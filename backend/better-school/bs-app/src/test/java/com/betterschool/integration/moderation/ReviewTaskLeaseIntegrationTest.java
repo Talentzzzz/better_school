@@ -49,14 +49,14 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800008001", "作者1");
         Session auditor = auditorSession("13900008001");
 
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
         LocalDateTime claimedAt = LocalDateTime.now();
 
         JsonNode claimed = claim(auditor, null);
         assertThat(claimed.path("data").path("taskId").asLong()).as("领到一条工单").isPositive();
         long taskId = claimed.path("data").path("taskId").asLong();
         assertThat(claimed.path("data").path("targetType").asText()).isEqualTo("ERRAND");
-        assertThat(claimed.path("data").path("targetId").asLong()).isEqualTo(orderId);
+        assertThat(claimed.path("data").path("targetId").asText()).isEqualTo(orderId);
         assertThat(claimed.path("data").path("claimState").asText()).isEqualTo("CLAIMED");
         assertThat(claimed.path("data").path("claimSeq").asInt()).isEqualTo(1);
 
@@ -69,7 +69,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         assertThat((LocalDateTime) row.get("lease_expire_at"))
                 .as("租约 5min 从领单时刻起算")
                 .isBetween(claimedAt.plusMinutes(4), claimedAt.plusMinutes(6));
-        assertThat(row.get("entered_at")).as("领单不改进入待审时刻").isEqualTo(enteredAtOf("ERRAND", String.valueOf(orderId)));
+        assertThat(row.get("entered_at")).as("领单不改进入待审时刻").isEqualTo(enteredAtOf("ERRAND", orderId));
 
         // 注册行：复合 bizId {taskId}:{claimSeq}、窗口从领单时刻起算、领单事务提交后立即可见
         Map<String, Object> registerRow = registerRowOf(taskId, 1);
@@ -83,18 +83,18 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800008002", "作者2");
         Session auditor = auditorSession("13900008002");
 
-        long orderId = createPaidOrder(author);
-        long productId = createProduct(author);
+        String orderId = createPaidOrder(author);
+        String productId = createProduct(author);
 
         // 类型过滤：POST 池空 → data=null，不串取其他类型的工单
         assertThat(claim(auditor, "POST").path("data").isNull()).isTrue();
         // ERRAND 过滤只取跑腿
         JsonNode errandClaim = claim(auditor, "ERRAND");
         assertThat(errandClaim.path("data").path("targetType").asText()).isEqualTo("ERRAND");
-        assertThat(errandClaim.path("data").path("targetId").asLong()).isEqualTo(orderId);
+        assertThat(errandClaim.path("data").path("targetId").asText()).isEqualTo(orderId);
         // PRODUCT 过滤取商品
         JsonNode productClaim = claim(auditor, "PRODUCT");
-        assertThat(productClaim.path("data").path("targetId").asLong()).isEqualTo(productId);
+        assertThat(productClaim.path("data").path("targetId").asText()).isEqualTo(productId);
         // 池空（不预取：每次领单只拿一条）
         assertThat(claim(auditor, null).path("data").isNull()).isTrue();
         assertThat(claim(auditor, "ERRAND").path("data").isNull()).isTrue();
@@ -107,7 +107,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800008003", "作者3");
         Session auditorA = auditorSession("13900008003");
         Session auditorB = auditorSession("13900008004");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
 
         // 两审核员同时抢池内唯一工单：条件 UPDATE 守卫 claim_state='PENDING'，影响行数 1 者赢
         ExecutorService pool = Executors.newFixedThreadPool(2);
@@ -137,7 +137,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         assertThat(((Number) row.get("claim_seq")).intValue()).isEqualTo(1);
         assertThat(((Number) row.get("recycle_count")).intValue()).isZero();
         // 目标工单仍指向同一内容，未被领两次
-        assertThat((String) row.get("target_id")).as("目标工单仍指向同一内容，未被领两次").isEqualTo(String.valueOf(orderId));
+        assertThat((String) row.get("target_id")).as("目标工单仍指向同一内容，未被领两次").isEqualTo(orderId);
     }
 
     // ---------- 租约到点回调：自动回池 + entered_at 不变 + 旧轮次零副作用 ----------
@@ -147,11 +147,11 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800008004", "作者4");
         Session auditorA = auditorSession("13900008005");
         Session auditorB = auditorSession("13900008006");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
 
         JsonNode firstClaim = claim(auditorA, null);
         long taskId = firstClaim.path("data").path("taskId").asLong();
-        LocalDateTime enteredAt = enteredAtOf("ERRAND", String.valueOf(orderId));
+        LocalDateTime enteredAt = enteredAtOf("ERRAND", orderId);
 
         // 到点回调：回 PENDING、清持单人、recycle_count+1
         assertCallbackSuccess(callback(leaseTask(taskId, 1)));
@@ -199,7 +199,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800008005", "作者5");
         Session auditorA = auditorSession("13900008007");
         Session auditorB = auditorSession("13900008008");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
 
         JsonNode firstClaim = claim(auditorA, null);
         long taskId = firstClaim.path("data").path("taskId").asLong();
@@ -221,7 +221,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         assertThat(((Number) row.get("recycle_count")).intValue())
                 .as("惰性回收与回调同口径计 recycle_count").isEqualTo(1);
         assertThat(row.get("entered_at")).as("惰性回收同样不改进入待审时刻")
-                .isEqualTo(enteredAtOf("ERRAND", String.valueOf(orderId)));
+                .isEqualTo(enteredAtOf("ERRAND", orderId));
     }
 
     // ---------- 主动放回 ----------
@@ -231,11 +231,11 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800008006", "作者6");
         Session auditorA = auditorSession("13900008009");
         Session auditorB = auditorSession("13900008010");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
 
         JsonNode claimResponse = claim(auditorA, null);
         long taskId = claimResponse.path("data").path("taskId").asLong();
-        LocalDateTime enteredAt = enteredAtOf("ERRAND", String.valueOf(orderId));
+        LocalDateTime enteredAt = enteredAtOf("ERRAND", orderId);
 
         // 持有人放回（带原因）：CLAIMED→PENDING、recycle_count+1
         assertSuccess(postJson("/api/moderation/tasks/" + taskId + "/release",
@@ -266,7 +266,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
     void 回收次数达三次置需人工干预标记() {
         Session author = registerAndLogin("13800008007", "作者7");
         Session auditor = auditorSession("13900008011");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
 
         long taskId = claim(auditor, null).path("data").path("taskId").asLong();
         for (int round = 1; round <= 3; round++) {
@@ -287,7 +287,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 用例夹具 ----------
 
-    private long createPaidOrder(Session author) {
+    private String createPaidOrder(Session author) {
         Map<String, Object> body = new HashMap<>();
         body.put("type", "EXPRESS_PICKUP");
         body.put("description", "帮忙取个快递");
@@ -297,12 +297,12 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         body.put("timeLimit", "HOURS_2");
         JsonNode createResponse = postJson("/api/errand/orders", body, author);
         assertSuccess(createResponse, "发布跑腿");
-        long orderId = createResponse.path("data").asLong();
+        String orderId = createResponse.path("data").asText();
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付");
         return orderId;
     }
 
-    private long createProduct(Session seller) {
+    private String createProduct(Session seller) {
         JsonNode response = postJson("/api/trade/products", Map.ofEntries(
                 Map.entry("title", "待审商品"),
                 Map.entry("description", "自用闲置，九成新"),
@@ -311,7 +311,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
                 Map.entry("tradeLocation", "图书馆门口"),
                 Map.entry("category", "BOOKS")), seller);
         assertSuccess(response, "发布商品");
-        return response.path("data").asLong();
+        return response.path("data").asText();
     }
 
     /** 审核员登录态：注册 → 改库提权 AUDITOR → 重新走验证码登录拿含新角色的 JWT */

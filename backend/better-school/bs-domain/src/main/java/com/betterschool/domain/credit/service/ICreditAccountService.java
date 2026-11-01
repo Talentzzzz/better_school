@@ -15,8 +15,8 @@ public interface ICreditAccountService {
     /** 发布/接单前置校验：封禁 403 / 信用分 <60 拒绝 */
     void ensureOperable(String userId);
 
-    /** 规则引擎统一入口（事务参与者，调用方须包事务）：扣/加分 + 流水 + 低分联动封禁，返回变动结果 */
-    CreditChangeResult applyChange(String userId, CreditReasonTypeVO reasonType, Long refId);
+    /** 规则引擎统一入口（事务参与者，调用方须包事务）：扣/加分 + 流水 + 低分联动封禁，返回变动结果；refId 是引用业务 id（UUID 字符串）或物理流水 id 的字符串形 */
+    CreditChangeResult applyChange(String userId, CreditReasonTypeVO reasonType, String refId);
 
     String getStatus(String userId);
 

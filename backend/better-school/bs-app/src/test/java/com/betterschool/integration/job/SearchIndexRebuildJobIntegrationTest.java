@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -32,9 +33,9 @@ class SearchIndexRebuildJobIntegrationTest extends CommunityApiTestBase {
         // 每类都摆「该进索引」与「不该进索引」各一行，过滤是否正确才有断言力
         String visiblePostId = publishPost(author, "重建可见帖");
         publishPendingPost(author, "重建待审帖");
-        long onSaleProductId = insertProduct(author.userId(), "ON_SALE");
+        String onSaleProductId = insertProduct(author.userId(), "ON_SALE");
         insertProduct(author.userId(), "SOLD");
-        long publishedErrandId = insertErrand(other.userId(), "PUBLISHED");
+        String publishedErrandId = insertErrand(other.userId(), "PUBLISHED");
         insertErrand(other.userId(), "CANCELLED");
 
         FakeSearchRepository.reset();
@@ -53,25 +54,26 @@ class SearchIndexRebuildJobIntegrationTest extends CommunityApiTestBase {
     }
 
     /**
-     * 直插一行商品，返回业务 id。业务列 NOT NULL 无默认值：先插 0 再绑到物理 id
-     * （应用侧 {@code bindBizId} 的同口径复刻），使游标列（id）与返回的业务 id 同值。
+     * 直插一行商品，返回业务 id。业务 id 是 UUID 字符串（uuid-biz-id 票 05）：
+     * 发号列随行一次写入，游标按 product_id 字典序推进。
      */
-    private long insertProduct(String userId, String state) {
+    private String insertProduct(String userId, String state) {
         // category 必须给：索引文档要 category.name()（线上由发布用例保证非空，这里摆真数据）
+        String productId = UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, category, state, "
-                + "create_time, update_time) VALUES (0, ?, '重建商品', 'BOOKS', ?, NOW(), NOW())", userId, state);
-        jdbcTemplate.update("UPDATE product SET product_id = id WHERE product_id = 0");
-        return jdbcTemplate.queryForObject("SELECT MAX(id) FROM product", Long.class);
+                        + "create_time, update_time) VALUES (?, ?, '重建商品', 'BOOKS', ?, NOW(), NOW())",
+                productId, userId, state);
+        return productId;
     }
 
     /** 直插一行跑腿单，返回业务 id（口径同上） */
-    private long insertErrand(String userId, String state) {
+    private String insertErrand(String userId, String state) {
+        String errandId = UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
                         + "pickup_location, delivery_location, reward, time_limit_hours, state, create_time, update_time) "
-                        + "VALUES (0, ?, 'BUY', '重建单', '宿舍楼', '食堂', 5.00, 2, ?, NOW(), NOW())",
-                userId, state);
-        jdbcTemplate.update("UPDATE errand_order SET errand_order_id = id WHERE errand_order_id = 0");
-        return jdbcTemplate.queryForObject("SELECT MAX(id) FROM errand_order", Long.class);
+                        + "VALUES (?, ?, 'BUY', '重建单', '宿舍楼', '食堂', 5.00, 2, ?, NOW(), NOW())",
+                errandId, userId, state);
+        return errandId;
     }
 
     /** 直接发帖（先审后发：落库即待审），返回 postId */

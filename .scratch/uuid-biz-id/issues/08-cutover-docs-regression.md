@@ -8,6 +8,8 @@
 
 > **票 04 注记（2026-11-01）**：`ChatMapper.xml` 的 room/message 列口径注释仍标注「（sql.md）」，而 sql.md 的 chat 段还是 `room_id/msg_id BIGINT` + 「业务 ID 回写」旧口径——本票收口时 sql.md 的 chat 五表段（room/direct_room_pair/room_member/message/timeline）须按 VARCHAR(36) + 应用层发号新口径重写。另：front 的 chat 详情页存在 `Number(route.params.roomId)` 硬编码与 `/chat/:roomId(\\d+)` 数字路由正则（front 整体 userId 也仍按 number 定型），front 适配不在本票范围，收口时须确认已另立 front 适配票。
 
+> **票 05 注记（2026-11-02）**：sql.md 的 trade 段（product/product_favorite/product_feed_index/errand_feed_index/两对 view_history/view_count/errand_order(+event)/product_order(+event)/wallet_detail.order_id/user_credit_detail.ref_id）仍是 BIGINT + 「业务 ID 回写」旧口径，须按 VARCHAR(36) + IIdGenerator 发号重写；product_feed_index/errand_feed_index 收口时补「热度档 = view_count DESC, create_time DESC, 业务 id DESC 三段收敛键」口径与新增 create_time 列说明。front 的市集页（MarketView 等）如存在按数字解析 product/errand id 的硬编码，随 front 适配批次一并收口。
+
 - [ ] 注册、发帖、评论、发消息、下单、抽奖等新建资源返回的 id 均可被 UUID.fromString 解析，且后续请求用该字符串 id 引用成功（集成断言）
 - [ ] 退役割接脚本删除或按新类型体系重写，仓库内无 BIGINT 业务键残留（schema 全文检查）
 - [ ] docs/api、docs/db、sql.md、CONTEXT.md、backend/CLAUDE.md 与代码一致

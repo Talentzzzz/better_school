@@ -18,20 +18,14 @@
         LEFT JOIN bs_user tu ON e.taker_id = tu.user_id
     </sql>
 
-    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO"
-            useGeneratedKeys="true" keyProperty="id">
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
         INSERT INTO errand_order (errand_order_id, publisher_id, taker_id, type, description, pickup_location, delivery_location,
                                   reward, time_limit_hours, images, deadline, state,
                                   create_time, update_time)
-        VALUES (0, #{publisherId}, #{takerId}, #{type}, #{description}, #{pickupLocation}, #{deliveryLocation},
+        VALUES (#{errandOrderId}, #{publisherId}, #{takerId}, #{type}, #{description}, #{pickupLocation}, #{deliveryLocation},
                 #{reward}, #{timeLimitHours}, #{images}, #{deadline}, #{state},
                 #{createTime}, #{updateTime})
     </insert>
-
-    <!-- 业务 ID 回写：业务标识与物理自增同值（应用同事务写回，见 sql.md 主键口径） -->
-    <update id="bindBizId">
-        UPDATE errand_order SET errand_order_id = id WHERE id = #{id} AND errand_order_id = 0
-    </update>
 
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
         SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
@@ -49,10 +43,12 @@
         <foreach collection="ids" item="orderId" open="(" separator="," close=")">#{orderId}</foreach>
     </select>
 
-    <select id="selectIdsAfter" resultType="long">
+    <!-- 搜索索引全量重建的游标页（uuid-biz-id 票 05）：业务 ID 是 UUID 字符串，按 errand_order_id 字典序推进
+         （同一排序规则下 &gt; 与 ORDER BY 自洽），不再按物理 id -->
+    <select id="selectIdsAfter" resultType="string">
         SELECT errand_order_id FROM errand_order
-        WHERE id &gt; #{lastId}
-        ORDER BY id
+        WHERE errand_order_id &gt; #{lastId}
+        ORDER BY errand_order_id
         LIMIT #{limit}
     </select>
 
@@ -77,32 +73,36 @@
         ORDER BY
         <choose>
             <!-- 五档排序（market-feed-uv 票 04）与索引路径语义同构：热度 = 浏览 UV 数、tie-break 同向。
-                 已知口径差：时间键这里取主表 create_time，索引取 feed_time（进入大厅的时刻）——降级本就
-                 发生在「索引不可用」时，拿不到 feed_time；tie-break 的 id 与 errand_order_id 在本库恒等
-                 （sql.md 主键口径：业务标识与物理自增同值），实际同一列 -->
-            <when test="sort == 'hot'">IFNULL(evc.view_count, 0) DESC, e.id DESC</when>
-            <when test="sort == 'price_asc'">e.reward ASC, e.id ASC</when>
-            <when test="sort == 'price_desc'">e.reward DESC, e.id DESC</when>
-            <when test="sort == 'time_asc'">e.create_time ASC, e.id ASC</when>
-            <otherwise>e.create_time DESC, e.id DESC</otherwise>
+                 已知口径差：时间键这里取主表 create_time，索引热度档同值收敛键也换成了 create_time 快照
+                 （uuid-biz-id 票 05：业务 ID 是 UUID 无序，不能再拿它当「创建先后」的代理，两路热度档
+                 同为 view_count DESC, create_time DESC, errand_order_id DESC）；其余档 tie-break 取
+                 errand_order_id 字典序，与索引尾列一致（物理 id 只作内部键，不再对外） -->
+            <when test="sort == 'hot'">IFNULL(evc.view_count, 0) DESC, e.create_time DESC, e.errand_order_id DESC</when>
+            <when test="sort == 'price_asc'">e.reward ASC, e.errand_order_id ASC</when>
+            <when test="sort == 'price_desc'">e.reward DESC, e.errand_order_id DESC</when>
+            <when test="sort == 'time_asc'">e.create_time ASC, e.errand_order_id ASC</when>
+            <otherwise>e.create_time DESC, e.errand_order_id DESC</otherwise>
         </choose>
         LIMIT #{offset}, #{limit}
     </select>
 
     <!-- 跑腿大厅索引序扫描（market-feed-uv 票 04）：state 过滤（可见 = PUBLISHED）+ (排序键, errand_order_id)
-         索引序 range scan。五档排序共用一条语句——热度 (state, view_count, errand_order_id)、最新/最早
+         索引序 range scan。五档排序共用一条语句——热度 (state, view_count, create_time, errand_order_id)
+         （uuid-biz-id 票 05：热度同值收敛键换 create_time 快照，业务 ID 是 UUID 无序）、最新/最早
          (state, feed_time, errand_order_id) 正向/反向扫描、价格升降 (state, price, errand_order_id)；
          续页谓词与排序方向同构（降序 &lt;、升序 &gt;）才能走 range scan。排序键与热度快照随行带出 -->
     <select id="selectFeedIndex" resultType="com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO">
         <!-- 业务键列名按 VO 口径别名：errand_order_id 直落会映射成 errandOrderId（下划线转驼峰），不在 VO 字段上 -->
-        SELECT errand_order_id AS order_id, feed_time, price, view_count
+        SELECT errand_order_id AS order_id, feed_time, create_time, price, view_count
         FROM errand_feed_index
         WHERE state = 'PUBLISHED'
         <if test="cursor != null and !cursor.isFirstPage()">
             <choose>
                 <when test="sort == 'hot'">
                     AND (view_count &lt; #{cursor.viewCount}
-                        OR (view_count = #{cursor.viewCount} AND errand_order_id &lt; #{cursor.orderId}))
+                        OR (view_count = #{cursor.viewCount} AND create_time &lt; #{cursor.createTime})
+                        OR (view_count = #{cursor.viewCount} AND create_time = #{cursor.createTime}
+                            AND errand_order_id &lt; #{cursor.orderId}))
                 </when>
                 <when test="sort == 'time_asc'">
                     AND (feed_time &gt; #{cursor.feedTime}
@@ -124,7 +124,7 @@
         </if>
         ORDER BY
         <choose>
-            <when test="sort == 'hot'">view_count DESC, errand_order_id DESC</when>
+            <when test="sort == 'hot'">view_count DESC, create_time DESC, errand_order_id DESC</when>
             <when test="sort == 'time_asc'">feed_time ASC, errand_order_id ASC</when>
             <when test="sort == 'price_asc'">price ASC, errand_order_id ASC</when>
             <when test="sort == 'price_desc'">price DESC, errand_order_id DESC</when>
@@ -341,7 +341,7 @@
     <!-- XXL-Job 兜底扫描：待支付超时（15min）与订单超时（deadline 已过）订单 id 列表。
          待支付锚在 update_time（= 进入待支付时刻：直接发布=落库时刻，草稿提交=提交时刻）——
          不能用 create_time：草稿可能在创建很久之后才提交，那样会被扫描立刻误判超时 -->
-    <select id="selectPayTimeoutOrderIds" resultType="long">
+    <select id="selectPayTimeoutOrderIds" resultType="string">
         SELECT errand_order_id
         FROM errand_order
         WHERE state = 'PENDING_PAYMENT'
@@ -349,7 +349,7 @@
         LIMIT #{limit}
     </select>
 
-    <select id="selectTimeoutOrderIds" resultType="long">
+    <select id="selectTimeoutOrderIds" resultType="string">
         SELECT errand_order_id
         FROM errand_order
         WHERE state IN ('PUBLISHED', 'LOCKED', 'CONFIRMED', 'PICKED_UP')
@@ -358,7 +358,7 @@
     </select>
 
     <!-- 待审超时提醒扫描：PENDING_REVIEW 由支付条件 UPDATE 翻转而来，update_time 即进入待审时间 -->
-    <select id="selectPendingReviewTimeoutOrderIds" resultType="long">
+    <select id="selectPendingReviewTimeoutOrderIds" resultType="string">
         SELECT errand_order_id
         FROM errand_order
         WHERE state = 'PENDING_REVIEW'
@@ -367,7 +367,7 @@
     </select>
 
     <!-- 送达超时自动完成扫描：DELIVERED 由送达条件 UPDATE 翻转而来，update_time 即送达时间 -->
-    <select id="selectAutoCompleteOrderIds" resultType="long">
+    <select id="selectAutoCompleteOrderIds" resultType="string">
         SELECT errand_order_id
         FROM errand_order
         WHERE state = 'DELIVERED'
@@ -410,7 +410,7 @@
         <if test="state != null">
             AND e.state = #{state}
         </if>
-        ORDER BY e.create_time DESC, e.id DESC
+        ORDER BY e.create_time DESC, e.errand_order_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -432,7 +432,7 @@
         <include refid="userJoins"/>
         WHERE e.publisher_id = #{userId}
           AND e.state IN ('PUBLISHED', 'LOCKED', 'CONFIRMED')
-        ORDER BY e.create_time DESC, e.id DESC
+        ORDER BY e.create_time DESC, e.errand_order_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -453,7 +453,7 @@
         <if test="state != null">
             AND e.state = #{state}
         </if>
-        ORDER BY e.create_time DESC, e.id DESC
+        ORDER BY e.create_time DESC, e.errand_order_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -534,7 +534,7 @@
 
     <!-- 已读灰显批量回显（market-feed-uv 票 05，照帖子 selectViewedPostIds）：明细表主键
          (user_id, errand_order_id) 前缀先钉人、再按页内 id 集合 IN，一页一次查询，不做 N+1 -->
-    <select id="selectViewedOrderIds" resultType="long">
+    <select id="selectViewedOrderIds" resultType="string">
         SELECT errand_order_id
         FROM errand_view_history
         WHERE user_id = #{userId}
@@ -547,10 +547,12 @@
 
     <!-- 审核通过：行诞生（唯一诞生点，彼时悬赏必已支付冻结满足 price 非空）。INSERT...SELECT 从
          errand_order 行取 reward 快照；feed_time = 进入大厅时刻，行诞生落第一次——跑腿无重提再过审
-         （REJECTED 终态），ODKU 属防御分支（双审并发重放）只翻 state，不刷 feed_time、不碰 price -->
+         （REJECTED 终态），ODKU 属防御分支（双审并发重放）只翻 state，不刷 feed_time、不碰 price。
+         create_time = 主表创建时刻快照随行写入（uuid-biz-id 票 05：热度档同值收敛键，业务 ID 是
+         UUID 无序、不能再拿它当「创建先后」的代理） -->
     <update id="upsertFeedIndexOnApprove">
-        INSERT INTO errand_feed_index (errand_order_id, state, feed_time, price, view_count, update_time)
-        SELECT e.errand_order_id, 'PUBLISHED', NOW(), e.reward, 0, NOW()
+        INSERT INTO errand_feed_index (errand_order_id, state, feed_time, create_time, price, view_count, update_time)
+        SELECT e.errand_order_id, 'PUBLISHED', NOW(), e.create_time, e.reward, 0, NOW()
         FROM errand_order e
         WHERE e.errand_order_id = #{orderId}
         ON DUPLICATE KEY UPDATE
@@ -586,10 +588,11 @@
     <!-- 重灌：一单一行 1:1 投影。行集 = PUBLISHED 订单 ∪ 有过审批通过的订单（行常驻口径：通过事务才诞生行、
          之后 13 态流转只翻快照、行永不删除；审核通过前的草稿/待支付/待审/驳回订单不凭空进索引）。
          feed_time 取审核记录里最近一次 APPROVE 时刻（与票 01 回填脚本同口径），查不到审批流水的存量老单取
-         create_time 兜底；price = reward；view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步
+         create_time 兜底；price = reward；create_time 快照取主表创建时刻（uuid-biz-id 票 05 热度收敛键）；
+         view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步
          同时把「过审前被浏览、旁路命中 0 行」漏计的那部分追平 -->
     <insert id="rebuildFeedIndexProjection">
-        INSERT INTO errand_feed_index (errand_order_id, state, feed_time, price, view_count, update_time)
+        INSERT INTO errand_feed_index (errand_order_id, state, feed_time, create_time, price, view_count, update_time)
         SELECT e.errand_order_id,
                e.state,
                COALESCE((SELECT MAX(cr.create_time)
@@ -598,6 +601,7 @@
                             AND cr.target_id = e.errand_order_id
                             AND cr.action = 'APPROVE'),
                         e.create_time),
+               e.create_time,
                e.reward,
                COALESCE(evc.view_count, 0),
                NOW()

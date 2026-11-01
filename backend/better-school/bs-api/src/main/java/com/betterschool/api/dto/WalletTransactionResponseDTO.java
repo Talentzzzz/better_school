@@ -11,6 +11,6 @@ public class WalletTransactionResponseDTO {
     private Long id;
     private String type;
     private BigDecimal amount;
-    private Long orderId;
+    private String orderId;
     private LocalDateTime createdAt;
 }

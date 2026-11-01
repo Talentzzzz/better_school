@@ -67,15 +67,15 @@ public class ProductController implements ITradeService {
                 .map(product -> toProductResponseDTO(product, false)).toList();
         // 已读灰显（market-feed-uv 票 05，照帖子 listPosts）：页内 product_id 批量回查浏览明细，
         // 登录用户带 viewed 标记；未登录为空集 ⇒ 恒 false（市集列表匿名可浏览）
-        Set<Long> viewedIds = viewedProductIdsOf(feedPage.getProducts(), SecurityUtils.currentUserId());
+        Set<String> viewedIds = viewedProductIdsOf(feedPage.getProducts(), SecurityUtils.currentUserId());
         dtoList.forEach(dto -> dto.setViewed(viewedIds.contains(dto.getProductId())));
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList, feedPage.getNextCursor()));
     }
 
     @Override
     @PostMapping("/products")
-    public Response<Long> publishProduct(@Valid @RequestBody ProductPublishRequestDTO request) {
-        Long productId = tradePublishCase.publishProduct(SecurityUtils.currentUserId(), request.getTitle(),
+    public Response<String> publishProduct(@Valid @RequestBody ProductPublishRequestDTO request) {
+        String productId = tradePublishCase.publishProduct(SecurityUtils.currentUserId(), request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
                 request.getTradeLocation(), request.getCategory());
         return Response.ok(productId);
@@ -83,8 +83,8 @@ public class ProductController implements ITradeService {
 
     @Override
     @PostMapping("/products/draft")
-    public Response<Long> saveProductDraft(@Valid @RequestBody ProductDraftSaveRequestDTO request) {
-        Long productId = tradePublishCase.saveProductDraft(SecurityUtils.currentUserId(), request.getTitle(),
+    public Response<String> saveProductDraft(@Valid @RequestBody ProductDraftSaveRequestDTO request) {
+        String productId = tradePublishCase.saveProductDraft(SecurityUtils.currentUserId(), request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
                 request.getTradeLocation(), request.getCategory());
         return Response.ok(productId);
@@ -92,7 +92,7 @@ public class ProductController implements ITradeService {
 
     @Override
     @PutMapping("/products/{productId}/draft")
-    public Response<Void> updateProductDraft(@PathVariable Long productId,
+    public Response<Void> updateProductDraft(@PathVariable String productId,
                                              @Valid @RequestBody ProductDraftSaveRequestDTO request) {
         tradePublishCase.updateProductDraft(SecurityUtils.currentUserId(), productId, request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
@@ -102,28 +102,28 @@ public class ProductController implements ITradeService {
 
     @Override
     @PostMapping("/products/{productId}/submit")
-    public Response<Void> submitProductDraft(@PathVariable Long productId) {
+    public Response<Void> submitProductDraft(@PathVariable String productId) {
         tradePublishCase.submitProductDraft(SecurityUtils.currentUserId(), productId);
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/withdraw")
-    public Response<Void> withdrawProduct(@PathVariable Long productId) {
+    public Response<Void> withdrawProduct(@PathVariable String productId) {
         productService.withdrawProduct(SecurityUtils.currentUserId(), productId);
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/takedown")
-    public Response<Void> takeDownProduct(@PathVariable Long productId) {
+    public Response<Void> takeDownProduct(@PathVariable String productId) {
         tradePublishCase.takeDownProduct(SecurityUtils.currentUserId(), productId);
         return Response.ok(null);
     }
 
     @Override
     @PutMapping("/products/{productId}")
-    public Response<Void> editProduct(@PathVariable Long productId,
+    public Response<Void> editProduct(@PathVariable String productId,
                                       @Valid @RequestBody ProductEditRequestDTO request) {
         tradePublishCase.editOnSaleProduct(SecurityUtils.currentUserId(), productId, request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice());
@@ -132,14 +132,14 @@ public class ProductController implements ITradeService {
 
     @Override
     @PostMapping("/products/{productId}/to-draft")
-    public Response<Void> moveRejectedProductToDraft(@PathVariable Long productId) {
+    public Response<Void> moveRejectedProductToDraft(@PathVariable String productId) {
         productService.moveRejectedProductToDraft(SecurityUtils.currentUserId(), productId);
         return Response.ok(null);
     }
 
     @Override
     @GetMapping("/products/{productId}")
-    public Response<ProductResponseDTO> productDetail(@PathVariable Long productId) {
+    public Response<ProductResponseDTO> productDetail(@PathVariable String productId) {
         String currentUserId = SecurityUtils.currentUserId();
         ProductEntity productEntity = productService.productDetail(productId, currentUserId);
         ProductResponseDTO dto = toProductResponseDTO(productEntity, productEntity.isFavorited());
@@ -152,35 +152,35 @@ public class ProductController implements ITradeService {
 
     @Override
     @DeleteMapping("/products/{productId}")
-    public Response<Void> deleteProduct(@PathVariable Long productId) {
+    public Response<Void> deleteProduct(@PathVariable String productId) {
         productService.deleteProduct(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/sold")
-    public Response<Void> markSold(@PathVariable Long productId) {
+    public Response<Void> markSold(@PathVariable String productId) {
         productService.markSold(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/relist")
-    public Response<Void> relistProduct(@PathVariable Long productId) {
+    public Response<Void> relistProduct(@PathVariable String productId) {
         productService.relistProduct(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/favorite")
-    public Response<Void> favoriteProduct(@PathVariable Long productId) {
+    public Response<Void> favoriteProduct(@PathVariable String productId) {
         productService.favoriteProduct(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @DeleteMapping("/products/{productId}/favorite")
-    public Response<Void> unfavoriteProduct(@PathVariable Long productId) {
+    public Response<Void> unfavoriteProduct(@PathVariable String productId) {
         productService.unfavoriteProduct(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
@@ -230,41 +230,41 @@ public class ProductController implements ITradeService {
 
     @Override
     @PostMapping("/orders")
-    public Response<Long> createProductOrder(@RequestParam Long productId) {
+    public Response<String> createProductOrder(@RequestParam String productId) {
         return Response.ok(productOrderCase.createOrder(SecurityUtils.currentUserId(), productId));
     }
 
     @Override
     @PostMapping("/orders/{orderId}/pay")
-    public Response<Void> payProductOrder(@PathVariable Long orderId) {
+    public Response<Void> payProductOrder(@PathVariable String orderId) {
         productOrderCase.payOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/mark-delivered")
-    public Response<Void> markDeliveredProduct(@PathVariable Long orderId) {
+    public Response<Void> markDeliveredProduct(@PathVariable String orderId) {
         productOrderCase.markDelivered(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/confirm")
-    public Response<Void> confirmProductOrder(@PathVariable Long orderId) {
+    public Response<Void> confirmProductOrder(@PathVariable String orderId) {
         productOrderCase.confirmReceived(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/cancel")
-    public Response<Void> cancelProductOrder(@PathVariable Long orderId) {
+    public Response<Void> cancelProductOrder(@PathVariable String orderId) {
         productOrderCase.cancelOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @GetMapping("/orders/{orderId}")
-    public Response<ProductOrderResponseDTO> productOrderDetail(@PathVariable Long orderId) {
+    public Response<ProductOrderResponseDTO> productOrderDetail(@PathVariable String orderId) {
         ProductOrderEntity orderEntity = productOrderCase.orderDetail(orderId, SecurityUtils.currentUserId());
         return Response.ok(toProductOrderResponseDTO(orderEntity));
     }
@@ -285,8 +285,8 @@ public class ProductController implements ITradeService {
     }
 
     /** 当前用户浏览过的商品 id 集合（未登录为空集；一页一次批量查询，不做 N+1） */
-    private Set<Long> viewedProductIdsOf(List<ProductEntity> productList, String currentUserId) {
-        List<Long> productIds = productList.stream().map(ProductEntity::getProductId).toList();
+    private Set<String> viewedProductIdsOf(List<ProductEntity> productList, String currentUserId) {
+        List<String> productIds = productList.stream().map(ProductEntity::getProductId).toList();
         return new HashSet<>(productService.listViewedProductIds(currentUserId, productIds));
     }
 

@@ -42,7 +42,8 @@ class ErrandFullChainIntegrationTest extends CommunityApiTestBase {
 
         JsonNode resent = postJson("/api/errand/orders", errandBody("帮我取个快递", null), user);
         assertSuccess(resent, "改文案重发");
-        long orderId = resent.path("data").asLong();
+        String orderId = resent.path("data").asText();
+        assertUuidId(orderId);
         assertThat(statusOf(orderId)).as("改文案后应正常创建待支付").isEqualTo("PENDING_PAYMENT");
     }
 
@@ -51,7 +52,7 @@ class ErrandFullChainIntegrationTest extends CommunityApiTestBase {
     @Test
     void 通过链路编排_支付通知裁决可见() {
         Session author = registerAndLogin("13800007002", "发单作者");
-        long orderId = createPaidOrder(author, List.of("http://minio.test/bs-files/uploads/a.png"));
+        String orderId = createPaidOrder(author, List.of("http://minio.test/bs-files/uploads/a.png"));
         Session admin = adminSession();
 
         // 1. 支付落 outbox → 消费者直接驱动 → 作者收到"进入人工审核"通知
@@ -94,7 +95,7 @@ class ErrandFullChainIntegrationTest extends CommunityApiTestBase {
     @Test
     void 拒绝链路编排_支付通知裁决退款理由() {
         Session author = registerAndLogin("13800007003", "发单作者");
-        long orderId = createPaidOrder(author, null);
+        String orderId = createPaidOrder(author, null);
         Session admin = adminSession();
 
         errandPaidConsumer.onMessage(pendingPayloadOf(orderId));
@@ -135,7 +136,8 @@ class ErrandFullChainIntegrationTest extends CommunityApiTestBase {
     void outbox定时扫描兜底重发未发送消息() {
         // 直插一条 PENDING 消息模拟"事务已提交但即时发送未完成"的遗留消息
         String msgId = UUID.randomUUID().toString();
-        String payload = "{\"orderId\":1}";
+        // uuid-biz-id 票 05：orderId 载荷为 UUID 字符串
+        String payload = "{\"orderId\":\"" + UUID.randomUUID() + "\"}";
         jdbcTemplate.update("INSERT INTO outbox_message (msg_id, destination, payload, state, retry_count, create_time, update_time) "
                 + "VALUES (?, ?, ?, 0, 0, NOW(), NOW())", msgId, Constants.ERRAND_PAID_TOPIC, payload);
 
@@ -163,20 +165,21 @@ class ErrandFullChainIntegrationTest extends CommunityApiTestBase {
         return body;
     }
 
-    private long createPaidOrder(Session author, List<String> images) {
+    private String createPaidOrder(Session author, List<String> images) {
         JsonNode createResponse = postJson("/api/errand/orders", errandBody("帮忙取个快递", images), author);
         assertSuccess(createResponse, "发布跑腿");
-        long orderId = createResponse.path("data").asLong();
+        String orderId = createResponse.path("data").asText();
+        assertUuidId(orderId);
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付");
         return orderId;
     }
 
-    private String pendingPayloadOf(long orderId) {
+    private String pendingPayloadOf(String orderId) {
         List<String> payloads = jdbcTemplate.queryForList(
                 "SELECT payload FROM outbox_message WHERE destination = ? AND state = 0", String.class,
                 Constants.ERRAND_PAID_TOPIC);
         return payloads.stream()
-                .filter(p -> readTree(p).path("orderId").asLong() == orderId)
+                .filter(p -> readTree(p).path("orderId").asText().equals(orderId))
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("订单 " + orderId + " 的支付 outbox 消息不存在"));
     }
@@ -187,11 +190,11 @@ class ErrandFullChainIntegrationTest extends CommunityApiTestBase {
                 String.class, userId, type, "%" + keyword + "%");
     }
 
-    private List<Long> listPublicOrderIds() {
+    private List<String> listPublicOrderIds() {
         JsonNode response = getJson("/api/errand/orders?page=1&pageSize=10", null);
         assertSuccess(response, "公开订单列表");
         return StreamSupport.stream(response.path("data").path("list").spliterator(), false)
-                .map(node -> node.path("orderId").asLong())
+                .map(node -> node.path("orderId").asText())
                 .toList();
     }
 
@@ -200,25 +203,25 @@ class ErrandFullChainIntegrationTest extends CommunityApiTestBase {
         return count == null ? 0 : count;
     }
 
-    private int countWalletTransactions(long orderId, String type) {
+    private int countWalletTransactions(String orderId, String type) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM wallet_detail WHERE order_id = ? AND type = ?",
                 Integer.class, orderId, type);
         return count == null ? 0 : count;
     }
 
-    private String statusOf(long orderId) {
+    private String statusOf(String orderId) {
         return jdbcTemplate.queryForObject("SELECT state FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }
 
     /** 该订单的事件流水类型序（id 递增即流转顺序） */
-    private List<String> eventTypesOf(long orderId) {
+    private List<String> eventTypesOf(String orderId) {
         return jdbcTemplate.queryForList(
                 "SELECT event_type FROM errand_order_event WHERE order_id = ? ORDER BY id", String.class, orderId);
     }
 
     /** 某类事件的行（每类事件在一条链路里至多一条；取首条足够） */
-    private Map<String, Object> eventRowOf(long orderId, String eventType) {
+    private Map<String, Object> eventRowOf(String orderId, String eventType) {
         return jdbcTemplate.queryForMap(
                 "SELECT from_state, to_state, actor_id, actor_role, reason_type, reason "
                         + "FROM errand_order_event WHERE order_id = ? AND event_type = ? ORDER BY id LIMIT 1",
@@ -226,14 +229,14 @@ class ErrandFullChainIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 事件前态；事件行不存在或该列为 NULL 都返回 null（创建事件即 NULL 前态） */
-    private String eventFromStateOf(long orderId, String eventType) {
+    private String eventFromStateOf(String orderId, String eventType) {
         List<String> states = jdbcTemplate.queryForList(
                 "SELECT from_state FROM errand_order_event WHERE order_id = ? AND event_type = ? ORDER BY id LIMIT 1",
                 String.class, orderId, eventType);
         return states.isEmpty() ? null : states.get(0);
     }
 
-    private String eventReasonOf(long orderId, String eventType) {
+    private String eventReasonOf(String orderId, String eventType) {
         List<String> reasons = jdbcTemplate.queryForList(
                 "SELECT reason FROM errand_order_event WHERE order_id = ? AND event_type = ? ORDER BY id LIMIT 1",
                 String.class, orderId, eventType);

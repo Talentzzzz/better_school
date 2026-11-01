@@ -8,8 +8,8 @@ import java.time.LocalDateTime;
 @Data
 public class ProductOrderResponseDTO {
 
-    private Long orderId;
-    private Long productId;
+    private String orderId;
+    private String productId;
     /** 商品标题快照 */
     private String productTitle;
     private String productImage;

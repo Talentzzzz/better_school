@@ -11,7 +11,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -29,8 +29,6 @@ class ErrandViewedIntegrationTest extends CommunityApiTestBase {
     private static final long DRAIN_MILLIS = 5_000;
     private static final int PAGE_SIZE = 2;
 
-    private static final AtomicLong SEQ = new AtomicLong();
-
     @Autowired
     private CountMerger countMerger;
 
@@ -38,8 +36,8 @@ class ErrandViewedIntegrationTest extends CommunityApiTestBase {
     @DisplayName("登录浏览详情后大厅该单 viewed=true、未浏览的 false；详情为 null")
     void 浏览详情后大厅已读灰显() {
         Session publisher = registerAndLogin("13600001501", "灰显发单人");
-        long viewedOrderId = seedPublishedOrder(publisher, "看过的一单");
-        long unseenOrderId = seedPublishedOrder(publisher, "没看过的一单");
+        String viewedOrderId = seedPublishedOrder(publisher, "看过的一单");
+        String unseenOrderId = seedPublishedOrder(publisher, "没看过的一单");
         Session viewer = registerAndLogin("13600001502", "跑腿浏览者");
 
         assertSuccess(getJson("/api/errand/orders/" + viewedOrderId, viewer), "浏览跑腿详情");
@@ -62,12 +60,12 @@ class ErrandViewedIntegrationTest extends CommunityApiTestBase {
     @DisplayName("匿名可浏览：大厅 viewed 恒 false（明确的字段值），热度排序下浏览量照常可读，游标续页不重不漏")
     void 匿名大厅灰显恒为false且游标可用() {
         Session publisher = registerAndLogin("13600001503", "匿名灰显发单人");
-        List<Long> seeded = seedPublishedOrders(publisher, 3);
+        List<String> seeded = seedPublishedOrders(publisher, 3);
 
         assertSuccess(getJson("/api/errand/orders/" + seeded.get(0), null), "匿名浏览跑腿详情");
         assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
 
-        List<Long> walked = new ArrayList<>();
+        List<String> walked = new ArrayList<>();
         JsonNode data = fetchPage(null, null);
         int pages = 0;
         while (data != null) {
@@ -76,7 +74,7 @@ class ErrandViewedIntegrationTest extends CommunityApiTestBase {
                 assertThat(item.path("viewed").asBoolean()).as("匿名永远不灰显").isFalse();
                 // 卡片浏览量展示的数据源（票 05 起两域卡片同口径）：大厅取索引热度快照，恒可读
                 assertThat(item.path("viewCount").isNumber()).as("大厅列表必须带浏览量").isTrue();
-                walked.add(item.path("orderId").asLong());
+                walked.add(item.path("orderId").asText());
             }
             pages++;
             String next = data.path("cursor").asText(null);
@@ -88,8 +86,8 @@ class ErrandViewedIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 夹具与可观察状态 ----------
 
-    private List<Long> seedPublishedOrders(Session publisher, int count) {
-        List<Long> orderIds = new ArrayList<>(count);
+    private List<String> seedPublishedOrders(Session publisher, int count) {
+        List<String> orderIds = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             orderIds.add(seedPublishedOrder(publisher, "灰显夹具" + i));
         }
@@ -97,16 +95,16 @@ class ErrandViewedIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 直插一条已发布订单 + 对应索引行（大厅只走索引路径，缺索引行就不会出现在列表里） */
-    private long seedPublishedOrder(Session publisher, String description) {
-        long orderId = 950_000L + SEQ.incrementAndGet();
+    private String seedPublishedOrder(Session publisher, String description) {
+        String orderId = UUID.randomUUID().toString();
         BigDecimal reward = BigDecimal.valueOf(15).setScale(2);
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
                         + "pickup_location, delivery_location, reward, time_limit_hours, deadline, state, "
                         + "create_time, update_time) VALUES (?, ?, 'EXPRESS_PICKUP', ?, '菜鸟驿站', '6号楼', ?, 2, "
                         + "DATE_ADD(NOW(), INTERVAL 2 HOUR), 'PUBLISHED', NOW(), NOW())",
                 orderId, publisher.userId(), description, reward);
-        jdbcTemplate.update("INSERT INTO errand_feed_index (errand_order_id, state, feed_time, price, view_count, "
-                        + "update_time) VALUES (?, 'PUBLISHED', ?, ?, 0, NOW())",
+        jdbcTemplate.update("INSERT INTO errand_feed_index (errand_order_id, state, feed_time, create_time, price, "
+                        + "view_count, update_time) VALUES (?, 'PUBLISHED', ?, NOW(), ?, 0, NOW())",
                 orderId, LocalDateTime.now(), reward);
         return orderId;
     }
@@ -121,9 +119,9 @@ class ErrandViewedIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 页内某订单的 viewed 值（订单必须在本页，缺行直接断言失败而不是静默 false） */
-    private boolean viewedOf(JsonNode data, long orderId) {
+    private boolean viewedOf(JsonNode data, String orderId) {
         for (JsonNode item : data.path("list")) {
-            if (item.path("orderId").asLong() == orderId) {
+            if (item.path("orderId").asText().equals(orderId)) {
                 return item.path("viewed").asBoolean();
             }
         }

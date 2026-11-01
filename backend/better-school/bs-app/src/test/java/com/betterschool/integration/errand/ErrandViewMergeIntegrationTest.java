@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -37,7 +38,7 @@ class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {
     @Test
     @DisplayName("登录浏览：明细落一行、加速列计 1，详情响应 viewCount 接线计数表")
     void 登录浏览计一并接线到详情() {
-        long orderId = insertPublishedOrder("帮忙取一个快递");
+        String orderId = insertPublishedOrder("帮忙取一个快递");
         Session viewer = registerAndLogin("13800008001", "跑腿浏览者");
 
         JsonNode first = getJson("/api/errand/orders/" + orderId, viewer).path("data");
@@ -56,7 +57,7 @@ class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {
     @Test
     @DisplayName("重复浏览不计数只刷 viewed_at；匿名浏览不计入")
     void 重复浏览与匿名都不加数() {
-        long orderId = insertPublishedOrder("代买一杯奶茶");
+        String orderId = insertPublishedOrder("代买一杯奶茶");
         Session viewer = registerAndLogin("13800008002", "回头客");
         // 预置一小时前的浏览明细（首次浏览已落），加速列对齐
         jdbcTemplate.update("INSERT INTO errand_view_history (user_id, errand_order_id, viewed_at) "
@@ -82,11 +83,11 @@ class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {
     @Test
     @DisplayName("一组 N 件合并：批内同人不重复计，加速列按 INSERT 影响行数增量且与明细行数一致")
     void 一组浏览件按去重后新增数落库() {
-        long orderId = insertPublishedOrder("帮忙搬一箱书");
+        String orderId = insertPublishedOrder("帮忙搬一箱书");
         Session viewerA = registerAndLogin("13800008003", "浏览者甲");
         Session viewerB = registerAndLogin("13800008004", "浏览者乙");
 
-        List<LikeState> results = flushHandler.flushGroup(CountAction.ERRAND_VIEW, String.valueOf(orderId),
+        List<LikeState> results = flushHandler.flushGroup(CountAction.ERRAND_VIEW, orderId,
                 List.of(viewEvent(orderId, viewerA.userId()), viewEvent(orderId, viewerA.userId()),
                         viewEvent(orderId, viewerB.userId())));
 
@@ -98,13 +99,13 @@ class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 工具 ----------
 
-    private static CountEvent viewEvent(long orderId, String userId) {
-        return new CountEvent(CountAction.ERRAND_VIEW, String.valueOf(orderId), userId);
+    private static CountEvent viewEvent(String orderId, String userId) {
+        return new CountEvent(CountAction.ERRAND_VIEW, orderId, userId);
     }
 
-    /** 直插一条大厅公开（PUBLISHED）订单：对外可见 ⇒ 登录/匿名详情均可用；业务 ID 取高位段避开应用自增 id */
-    private long insertPublishedOrder(String description) {
-        long orderId = 920_000L + System.nanoTime() % 10_000L;
+    /** 直插一条大厅公开（PUBLISHED）订单：对外可见 ⇒ 登录/匿名详情均可用（uuid-biz-id 票 05：业务 ID 为 UUID） */
+    private String insertPublishedOrder(String description) {
+        String orderId = UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
                         + "pickup_location, delivery_location, reward, time_limit_hours, state, "
                         + "create_time, update_time) "
@@ -113,13 +114,13 @@ class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {
         return orderId;
     }
 
-    private int historyCountOf(long orderId) {
+    private int historyCountOf(String orderId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM errand_view_history WHERE errand_order_id = ?", Integer.class, orderId);
         return count == null ? 0 : count;
     }
 
-    private int acceleratedCountOf(long orderId) {
+    private int acceleratedCountOf(String orderId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT view_count FROM errand_view_count WHERE errand_order_id = ?", Integer.class, orderId);
         return count == null ? 0 : count;

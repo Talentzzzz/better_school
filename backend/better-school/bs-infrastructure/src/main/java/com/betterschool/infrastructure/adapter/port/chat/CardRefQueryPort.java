@@ -33,13 +33,13 @@ public class CardRefQueryPort implements ICardRefQueryPort {
     }
 
     @Override
-    public ProductStatusVO findProductStatus(Long productId) {
+    public ProductStatusVO findProductStatus(String productId) {
         ProductEntity product = tradeRepository.findById(productId);
         return product == null ? null : product.getStatus();
     }
 
     @Override
-    public ErrandStatusVO findErrandStatus(Long errandId) {
+    public ErrandStatusVO findErrandStatus(String errandId) {
         ErrandOrderEntity errand = errandRepository.findById(errandId);
         return errand == null ? null : errand.getStatus();
     }

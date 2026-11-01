@@ -11,7 +11,8 @@ import java.time.LocalDateTime;
 public class ErrandOrderEventPO {
 
     private Long id;
-    private Long orderId;
+    /** 跑腿订单业务 ID（UUID 字符串，uuid-biz-id 票 05） */
+    private String orderId;
     private String eventType;
     private String fromState;
     private String toState;

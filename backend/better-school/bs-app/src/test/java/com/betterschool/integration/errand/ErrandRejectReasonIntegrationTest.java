@@ -18,7 +18,7 @@ class ErrandRejectReasonIntegrationTest extends CommunityApiTestBase {
     @Test
     void 作者看被拒订单带拒绝理由() {
         Session author = registerAndLogin("13800004001", "被拒作者");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
         String reason = "配图与描述不符";
         Session admin = adminSession();
         assertSuccess(postJson("/api/admin/reviews/decide",
@@ -35,7 +35,7 @@ class ErrandRejectReasonIntegrationTest extends CommunityApiTestBase {
     @Test
     void 他人看被拒订单不带拒绝理由() {
         Session author = registerAndLogin("13800004002", "被拒作者2");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
         Session admin = adminSession();
         assertSuccess(postJson("/api/admin/reviews/decide",
                 Map.of("targetType", "ERRAND", "targetId", orderId, "approve", false, "reasonCode", "OTHER", "supplement", "描述不清"), admin),
@@ -51,7 +51,7 @@ class ErrandRejectReasonIntegrationTest extends CommunityApiTestBase {
     @Test
     void 非REJECTED状态不带拒绝理由() {
         Session author = registerAndLogin("13800004004", "待审作者");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
 
         JsonNode detail = getJson("/api/errand/orders/" + orderId, author);
         assertSuccess(detail, "作者看待审订单");
@@ -62,7 +62,7 @@ class ErrandRejectReasonIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 工具 ----------
 
-    private long createPaidOrder(Session author) {
+    private String createPaidOrder(Session author) {
         JsonNode createResponse = postJson("/api/errand/orders", Map.ofEntries(
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", "帮忙取个快递"),
@@ -71,7 +71,8 @@ class ErrandRejectReasonIntegrationTest extends CommunityApiTestBase {
                 Map.entry("reward", 10),
                 Map.entry("timeLimit", "HOURS_2")), author);
         assertSuccess(createResponse, "发布跑腿");
-        long orderId = createResponse.path("data").asLong();
+        String orderId = createResponse.path("data").asText();
+        assertUuidId(orderId);
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付");
         return orderId;
     }

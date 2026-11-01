@@ -22,28 +22,28 @@ public interface IWalletRepository {
     void recharge(String userId, BigDecimal amount);
 
     /** 冻结悬赏：可用余额（balance - frozen）不足抛 400（+流水 FROZEN）：单个原子用例 */
-    void freeze(String userId, BigDecimal amount, Long orderId);
+    void freeze(String userId, BigDecimal amount, String orderId);
 
     /** 冻结（带流水类型，跑腿 FROZEN / 商品 PRODUCT_FROZEN —— uk_order_type 需域区分）：单个原子用例 */
-    void freeze(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type);
+    void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type);
 
     /** 冻结（带业务轮次）：同一订单同类型可有多轮合法冻结（撤单重发再支付等业务轮次），uk 按 biz_round 区分：单个原子用例 */
-    void freeze(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type, int bizRound);
+    void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type, int bizRound);
 
     /** 解冻退回（+流水 UNFROZEN）：单个原子用例 */
-    void unfreeze(String userId, BigDecimal amount, Long orderId);
+    void unfreeze(String userId, BigDecimal amount, String orderId);
 
     /** 解冻退回（带流水类型）：单个原子用例 */
-    void unfreeze(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type);
+    void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type);
 
     /** 解冻退回（带业务轮次，与冻结轮次对齐）：单个原子用例 */
-    void unfreeze(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type, int bizRound);
+    void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type, int bizRound);
 
     /** 接单方入账（+流水 INCOME）：单个原子用例 */
-    void income(String userId, BigDecimal amount, Long orderId);
+    void income(String userId, BigDecimal amount, String orderId);
 
     /** 接收方入账（带流水类型）：单个原子用例 */
-    void income(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type);
+    void income(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type);
 
     List<WalletDetailEntity> listDetails(String userId, int offset, int limit);
 

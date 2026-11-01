@@ -11,7 +11,8 @@ import java.util.List;
 @Data
 public class ProductEntity {
 
-    private Long productId;
+    /** 业务 ID（UUID 字符串，uuid-biz-id 票 05） */
+    private String productId;
     private String userId;
     private String title;
     private String description;

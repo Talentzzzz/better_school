@@ -40,10 +40,10 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 未领单裁决被拒且业务行零改动() {
         Session author = registerAndLogin("13800009001", "作者1");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
         Session auditor = auditorSession("13900009001", "13900009001");
 
-        long taskId = latestTaskIdOf("ERRAND", String.valueOf(orderId));
+        long taskId = latestTaskIdOf("ERRAND", orderId);
         assertThat(taskState(taskId)).as("前置：工单在池").isEqualTo("PENDING");
 
         // 未领单直接对工单裁决：403，业务行/审核记录/工单全零改动
@@ -59,7 +59,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
 
         assertThat(orderState(orderId)).as("业务行零改动").isEqualTo("PENDING_REVIEW");
         assertThat(taskState(taskId)).as("工单仍应在池").isEqualTo("PENDING");
-        assertThat(reviewRowCount("ERRAND", String.valueOf(orderId))).as("审核记录零改动").isZero();
+        assertThat(reviewRowCount("ERRAND", orderId)).as("审核记录零改动").isZero();
     }
 
     // ---------- 正常领单后裁决四类型各一次 ----------
@@ -74,8 +74,8 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         String postId = publishPendingPost(postAuthor);
         String hostPostId = publishPost(postAuthor, "评论宿主帖子");
         String commentId = publishCommentAndGetId(hostPostId, commentAuthor, "待审评论");
-        long productId = createProduct(postAuthor);
-        long orderId = createPaidOrder(postAuthor);
+        String productId = createProduct(postAuthor);
+        String orderId = createPaidOrder(postAuthor);
 
         // POST 通过：业务行 NORMAL + 审核记录 + 工单 DONE 同事务
         long postTaskId = claimTaskOf(auditor, "POST", postId);
@@ -97,15 +97,15 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         assertThat(interactions).as("评论通过才发互动通知").anyMatch(content -> content.contains("新评论"));
 
         // PRODUCT 拒绝：REJECTED + 拒绝理由落枚举格式（无资金环节）
-        long productTaskId = claimTaskOf(auditor, "PRODUCT", String.valueOf(productId));
+        long productTaskId = claimTaskOf(auditor, "PRODUCT", productId);
         assertSuccess(postJson("/api/moderation/tasks/" + productTaskId + "/decide",
                 Map.of("action", "REJECT", "reasonCode", "OTHER", "supplement", "图片与实物不符"), auditor), "商品裁决");
         assertThat(productStatus(productId)).isEqualTo("REJECTED");
         assertTaskDone(productTaskId, auditor);
-        assertThat(rejectReasonOf("PRODUCT", String.valueOf(productId))).isEqualTo("其他：图片与实物不符");
+        assertThat(rejectReasonOf("PRODUCT", productId)).isEqualTo("其他：图片与实物不符");
 
         // ERRAND 拒绝：REJECTED + 解冻退款（跨域资金动作）
-        long errandTaskId = claimTaskOf(auditor, "ERRAND", String.valueOf(orderId));
+        long errandTaskId = claimTaskOf(auditor, "ERRAND", orderId);
         assertSuccess(postJson("/api/moderation/tasks/" + errandTaskId + "/decide",
                 Map.of("action", "REJECT", "reasonCode", "OTHER", "supplement", "描述不清"), auditor), "跑腿裁决");
         assertThat(orderState(orderId)).isEqualTo("REJECTED");
@@ -121,10 +121,10 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 已DONE工单重放裁决幂等零副作用() {
         Session author = registerAndLogin("13800009004", "作者4");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
         Session auditor = auditorSession("13900009003", "13900009003");
 
-        long taskId = claimTaskOf(auditor, "ERRAND", String.valueOf(orderId));
+        long taskId = claimTaskOf(auditor, "ERRAND", orderId);
         Map<String, Object> rejectBody = Map.of("action", "REJECT",
                 "reasonCode", "OTHER", "supplement", "描述不清");
         assertSuccess(postJson("/api/moderation/tasks/" + taskId + "/decide", rejectBody, auditor), "首次拒绝");
@@ -138,7 +138,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         BigDecimal balance = jdbcTemplate.queryForObject(
                 "SELECT balance FROM virtual_wallet WHERE user_id = ?", BigDecimal.class, author.userId());
         assertThat(balance).as("资金不再变动").isEqualByComparingTo("1000.00");
-        assertThat(reviewRowCount("ERRAND", String.valueOf(orderId))).as("审核记录不重复").isEqualTo(1);
+        assertThat(reviewRowCount("ERRAND", orderId)).as("审核记录不重复").isEqualTo(1);
         assertThat(decidedAtOf(taskId)).as("裁决时刻不变").isEqualTo(decidedAt);
 
         // 相反动作（已拒再改判通过）不是重放：既有内核终态闸门拦下，零副作用
@@ -153,11 +153,11 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 非持有人与被回收后裁决被拒且业务行零改动() {
         Session author = registerAndLogin("13800009005", "作者5");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
         Session auditorA = auditorSession("13900009004", "13900009004");
         Session auditorB = auditorSession("13900009005", "13900009005");
 
-        long taskId = claimTaskOf(auditorA, "ERRAND", String.valueOf(orderId));
+        long taskId = claimTaskOf(auditorA, "ERRAND", orderId);
 
         // 非持有人裁决：403，工单租约不动、业务行零改动
         JsonNode wrongDecider = postJson("/api/moderation/tasks/" + taskId + "/decide",
@@ -177,8 +177,8 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
                 Map.of("action", "APPROVE"), auditorA);
         assertThat(recycled.path("code").asText()).as("被回收后裁决应被拒：%s", recycled).isEqualTo("403");
         assertThat(orderState(orderId)).as("业务行零改动").isEqualTo("PENDING_REVIEW");
-        assertThat(reviewRowCount("ERRAND", String.valueOf(orderId))).isZero();
-        assertThat(claimTaskOf(auditorB, "ERRAND", String.valueOf(orderId))).as("回池后可被他人领走").isPositive();
+        assertThat(reviewRowCount("ERRAND", orderId)).isZero();
+        assertThat(claimTaskOf(auditorB, "ERRAND", orderId)).as("回池后可被他人领走").isPositive();
     }
 
     // ---------- 遗留入口收口：反查我持有的在途工单 → 裁决 ----------
@@ -223,7 +223,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         return response.path("data").asText();
     }
 
-    private long createProduct(Session seller) {
+    private String createProduct(Session seller) {
         JsonNode response = postJson("/api/trade/products", Map.ofEntries(
                 Map.entry("title", "待审商品"),
                 Map.entry("description", "自用闲置，九成新"),
@@ -232,10 +232,10 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
                 Map.entry("tradeLocation", "图书馆门口"),
                 Map.entry("category", "BOOKS")), seller);
         assertSuccess(response, "发布商品");
-        return response.path("data").asLong();
+        return response.path("data").asText();
     }
 
-    private long createPaidOrder(Session author) {
+    private String createPaidOrder(Session author) {
         Map<String, Object> body = new HashMap<>();
         body.put("type", "EXPRESS_PICKUP");
         body.put("description", "帮忙取个快递");
@@ -245,7 +245,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         body.put("timeLimit", "HOURS_2");
         JsonNode createResponse = postJson("/api/errand/orders", body, author);
         assertSuccess(createResponse, "发布跑腿");
-        long orderId = createResponse.path("data").asLong();
+        String orderId = createResponse.path("data").asText();
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付");
         return orderId;
     }
@@ -323,16 +323,16 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         return jdbcTemplate.queryForObject("SELECT state FROM post WHERE post_id = ?", String.class, postId);
     }
 
-    private String productStatus(long productId) {
+    private String productStatus(String productId) {
         return jdbcTemplate.queryForObject("SELECT state FROM product WHERE product_id = ?", String.class, productId);
     }
 
-    private String orderState(long orderId) {
+    private String orderState(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT state FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }
 
-    private int countWalletTransactions(long orderId, String type) {
+    private int countWalletTransactions(String orderId, String type) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM wallet_detail WHERE order_id = ? AND type = ?",
                 Integer.class, orderId, type);

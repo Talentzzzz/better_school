@@ -9,11 +9,11 @@ import java.time.LocalDateTime;
 public class ProductOrderPO {
 
     private Long id;
-    /** 业务 ID（对外唯一标识；与物理自增同值，插入后同事务回写） */
-    private Long productOrderId;
+    /** 业务 ID（对外唯一标识，UUID 字符串；uuid-biz-id 票 05 起落库前发号，与物理自增不再同值） */
+    private String productOrderId;
     private String buyerId;
     private String sellerId;
-    private Long productId;
+    private String productId;
     private BigDecimal price;
     /** 商品信息全部为下单时快照（此后不可变） */
     private String productTitle;

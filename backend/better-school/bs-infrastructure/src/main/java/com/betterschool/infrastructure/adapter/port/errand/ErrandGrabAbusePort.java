@@ -31,7 +31,7 @@ public class ErrandGrabAbusePort implements IErrandGrabAbusePort {
     private final IErrandRepository errandRepository;
 
     @Override
-    public long recordAbandon(String userId, Long orderId, int lockSeq, LocalDateTime windowFloor) {
+    public long recordAbandon(String userId, String orderId, int lockSeq, LocalDateTime windowFloor) {
         RScoredSortedSet<String> window = windowOf(userId);
         // member = {orderId}:{lockSeq}：每次锁单至多一次放弃，天然唯一（同一人重抢同单是不同轮次）
         window.add((double) toMillis(LocalDateTime.now()), orderId + ":" + lockSeq);

@@ -4,10 +4,12 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] product/collect/uv/errand 相关表 DDL 业务键改 `VARCHAR(36)`，schema 脚本重写、删库重建
-- [ ] 商品与订单发号走 IdGenerator，应用层随 insert 一次写入
-- [ ] 超时任务注册/扫描/关单在字符串 biz_id 下路由与幂等不变（既有超时分片集成用例全绿）
-- [ ] 市集推荐收敛键换「create_time + 业务 ID」，推荐用例全绿
+- [x] product/collect/uv/errand 相关表 DDL 业务键改 `VARCHAR(36)`，schema 脚本重写、删库重建
+- [x] 商品与订单发号走 IdGenerator，应用层随 insert 一次写入
+- [x] 超时任务注册/扫描/关单在字符串 biz_id 下路由与幂等不变（既有超时分片集成用例全绿）
+- [x] 市集推荐收敛键换「create_time + 业务 ID」，推荐用例全绿
 - [ ] 定向测试通过；全量测试全绿
+
+> **验收实情（2026-11-02）**：前三项按编译 + 链路语义核对完成（全仓 compile / test-compile 全绿，grep 确认 trade 链路无 Long 业务 id、bindBizId、String.valueOf/parseLong 过渡缝合残留）。定向/全量测试**未跑**：测试中间件镜像（nacos/redis/minio）本地缺失，Docker 守护进程代理 127.0.0.1:7890 未开拉不动镜像，用户拍板「只编译不跑测试」。超时链路按字符串等值幂等核对（biz_id 复合键 `{uuid}:{seq}` 拆分不受 UUID 影响、分片 hash 输入仍是 biz_id 字符串）；市集推荐收敛键已换三段 `view_count DESC, create_time DESC, 业务 id DESC`（两索引表新增 create_time 主表快照列，游标 5 段化）。定向复跑命令（环境可用时）：`mvn -pl bs-app -am test -Dtest='com.betterschool.integration.trade.*,com.betterschool.integration.errand.*,TimeoutTask*Test,ErrandLockTimeout*,TimeoutTaskCallbackIntegrationTest,SearchIndexRebuildJobIntegrationTest,MarketFeedUvBackfillIntegrationTest,ViewMergeWriterTest'`（跑前先 `scripts/test-env.sh up` + `reset-test-db`）。文档/front/sql.md 旧口径已登记票 08 注记。

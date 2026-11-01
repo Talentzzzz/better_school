@@ -29,8 +29,8 @@ public class FakeSearchRepository implements ISearchRepository {
 
     private static final List<String> CLEARED_INDEXES = Collections.synchronizedList(new ArrayList<>());
     private static final Set<String> POST_IDS = Collections.synchronizedSet(new LinkedHashSet<>());
-    private static final Set<Long> PRODUCT_IDS = Collections.synchronizedSet(new LinkedHashSet<>());
-    private static final Set<Long> ERRAND_IDS = Collections.synchronizedSet(new LinkedHashSet<>());
+    private static final Set<String> PRODUCT_IDS = Collections.synchronizedSet(new LinkedHashSet<>());
+    private static final Set<String> ERRAND_IDS = Collections.synchronizedSet(new LinkedHashSet<>());
     private static final Set<String> USER_IDS = Collections.synchronizedSet(new LinkedHashSet<>());
 
     @Override
@@ -49,12 +49,12 @@ public class FakeSearchRepository implements ISearchRepository {
     }
 
     @Override
-    public SearchPageVO<Long> searchProducts(String keyword, int page, int pageSize) {
+    public SearchPageVO<String> searchProducts(String keyword, int page, int pageSize) {
         return emptyPage();
     }
 
     @Override
-    public SearchPageVO<Long> searchErrands(String keyword, int page, int pageSize) {
+    public SearchPageVO<String> searchErrands(String keyword, int page, int pageSize) {
         return emptyPage();
     }
 
@@ -89,12 +89,12 @@ public class FakeSearchRepository implements ISearchRepository {
     }
 
     @Override
-    public void deleteProductDoc(Long productId) {
+    public void deleteProductDoc(String productId) {
         PRODUCT_IDS.remove(productId);
     }
 
     @Override
-    public void deleteErrandDoc(Long orderId) {
+    public void deleteErrandDoc(String orderId) {
         ERRAND_IDS.remove(orderId);
     }
 
@@ -120,11 +120,11 @@ public class FakeSearchRepository implements ISearchRepository {
         return Set.copyOf(POST_IDS);
     }
 
-    public static Set<Long> productIds() {
+    public static Set<String> productIds() {
         return Set.copyOf(PRODUCT_IDS);
     }
 
-    public static Set<Long> errandIds() {
+    public static Set<String> errandIds() {
         return Set.copyOf(ERRAND_IDS);
     }
 

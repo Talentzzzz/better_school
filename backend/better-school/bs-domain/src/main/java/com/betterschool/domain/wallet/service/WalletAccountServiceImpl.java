@@ -31,42 +31,42 @@ public class WalletAccountServiceImpl implements IWalletAccountService {
     }
 
     @Override
-    public void freeze(String userId, BigDecimal amount, Long orderId) {
+    public void freeze(String userId, BigDecimal amount, String orderId) {
         freeze(userId, amount, orderId, WalletDetailTypeVO.FROZEN);
     }
 
     @Override
-    public void freeze(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type) {
+    public void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type) {
         freeze(userId, amount, orderId, type, 0);
     }
 
     @Override
-    public void freeze(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type, int bizRound) {
+    public void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type, int bizRound) {
         walletRepository.freeze(userId, amount, orderId, type, bizRound);
     }
 
     @Override
-    public void unfreeze(String userId, BigDecimal amount, Long orderId) {
+    public void unfreeze(String userId, BigDecimal amount, String orderId) {
         unfreeze(userId, amount, orderId, WalletDetailTypeVO.UNFROZEN);
     }
 
     @Override
-    public void unfreeze(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type) {
+    public void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type) {
         unfreeze(userId, amount, orderId, type, 0);
     }
 
     @Override
-    public void unfreeze(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type, int bizRound) {
+    public void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type, int bizRound) {
         walletRepository.unfreeze(userId, amount, orderId, type, bizRound);
     }
 
     @Override
-    public void income(String userId, BigDecimal amount, Long orderId) {
+    public void income(String userId, BigDecimal amount, String orderId) {
         income(userId, amount, orderId, WalletDetailTypeVO.INCOME);
     }
 
     @Override
-    public void income(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type) {
+    public void income(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type) {
         walletRepository.income(userId, amount, orderId, type);
     }
 

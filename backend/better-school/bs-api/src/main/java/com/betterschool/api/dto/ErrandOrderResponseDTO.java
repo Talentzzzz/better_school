@@ -10,7 +10,8 @@ import java.util.List;
 @Data
 public class ErrandOrderResponseDTO {
 
-    private Long orderId;
+    /** 跑腿订单业务 ID（UUID 字符串，uuid-biz-id 票 05） */
+    private String orderId;
     private String publisherId;
     private String publisherNickname;
     private String publisherAvatar;

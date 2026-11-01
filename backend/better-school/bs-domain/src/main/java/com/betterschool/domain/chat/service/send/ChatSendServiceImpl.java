@@ -164,7 +164,8 @@ public class ChatSendServiceImpl implements IChatSendService {
                 }
             }
             case PRODUCT -> {
-                ProductStatusVO status = cardRefQueryPort.findProductStatus(numericRefId(refId));
+                // 业务 id 是 UUID 字符串，refId 直传（uuid-biz-id 票 05）
+                ProductStatusVO status = cardRefQueryPort.findProductStatus(refId);
                 if (status == null) {
                     throw new BusinessException(ResponseCode.NOT_FOUND, "卡片对象不存在");
                 }
@@ -173,7 +174,7 @@ public class ChatSendServiceImpl implements IChatSendService {
                 }
             }
             case ERRAND -> {
-                ErrandStatusVO status = cardRefQueryPort.findErrandStatus(numericRefId(refId));
+                ErrandStatusVO status = cardRefQueryPort.findErrandStatus(refId);
                 if (status == null) {
                     throw new BusinessException(ResponseCode.NOT_FOUND, "卡片对象不存在");
                 }
@@ -181,18 +182,6 @@ public class ChatSendServiceImpl implements IChatSendService {
                     throw new BusinessException(ResponseCode.BUSINESS_ERROR, "内容已失效");
                 }
             }
-        }
-    }
-
-    /**
-     * 商品 / 跑腿卡片引用的过渡期解析：这两个域的业务 ID 仍是数值（String 化在 uuid-biz-id 票 05/06），
-     * 消息 ref_id 统一按「业务 ID 的字符串形」承载，进它们的状态查询端口时解析回 long
-     */
-    private static Long numericRefId(String refId) {
-        try {
-            return Long.valueOf(refId);
-        } catch (NumberFormatException e) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "卡片引用 ID 非法");
         }
     }
 }

@@ -11,7 +11,6 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -30,8 +29,6 @@ class ProductViewedIntegrationTest extends CommunityApiTestBase {
     private static final long DRAIN_MILLIS = 5_000;
     private static final int PAGE_SIZE = 2;
 
-    private static final AtomicLong SEQ = new AtomicLong();
-
     @Autowired
     private CountMerger countMerger;
 
@@ -39,8 +36,8 @@ class ProductViewedIntegrationTest extends CommunityApiTestBase {
     @DisplayName("登录浏览详情后列表该商品 viewed=true、未浏览的 false；筛选直查路径同样带标记；详情为 null")
     void 浏览详情后列表已读灰显() {
         Session seller = registerAndLogin("13700001501", "灰显卖家");
-        long viewedProductId = seedOnSaleProduct(seller, "看过的台灯");
-        long unseenProductId = seedOnSaleProduct(seller, "没看过的键盘");
+        String viewedProductId = seedOnSaleProduct(seller, "看过的台灯");
+        String unseenProductId = seedOnSaleProduct(seller, "没看过的键盘");
         Session viewer = registerAndLogin("13700001502", "浏览者");
 
         assertSuccess(getJson("/api/trade/products/" + viewedProductId, viewer), "浏览商品详情");
@@ -63,20 +60,20 @@ class ProductViewedIntegrationTest extends CommunityApiTestBase {
     @DisplayName("匿名可浏览：列表 viewed 恒 false（明确的字段值，不是缺字段），游标续页不重不漏")
     void 匿名列表灰显恒为false且游标可用() {
         Session seller = registerAndLogin("13700001503", "匿名灰显卖家");
-        List<Long> seeded = seedOnSaleProducts(seller, 3);
+        List<String> seeded = seedOnSaleProducts(seller, 3);
 
         // 匿名也能看详情，但不落浏览明细（匿名不计入），列表照常可浏览
         assertSuccess(getJson("/api/trade/products/" + seeded.get(0), null), "匿名浏览商品详情");
         assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
 
-        List<Long> walked = new ArrayList<>();
+        List<String> walked = new ArrayList<>();
         JsonNode data = fetchPage(null, null, "");
         int pages = 0;
         while (data != null) {
             for (JsonNode item : data.path("list")) {
                 assertThat(item.path("viewed").isBoolean()).as("匿名也需要明确的 false，不是缺字段").isTrue();
                 assertThat(item.path("viewed").asBoolean()).as("匿名永远不灰显").isFalse();
-                walked.add(item.path("productId").asLong());
+                walked.add(item.path("productId").asText());
             }
             pages++;
             String next = data.path("cursor").asText(null);
@@ -90,26 +87,26 @@ class ProductViewedIntegrationTest extends CommunityApiTestBase {
 
     /**
      * 直插 N 条在售商品 + 对应索引行（推荐列表只走索引路径，缺索引行就不会出现在列表里）。
-     * 业务 ID 取高位段避开应用自增 id
+     * uuid-biz-id 票 05 起业务 id 直插 UUID 形态（应用侧发号，自增同值回写已删）
      */
-    private List<Long> seedOnSaleProducts(Session seller, int count) {
-        List<Long> productIds = new ArrayList<>(count);
+    private List<String> seedOnSaleProducts(Session seller, int count) {
+        List<String> productIds = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             productIds.add(seedOnSaleProduct(seller, "灰显夹具" + i));
         }
         return productIds;
     }
 
-    private long seedOnSaleProduct(Session seller, String title) {
-        long productId = 940_000L + SEQ.incrementAndGet();
+    private String seedOnSaleProduct(Session seller, String title) {
+        String productId = java.util.UUID.randomUUID().toString();
         BigDecimal price = BigDecimal.valueOf(12).setScale(2);
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, trade_location, "
                         + "category, state, review_round, create_time, update_time, expire_at) "
                         + "VALUES (?, ?, ?, '灰显夹具描述', ?, '驿站', 'BOOKS', 'ON_SALE', 1, NOW(), NOW(), "
                         + "DATE_ADD(NOW(), INTERVAL 30 DAY))",
                 productId, seller.userId(), title, price);
-        jdbcTemplate.update("INSERT INTO product_feed_index (product_id, state, feed_time, price, view_count, "
-                        + "update_time) VALUES (?, 'ON_SALE', ?, ?, 0, NOW())",
+        jdbcTemplate.update("INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, "
+                        + "view_count, update_time) VALUES (?, 'ON_SALE', ?, NOW(), ?, 0, NOW())",
                 productId, LocalDateTime.now(), price);
         return productId;
     }
@@ -125,9 +122,9 @@ class ProductViewedIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 页内某商品的 viewed 值（商品必须在本页，缺行直接断言失败而不是静默 false） */
-    private boolean viewedOf(JsonNode data, long productId) {
+    private boolean viewedOf(JsonNode data, String productId) {
         for (JsonNode item : data.path("list")) {
-            if (item.path("productId").asLong() == productId) {
+            if (item.path("productId").asText().equals(productId)) {
                 return item.path("viewed").asBoolean();
             }
         }

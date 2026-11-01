@@ -38,7 +38,7 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
     @Test
     @DisplayName("登录浏览：明细落一行、加速列计 1，详情响应读计数表")
     void 登录浏览计一并读计数表() {
-        long productId = insertOnSaleProduct("登录浏览计数的台灯");
+        String productId = insertOnSaleProduct("登录浏览计数的台灯");
         Session viewer = registerAndLogin("13700006001", "商品浏览者");
 
         assertSuccess(getJson("/api/trade/products/" + productId, viewer), "登录浏览商品详情");
@@ -55,7 +55,7 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
     @Test
     @DisplayName("重复浏览：不计数，唯一可见效果是 viewed_at 变新")
     void 重复浏览只刷ViewedAt不加数() {
-        long productId = insertOnSaleProduct("重复浏览的键盘");
+        String productId = insertOnSaleProduct("重复浏览的键盘");
         Session viewer = registerAndLogin("13700006002", "回头客");
         // 预置一小时前的浏览明细（首次浏览已落），加速列对齐
         jdbcTemplate.update("INSERT INTO product_view_history (user_id, product_id, viewed_at) "
@@ -80,7 +80,7 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
     @Test
     @DisplayName("匿名浏览不计入：明细与加速列都不落（商品语义变更）")
     void 匿名浏览不计入() {
-        long productId = insertOnSaleProduct("匿名浏览的手电筒");
+        String productId = insertOnSaleProduct("匿名浏览的手电筒");
         assertSuccess(getJson("/api/trade/products/" + productId, null), "匿名浏览商品详情");
         assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
 
@@ -91,11 +91,11 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
     @Test
     @DisplayName("一组 N 件合并：批内同人不重复计，加速列按 INSERT 影响行数增量且与明细行数一致")
     void 一组浏览件按去重后新增数落库() {
-        long productId = insertOnSaleProduct("一组浏览件的商品");
+        String productId = insertOnSaleProduct("一组浏览件的商品");
         Session viewerA = registerAndLogin("13700006003", "浏览者甲");
         Session viewerB = registerAndLogin("13700006004", "浏览者乙");
 
-        List<LikeState> results = flushHandler.flushGroup(CountAction.PRODUCT_VIEW, String.valueOf(productId),
+        List<LikeState> results = flushHandler.flushGroup(CountAction.PRODUCT_VIEW, productId,
                 List.of(viewEvent(productId, viewerA.userId()), viewEvent(productId, viewerA.userId()),
                         viewEvent(productId, viewerB.userId())));
 
@@ -105,7 +105,7 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
         assertThat(acceleratedCountOf(productId)).as("加速列按新增 UV 数增量 = 明细行数").isEqualTo(2);
 
         // 再来一组全重复：INSERT IGNORE 全撞键，计数与明细都不动（幂等不动点）
-        flushHandler.flushGroup(CountAction.PRODUCT_VIEW, String.valueOf(productId),
+        flushHandler.flushGroup(CountAction.PRODUCT_VIEW, productId,
                 List.of(viewEvent(productId, viewerA.userId()), viewEvent(productId, viewerB.userId())));
         assertThat(historyCountOf(productId)).isEqualTo(2);
         assertThat(acceleratedCountOf(productId)).as("重复组不产生增量").isEqualTo(2);
@@ -113,13 +113,14 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 工具 ----------
 
-    private static CountEvent viewEvent(long productId, String userId) {
-        return new CountEvent(CountAction.PRODUCT_VIEW, String.valueOf(productId), userId);
+    private static CountEvent viewEvent(String productId, String userId) {
+        return new CountEvent(CountAction.PRODUCT_VIEW, productId, userId);
     }
 
-    /** 直插一条在售商品（对外可见 ⇒ 登录/匿名详情均可用）；业务 ID 取高位段，避开应用自增 id */
-    private long insertOnSaleProduct(String title) {
-        long productId = 910_000L + System.nanoTime() % 10_000L;
+    /** 直插一条在售商品（对外可见 ⇒ 登录/匿名详情均可用）（uuid-biz-id 票 05） */
+    private String insertOnSaleProduct(String title) {
+        // uuid-biz-id 票 05 起业务 id 直插 UUID 形态（应用侧发号，自增同值回写已删）
+        String productId = java.util.UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
                         + "trade_location, category, state, create_time, update_time, expire_at) "
                         + "VALUES (?, 999, ?, '浏览计数的夹具', 10.00, '驿站', 'BOOKS', 'ON_SALE', "
@@ -127,13 +128,13 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
         return productId;
     }
 
-    private int historyCountOf(long productId) {
+    private int historyCountOf(String productId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM product_view_history WHERE product_id = ?", Integer.class, productId);
         return count == null ? 0 : count;
     }
 
-    private int acceleratedCountOf(long productId) {
+    private int acceleratedCountOf(String productId) {
         List<Integer> rows = jdbcTemplate.queryForList(
                 "SELECT view_count FROM product_view_count WHERE product_id = ?", Integer.class, productId);
         return rows.isEmpty() ? 0 : rows.get(0);

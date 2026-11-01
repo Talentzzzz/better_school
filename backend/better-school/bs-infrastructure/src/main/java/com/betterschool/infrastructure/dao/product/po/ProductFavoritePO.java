@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 public class ProductFavoritePO {
 
     private Long id;
-    private Long productId;
+    private String productId;
     private String userId;
     private LocalDateTime createdAt;
 }

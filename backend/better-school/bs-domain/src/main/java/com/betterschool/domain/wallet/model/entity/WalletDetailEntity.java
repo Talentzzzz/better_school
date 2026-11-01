@@ -14,7 +14,8 @@ public class WalletDetailEntity {
     private String userId;
     private WalletDetailTypeVO type;
     private BigDecimal amount;
-    private Long orderId;
+    /** 订单业务 id 是 UUID 字符串（uuid-biz-id 票 05） */
+    private String orderId;
     private int bizRound;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;

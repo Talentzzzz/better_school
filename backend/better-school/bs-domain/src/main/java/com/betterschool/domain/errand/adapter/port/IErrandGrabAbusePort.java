@@ -21,7 +21,7 @@ public interface IErrandGrabAbusePort {
      *
      * @param windowFloor 窗口下界（now − 窗口时长），早于它的旧放弃在本次写入时被裁掉
      */
-    long recordAbandon(String userId, Long orderId, int lockSeq, LocalDateTime windowFloor);
+    long recordAbandon(String userId, String orderId, int lockSeq, LocalDateTime windowFloor);
 
     /**
      * 置冷却标记（{@code SET NX EX}，幂等、不叠加延长）。

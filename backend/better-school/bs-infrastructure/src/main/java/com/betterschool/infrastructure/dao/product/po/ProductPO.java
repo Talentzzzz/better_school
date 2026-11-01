@@ -9,8 +9,8 @@ import java.time.LocalDateTime;
 public class ProductPO {
 
     private Long id;
-    /** 业务 ID（对外唯一标识；与物理自增同值，插入后同事务回写） */
-    private Long productId;
+    /** 业务 ID（对外唯一标识，UUID 字符串；uuid-biz-id 票 05 起落库前发号，与物理自增不再同值） */
+    private String productId;
     private String userId;
     private String title;
     private String description;

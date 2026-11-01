@@ -36,9 +36,9 @@ class ViewMergeWriterTest {
 
     private static final String POST_ID = "post-5001";
 
-    private static final String PRODUCT_ID = "5002";
+    private static final String PRODUCT_ID = "f3a1c2d4-0005-4a6b-8c9d-0e1f2a3b4c5d";
 
-    private static final String ERRAND_ID = "5003";
+    private static final String ERRAND_ID = "b7e8f9a0-0006-4b7c-9d0e-1f2a3b4c5d6e";
 
     /** 帖子浏览必须带浏览者（UV 明细表主键的一半）；本类只看线程归属与组大小，给谁无所谓 */
     private static final String VIEWER = "user-viewer-42";

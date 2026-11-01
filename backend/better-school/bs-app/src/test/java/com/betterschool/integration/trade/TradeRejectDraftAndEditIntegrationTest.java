@@ -26,14 +26,14 @@ class TradeRejectDraftAndEditIntegrationTest extends CommunityApiTestBase {
     @Test
     void 商品被拒转草稿箱编辑重提产生第二轮审核且两轮记录并存() {
         Session seller = registerAndLogin("13800006001", "卖家1");
-        long productId = createProduct(seller, "九成新吉他", List.of("http://minio/bs-files/it/r-1.jpg"));
+        String productId = createProduct(seller, "九成新吉他", List.of("http://minio/bs-files/it/r-1.jpg"));
         Session admin = adminSession();
         String firstReason = "配图与描述不符";
         rejectProduct(admin, productId, firstReason);
         assertThat(productStatus(productId)).isEqualTo("REJECTED");
 
         // 非被拒状态不可转草稿（在售商品先验证闸门）
-        long onSaleId = createProduct(seller, "九成新贝斯", List.of());
+        String onSaleId = createProduct(seller, "九成新贝斯", List.of());
         approveProduct(admin, onSaleId);
         JsonNode guard = postJson("/api/trade/products/" + onSaleId + "/to-draft", null, seller);
         assertThat(guard.path("code").asText()).as("仅被拒商品可转草稿箱：%s", guard).isEqualTo("500");
@@ -82,7 +82,7 @@ class TradeRejectDraftAndEditIntegrationTest extends CommunityApiTestBase {
     @Test
     void 商品上架后改价格立即生效不进审核无通知() {
         Session seller = registerAndLogin("13800006002", "卖家2");
-        long productId = createProduct(seller, "九成新台灯", List.of());
+        String productId = createProduct(seller, "九成新台灯", List.of());
         Session admin = adminSession();
         approveProduct(admin, productId);
         int syncCountBefore = searchSyncMessageCount(productId);
@@ -115,7 +115,7 @@ class TradeRejectDraftAndEditIntegrationTest extends CommunityApiTestBase {
     void 商品上架后改内容回待审他人不可见本人可见重审通过恢复可见() {
         Session seller = registerAndLogin("13800006003", "卖家3");
         Session other = registerAndLogin("13800006004", "路人1");
-        long productId = createProduct(seller, "九成新滑板", List.of());
+        String productId = createProduct(seller, "九成新滑板", List.of());
         Session admin = adminSession();
         approveProduct(admin, productId);
 
@@ -175,7 +175,7 @@ class TradeRejectDraftAndEditIntegrationTest extends CommunityApiTestBase {
     @Test
     void 商品重审再次拒绝按拒绝路径处理可再转草稿() {
         Session seller = registerAndLogin("13800006005", "卖家4");
-        long productId = createProduct(seller, "九成新耳机", List.of());
+        String productId = createProduct(seller, "九成新耳机", List.of());
         Session admin = adminSession();
         approveProduct(admin, productId);
 
@@ -206,7 +206,7 @@ class TradeRejectDraftAndEditIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 直接发布商品（先审后售 → PENDING_REVIEW），返回 productId */
-    private long createProduct(Session seller, String title, List<String> images) {
+    private String createProduct(Session seller, String title, List<String> images) {
         JsonNode response = postJson("/api/trade/products", Map.ofEntries(
                 Map.entry("title", title),
                 Map.entry("description", "自用闲置，九成新"),
@@ -215,37 +215,37 @@ class TradeRejectDraftAndEditIntegrationTest extends CommunityApiTestBase {
                 Map.entry("tradeLocation", "图书馆门口"),
                 Map.entry("category", "BOOKS")), seller);
         assertSuccess(response, "发布商品");
-        long productId = response.path("data").asLong();
+        String productId = response.path("data").asText();
         assertThat(productStatus(productId)).as("先审后售：提交即待审").isEqualTo("PENDING_REVIEW");
         return productId;
     }
 
-    private void approveProduct(Session admin, long productId) {
+    private void approveProduct(Session admin, String productId) {
         assertSuccess(postJson("/api/admin/reviews/decide",
                 Map.of("targetType", "PRODUCT", "targetId", productId, "approve", true), admin), "商品裁决通过");
         assertThat(productStatus(productId)).isEqualTo("ON_SALE");
     }
 
-    private void rejectProduct(Session admin, long productId, String reason) {
+    private void rejectProduct(Session admin, String productId, String reason) {
         assertSuccess(postJson("/api/admin/reviews/decide",
                 Map.of("targetType", "PRODUCT", "targetId", productId, "approve", false, "reasonCode", "OTHER", "supplement", reason), admin),
                 "商品裁决拒绝");
         assertThat(productStatus(productId)).isEqualTo("REJECTED");
     }
 
-    private List<Long> moderationQueueIds(String targetType, Session admin) {
+    private List<String> moderationQueueIds(String targetType, Session admin) {
         JsonNode queue = getJson("/api/moderation/queue?targetType=" + targetType + "&page=1&pageSize=50", admin);
         assertSuccess(queue, "审核队列");
         return StreamSupport.stream(queue.path("data").path("list").spliterator(), false)
-                .map(node -> node.path("targetId").asLong()).toList();
+                .map(node -> node.path("targetId").asText()).toList();
     }
 
-    private int searchSyncMessageCount(long productId) {
+    private int searchSyncMessageCount(String productId) {
         return (int) jdbcTemplate.queryForList(
                 "SELECT payload FROM outbox_message WHERE destination = ?", String.class, Constants.SEARCH_SYNC_TOPIC)
                 .stream().map(this::readTree)
                 .filter(node -> "product".equals(node.path("type").asText())
-                        && node.path("id").asLong() == productId)
+                        && node.path("id").asText().equals(productId))
                 .count();
     }
 
@@ -256,12 +256,12 @@ class TradeRejectDraftAndEditIntegrationTest extends CommunityApiTestBase {
         return count == null ? 0 : count;
     }
 
-    private String productStatus(long productId) {
+    private String productStatus(String productId) {
         return jdbcTemplate.queryForObject("SELECT state FROM product WHERE product_id = ?", String.class, productId);
     }
 
-    private List<Long> productIdsOf(JsonNode response) {
+    private List<String> productIdsOf(JsonNode response) {
         return StreamSupport.stream(response.path("data").path("list").spliterator(), false)
-                .map(node -> node.path("productId").asLong()).toList();
+                .map(node -> node.path("productId").asText()).toList();
     }
 }

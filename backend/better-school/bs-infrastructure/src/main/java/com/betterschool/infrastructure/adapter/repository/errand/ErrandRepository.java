@@ -24,6 +24,7 @@ import com.betterschool.infrastructure.outbox.OutboxMessageStore;
 import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
+import com.betterschool.types.id.IIdGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,23 +48,23 @@ public class ErrandRepository implements IErrandRepository {
     private final OutboxMessageStore outboxMessageStore;
     private final ITimeoutRepository timeoutRepository;
     private final ReviewTaskPoolStore reviewTaskPoolStore;
+    private final IIdGenerator idGenerator;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
 
     @Override
     public void save(ErrandOrderEntity orderEntity) {
+        // 业务 ID 应用层发号、insert 前一次写入（uuid-biz-id 票 05：物理自增 id 只作内部键，不再同值回写）
+        orderEntity.setOrderId(idGenerator.nextId());
         ErrandOrderPO orderPO = toPO(orderEntity);
         errandDao.insert(orderPO);
-        errandDao.bindBizId(orderPO.getId());
-        // 业务 ID 与物理自增同值：取回写后的 id（PO 的 errandOrderId 是插入前的旧值，不可用）
-        orderEntity.setOrderId(orderPO.getId());
         // 创建事件：from_state 为 NULL（sql.md 口径），操作方恒发布方
-        saveEvent(orderPO.getId(), "CREATED", null, orderPO.getState(),
+        saveEvent(orderPO.getErrandOrderId(), "CREATED", null, orderPO.getState(),
                 orderPO.getPublisherId(), "PUBLISHER", null);
     }
 
     @Override
-    public ErrandOrderEntity findById(Long orderId) {
+    public ErrandOrderEntity findById(String orderId) {
         return toEntity(errandDao.selectById(orderId));
     }
 
@@ -101,7 +102,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean payById(Long orderId, String actorId, LocalDateTime deadline) {
+    public boolean payById(String orderId, String actorId, LocalDateTime deadline) {
         // 先付后审：支付进入待审（处于支付事务内，轮次恒为 1）
         boolean updated = errandDao.payById(orderId, deadline) > 0;
         if (updated) {
@@ -111,7 +112,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean grab(Long orderId, String takerId) {
+    public boolean grab(String orderId, String takerId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.grab(orderId, takerId) > 0;
             if (updated) {
@@ -125,7 +126,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean acceptLockedById(Long orderId, String takerId) {
+    public boolean acceptLockedById(String orderId, String takerId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.acceptLockedById(orderId, takerId) > 0;
             if (updated) {
@@ -137,7 +138,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean abandonLockedById(Long orderId, String takerId) {
+    public boolean abandonLockedById(String orderId, String takerId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.abandonLockedById(orderId, takerId) > 0;
             if (updated) {
@@ -151,7 +152,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public int lockSeqOf(Long orderId) {
+    public int lockSeqOf(String orderId) {
         return errandDao.selectLockSeqById(orderId);
     }
 
@@ -166,7 +167,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean releaseLockedByTimeout(Long orderId, int lockSeq) {
+    public boolean releaseLockedByTimeout(String orderId, int lockSeq) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (errandDao.releaseLockedByTimeout(orderId, lockSeq) == 0) {
                 // 陈旧轮次 / 已确认 / 已放弃 / 已取消：幂等成功、零副作用
@@ -181,7 +182,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean pickupById(Long orderId, String takerId) {
+    public boolean pickupById(String orderId, String takerId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.pickupById(orderId, takerId) > 0;
             if (updated) {
@@ -193,7 +194,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean deliverById(Long orderId, String takerId) {
+    public boolean deliverById(String orderId, String takerId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.deliverById(orderId, takerId) > 0;
             if (updated) {
@@ -205,7 +206,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean confirmById(Long orderId, String publisherId) {
+    public boolean confirmById(String orderId, String publisherId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.confirmById(orderId, publisherId) > 0;
             if (updated) {
@@ -219,7 +220,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean cancelByPublisher(Long orderId, String publisherId) {
+    public boolean cancelByPublisher(String orderId, String publisherId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             // 取消允许 PENDING_PAYMENT/PENDING_REVIEW/PUBLISHED/CONFIRMED 四个前态，前态要落事件必须先读
             String fromState = priorStateOf(orderId);
@@ -235,7 +236,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean cancelByTaker(Long orderId, String takerId) {
+    public boolean cancelByTaker(String orderId, String takerId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.cancelByTaker(orderId, takerId) > 0;
             if (updated) {
@@ -248,7 +249,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean disputeById(Long orderId, String actorId, String actorRole) {
+    public boolean disputeById(String orderId, String actorId, String actorRole) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             // 争议允许 CONFIRMED/PICKED_UP/DELIVERED 三个前态，前态要落事件必须先读
             String fromState = priorStateOf(orderId);
@@ -262,7 +263,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean arbitrateCancelById(Long orderId, String operatorId) {
+    public boolean arbitrateCancelById(String orderId, String operatorId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.arbitrateCancelById(orderId) > 0;
             if (updated) {
@@ -274,7 +275,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean arbitrateCompleteById(Long orderId, String operatorId) {
+    public boolean arbitrateCompleteById(String orderId, String operatorId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.arbitrateCompleteById(orderId) > 0;
             if (updated) {
@@ -286,7 +287,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean markTimeout(Long orderId) {
+    public boolean markTimeout(String orderId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             // 超时允许 PUBLISHED/CONFIRMED/PICKED_UP 三个前态，前态要落事件必须先读
             String fromState = priorStateOf(orderId);
@@ -300,7 +301,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean cancelPendingPayment(Long orderId) {
+    public boolean cancelPendingPayment(String orderId) {
         boolean updated = errandDao.cancelPendingPayment(orderId) > 0;
         if (updated) {
             saveEvent(orderId, "PAY_TIMEOUT", "PENDING_PAYMENT", "CANCELLED", null, "SYSTEM", null);
@@ -309,22 +310,22 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public List<Long> listPayTimeoutOrderIds(LocalDateTime before, int limit) {
+    public List<String> listPayTimeoutOrderIds(LocalDateTime before, int limit) {
         return errandDao.selectPayTimeoutOrderIds(before, limit);
     }
 
     @Override
-    public List<Long> listTimeoutOrderIds(int limit) {
+    public List<String> listTimeoutOrderIds(int limit) {
         return errandDao.selectTimeoutOrderIds(limit);
     }
 
     @Override
-    public List<Long> listPendingReviewOrderIds(LocalDateTime before, int limit) {
+    public List<String> listPendingReviewOrderIds(LocalDateTime before, int limit) {
         return errandDao.selectPendingReviewTimeoutOrderIds(before, limit);
     }
 
     @Override
-    public boolean reviewApproveById(Long orderId, String operatorId) {
+    public boolean reviewApproveById(String orderId, String operatorId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.reviewApproveById(orderId) > 0;
             if (updated) {
@@ -337,7 +338,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean reviewRejectById(Long orderId, String operatorId, String reason) {
+    public boolean reviewRejectById(String orderId, String operatorId, String reason) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             // 审核驳回：REJECTED 终态只可从待审可达，索引行尚未诞生（行诞生于审核通过），无需带写
             boolean updated = errandDao.reviewRejectById(orderId) > 0;
@@ -350,7 +351,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean autoCompleteById(Long orderId) {
+    public boolean autoCompleteById(String orderId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.autoCompleteById(orderId) > 0;
             if (updated) {
@@ -362,7 +363,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public List<Long> listAutoCompleteOrderIds(LocalDateTime before, int limit) {
+    public List<String> listAutoCompleteOrderIds(LocalDateTime before, int limit) {
         return errandDao.selectAutoCompleteOrderIds(before, limit);
     }
 
@@ -397,14 +398,15 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public void schedulePayTimeout(Long orderId, LocalDateTime actionTime) {
+    public void schedulePayTimeout(String orderId, LocalDateTime actionTime) {
         // 业务事务内直插超时任务行（内嵌超时中心，注册 outbox 已删）：三分支幂等在超时仓储内裁决
+        // （uuid-biz-id 票 05：orderId 即 UUID 字符串，biz_id 直传）
         timeoutRepository.register(TimeoutTaskEntity.newWaiting(
-                Constants.ERRAND_PAY_TIMEOUT, String.valueOf(orderId), actionTime, LocalDateTime.now()));
+                Constants.ERRAND_PAY_TIMEOUT, orderId, actionTime, LocalDateTime.now()));
     }
 
     @Override
-    public void scheduleLockTimeout(Long orderId, int lockSeq, LocalDateTime actionTime) {
+    public void scheduleLockTimeout(String orderId, int lockSeq, LocalDateTime actionTime) {
         // 复合 bizId：给每次锁单一个独立键（陈旧任务只影响旧键，不会幂等复位新锁的到期时刻）；
         // 直插与锁单同事务，回滚即无行
         timeoutRepository.register(TimeoutTaskEntity.newWaiting(
@@ -412,23 +414,23 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public List<ErrandOrderEntity> listByIds(List<Long> orderIds) {
+    public List<ErrandOrderEntity> listByIds(List<String> orderIds) {
         return errandDao.selectByIds(orderIds).stream().map(this::toEntity).toList();
     }
 
     @Override
-    public List<Long> listIdsAfter(Long lastId, int limit) {
+    public List<String> listIdsAfter(String lastId, int limit) {
         return errandDao.selectIdsAfter(lastId, limit);
     }
 
     @Override
-    public void saveSearchSyncMessage(Long orderId) {
+    public void saveSearchSyncMessage(String orderId) {
         outboxMessageStore.save(Constants.SEARCH_SYNC_TOPIC,
-                new SearchSyncMessage(SearchEntityType.ERRAND.name().toLowerCase(), String.valueOf(orderId)));
+                new SearchSyncMessage(SearchEntityType.ERRAND.name().toLowerCase(), orderId));
     }
 
     @Override
-    public void saveErrandPaidMessage(Long orderId) {
+    public void saveErrandPaidMessage(String orderId) {
         outboxMessageStore.save(Constants.ERRAND_PAID_TOPIC, new ErrandPaidMessage(orderId));
     }
 
@@ -447,7 +449,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean grabWithLockTimeout(Long orderId, String takerId, int lockTimeoutMinutes) {
+    public boolean grabWithLockTimeout(String orderId, String takerId, int lockTimeoutMinutes) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (!grab(orderId, takerId)) {
                 // 条件 UPDATE 未命中：不注册超时任务（本次没有产生锁单，不该有计时）
@@ -486,7 +488,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public void submitDraftWithPayTimeout(Long orderId, String publisherId, int payTimeoutMinutes) {
+    public void submitDraftWithPayTimeout(String orderId, String publisherId, int payTimeoutMinutes) {
         transactionTemplate.execute(status -> {
             if (errandDao.submitDraft(orderId, publisherId) == 0) {
                 throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
@@ -499,7 +501,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean softDeleteDraft(Long orderId, String publisherId) {
+    public boolean softDeleteDraft(String orderId, String publisherId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (errandDao.softDelete(orderId, publisherId) == 0) {
                 return false;
@@ -510,7 +512,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public void payWithPaidMessage(Long orderId, String userId, int timeLimitHours) {
+    public void payWithPaidMessage(String orderId, String userId, int timeLimitHours) {
         transactionTemplate.execute(status -> {
             LocalDateTime paidAt = LocalDateTime.now();
             LocalDateTime deadline = paidAt.plusHours(timeLimitHours);
@@ -520,13 +522,13 @@ public class ErrandRepository implements IErrandRepository {
             saveErrandPaidMessage(orderId);
             // 入池点（spec §5.1）：支付成功进待审，工单开单与状态迁移同事务；
             // entered_at 取支付成功时刻（errand_order 无 review_entered_at 列），轮次恒 1
-            reviewTaskPoolStore.enter(ReviewTargetTypeVO.ERRAND, String.valueOf(orderId), 1, userId, paidAt);
+            reviewTaskPoolStore.enter(ReviewTargetTypeVO.ERRAND, orderId, 1, userId, paidAt);
             return null;
         });
     }
 
     @Override
-    public void deliverByIdOrThrow(Long orderId, String takerId) {
+    public void deliverByIdOrThrow(String orderId, String takerId) {
         transactionTemplate.execute(status -> {
             if (!deliverById(orderId, takerId)) {
                 throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
@@ -536,7 +538,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public void confirmWithSearchSync(Long orderId, String publisherId) {
+    public void confirmWithSearchSync(String orderId, String publisherId) {
         transactionTemplate.execute(status -> {
             if (!confirmById(orderId, publisherId)) {
                 throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
@@ -548,7 +550,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public void cancelByPublisherWithSearchSync(Long orderId, String publisherId) {
+    public void cancelByPublisherWithSearchSync(String orderId, String publisherId) {
         transactionTemplate.execute(status -> {
             if (!cancelByPublisher(orderId, publisherId)) {
                 throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
@@ -556,13 +558,13 @@ public class ErrandRepository implements IErrandRepository {
             // 取消后订单退出公开列表（PENDING_PAYMENT 取消无文档，消息无害）
             saveSearchSyncMessage(orderId);
             // 待审单可被发布方取消：退出待审同事务出池（其余状态无在途工单，幂等 0 行无害）
-            reviewTaskPoolStore.close(ReviewTargetTypeVO.ERRAND, String.valueOf(orderId));
+            reviewTaskPoolStore.close(ReviewTargetTypeVO.ERRAND, orderId);
             return null;
         });
     }
 
     @Override
-    public void disputeWithSearchSync(Long orderId, String actorId, String actorRole) {
+    public void disputeWithSearchSync(String orderId, String actorId, String actorRole) {
         transactionTemplate.execute(status -> {
             if (!disputeById(orderId, actorId, actorRole)) {
                 throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
@@ -574,7 +576,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean arbitrateWithSearchSync(Long orderId, String operatorId, boolean cancel) {
+    public boolean arbitrateWithSearchSync(String orderId, String operatorId, boolean cancel) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = cancel
                     ? arbitrateCancelById(orderId, operatorId)
@@ -589,7 +591,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean markTimeoutWithSearchSync(Long orderId) {
+    public boolean markTimeoutWithSearchSync(String orderId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (!markTimeout(orderId)) {
                 return false;
@@ -601,7 +603,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean autoCompleteWithSearchSync(Long orderId) {
+    public boolean autoCompleteWithSearchSync(String orderId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (!autoCompleteById(orderId)) {
                 return false;
@@ -684,7 +686,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     /** 订单状态流转事件落表（与条件 UPDATE 同事务，只插入；from_state 为 NULL 仅限创建事件） */
-    private void saveEvent(Long orderId, String eventType, String fromState, String toState,
+    private void saveEvent(String orderId, String eventType, String fromState, String toState,
                            String actorId, String actorRole, String reasonType) {
         saveEvent(orderId, eventType, fromState, toState, actorId, actorRole, reasonType, null);
     }
@@ -697,7 +699,7 @@ public class ErrandRepository implements IErrandRepository {
      * 必须在 UPDATE 之前读——更新后同一行的 state 已是新态。读到的值仅用于事件记录：
      * 状态机仍由条件 UPDATE 把关（命中 0 行则不落事件），故并发下最坏只是事件前态取了调用前观察值。
      */
-    private String priorStateOf(Long orderId) {
+    private String priorStateOf(String orderId) {
         ErrandOrderPO orderPO = errandDao.selectById(orderId);
         return orderPO == null ? null : orderPO.getState();
     }
@@ -706,7 +708,7 @@ public class ErrandRepository implements IErrandRepository {
      * 订单状态流转事件落表（带原因补充说明）：reason 只在「用户/审核员输入了原因」的事件上非空
      * （当前仅审核驳回带枚举文案 + 补充说明），SYSTEM 事件恒 NULL——与 sql.md 列注释同口径
      */
-    private void saveEvent(Long orderId, String eventType, String fromState, String toState,
+    private void saveEvent(String orderId, String eventType, String fromState, String toState,
                            String actorId, String actorRole, String reasonType, String reason) {
         LocalDateTime now = LocalDateTime.now();
         ErrandOrderEventPO eventPO = new ErrandOrderEventPO();
@@ -726,25 +728,24 @@ public class ErrandRepository implements IErrandRepository {
     // ---------- 计数合并器的落库方法：跑腿浏览（UV 口径，market-feed-uv 票 02） ----------
 
     @Override
-    public void recordOrderView(Long orderId, String userId) {
+    public void recordOrderView(String orderId, String userId) {
         // 浏览计数（UV 口径）：入队即返回，窗口过后一组一个事务——明细表 INSERT IGNORE + viewed_at
         // 刷新 + 加速列 += 新增数。匿名访问落不了明细行（errand_view_history 主键的一半是 user_id），
         // 按「INSERT 成功才算浏览」的口径不计入；明细行即真相源，失败只记丢弃数
         if (userId == null) {
             return;
         }
-        // 跑腿订单业务 ID 过渡期仍是数值（errand 域 String 化在 uuid-biz-id 票 05）：合并器键统一走字符串外观
-        viewMergeWriter.write(CountAction.ERRAND_VIEW, String.valueOf(orderId), userId);
+        viewMergeWriter.write(CountAction.ERRAND_VIEW, orderId, userId);
     }
 
     @Override
-    public long viewCountOf(Long orderId) {
+    public long viewCountOf(String orderId) {
         Integer count = errandDao.selectViewCount(orderId);
         return count == null ? 0 : count;
     }
 
     @Override
-    public List<Long> selectViewedOrderIds(String userId, List<Long> orderIds) {
+    public List<String> selectViewedOrderIds(String userId, List<String> orderIds) {
         if (userId == null || orderIds == null || orderIds.isEmpty()) {
             return List.of();
         }
@@ -771,17 +772,14 @@ public class ErrandRepository implements IErrandRepository {
      * 「accepted − flushed」两个读数同时失真。
      */
     public List<LikeState> flushViewGroup(String orderIdKey, List<CountEvent> events) {
-        // 合并器键是字符串（uuid-biz-id）：跑腿订单业务 ID 过渡期仍是数值，这里解析回 long，
-        // 票 05 一并去掉本行
-        long orderId = Long.parseLong(orderIdKey);
         return transactionTemplate.execute(status -> {
             List<String> userIds = distinctUserIds(events);
-            int inserted = errandDao.insertOrderViewHistory(orderId, userIds);
-            errandDao.touchOrderViewedAt(orderId, userIds);
+            int inserted = errandDao.insertOrderViewHistory(orderIdKey, userIds);
+            errandDao.touchOrderViewedAt(orderIdKey, userIds);
             if (inserted > 0) {
-                errandDao.upsertOrderViewCount(orderId, inserted);
+                errandDao.upsertOrderViewCount(orderIdKey, inserted);
                 // 热度排序键旁路 ±N（market-feed-uv 票 03）：索引行 view_count 同事务跟上
-                syncFeedIndexViewCount(orderId, inserted);
+                syncFeedIndexViewCount(orderIdKey, inserted);
             }
             return Collections.nCopies(events.size(), LikeState.APPLIED);
         });
@@ -792,7 +790,7 @@ public class ErrandRepository implements IErrandRepository {
      * （行常驻 + 快照，大厅可见 = PUBLISHED）。纯 UPDATE 不 upsert——行不存在的常态（审核通过前的
      * 取消等）0 行静默，不在写路径凭空补行
      */
-    private void syncFeedIndexState(long orderId, ErrandStatusVO state) {
+    private void syncFeedIndexState(String orderId, ErrandStatusVO state) {
         errandDao.updateFeedIndexState(orderId, state.name());
     }
 
@@ -800,7 +798,7 @@ public class ErrandRepository implements IErrandRepository {
      * feed 索引行热度键旁路 ±N（浏览没有取消语义，恒 +）：纯 UPDATE 不 upsert。命中 0 行 =
      * 索引行缺失（过审前被发布方浏览、或存量异常），落 warn 交重建 job（票 06），不在写路径补行
      */
-    private void syncFeedIndexViewCount(long orderId, int delta) {
+    private void syncFeedIndexViewCount(String orderId, int delta) {
         if (errandDao.updateFeedIndexViewCount(orderId, delta) == 0) {
             log.warn("[ErrandRepository] 跑腿浏览旁路落 0 行：索引行缺失（未过审订单的浏览或存量异常），交重建 job 兜底 orderId={}", orderId);
         }

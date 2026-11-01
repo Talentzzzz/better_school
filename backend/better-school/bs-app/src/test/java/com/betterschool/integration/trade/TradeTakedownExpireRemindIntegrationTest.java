@@ -30,7 +30,7 @@ class TradeTakedownExpireRemindIntegrationTest extends CommunityApiTestBase {
     void 商品上架后主动下架进草稿箱退出可见可重提回待审() {
         Session seller = registerAndLogin("13800008001", "卖家1");
         Session other = registerAndLogin("13800008002", "路人1");
-        long productId = createApprovedProduct(seller, "九成新吉他");
+        String productId = createApprovedProduct(seller, "九成新吉他");
         int syncCountBefore = searchSyncMessageCount(productId);
 
         assertSuccess(postJson("/api/trade/products/" + productId + "/takedown", null, seller), "在售商品下架");
@@ -77,7 +77,7 @@ class TradeTakedownExpireRemindIntegrationTest extends CommunityApiTestBase {
     @Test
     void 到期下架扫描商品进草稿箱() {
         Session seller = registerAndLogin("13800008005", "卖家3");
-        long productId = createApprovedProduct(seller, "九成新台灯");
+        String productId = createApprovedProduct(seller, "九成新台灯");
         int productSyncBefore = searchSyncMessageCount(productId);
 
         // 对外可见满 30 天（回拨 expire_at 模拟到期）
@@ -106,8 +106,8 @@ class TradeTakedownExpireRemindIntegrationTest extends CommunityApiTestBase {
         jdbcTemplate.update("UPDATE bs_user SET role = 'ADMIN' WHERE user_id = ?", admin.userId());
         jdbcTemplate.update("UPDATE bs_user SET role = 'AUDITOR' WHERE user_id = ?", auditor.userId());
 
-        long productId = createProduct(seller, "九成新滑板");
-        long freshProductId = createProduct(seller, "九成新耳机");
+        String productId = createProduct(seller, "九成新滑板");
+        String freshProductId = createProduct(seller, "九成新耳机");
 
         // 回拨进审时间模拟超 24h（freshProductId 不回拨 = 未超时不提醒）
         jdbcTemplate.update("UPDATE product SET review_entered_at = DATE_SUB(NOW(), INTERVAL 25 HOUR) WHERE product_id = ?",
@@ -130,11 +130,11 @@ class TradeTakedownExpireRemindIntegrationTest extends CommunityApiTestBase {
         assertThat(productStatus(freshProductId)).isEqualTo("PENDING_REVIEW");
     }
 
-    private long countReviewReminders(String userId, List<Long> targetIds) {
+    private long countReviewReminders(String userId, List<String> targetIds) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM notification WHERE user_id = ? AND type = 'ORDER_EVENT' "
                         + "AND content LIKE '%24 小时%' AND ref_id IN ("
-                        + targetIds.stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse("0") + ")",
+                        + targetIds.stream().map(id -> "'" + id + "'").reduce((a, b) -> a + "," + b).orElse("''") + ")",
                 Integer.class, userId);
         return count == null ? 0 : count;
     }
@@ -142,7 +142,7 @@ class TradeTakedownExpireRemindIntegrationTest extends CommunityApiTestBase {
     // ---------- 工具 ----------
 
     /** 直接发布商品（先审后售 → PENDING_REVIEW），返回 productId */
-    private long createProduct(Session seller, String title) {
+    private String createProduct(Session seller, String title) {
         JsonNode response = postJson("/api/trade/products", Map.ofEntries(
                 Map.entry("title", title),
                 Map.entry("description", "自用闲置，九成新"),
@@ -151,14 +151,14 @@ class TradeTakedownExpireRemindIntegrationTest extends CommunityApiTestBase {
                 Map.entry("tradeLocation", "图书馆门口"),
                 Map.entry("category", "BOOKS")), seller);
         assertSuccess(response, "发布商品");
-        long productId = response.path("data").asLong();
+        String productId = response.path("data").asText();
         assertThat(productStatus(productId)).as("先审后售：提交即待审").isEqualTo("PENDING_REVIEW");
         return productId;
     }
 
     /** 发布并通过审核（ON_SALE），返回 productId */
-    private long createApprovedProduct(Session seller, String title) {
-        long productId = createProduct(seller, title);
+    private String createApprovedProduct(Session seller, String title) {
+        String productId = createProduct(seller, title);
         assertSuccess(postJson("/api/admin/reviews/decide",
                 Map.of("targetType", "PRODUCT", "targetId", productId, "approve", true), adminSession()), "商品通过");
         assertThat(productStatus(productId)).isEqualTo("ON_SALE");
@@ -182,21 +182,21 @@ class TradeTakedownExpireRemindIntegrationTest extends CommunityApiTestBase {
 
     private Session cachedAdminSession;
 
-    private int searchSyncMessageCount(long productId) {
+    private int searchSyncMessageCount(String productId) {
         return (int) jdbcTemplate.queryForList(
                 "SELECT payload FROM outbox_message WHERE destination = ?", String.class, Constants.SEARCH_SYNC_TOPIC)
                 .stream().map(this::readTree)
                 .filter(node -> "product".equals(node.path("type").asText())
-                        && node.path("id").asLong() == productId)
+                        && node.path("id").asText().equals(productId))
                 .count();
     }
 
-    private String productStatus(long productId) {
+    private String productStatus(String productId) {
         return jdbcTemplate.queryForObject("SELECT state FROM product WHERE product_id = ?", String.class, productId);
     }
 
-    private List<Long> productIdsOf(JsonNode response) {
+    private List<String> productIdsOf(JsonNode response) {
         return StreamSupport.stream(response.path("data").path("list").spliterator(), false)
-                .map(node -> node.path("productId").asLong()).toList();
+                .map(node -> node.path("productId").asText()).toList();
     }
 }

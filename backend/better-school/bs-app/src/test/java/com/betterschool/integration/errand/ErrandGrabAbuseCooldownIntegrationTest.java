@@ -49,7 +49,7 @@ class ErrandGrabAbuseCooldownIntegrationTest extends CommunityApiTestBase {
         assertThat(cooldownUntilOf(taker)).as("第 3 次放弃触发冷却").isNotNull();
 
         // 第 4 次抢单被拒：403 权限类拒绝 + 文案（含到期时刻 HH:mm）；订单状态不动、无人持有
-        long blockedOrder = publishableOrder(author);
+        String blockedOrder = publishableOrder(author);
         JsonNode rejected = postJson("/api/errand/orders/" + blockedOrder + "/grab", null, taker);
         assertThat(rejected.path("code").asText()).as("冷却期抢单被拒：%s", rejected)
                 .isEqualTo(ResponseCode.FORBIDDEN.getCode());
@@ -81,7 +81,7 @@ class ErrandGrabAbuseCooldownIntegrationTest extends CommunityApiTestBase {
 
         // 模拟 2h 冷却到期（删冷却键，等价 TTL 到点）：窗口为空 → 可正常抢
         deleteCooldown(taker);
-        long order = publishableOrder(author);
+        String order = publishableOrder(author);
         assertSuccess(postJson("/api/errand/orders/" + order + "/grab", null, taker), "冷却结束可抢");
         assertThat(statusOf(order)).isEqualTo("LOCKED");
 
@@ -100,7 +100,7 @@ class ErrandGrabAbuseCooldownIntegrationTest extends CommunityApiTestBase {
 
         // 三次「抢了不确认」由超时中心回调释放：超时不可控（掉线/没看到），不计入滥用
         for (int i = 0; i < 3; i++) {
-            long order = publishableOrder(author);
+            String order = publishableOrder(author);
             grab(order, taker);
             assertCallbackSuccess(callback(lockTask(order, 1)));
             assertThat(statusOf(order)).isEqualTo("PUBLISHED");
@@ -110,14 +110,14 @@ class ErrandGrabAbuseCooldownIntegrationTest extends CommunityApiTestBase {
         assertThat(cooldownUntilOf(taker)).as("三次超时不触发冷却").isNull();
 
         // 第 4 次仍可正常抢单
-        long order = publishableOrder(author);
+        String order = publishableOrder(author);
         assertSuccess(postJson("/api/errand/orders/" + order + "/grab", null, taker), "超时不冷却，仍可抢");
         assertThat(statusOf(order)).isEqualTo("LOCKED");
     }
 
     // ---------- 前置：走到 PUBLISHED 的完整链路 ----------
 
-    private long publishableOrder(Session author) {
+    private String publishableOrder(Session author) {
         JsonNode created = postJson("/api/errand/orders", Map.ofEntries(
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", "帮忙取个快递"),
@@ -126,16 +126,17 @@ class ErrandGrabAbuseCooldownIntegrationTest extends CommunityApiTestBase {
                 Map.entry("reward", 10),
                 Map.entry("timeLimit", "HOURS_2")), author);
         assertSuccess(created, "发布跑腿");
-        long orderId = created.path("data").asLong();
+        String orderId = created.path("data").asText();
+        assertUuidId(orderId);
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付");
-        reviewCase.decide("ERRAND", String.valueOf(orderId), true, null, null, "auditor-1");
+        reviewCase.decide("ERRAND", orderId, true, null, null, "auditor-1");
         assertThat(statusOf(orderId)).as("前置：订单应已发布").isEqualTo("PUBLISHED");
         return orderId;
     }
 
     /** 抢单 → 主动放弃 → 回已发布（一次完整「主动放弃」，每次用一张新单保证 member 唯一） */
     private void abandonOnce(Session author, Session taker) {
-        long order = publishableOrder(author);
+        String order = publishableOrder(author);
         grab(order, taker);
         assertSuccess(postJson("/api/errand/orders/" + order + "/abandon", null, taker), "放弃接单");
         assertThat(statusOf(order)).isEqualTo("PUBLISHED");
@@ -147,14 +148,14 @@ class ErrandGrabAbuseCooldownIntegrationTest extends CommunityApiTestBase {
         }
     }
 
-    private void grab(long orderId, Session taker) {
+    private void grab(String orderId, Session taker) {
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/grab", null, taker), "抢单");
         assertThat(statusOf(orderId)).isEqualTo("LOCKED");
     }
 
     // ---------- 超时回调工具（与 ErrandLockTimeoutIntegrationTest 同口径：进程内分发器，票 05） ----------
 
-    private static TimeoutTaskEntity lockTask(long orderId, int lockSeq) {
+    private static TimeoutTaskEntity lockTask(String orderId, int lockSeq) {
         return TimeoutCallbackFixture.dueTask(Constants.ERRAND_LOCK_TIMEOUT, orderId + ":" + lockSeq, 5);
     }
 
@@ -182,12 +183,12 @@ class ErrandGrabAbuseCooldownIntegrationTest extends CommunityApiTestBase {
         redissonClient.getBucket(Constants.ERRAND_GRAB_COOLDOWN_KEY + user.userId()).delete();
     }
 
-    private String statusOf(long orderId) {
+    private String statusOf(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT state FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }
 
-    private String takerIdOf(long orderId) {
+    private String takerIdOf(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT taker_id FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }

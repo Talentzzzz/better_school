@@ -22,7 +22,7 @@ import java.sql.PreparedStatement;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -66,18 +66,18 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
         Session seller = registerAndLogin("13800011001", "卖家1");
         Session buyer = registerAndLogin("13800011002", "买家1");
 
-        long productId = createApprovedProduct(seller, "九成新吉他");
-        long orderId = createProductOrder(buyer, productId);
-        long errandId = createErrand(buyer, "帮忙取个快递");
+        String productId = createApprovedProduct(seller, "九成新吉他");
+        String orderId = createProductOrder(buyer, productId);
+        String errandId = createErrand(buyer, "帮忙取个快递");
 
         // 业务行与超时行同时可见（同一事务提交），无需等待任何异步注册
-        Map<String, Object> productTask = taskRowOf(Constants.PRODUCT_ORDER_PAY_TIMEOUT, String.valueOf(orderId));
+        Map<String, Object> productTask = taskRowOf(Constants.PRODUCT_ORDER_PAY_TIMEOUT, orderId);
         assertThat(productTask.get("status")).as("注册即 WAITING（无 outbox 中间态）").isEqualTo("WAITING");
         assertThat((LocalDateTime) productTask.get("action_time"))
                 .as("action_time ≈ 下单时刻 + 15min（15 分钟支付超时）")
                 .isBetween(LocalDateTime.now().plusMinutes(14), LocalDateTime.now().plusMinutes(16));
 
-        Map<String, Object> errandTask = taskRowOf(Constants.ERRAND_PAY_TIMEOUT, String.valueOf(errandId));
+        Map<String, Object> errandTask = taskRowOf(Constants.ERRAND_PAY_TIMEOUT, errandId);
         assertThat(errandTask.get("status")).isEqualTo("WAITING");
         assertThat((LocalDateTime) errandTask.get("action_time"))
                 .as("action_time ≈ 发布时刻 + 15min")
@@ -88,8 +88,8 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
 
     @Test
     void 业务事务回滚超时行不落库() {
-        long tradeOrderId = uniqueId();
-        long errandOrderId = uniqueId();
+        String tradeOrderId = uniqueUuid();
+        String errandOrderId = uniqueUuid();
 
         assertThatThrownBy(() -> transactionTemplate.execute(status -> {
             // 两个接入方的注册边都在业务事务内被调：这里直接驱动仓储方法复现同一事务边界
@@ -98,9 +98,9 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
             throw new IllegalStateException("业务事务后续步骤失败");
         })).isInstanceOf(IllegalStateException.class);
 
-        assertThat(taskCountOf(Constants.PRODUCT_ORDER_PAY_TIMEOUT, String.valueOf(tradeOrderId)))
+        assertThat(taskCountOf(Constants.PRODUCT_ORDER_PAY_TIMEOUT, tradeOrderId))
                 .as("回滚时商品支付超时行随事务消失").isZero();
-        assertThat(taskCountOf(Constants.ERRAND_PAY_TIMEOUT, String.valueOf(errandOrderId)))
+        assertThat(taskCountOf(Constants.ERRAND_PAY_TIMEOUT, errandOrderId))
                 .as("回滚时跑腿支付超时行随事务消失").isZero();
     }
 
@@ -111,7 +111,7 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
         Session publisher = registerAndLogin("13800011003", "发布者1");
 
         // 提交侧：跑腿订单行与支付超时行一起落库
-        long committedOrderId = transactionTemplate.execute(status -> {
+        String committedOrderId = transactionTemplate.execute(status -> {
             ErrandOrderEntity orderEntity = newErrandEntity(publisher.userId());
             errandRepository.save(orderEntity);
             errandRepository.schedulePayTimeout(orderEntity.getOrderId(), LocalDateTime.now().plusMinutes(15));
@@ -121,11 +121,11 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM errand_order WHERE errand_order_id = ?", Integer.class, committedOrderId))
                 .as("业务行已提交").isEqualTo(1);
-        assertThat(taskCountOf(Constants.ERRAND_PAY_TIMEOUT, String.valueOf(committedOrderId)))
+        assertThat(taskCountOf(Constants.ERRAND_PAY_TIMEOUT, committedOrderId))
                 .as("同一事务的超时行同批可见").isEqualTo(1);
 
         // 回滚侧：setRollbackOnly 后业务行与超时行一起消失
-        long rolledBackOrderId = transactionTemplate.execute(status -> {
+        String rolledBackOrderId = transactionTemplate.execute(status -> {
             ErrandOrderEntity orderEntity = newErrandEntity(publisher.userId());
             errandRepository.save(orderEntity);
             errandRepository.schedulePayTimeout(orderEntity.getOrderId(), LocalDateTime.now().plusMinutes(15));
@@ -136,7 +136,7 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM errand_order WHERE errand_order_id = ?", Integer.class, rolledBackOrderId))
                 .as("业务行随回滚消失").isZero();
-        assertThat(taskCountOf(Constants.ERRAND_PAY_TIMEOUT, String.valueOf(rolledBackOrderId)))
+        assertThat(taskCountOf(Constants.ERRAND_PAY_TIMEOUT, rolledBackOrderId))
                 .as("同一事务的超时行同批消失（同生同死）").isZero();
     }
 
@@ -144,11 +144,11 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
 
     @Test
     void 在途同键重注册幂等成功不改期() {
-        String bizId = String.valueOf(uniqueId());
+        String bizId = uniqueUuid();
         try {
-            errandRepository.schedulePayTimeout(Long.parseLong(bizId), LocalDateTime.now().plusMinutes(15));
+            errandRepository.schedulePayTimeout(bizId, LocalDateTime.now().plusMinutes(15));
             // 同键二次注册（原 outbox 语义是「复位 PENDING」；直插后由三分支接管：在途 = 幂等成功不改期）
-            errandRepository.schedulePayTimeout(Long.parseLong(bizId), LocalDateTime.now().plusMinutes(5));
+            errandRepository.schedulePayTimeout(bizId, LocalDateTime.now().plusMinutes(5));
 
             assertThat(taskCountOf(Constants.ERRAND_PAY_TIMEOUT, bizId))
                     .as("同键重注册不插第二行").isEqualTo(1);
@@ -164,14 +164,14 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
 
     @Test
     void 终态行复活刷新actionTime() {
-        String bizId = String.valueOf(uniqueId());
+        String bizId = uniqueUuid();
         try {
-            errandRepository.schedulePayTimeout(Long.parseLong(bizId), LocalDateTime.now().plusMinutes(15));
+            errandRepository.schedulePayTimeout(bizId, LocalDateTime.now().plusMinutes(15));
             // 到终态（业务取消路径的软置 CANCELED）
             assertThat(timeoutRepository.cancelActive(Constants.ERRAND_PAY_TIMEOUT, bizId)).isTrue();
 
             // 终态后同键再注册 = 复活重开一轮：action_time 刷新为本次传入的新时刻
-            errandRepository.schedulePayTimeout(Long.parseLong(bizId), LocalDateTime.now().plusMinutes(5));
+            errandRepository.schedulePayTimeout(bizId, LocalDateTime.now().plusMinutes(5));
 
             Map<String, Object> row = taskRowOf(Constants.ERRAND_PAY_TIMEOUT, bizId);
             assertThat(row.get("status")).as("复活回 WAITING").isEqualTo("WAITING");
@@ -191,12 +191,12 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
                 "菜鸟驿站", "6号楼楼下", BigDecimal.TEN, List.of(), ErrandTimeLimitVO.HOURS_2);
     }
 
-    /** 与真实自增 id 空间隔开的测试专用 id：同键断言不撞真实业务行 */
-    private static long uniqueId() {
-        return 7_2000_0000_000L + ThreadLocalRandom.current().nextLong(1_000_000L);
+    /** 与真实业务 id 空间隔开的测试专用 UUID：同键断言不撞真实业务行 */
+    private static String uniqueUuid() {
+        return UUID.randomUUID().toString();
     }
 
-    private long createApprovedProduct(Session seller, String title) {
+    private String createApprovedProduct(Session seller, String title) {
         JsonNode publish = postJson("/api/trade/products", Map.ofEntries(
                 Map.entry("title", title),
                 Map.entry("description", "自用闲置，九成新"),
@@ -205,19 +205,19 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
                 Map.entry("tradeLocation", "图书馆门口"),
                 Map.entry("category", "BOOKS")), seller);
         assertSuccess(publish, "发布商品");
-        long productId = publish.path("data").asLong();
+        String productId = publish.path("data").asText();
         assertSuccess(postJson("/api/admin/reviews/decide",
                 Map.of("targetType", "PRODUCT", "targetId", productId, "approve", true), adminSession()), "商品裁决通过");
         return productId;
     }
 
-    private long createProductOrder(Session buyer, long productId) {
+    private String createProductOrder(Session buyer, String productId) {
         JsonNode response = postJson("/api/trade/orders?productId=" + productId, null, buyer);
         assertSuccess(response, "商品下单");
-        return response.path("data").asLong();
+        return response.path("data").asText();
     }
 
-    private long createErrand(Session user, String description) {
+    private String createErrand(Session user, String description) {
         JsonNode response = postJson("/api/errand/orders", Map.ofEntries(
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", description),
@@ -226,7 +226,7 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
                 Map.entry("reward", 10),
                 Map.entry("timeLimit", "HOURS_2")), user);
         assertSuccess(response, "发布跑腿");
-        return response.path("data").asLong();
+        return response.path("data").asText();
     }
 
     private Session cachedAdminSession;

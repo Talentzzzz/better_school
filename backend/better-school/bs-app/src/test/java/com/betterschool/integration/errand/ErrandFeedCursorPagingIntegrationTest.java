@@ -20,7 +20,7 @@ import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doThrow;
@@ -41,9 +41,6 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
     private static final int ORDER_COUNT = 25;
     private static final List<String> SORTS = List.of("time", "time_asc", "hot", "price_asc", "price_desc");
 
-    /** 夹具业务 ID 序列：同一用例内多次直插不撞主键 */
-    private static final AtomicLong SEQ = new AtomicLong();
-
     @Autowired
     private IErrandRepository errandRepository;
     @Autowired
@@ -53,21 +50,21 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
     @DisplayName("五档排序游标翻页不重不漏、整序与索引序一致、total 降口径 -1")
     void 五档排序游标翻页不重不漏且total降口径() {
         Session publisher = registerAndLogin("13600001401", "跑腿游标发单人");
-        List<Long> seeded = seedPublishedOrders(publisher, ORDER_COUNT);
+        List<String> seeded = seedPublishedOrders(publisher, ORDER_COUNT);
 
         for (String sort : SORTS) {
-            List<Long> expected = indexOrderOf(sort);
+            List<String> expected = indexOrderOf(sort);
             assertThat(expected).as("%s 期望序取自索引表", sort).hasSize(ORDER_COUNT);
 
             JsonNode first = fetchPage(sort, null, null);
             assertThat(first.path("total").asLong()).as("%s：索引路径 total 降口径", sort).isEqualTo(-1);
             assertThat(first.path("page").asLong()).as("%s：page/pageSize 兼容字段照常回显", sort).isEqualTo(1);
 
-            List<Long> walked = new ArrayList<>();
+            List<String> walked = new ArrayList<>();
             int pages = 0;
             JsonNode data = first;
             while (data != null) {
-                List<Long> ids = orderIdsOf(data);
+                List<String> ids = orderIdsOf(data);
                 assertThat(ids).as("%s：每页不超过 pageSize", sort).size().isLessThanOrEqualTo(PAGE_SIZE);
                 assertThat(new HashSet<>(ids)).as("%s：单页内无重复", sort).hasSameSizeAs(ids);
                 walked.addAll(ids);
@@ -85,7 +82,7 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
     @DisplayName("大厅列表带索引热度快照（浏览量），供热度排序与展示同源")
     void 大厅列表带索引热度快照() {
         Session publisher = registerAndLogin("13600001402", "跑腿热度发单人");
-        long orderId = seedPublishedOrders(publisher, 1).get(0);
+        String orderId = seedPublishedOrders(publisher, 1).get(0);
         jdbcTemplate.update("UPDATE errand_feed_index SET view_count = 7 WHERE errand_order_id = ?", orderId);
 
         JsonNode data = fetchPage("hot", null, null);
@@ -124,7 +121,8 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
         Map<String, Object> tail = jdbcTemplate.queryForList(
                 "SELECT errand_order_id, feed_time FROM errand_feed_index WHERE state = 'PUBLISHED' "
                         + "ORDER BY feed_time ASC, errand_order_id ASC LIMIT 1").get(0);
-        String raw = "errand|time|" + ((LocalDateTime) tail.get("feed_time")) + "|" + tail.get("errand_order_id");
+        // uuid-biz-id 票 05：游标 5 段 errand|sort|排序键|create_time|orderId（非热度档第二段留空）
+        String raw = "errand|time|" + ((LocalDateTime) tail.get("feed_time")) + "||" + tail.get("errand_order_id");
         String cursor = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(raw.getBytes(StandardCharsets.UTF_8));
 
@@ -151,7 +149,7 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
         assertThat(orderIdsOf(typeData)).isNotEmpty().hasSize((int) Math.min(PAGE_SIZE, typeTotal));
 
         // 筛选（旧直查）路径的浏览量读计数窄表：与索引快照同源，筛选不会把浏览量掉成 0
-        long filteredFirst = orderIdsOf(typeData).get(0);
+        String filteredFirst = orderIdsOf(typeData).get(0);
         jdbcTemplate.update("INSERT INTO errand_view_count (errand_order_id, view_count, create_time, update_time) "
                 + "VALUES (?, 5, NOW(), NOW())", filteredFirst);
         JsonNode refetched = getJson("/api/errand/orders?type=EXPRESS_PICKUP&pageSize=" + PAGE_SIZE, null);
@@ -172,7 +170,7 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
     @DisplayName("索引查询异常时降级 DB 直查：indexPath=false、不发游标、仍出首页数据")
     void 索引查询异常时降级DB直查() {
         Session publisher = registerAndLogin("13600001406", "跑腿降级发单人");
-        List<Long> seeded = seedPublishedOrders(publisher, ORDER_COUNT);
+        List<String> seeded = seedPublishedOrders(publisher, ORDER_COUNT);
 
         IErrandRepository failingIndexRepo = mock(IErrandRepository.class,
                 withSettings().defaultAnswer(AdditionalAnswers.delegatesTo(errandRepository)));
@@ -186,41 +184,44 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
         assertThat(page.isIndexPath()).as("降级后 indexPath=false（total 由调用方精确 COUNT）").isFalse();
         assertThat(page.getNextCursor()).as("降级路径不发游标").isNull();
         assertThat(page.getOrders()).as("降级路径仍出满页数据").hasSize(PAGE_SIZE);
-        // 旧直查按 create_time DESC, id DESC：夹具同秒落库，整序 = errand_order_id 降序 → 首页取末段
+        // 旧直查按 create_time DESC：夹具 create_time 逐条错开（越晚插入越新），整序确定 → 首页取最新一段
+        // （uuid-biz-id 票 05：tie-break 换 errand_order_id 字典序，UUID 无序，夹具不能靠它表达插入先后）
         assertThat(page.getOrders()).extracting(ErrandOrderEntity::getOrderId)
-                .containsAll(seeded.subList(ORDER_COUNT - PAGE_SIZE, ORDER_COUNT));
+                .containsAll(seeded.subList(0, PAGE_SIZE));
     }
 
     // ---------- 夹具与可观察状态 ----------
 
     /**
      * 直插 N 条已发布订单 + 对应索引行（读路径测试只关心投影，不重复走付费/审核链）。
-     * 夹具刻意造并列：悬赏四档循环、热度三档循环、feed_time 五分钟循环，tie-break 由业务 ID 收
+     * 夹具刻意造并列：悬赏四档循环、热度三档循环、feed_time 五分钟循环，tie-break 由业务 ID 收；
+     * 业务 ID 是 UUID（uuid-biz-id 票 05，无序），create_time 逐条错开一分钟保证旧直查时间序确定
      */
-    private List<Long> seedPublishedOrders(Session publisher, int count) {
-        List<Long> orderIds = new ArrayList<>(count);
+    private List<String> seedPublishedOrders(Session publisher, int count) {
+        List<String> orderIds = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
-            long orderId = 930_000L + SEQ.incrementAndGet();
+            String orderId = UUID.randomUUID().toString();
             BigDecimal reward = BigDecimal.valueOf((i % 4) * 5L + 1).setScale(2);
             String type = i % 2 == 0 ? "EXPRESS_PICKUP" : "BUY";
             int viewCount = (i % 3) * 2;
             jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
                             + "pickup_location, delivery_location, reward, time_limit_hours, deadline, state, "
                             + "create_time, update_time) VALUES (?, ?, ?, '大厅游标夹具', '菜鸟驿站', '6号楼', ?, 2, "
-                            + "DATE_ADD(NOW(), INTERVAL 2 HOUR), 'PUBLISHED', NOW(), NOW())",
-                    orderId, publisher.userId(), type, reward);
-            jdbcTemplate.update("INSERT INTO errand_feed_index (errand_order_id, state, feed_time, price, view_count, "
-                            + "update_time) VALUES (?, 'PUBLISHED', ?, ?, ?, NOW())",
+                            + "DATE_ADD(NOW(), INTERVAL 2 HOUR), 'PUBLISHED', "
+                            + "DATE_SUB(NOW(), INTERVAL ? MINUTE), NOW())",
+                    orderId, publisher.userId(), type, reward, i);
+            jdbcTemplate.update("INSERT INTO errand_feed_index (errand_order_id, state, feed_time, create_time, "
+                            + "price, view_count, update_time) VALUES (?, 'PUBLISHED', ?, NOW(), ?, ?, NOW())",
                     orderId, LocalDateTime.now().minusMinutes(i % 5), reward, viewCount);
             orderIds.add(orderId);
         }
         return orderIds;
     }
 
-    /** 期望序 = 库内索引序（与 mapper 的 ORDER BY 逐字同构） */
-    private List<Long> indexOrderOf(String sort) {
+    /** 期望序 = 库内索引序（与 mapper 的 ORDER BY 逐字同构；热度档三段收敛键随 uuid-biz-id 票 05 对齐） */
+    private List<String> indexOrderOf(String sort) {
         String orderBy = switch (sort) {
-            case "hot" -> "view_count DESC, errand_order_id DESC";
+            case "hot" -> "view_count DESC, create_time DESC, errand_order_id DESC";
             case "time_asc" -> "feed_time ASC, errand_order_id ASC";
             case "price_asc" -> "price ASC, errand_order_id ASC";
             case "price_desc" -> "price DESC, errand_order_id DESC";
@@ -228,7 +229,7 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
         };
         return jdbcTemplate.queryForList(
                 "SELECT errand_order_id FROM errand_feed_index WHERE state = 'PUBLISHED' ORDER BY " + orderBy,
-                Long.class);
+                String.class);
     }
 
     /** 跑腿大厅请求（data 节点）；type 非空时走筛选直查 */
@@ -241,9 +242,9 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
         return response.path("data");
     }
 
-    private List<Long> orderIdsOf(JsonNode data) {
-        List<Long> ids = new ArrayList<>();
-        data.path("list").forEach(node -> ids.add(node.path("orderId").asLong()));
+    private List<String> orderIdsOf(JsonNode data) {
+        List<String> ids = new ArrayList<>();
+        data.path("list").forEach(node -> ids.add(node.path("orderId").asText()));
         return ids;
     }
 }

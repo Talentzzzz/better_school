@@ -9,7 +9,7 @@ import java.util.List;
 @Data
 public class ProductResponseDTO {
 
-    private Long productId;
+    private String productId;
     private String userId;
     private String sellerNickname;
     private String sellerAvatar;

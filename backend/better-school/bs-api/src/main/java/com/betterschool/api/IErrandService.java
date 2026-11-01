@@ -11,21 +11,21 @@ import com.betterschool.api.response.Response;
  */
 public interface IErrandService {
 
-    Response<Long> createOrder(ErrandOrderPublishRequestDTO request);
+    Response<String> createOrder(ErrandOrderPublishRequestDTO request);
 
     /** 保存草稿（草稿入口）：落 DRAFT，字段可缺省，不付款不对外、不起支付钟 */
-    Response<Long> saveDraft(ErrandDraftSaveRequestDTO request);
+    Response<String> saveDraft(ErrandDraftSaveRequestDTO request);
 
     /** 编辑草稿（仅 DRAFT 可编辑，全量覆盖内容字段） */
-    Response<Void> updateDraft(Long orderId, ErrandDraftSaveRequestDTO request);
+    Response<Void> updateDraft(String orderId, ErrandDraftSaveRequestDTO request);
 
     /** 提交草稿：必填 + 同步初筛通过后转待支付并注册 15 分钟支付超时 */
-    Response<Void> submitDraft(Long orderId);
+    Response<Void> submitDraft(String orderId);
 
     /** 删除草稿（软删 DELETED，仅作者、仅 DRAFT） */
-    Response<Void> deleteDraft(Long orderId);
+    Response<Void> deleteDraft(String orderId);
 
-    Response<Void> payOrder(Long orderId);
+    Response<Void> payOrder(String orderId);
 
     /**
      * 跑腿大厅（market-feed-uv 票 04）：无类型筛选且只看 PUBLISHED 时走索引序扫描 + keyset 续页
@@ -35,27 +35,27 @@ public interface IErrandService {
     Response<PageResult<ErrandOrderResponseDTO>> listOrders(String type, String status, String sort, String cursor,
                                                             int page, int pageSize);
 
-    Response<ErrandOrderResponseDTO> orderDetail(Long orderId);
+    Response<ErrandOrderResponseDTO> orderDetail(String orderId);
 
-    Response<Void> grabOrder(Long orderId);
+    Response<Void> grabOrder(String orderId);
 
     /** 确认接单（锁单→已确认，仅持单人） */
-    Response<Void> acceptLockedOrder(Long orderId);
+    Response<Void> acceptLockedOrder(String orderId);
 
     /** 放弃（锁单→已发布，仅持单人；不扣信用分） */
-    Response<Void> abandonLockedOrder(Long orderId);
+    Response<Void> abandonLockedOrder(String orderId);
 
-    Response<Void> pickupOrder(Long orderId);
+    Response<Void> pickupOrder(String orderId);
 
-    Response<Void> deliverOrder(Long orderId);
+    Response<Void> deliverOrder(String orderId);
 
-    Response<Void> confirmOrder(Long orderId);
+    Response<Void> confirmOrder(String orderId);
 
-    Response<Void> cancelOrder(Long orderId);
+    Response<Void> cancelOrder(String orderId);
 
-    Response<Void> disputeOrder(Long orderId);
+    Response<Void> disputeOrder(String orderId);
 
-    Response<Void> arbitrateOrder(Long orderId, String result);
+    Response<Void> arbitrateOrder(String orderId, String result);
 
     Response<PageResult<ErrandOrderResponseDTO>> listMyOrders(String role, String status, int page, int pageSize);
 

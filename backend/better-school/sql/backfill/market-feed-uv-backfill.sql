@@ -44,7 +44,7 @@
 --    MAX(create_time)，重提再通过取最近一次）；查不到审批流水的存量老商品取 product.create_time 兜底。
 --    price 从主表抄入（ON_SALE 必有价格：提交时必填）；view_count 不抄（列已删，索引行按默认 0 起，
 --    切码后由浏览旁路累计——存量 PV 本就要在切码前清零，抄不抄都落 0，见头部退役说明）
-INSERT INTO product_feed_index (product_id, state, feed_time, price, update_time)
+INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, update_time)
 SELECT p.product_id,
        p.state,
        COALESCE((SELECT MAX(cr.create_time)
@@ -53,6 +53,7 @@ SELECT p.product_id,
                     AND cr.target_id = p.product_id
                     AND cr.action = 'APPROVE'),
                 p.create_time),
+       p.create_time,
        p.price,
        NOW()
   FROM product p
@@ -67,7 +68,7 @@ ON DUPLICATE KEY UPDATE state      = VALUES(state),
 --    跑腿 review_round 恒 1，MAX 即该次）；查不到审批流水的存量老单取 errand_order.create_time 兜底。
 --    price = reward（PUBLISHED 必已支付冻结，悬赏必有值）。
 --    ODKU 不碰 view_count：热度键由运行期浏览旁路独占维护，重投影不该把 UV 抹成 0
-INSERT INTO errand_feed_index (errand_order_id, state, feed_time, price, view_count, update_time)
+INSERT INTO errand_feed_index (errand_order_id, state, feed_time, create_time, price, view_count, update_time)
 SELECT e.errand_order_id,
        e.state,
        COALESCE((SELECT MAX(cr.create_time)
@@ -76,6 +77,7 @@ SELECT e.errand_order_id,
                     AND cr.target_id = e.errand_order_id
                     AND cr.action = 'APPROVE'),
                 e.create_time),
+       e.create_time,
        e.reward,
        0,
        NOW()

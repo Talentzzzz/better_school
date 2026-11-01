@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -31,9 +31,6 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
 
     private static final String PUBLISHER_ID = "publisher-999";
 
-    /** 夹具业务 ID 序列：同一用例内多次直插不撞 uk_errand_order_id */
-    private static final AtomicLong SEQ = new AtomicLong();
-
     @Autowired
     private MarketFeedIndexRebuildJob rebuildJob;
 
@@ -48,29 +45,29 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     void 重建后索引与源表严格一致且修复缺行漂移() {
         // 真实链路四态：通过（有审批流水）、通过后取消（有行的不可见态）、从未通过审（不该有行）、
         // 存量在厅单（直插 PUBLISHED、无审批流水，feed_time 取 create_time 兜底）
-        long approvedId = insertOrder("PENDING_REVIEW", "8.50");
+        String approvedId = insertOrder("PENDING_REVIEW", "8.50");
         approve(approvedId);
-        long cancelledId = insertOrder("PENDING_REVIEW", "5.00");
+        String cancelledId = insertOrder("PENDING_REVIEW", "5.00");
         approve(cancelledId);
         assertThat(errandRepository.cancelByPublisher(cancelledId, PUBLISHER_ID)).as("发布方取消").isTrue();
-        long draftId = insertOrder("PENDING_PAYMENT", "3.00");
-        long legacyId = insertLegacyPublishedOrder("6.00");
+        String draftId = insertOrder("PENDING_PAYMENT", "3.00");
+        String legacyId = insertLegacyPublishedOrder("6.00");
 
         // 缺行边角：索引行被删后浏览——旁路 UPDATE 命中 0 行、窄表照涨；再把窄表直改成 99 制造漂移
-        long missingRowId = insertOrder("PENDING_REVIEW", "9.00");
+        String missingRowId = insertOrder("PENDING_REVIEW", "9.00");
         approve(missingRowId);
         jdbcTemplate.update("DELETE FROM errand_feed_index WHERE errand_order_id = ?", missingRowId);
         flushViews(missingRowId, "u501");
         jdbcTemplate.update("UPDATE errand_view_count SET view_count = 99 WHERE errand_order_id = ?", missingRowId);
 
         // 过审前被发布方浏览：明细与窄表已记、索引行彼时不存在（0 行 warn 交重建）——重建把这段漏计追平
-        long preViewId = insertOrder("PENDING_REVIEW", "7.00");
+        String preViewId = insertOrder("PENDING_REVIEW", "7.00");
         flushViews(preViewId, "u502");
         approve(preViewId);
         assertThat(indexViewCountOf(preViewId)).as("过审前浏览旁路命中 0 行，索引热度键未计").isZero();
 
         // 孤儿计数行：无浏览明细却建了行（懒建行口径下不该存在）
-        long orphanId = insertOrder("PENDING_REVIEW", "4.00");
+        String orphanId = insertOrder("PENDING_REVIEW", "4.00");
         approve(orphanId);
         jdbcTemplate.update("INSERT INTO errand_view_count (errand_order_id, view_count, create_time, update_time) "
                 + "VALUES (?, 7, NOW(), NOW())", orphanId);
@@ -117,13 +114,13 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     @Test
     @DisplayName("浏览加速列校准为明细行数：漂移刷回、缺行补建、孤儿清掉，索引热度键同步追平")
     void 浏览加速列校准为明细行数并清孤儿补缺行() {
-        long viewedId = insertOrder("PENDING_REVIEW", "8.00");
+        String viewedId = insertOrder("PENDING_REVIEW", "8.00");
         approve(viewedId);
         flushViews(viewedId, "u601", "u602", "u601"); // 重复浏览：明细只刷 viewed_at，UV 不加数
-        long lostRowId = insertOrder("PENDING_REVIEW", "6.00");
+        String lostRowId = insertOrder("PENDING_REVIEW", "6.00");
         approve(lostRowId);
         flushViews(lostRowId, "u601");
-        long orphanId = insertOrder("PENDING_REVIEW", "5.00");
+        String orphanId = insertOrder("PENDING_REVIEW", "5.00");
         approve(orphanId); // 无浏览，人为插计数行
 
         // 漂移：直接改加速列（明细行数的真值是 2）
@@ -149,9 +146,9 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 夹具与可观察状态 ----------
 
-    /** 直插一行指定态订单（deadline 落未来），返回业务 ID */
-    private long insertOrder(String state, String reward) {
-        long orderId = 930_000L + SEQ.incrementAndGet();
+    /** 直插一行指定态订单（deadline 落未来），返回业务 ID（uuid-biz-id 票 05：UUID 字符串） */
+    private String insertOrder(String state, String reward) {
+        String orderId = UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
                         + "pickup_location, delivery_location, reward, time_limit_hours, state, deadline, "
                         + "create_time, update_time) "
@@ -162,8 +159,8 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 直插一行存量 PUBLISHED 订单（无审批流水），create_time 拨回两天前供 feed_time 兜底断言 */
-    private long insertLegacyPublishedOrder(String reward) {
-        long orderId = 930_000L + SEQ.incrementAndGet();
+    private String insertLegacyPublishedOrder(String reward) {
+        String orderId = UUID.randomUUID().toString();
         Timestamp twoDaysAgo = Timestamp.valueOf(LocalDateTime.now().minusDays(2));
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
                         + "pickup_location, delivery_location, reward, time_limit_hours, state, deadline, "
@@ -179,7 +176,7 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
      * 真实链路里「审核记录」与「索引 feed_time」出自同一事件（秒级精度下可能跨秒），夹具按索引落下的
      * 时刻补记录，让「feed_time = MAX(APPROVE) 兜底 create_time」这条投影口径在数据上严格成立
      */
-    private void approve(long orderId) {
+    private void approve(String orderId) {
         assertThat(errandRepository.reviewApproveById(orderId, "auditor-1")).as("待审订单通过").isTrue();
         LocalDateTime feedTime = queryFeedTime(orderId);
         jdbcTemplate.update("INSERT INTO content_review (target_type, target_id, author_id, review_round, "
@@ -189,46 +186,46 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 一组浏览落库（同步合并，等价于合并窗口过后的三步 + 索引旁路） */
-    private void flushViews(long orderId, String... userIds) {
+    private void flushViews(String orderId, String... userIds) {
         List<CountEvent> events = Arrays.stream(userIds)
-                .map(userId -> new CountEvent(CountAction.ERRAND_VIEW, String.valueOf(orderId), userId))
+                .map(userId -> new CountEvent(CountAction.ERRAND_VIEW, orderId, userId))
                 .toList();
-        flushHandler.flushGroup(CountAction.ERRAND_VIEW, String.valueOf(orderId), events);
+        flushHandler.flushGroup(CountAction.ERRAND_VIEW, orderId, events);
     }
 
     /** 索引行整行（无行 = null） */
-    private Map<String, Object> feedRow(long orderId) {
+    private Map<String, Object> feedRow(String orderId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT state, feed_time, price, view_count FROM errand_feed_index WHERE errand_order_id = ?", orderId);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    private String feedState(long orderId) {
+    private String feedState(String orderId) {
         Map<String, Object> row = feedRow(orderId);
         return row == null ? null : (String) row.get("state");
     }
 
-    private LocalDateTime queryFeedTime(long orderId) {
+    private LocalDateTime queryFeedTime(String orderId) {
         return ((LocalDateTime) feedRow(orderId).get("feed_time"));
     }
 
-    private LocalDateTime queryCreateTime(long orderId) {
+    private LocalDateTime queryCreateTime(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT create_time FROM errand_order WHERE errand_order_id = ?", Timestamp.class, orderId)
                 .toLocalDateTime();
     }
 
-    private int indexViewCountOf(long orderId) {
+    private int indexViewCountOf(String orderId) {
         return ((Number) feedRow(orderId).get("view_count")).intValue();
     }
 
-    private int acceleratedCountOf(long orderId) {
+    private int acceleratedCountOf(String orderId) {
         List<Integer> rows = jdbcTemplate.queryForList(
                 "SELECT view_count FROM errand_view_count WHERE errand_order_id = ?", Integer.class, orderId);
         return rows.isEmpty() ? 0 : rows.get(0);
     }
 
-    private boolean countRowExists(long orderId) {
+    private boolean countRowExists(String orderId) {
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM errand_view_count WHERE errand_order_id = ?", Long.class, orderId);
         return count != null && count > 0;
@@ -236,7 +233,7 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
 
     /** 逐行扫一致性破坏者：state ≠ errand_order.state、price ≠ reward、view_count ≠ 窄表（无行 = 0），
      *  或 feed_time ≠ 最近通过（兜底 create_time）的索引行 */
-    private List<Long> inconsistentIndexOrderIds() {
+    private List<String> inconsistentIndexOrderIds() {
         return jdbcTemplate.queryForList(
                 "SELECT fi.errand_order_id FROM errand_feed_index fi "
                         + "JOIN errand_order e ON e.errand_order_id = fi.errand_order_id "
@@ -245,33 +242,33 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
                         + "OR fi.view_count <> COALESCE(evc.view_count, 0) "
                         + "OR fi.feed_time <> COALESCE((SELECT MAX(cr.create_time) FROM content_review cr "
                         + "  WHERE cr.target_type = 'ERRAND' AND cr.target_id = fi.errand_order_id "
-                        + "    AND cr.action = 'APPROVE'), e.create_time)", Long.class);
+                        + "    AND cr.action = 'APPROVE'), e.create_time)", String.class);
     }
 
     /** 覆盖破坏者：该有行而没有行的订单（在厅 ∪ 通过过审） */
-    private List<Long> ordersWithoutIndexRow() {
+    private List<String> ordersWithoutIndexRow() {
         return jdbcTemplate.queryForList(
                 "SELECT e.errand_order_id FROM errand_order e "
                         + "LEFT JOIN errand_feed_index fi ON fi.errand_order_id = e.errand_order_id "
                         + "WHERE fi.errand_order_id IS NULL AND (e.state = 'PUBLISHED' "
                         + "  OR EXISTS (SELECT 1 FROM content_review cr WHERE cr.target_type = 'ERRAND' "
-                        + "       AND cr.target_id = e.errand_order_id AND cr.action = 'APPROVE'))", Long.class);
+                        + "       AND cr.target_id = e.errand_order_id AND cr.action = 'APPROVE'))", String.class);
     }
 
     /** 投影破坏者：view_count ≠ 明细行数的加速列行 */
-    private List<Long> viewCountRowsMismatchingHistory() {
+    private List<String> viewCountRowsMismatchingHistory() {
         return jdbcTemplate.queryForList(
                 "SELECT vc.errand_order_id FROM errand_view_count vc "
                         + "LEFT JOIN (SELECT errand_order_id, COUNT(*) AS cnt FROM errand_view_history "
                         + "  GROUP BY errand_order_id) h ON h.errand_order_id = vc.errand_order_id "
-                        + "WHERE vc.view_count <> COALESCE(h.cnt, 0)", Long.class);
+                        + "WHERE vc.view_count <> COALESCE(h.cnt, 0)", String.class);
     }
 
     /** 覆盖破坏者：有浏览明细却没有计数行的订单 */
-    private List<Long> historyOrdersWithoutCountRow() {
+    private List<String> historyOrdersWithoutCountRow() {
         return jdbcTemplate.queryForList(
                 "SELECT DISTINCT h.errand_order_id FROM errand_view_history h "
                         + "LEFT JOIN errand_view_count vc ON vc.errand_order_id = h.errand_order_id "
-                        + "WHERE vc.errand_order_id IS NULL", Long.class);
+                        + "WHERE vc.errand_order_id IS NULL", String.class);
     }
 }

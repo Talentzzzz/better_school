@@ -10,7 +10,8 @@ import java.time.LocalDateTime;
 @Data
 public class ErrandSearchDocVO {
 
-    private Long orderId;
+    /** 业务 id 是 UUID 字符串（uuid-biz-id 票 05） */
+    private String orderId;
     private String description;
     private String pickupLocation;
     private String deliveryLocation;

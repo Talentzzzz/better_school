@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -87,18 +88,18 @@ class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
         return response.path("data").asText();
     }
 
-    /** 直插一行在售商品（业务列 NOT NULL 无默认值：插 0 后绑到物理 id，应用 bindBizId 的同口径） */
+    /** 直插一行在售商品（业务 id 是 UUID 字符串，uuid-biz-id 票 05） */
     private void insertOnSaleProduct(String userId) {
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, category, state, "
-                + "create_time, update_time) VALUES (0, ?, '扇出商品', 'BOOKS', 'ON_SALE', NOW(), NOW())", userId);
-        jdbcTemplate.update("UPDATE product SET product_id = id WHERE product_id = 0");
+                + "create_time, update_time) VALUES (?, ?, '扇出商品', 'BOOKS', 'ON_SALE', NOW(), NOW())",
+                UUID.randomUUID().toString(), userId);
     }
 
     /** 直插一行已发布跑腿单（口径同上） */
     private void insertPublishedErrand(String userId) {
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
                 + "pickup_location, delivery_location, reward, time_limit_hours, state, create_time, update_time) "
-                + "VALUES (0, ?, 'BUY', '扇出单', '宿舍楼', '食堂', 5.00, 2, 'PUBLISHED', NOW(), NOW())", userId);
-        jdbcTemplate.update("UPDATE errand_order SET errand_order_id = id WHERE errand_order_id = 0");
+                + "VALUES (?, ?, 'BUY', '扇出单', '宿舍楼', '食堂', 5.00, 2, 'PUBLISHED', NOW(), NOW())",
+                UUID.randomUUID().toString(), userId);
     }
 }

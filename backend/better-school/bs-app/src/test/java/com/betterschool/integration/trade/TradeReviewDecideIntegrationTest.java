@@ -31,7 +31,7 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 商品裁决通过转ON_SALE对外可见且作者收通知() {
         Session seller = registerAndLogin("13800005001", "卖家1");
-        long productId = createProduct(seller, "九成新吉他", List.of("http://minio/bs-files/it/p-1.jpg"));
+        String productId = createProduct(seller, "九成新吉他", List.of("http://minio/bs-files/it/p-1.jpg"));
         Session admin = adminSession();
 
         JsonNode response = postJson("/api/admin/reviews/decide",
@@ -62,7 +62,7 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
                 "SELECT payload FROM outbox_message WHERE destination = ?", String.class, Constants.SEARCH_SYNC_TOPIC);
         assertThat(syncPayloads.stream().map(this::readTree)
                 .anyMatch(node -> "product".equals(node.path("type").asText())
-                        && node.path("id").asLong() == productId))
+                        && node.path("id").asText().equals(productId)))
                 .as("通过转 ON_SALE 应落搜索同步消息").isTrue();
     }
 
@@ -71,7 +71,7 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 商品拒绝无理由被参数拒绝且状态不变() {
         Session seller = registerAndLogin("13800005002", "卖家2");
-        long productId = createProduct(seller, "九成新台灯", List.of());
+        String productId = createProduct(seller, "九成新台灯", List.of());
         Session admin = adminSession();
 
         JsonNode response = postJson("/api/admin/reviews/decide",
@@ -85,7 +85,7 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
     void 商品拒绝转REJECTED通知含理由且详情带理由() {
         Session seller = registerAndLogin("13800005003", "卖家3");
         Session other = registerAndLogin("13800005004", "路人1");
-        long productId = createProduct(seller, "九成新滑板", List.of());
+        String productId = createProduct(seller, "九成新滑板", List.of());
         String reason = "配图与描述不符";
         Session admin = adminSession();
 
@@ -111,7 +111,7 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
 
         JsonNode mine = getJson("/api/trade/products/mine", seller);
         JsonNode mineItem = mineItemsOf(mine.path("data")).stream()
-                .filter(node -> node.path("productId").asLong() == productId).findFirst().orElseThrow();
+                .filter(node -> node.path("productId").asText().equals(productId)).findFirst().orElseThrow();
         assertThat(mineItem.path("rejectReason").asText()).as("我的发布带拒绝理由").isEqualTo("其他：" + reason);
 
         JsonNode otherDetail = getJson("/api/trade/products/" + productId, other);
@@ -123,7 +123,7 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 同一商品两次裁决审核记录轮次互不冲突且理由取最新() {
         Session seller = registerAndLogin("13800005008", "卖家4");
-        long productId = createProduct(seller, "九成新相机", List.of());
+        String productId = createProduct(seller, "九成新相机", List.of());
         Session admin = adminSession();
 
         // 第一轮：通过（APPROVE 落轮次 1）
@@ -160,7 +160,7 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 商品撤回重提进入第二轮审核且裁决落轮次2() {
         Session seller = registerAndLogin("13800005015", "卖家8");
-        long productId = createProduct(seller, "九成新音箱", List.of());
+        String productId = createProduct(seller, "九成新音箱", List.of());
         Session admin = adminSession();
 
         // 第一轮未裁决先撤回（ticket 02 路径）：撤回不加轮次，草稿重提轮次 +1
@@ -224,14 +224,14 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 审核队列带出待审商品及配图() {
         Session seller = registerAndLogin("13800005009", "卖家5");
-        long productId = createProduct(seller, "九成新键盘",
+        String productId = createProduct(seller, "九成新键盘",
                 List.of("http://minio/bs-files/it/q-1.jpg", "http://minio/bs-files/it/q-2.jpg"));
         Session admin = adminSession();
 
         JsonNode productQueue = getJson("/api/moderation/queue?targetType=PRODUCT&page=1&pageSize=10", admin);
         assertSuccess(productQueue, "商品审核队列");
         JsonNode productItem = mineItemsOf(productQueue.path("data")).stream()
-                .filter(node -> node.path("targetId").asLong() == productId).findFirst().orElseThrow();
+                .filter(node -> node.path("targetId").asText().equals(productId)).findFirst().orElseThrow();
         assertThat(productItem.path("targetType").asText()).isEqualTo("PRODUCT");
         assertThat(productItem.path("images")).as("队列带出商品配图").hasSize(2);
         assertThat(productItem.path("content").asText()).contains("九成新键盘");
@@ -245,7 +245,7 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
                 Map.of("targetType", "PRODUCT", "targetId", productId, "approve", true), admin), "裁决通过");
         JsonNode queueAfter = getJson("/api/moderation/queue?targetType=PRODUCT&page=1&pageSize=10", admin);
         assertThat(mineItemsOf(queueAfter.path("data")).stream()
-                .map(node -> node.path("targetId").asLong()))
+                .map(node -> node.path("targetId").asText()))
                 .as("已裁决商品应移出队列").doesNotContain(productId);
     }
 
@@ -254,7 +254,7 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 非管理员调用裁决被拒() {
         Session seller = registerAndLogin("13800005011", "卖家6");
-        long productId = createProduct(seller, "九成新耳机", List.of());
+        String productId = createProduct(seller, "九成新耳机", List.of());
         Session normalUser = registerAndLogin("13800005012", "普通用户");
 
         JsonNode response = postJson("/api/admin/reviews/decide",
@@ -263,18 +263,18 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
         assertThat(productStatus(productId)).isEqualTo("PENDING_REVIEW");
 
         ResponseEntity<String> anonymous = exchange(HttpMethod.POST, "/api/admin/reviews/decide",
-                Map.of("targetType", "PRODUCT", "targetId", 1, "approve", true), null);
+                Map.of("targetType", "PRODUCT", "targetId", "1", "approve", true), null);
         assertThat(anonymous.getStatusCode().value()).as("未登录应 401").isEqualTo(401);
     }
 
     @Test
     void 系统账号operatorId直调用例裁决商品生效() {
         Session seller = registerAndLogin("13800005013", "卖家7");
-        long productId = createProduct(seller, "九成新自行车", List.of());
+        String productId = createProduct(seller, "九成新自行车", List.of());
         // operatorId 直传即可走通，用例不校验登录态/角色（HTTP 层拦截角色）
         Session systemAccount = registerAndLogin("13800005014", "系统账号");
 
-        reviewCase.decide("PRODUCT", String.valueOf(productId), true, null, null, systemAccount.userId());
+        reviewCase.decide("PRODUCT", productId, true, null, null, systemAccount.userId());
 
         assertThat(productStatus(productId)).as("系统账号 operatorId 裁决应生效").isEqualTo("ON_SALE");
         String operatorId = jdbcTemplate.queryForObject(
@@ -297,7 +297,7 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 直接发布商品（先审后售 → PENDING_REVIEW），返回 productId */
-    private long createProduct(Session seller, String title, List<String> images) {
+    private String createProduct(Session seller, String title, List<String> images) {
         JsonNode response = postJson("/api/trade/products", Map.ofEntries(
                 Map.entry("title", title),
                 Map.entry("description", "自用闲置，九成新"),
@@ -306,12 +306,12 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
                 Map.entry("tradeLocation", "图书馆门口"),
                 Map.entry("category", "BOOKS")), seller);
         assertSuccess(response, "发布商品");
-        long productId = response.path("data").asLong();
+        String productId = response.path("data").asText();
         assertThat(productStatus(productId)).as("先审后售：提交即待审").isEqualTo("PENDING_REVIEW");
         return productId;
     }
 
-    private String productStatus(long productId) {
+    private String productStatus(String productId) {
         return jdbcTemplate.queryForObject("SELECT state FROM product WHERE product_id = ?", String.class, productId);
     }
 
@@ -319,8 +319,8 @@ class TradeReviewDecideIntegrationTest extends CommunityApiTestBase {
         return StreamSupport.stream(listData.path("list").spliterator(), false).toList();
     }
 
-    private List<Long> productIdsOf(JsonNode response) {
+    private List<String> productIdsOf(JsonNode response) {
         return StreamSupport.stream(response.path("data").path("list").spliterator(), false)
-                .map(node -> node.path("productId").asLong()).toList();
+                .map(node -> node.path("productId").asText()).toList();
     }
 }

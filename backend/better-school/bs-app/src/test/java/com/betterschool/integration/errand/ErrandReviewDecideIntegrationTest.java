@@ -32,7 +32,7 @@ class ErrandReviewDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 裁决通过转PUBLISHED对外可见且作者收通知() {
         Session author = registerAndLogin("13800003001", "发单作者");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
         Session admin = adminSession();
 
         JsonNode response = postJson("/api/admin/reviews/decide",
@@ -66,7 +66,7 @@ class ErrandReviewDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 拒绝无理由被参数拒绝且状态不变() {
         Session author = registerAndLogin("13800003002", "发单作者2");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
         Session admin = adminSession();
 
         JsonNode response = postJson("/api/admin/reviews/decide",
@@ -79,7 +79,7 @@ class ErrandReviewDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 拒绝转REJECTED解冻退款且通知含理由() {
         Session author = registerAndLogin("13800003003", "发单作者3");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
         String reason = "配图模糊无法辨认需求";
         Session admin = adminSession();
 
@@ -110,7 +110,7 @@ class ErrandReviewDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 重复裁决幂等退款不重复() {
         Session author = registerAndLogin("13800003004", "发单作者4");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
         Session admin = adminSession();
         Map<String, Object> rejectBody = Map.of("targetType", "ERRAND", "targetId", orderId,
                 "approve", false, "reasonCode", "OTHER", "supplement", "描述不清");
@@ -141,7 +141,7 @@ class ErrandReviewDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 非管理员调用裁决被拒() {
         Session author = registerAndLogin("13800003005", "发单作者5");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
         Session normalUser = registerAndLogin("13800003006", "普通用户");
 
         JsonNode response = postJson("/api/admin/reviews/decide",
@@ -157,11 +157,11 @@ class ErrandReviewDecideIntegrationTest extends CommunityApiTestBase {
     @Test
     void 系统账号operatorId直调用例生效() {
         Session author = registerAndLogin("13800003007", "发单作者7");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
         // operatorId 直传即可走通，用例不校验登录态/角色（HTTP 层拦截角色）
         Session systemAccount = registerAndLogin("13800003008", "系统账号");
 
-        reviewCase.decide("ERRAND", String.valueOf(orderId), true, null, null, systemAccount.userId());
+        reviewCase.decide("ERRAND", orderId, true, null, null, systemAccount.userId());
 
         assertThat(statusOf(orderId)).as("系统账号 operatorId 裁决应生效").isEqualTo("PUBLISHED");
         String operatorId = jdbcTemplate.queryForObject(
@@ -207,7 +207,7 @@ class ErrandReviewDecideIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 工具 ----------
 
-    private long createPaidOrder(Session author) {
+    private String createPaidOrder(Session author) {
         JsonNode createResponse = postJson("/api/errand/orders", Map.ofEntries(
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", "帮忙取个快递"),
@@ -216,7 +216,8 @@ class ErrandReviewDecideIntegrationTest extends CommunityApiTestBase {
                 Map.entry("reward", 10),
                 Map.entry("timeLimit", "HOURS_2")), author);
         assertSuccess(createResponse, "发布跑腿");
-        long orderId = createResponse.path("data").asLong();
+        String orderId = createResponse.path("data").asText();
+        assertUuidId(orderId);
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付");
         return orderId;
     }
@@ -243,27 +244,27 @@ class ErrandReviewDecideIntegrationTest extends CommunityApiTestBase {
         return postId;
     }
 
-    private String statusOf(long orderId) {
+    private String statusOf(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT state FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }
 
-    private int countWalletTransactions(long orderId, String type) {
+    private int countWalletTransactions(String orderId, String type) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM wallet_detail WHERE order_id = ? AND type = ?",
                 Integer.class, orderId, type);
         return count == null ? 0 : count;
     }
 
-    private List<Long> listPublicOrders() {
+    private List<String> listPublicOrders() {
         JsonNode response = getJson("/api/errand/orders?page=1&pageSize=10", null);
         assertSuccess(response, "公开订单列表");
         return StreamSupport.stream(response.path("data").path("list").spliterator(), false)
-                .map(node -> node.path("orderId").asLong())
+                .map(node -> node.path("orderId").asText())
                 .toList();
     }
 
-    private boolean containsOrder(List<Long> orderIds, long orderId) {
+    private boolean containsOrder(List<String> orderIds, String orderId) {
         return orderIds.contains(orderId);
     }
 }

@@ -39,11 +39,11 @@ public class TradePublishCase {
     private final VirtualThreadFanout fanout;
 
     /** 被拒商品的拒绝理由（content_review.reason），供详情/我的发布对卖家带出 */
-    public String productRejectReason(Long productId) {
-        return reviewService.rejectReason(ReviewTargetTypeVO.PRODUCT, String.valueOf(productId));
+    public String productRejectReason(String productId) {
+        return reviewService.rejectReason(ReviewTargetTypeVO.PRODUCT, productId);
     }
 
-    public Long publishProduct(String userId, String title, String description, List<String> images, BigDecimal price,
+    public String publishProduct(String userId, String title, String description, List<String> images, BigDecimal price,
                                String tradeLocation, String category) {
         creditAccountService.ensureOperable(userId);
         screenText(title, description);
@@ -51,20 +51,20 @@ public class TradePublishCase {
     }
 
     /** 保存商品草稿：不做初筛、不做信用分门槛，字段可缺省 */
-    public Long saveProductDraft(String userId, String title, String description, List<String> images, BigDecimal price,
+    public String saveProductDraft(String userId, String title, String description, List<String> images, BigDecimal price,
                                  String tradeLocation, String category) {
         return productService.saveProductDraft(userId, title, description, images, price, tradeLocation, category);
     }
 
     /** 编辑商品草稿：仅 DRAFT 可编辑（待审中需先撤回） */
-    public void updateProductDraft(String userId, Long productId, String title, String description, List<String> images,
+    public void updateProductDraft(String userId, String productId, String title, String description, List<String> images,
                                    BigDecimal price, String tradeLocation, String category) {
         productService.updateProductDraft(userId, productId, title, description, images, price,
                 tradeLocation, category);
     }
 
     /** 提交商品草稿：与直接发布同门槛校验，初筛命中停留草稿，通过进入待审 */
-    public void submitProductDraft(String userId, Long productId) {
+    public void submitProductDraft(String userId, String productId) {
         ProductEntity draft = productService.getOwnedProductDraft(userId, productId);
         creditAccountService.ensureOperable(userId);
         validateProductDraftComplete(draft);
@@ -76,7 +76,7 @@ public class TradePublishCase {
      * 上架后编辑商品（编辑语义）：先做归属与状态守卫（待审中不可编辑/被拒引导转草稿箱），
      * 新增文字内容过同步初筛，再由域层按"仅改价立即生效 / 改内容回待审"分流
      */
-    public void editOnSaleProduct(String userId, Long productId, String title, String description, List<String> images,
+    public void editOnSaleProduct(String userId, String productId, String title, String description, List<String> images,
                                   BigDecimal price) {
         productService.getOwnedOnSaleProduct(userId, productId);
         screenText(title, description);
@@ -86,7 +86,7 @@ public class TradePublishCase {
     /**
      * 上架商品主动下架：ON_SALE → DRAFT 汇入草稿箱，可编辑后重新提交回待审；同事务退出搜索可见
      */
-    public void takeDownProduct(String userId, Long productId) {
+    public void takeDownProduct(String userId, String productId) {
         productService.takeDownProduct(userId, productId);
     }
 
@@ -113,11 +113,11 @@ public class TradePublishCase {
                 productId -> remindReviewers(reviewerIds, "PRODUCT", "商品", productId));
     }
 
-    private void remindReviewers(List<String> reviewerIds, String targetType, String targetLabel, Long targetId) {
+    private void remindReviewers(List<String> reviewerIds, String targetType, String targetLabel, String targetId) {
         for (String reviewerId : reviewerIds) {
             try {
                 notificationService.sendSystem(reviewerId, NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.ORDER_EVENT, "审核提醒",
-                        targetLabel + " " + targetId + " 已待审超过 24 小时，请及时处理", targetType, String.valueOf(targetId),
+                        targetLabel + " " + targetId + " 已待审超过 24 小时，请及时处理", targetType, targetId,
                         NotificationTypeVO.ORDER_EVENT.name() + ":REVIEW_TIMEOUT:" + targetType + ":" + targetId + ":" + reviewerId);
             } catch (Exception e) {
                 log.warn("[TradePublishCase] 待审超时提醒发送失败（下轮扫描补发） targetType={} targetId={} reviewerId={}",

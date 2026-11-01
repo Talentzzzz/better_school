@@ -53,9 +53,9 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
     void 商品支付超时_到点回调关单且商品回在售() {
         Session seller = registerAndLogin("13800009001", "端到端卖家");
         Session buyer = registerAndLogin("13800009002", "端到端买家");
-        long productId = createApprovedProduct(seller, "端到端相机");
-        long orderId = createProductOrder(buyer, productId);
-        String bizId = String.valueOf(orderId);
+        String productId = createApprovedProduct(seller, "端到端相机");
+        String orderId = createProductOrder(buyer, productId);
+        String bizId = orderId;
 
         makeDue(Constants.PRODUCT_ORDER_PAY_TIMEOUT, bizId);
         ScanSummaryVO summary = scanAll();
@@ -69,8 +69,8 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
     @Test
     void 跑腿支付超时_到点回调取消订单() {
         Session user = registerAndLogin("13800009003", "端到端跑腿用户");
-        long orderId = createErrand(user, "端到端取快递");
-        String bizId = String.valueOf(orderId);
+        String orderId = createErrand(user, "端到端取快递");
+        String bizId = orderId;
 
         makeDue(Constants.ERRAND_PAY_TIMEOUT, bizId);
         scanAll();
@@ -83,7 +83,7 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
     void 跑腿锁单超时_到点回调释放回PUBLISHED并清空接单人() {
         Session author = registerAndLogin("13800009004", "端到端发单用户");
         Session taker = registerAndLogin("13800009005", "端到端接单用户");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
         grab(orderId, taker);
         String bizId = orderId + ":1";
 
@@ -99,7 +99,7 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
     void 审核租约超时_到点回调把工单放回池中() {
         Session author = registerAndLogin("13800009006", "端到端作者");
         Session auditor = auditorSession("13900009001");
-        long orderId = createPaidOrder(author);
+        createPaidOrder(author);
         long taskId = claim(auditor, null).path("data").path("taskId").asLong();
         String bizId = taskId + ":1";
 
@@ -192,8 +192,8 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
         return cachedAdminSession;
     }
 
-    /** 发布商品并经管理员裁决通过（下单单前置态 = ON_SALE） */
-    private long createApprovedProduct(Session seller, String title) {
+    /** 发布商品并经管理员裁决通过（下单单前置态 = ON_SALE）；商品业务 id 是 UUID 字符串 */
+    private String createApprovedProduct(Session seller, String title) {
         JsonNode publish = postJson("/api/trade/products", Map.ofEntries(
                 Map.entry("title", title),
                 Map.entry("description", "自用闲置，九成新"),
@@ -202,19 +202,19 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
                 Map.entry("tradeLocation", "图书馆门口"),
                 Map.entry("category", "BOOKS")), seller);
         assertSuccess(publish, "发布商品");
-        long productId = publish.path("data").asLong();
+        String productId = publish.path("data").asText();
         assertSuccess(postJson("/api/admin/reviews/decide",
                 Map.of("targetType", "PRODUCT", "targetId", productId, "approve", true), adminSession()), "商品裁决通过");
         return productId;
     }
 
-    private long createProductOrder(Session buyer, long productId) {
+    private String createProductOrder(Session buyer, String productId) {
         JsonNode response = postJson("/api/trade/orders?productId=" + productId, null, buyer);
         assertSuccess(response, "商品下单");
-        return response.path("data").asLong();
+        return response.path("data").asText();
     }
 
-    private long createErrand(Session user, String description) {
+    private String createErrand(Session user, String description) {
         JsonNode response = postJson("/api/errand/orders", Map.ofEntries(
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", description),
@@ -223,28 +223,27 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
                 Map.entry("reward", 10),
                 Map.entry("timeLimit", "HOURS_2")), user);
         assertSuccess(response, "发布跑腿");
-        return response.path("data").asLong();
+        return response.path("data").asText();
     }
 
     /** 走到 PUBLISHED 的完整前置：发布 → 支付 → 人工裁决通过（同 ErrandLockTimeoutIntegrationTest） */
-    private long publishableOrder(Session author) {
-        long orderId = createErrand(author, "端到端可抢跑腿");
+    private String publishableOrder(Session author) {
+        String orderId = createErrand(author, "端到端可抢跑腿");
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付跑腿");
-        reviewCase.decide("ERRAND", String.valueOf(orderId), true, null, null, "auditor-1");
+        reviewCase.decide("ERRAND", orderId, true, null, null, "auditor-1");
         assertThat(errandStatus(orderId)).as("前置：跑腿应已发布").isEqualTo("PUBLISHED");
         return orderId;
     }
 
-    private void grab(long orderId, Session taker) {
+    private void grab(String orderId, Session taker) {
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/grab", null, taker), "抢单");
         assertThat(errandStatus(orderId)).isEqualTo("LOCKED");
     }
 
     /** 已支付跑腿（审核工单入池前置；同 ReviewTaskLeaseIntegrationTest） */
-    private long createPaidOrder(Session author) {
-        long orderId = createErrand(author, "端到端待审跑腿");
+    private void createPaidOrder(Session author) {
+        String orderId = createErrand(author, "端到端待审跑腿");
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付跑腿");
-        return orderId;
     }
 
     /** 审核员登录态（JWT 里带新角色） */
@@ -270,22 +269,22 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
 
     // ---------- 可观察状态 ----------
 
-    private String productOrderStatus(long orderId) {
+    private String productOrderStatus(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT state FROM product_order WHERE product_order_id = ?", String.class, orderId);
     }
 
-    private String productStatus(long productId) {
+    private String productStatus(String productId) {
         return jdbcTemplate.queryForObject(
                 "SELECT state FROM product WHERE product_id = ?", String.class, productId);
     }
 
-    private String errandStatus(long orderId) {
+    private String errandStatus(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT state FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }
 
-    private String takerIdOf(long orderId) {
+    private String takerIdOf(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT taker_id FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }

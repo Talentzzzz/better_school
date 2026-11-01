@@ -16,6 +16,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.StreamSupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,7 +42,7 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
     void 抢单同事务注册锁单超时_复合bizId带轮次且窗口从锁单时刻起算() {
         Session author = registerAndLogin("13800006001", "发单用户1");
         Session taker = registerAndLogin("13800006002", "接单用户1");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
 
         grab(orderId, taker);
 
@@ -52,7 +53,7 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
                 .isBetween(LocalDateTime.now().plusMinutes(4), LocalDateTime.now().plusMinutes(6));
 
         // 锁单超时与支付超时是两条独立注册键，互不覆盖
-        assertThat(actionTimeOf(Constants.ERRAND_PAY_TIMEOUT, String.valueOf(orderId)))
+        assertThat(actionTimeOf(Constants.ERRAND_PAY_TIMEOUT, orderId))
                 .as("同一订单的支付超时注册键仍是裸 orderId").isNotNull();
     }
 
@@ -61,7 +62,7 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800006003", "发单用户2");
         Session takerA = registerAndLogin("13800006004", "接单用户2");
         Session takerB = registerAndLogin("13800006005", "接单用户3");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
 
         grab(orderId, takerA);
         LocalDateTime roundOneActionTime = actionTimeOf(Constants.ERRAND_LOCK_TIMEOUT, orderId + ":1");
@@ -102,7 +103,7 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800006006", "发单用户3");
         Session taker = registerAndLogin("13800006007", "接单用户4");
         Session other = registerAndLogin("13800006008", "接单用户5");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
         grab(orderId, taker);
 
         assertCallbackSuccess(callback(lockTask(orderId, 1)));
@@ -133,7 +134,7 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
         assertThat(notice.get("scope")).isEqualTo("MARKET_ERRAND");
         assertThat(notice.get("type")).isEqualTo("ORDER_EVENT");
         assertThat(notice.get("ref_type")).isEqualTo("ERRAND");
-        assertThat(((Number) notice.get("ref_id")).longValue()).isEqualTo(orderId);
+        assertThat((String) notice.get("ref_id")).as("通知 ref_id 直带 UUID 字符串（uuid-biz-id 票 05）").isEqualTo(orderId);
         assertThat(notificationCountFor(other.userId(), orderId)).as("新接单人未被释放，不该收到通知").isZero();
     }
 
@@ -141,7 +142,7 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
     void 多轮释放各发各的结果通知_同轮重复回调不重复发() {
         Session author = registerAndLogin("13800006009", "发单用户4");
         Session taker = registerAndLogin("13800006010", "接单用户6");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
 
         grab(orderId, taker);
         assertCallbackSuccess(callback(lockTask(orderId, 1)));
@@ -166,7 +167,7 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
     void 已确认的单收到回调零副作用() {
         Session author = registerAndLogin("13800006011", "发单用户5");
         Session taker = registerAndLogin("13800006012", "接单用户7");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
         grab(orderId, taker);
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/accept", null, taker), "确认接单");
 
@@ -182,12 +183,12 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
     void 已取消与不存在的单收到回调零副作用() {
         Session author = registerAndLogin("13800006013", "发单用户6");
         Session taker = registerAndLogin("13800006014", "接单用户8");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
         grab(orderId, taker);
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/cancel", null, author), "锁单期发布方取消");
 
         // 已取消 + 不存在的订单：同批回调都按成功回报（未命中状态机 = 幂等成功，不算失败）
-        assertCallbackSuccess(callback(lockTask(orderId, 1), lockTask(999999999L, 7)));
+        assertCallbackSuccess(callback(lockTask(orderId, 1), lockTask(UUID.randomUUID().toString(), 7)));
 
         assertThat(statusOf(orderId)).isEqualTo("CANCELLED");
         assertThat(lockTimeoutEventCount(orderId)).as("已取消单不落释放事件").isZero();
@@ -200,7 +201,7 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
     void 复合bizId形状不合法按失败重投且不拖垮同批其他项() {
         Session author = registerAndLogin("13800006015", "发单用户7");
         Session taker = registerAndLogin("13800006016", "接单用户9");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
         grab(orderId, taker);
 
         Set<String> failures = callback(
@@ -219,7 +220,7 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
     // ---------- 用例夹具 ----------
 
     /** 走到 PUBLISHED 的完整前置：发布 → 支付冻结 → 人工裁决通过 */
-    private long publishableOrder(Session author) {
+    private String publishableOrder(Session author) {
         JsonNode created = postJson("/api/errand/orders", Map.ofEntries(
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", "帮忙取个快递"),
@@ -228,21 +229,22 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
                 Map.entry("reward", 10),
                 Map.entry("timeLimit", "HOURS_2")), author);
         assertSuccess(created, "发布跑腿");
-        long orderId = created.path("data").asLong();
+        String orderId = created.path("data").asText();
+        assertUuidId(orderId);
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付");
-        reviewCase.decide("ERRAND", String.valueOf(orderId), true, null, null, "auditor-1");
+        reviewCase.decide("ERRAND", orderId, true, null, null, "auditor-1");
         assertThat(statusOf(orderId)).as("前置：订单应已发布").isEqualTo("PUBLISHED");
         return orderId;
     }
 
-    private void grab(long orderId, Session taker) {
+    private void grab(String orderId, Session taker) {
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/grab", null, taker), "抢单");
         assertThat(statusOf(orderId)).isEqualTo("LOCKED");
     }
 
     // ---------- 回调工具 ----------
 
-    private static TimeoutTaskEntity lockTask(long orderId, int lockSeq) {
+    private static TimeoutTaskEntity lockTask(String orderId, int lockSeq) {
         return lockTaskRaw(orderId + ":" + lockSeq);
     }
 
@@ -261,23 +263,23 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 可观察状态 ----------
 
-    private String statusOf(long orderId) {
+    private String statusOf(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT state FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }
 
-    private String takerIdOf(long orderId) {
+    private String takerIdOf(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT taker_id FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }
 
-    private int lockSeqOf(long orderId) {
+    private int lockSeqOf(String orderId) {
         Integer lockSeq = jdbcTemplate.queryForObject(
                 "SELECT lock_seq FROM errand_order WHERE errand_order_id = ?", Integer.class, orderId);
         return lockSeq == null ? -1 : lockSeq;
     }
 
-    private Map<String, Object> registerRowOf(long orderId, int lockSeq) {
+    private Map<String, Object> registerRowOf(String orderId, int lockSeq) {
         return jdbcTemplate.queryForMap(
                 "SELECT action_time, status FROM timeout_task WHERE task_type = ? AND biz_id = ?",
                 Constants.ERRAND_LOCK_TIMEOUT, orderId + ":" + lockSeq);
@@ -289,21 +291,21 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
                 LocalDateTime.class, taskType, bizId);
     }
 
-    private int registerRowCount(long orderId) {
+    private int registerRowCount(String orderId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM timeout_task WHERE task_type = ? AND biz_id LIKE ?",
                 Integer.class, Constants.ERRAND_LOCK_TIMEOUT, orderId + ":%");
         return count == null ? 0 : count;
     }
 
-    private int lockTimeoutEventCount(long orderId) {
+    private int lockTimeoutEventCount(String orderId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM errand_order_event WHERE order_id = ? AND event_type = 'LOCK_TIMEOUT'",
                 Integer.class, orderId);
         return count == null ? 0 : count;
     }
 
-    private Map<String, Object> eventRowOf(long orderId, String eventType) {
+    private Map<String, Object> eventRowOf(String orderId, String eventType) {
         return jdbcTemplate.queryForMap(
                 "SELECT from_state, to_state, actor_id, actor_role "
                         + "FROM errand_order_event WHERE order_id = ? AND event_type = ? ORDER BY id LIMIT 1",
@@ -331,34 +333,34 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
         return count == null ? 0 : count;
     }
 
-    private static String lockDedupKey(long orderId, int lockSeq) {
+    private static String lockDedupKey(String orderId, int lockSeq) {
         return "ORDER_EVENT:ERRAND_LOCK_TIMEOUT:" + orderId + ":" + lockSeq;
     }
 
-    private Map<String, Object> notificationOf(String userId, long orderId, int lockSeq) {
+    private Map<String, Object> notificationOf(String userId, String orderId, int lockSeq) {
         return jdbcTemplate.queryForMap(
                 "SELECT scope, type, ref_type, ref_id FROM notification WHERE user_id = ? AND dedup_key = ?",
                 userId, lockDedupKey(orderId, lockSeq));
     }
 
-    private int notificationCountFor(String userId, long orderId) {
+    private int notificationCountFor(String userId, String orderId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM notification WHERE user_id = ? AND type = 'ORDER_EVENT' AND ref_id = ?",
                 Integer.class, userId, orderId);
         return count == null ? 0 : count;
     }
 
-    private List<String> notificationDedupKeysFor(String userId, long orderId) {
+    private List<String> notificationDedupKeysFor(String userId, String orderId) {
         return jdbcTemplate.queryForList(
                 "SELECT dedup_key FROM notification WHERE user_id = ? AND type = 'ORDER_EVENT' AND ref_id = ?",
                 String.class, userId, orderId);
     }
 
-    private List<Long> publicOrderIds() {
+    private List<String> publicOrderIds() {
         JsonNode response = getJson("/api/errand/orders?page=1&pageSize=20", null);
         assertSuccess(response, "公开跑腿列表");
         return StreamSupport.stream(response.path("data").path("list").spliterator(), false)
-                .map(node -> node.path("orderId").asLong()).toList();
+                .map(node -> node.path("orderId").asText()).toList();
     }
 
 }

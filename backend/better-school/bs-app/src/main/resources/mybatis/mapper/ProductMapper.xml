@@ -17,20 +17,16 @@
     </sql>
 
     <!-- 主表不再有浏览列（market-feed-uv 票 06 删列）：浏览 UV 只落 product_view_history + product_view_count -->
-    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.product.po.ProductPO"
-            useGeneratedKeys="true" keyProperty="id">
+    <!-- uuid-biz-id 票 05：业务 ID 发号在 repository 落库前生成（IIdGenerator.nextId），随行一次写入，
+         删除 bindBizId 自增同值回写 -->
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.product.po.ProductPO">
         INSERT INTO product (product_id, user_id, title, description, images, price, trade_location,
                              category, state, review_round, review_entered_at,
                              create_time, update_time, expire_at)
-        VALUES (0, #{userId}, #{title}, #{description}, #{images}, #{price}, #{tradeLocation},
+        VALUES (#{productId}, #{userId}, #{title}, #{description}, #{images}, #{price}, #{tradeLocation},
                 #{category}, #{state}, #{reviewRound}, #{reviewEnteredAt},
                 #{createTime}, #{updateTime}, #{expireAt})
     </insert>
-
-    <!-- 业务 ID 回写：product_id = id（同事务，见 sql.md 主键口径） -->
-    <update id="bindBizId">
-        UPDATE product SET product_id = id WHERE id = #{id} AND product_id = 0
-    </update>
 
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
         SELECT <include refid="baseColumns"/>,
@@ -53,10 +49,11 @@
         <foreach collection="ids" item="productId" open="(" separator="," close=")">#{productId}</foreach>
     </select>
 
-    <select id="selectIdsAfter" resultType="long">
+    <!-- 搜索索引全量重建游标页：业务 ID 是 UUID 字符串，按 product_id 字典序推进（同一排序规则下 &gt; 与 ORDER BY 自洽） -->
+    <select id="selectIdsAfter" resultType="string">
         SELECT product_id FROM product
-        WHERE id &gt; #{lastId}
-        ORDER BY id
+        WHERE product_id &gt; #{lastProductId}
+        ORDER BY product_id
         LIMIT #{limit}
     </select>
 
@@ -130,7 +127,7 @@
     </update>
 
     <!-- 到期扫描：在售且 expire_at 已到（满 30 天），XXL-Job 后置汇入草稿箱 -->
-    <select id="selectExpiredOnSaleIds" resultType="long">
+    <select id="selectExpiredOnSaleIds" resultType="string">
         SELECT product_id
         FROM product
         WHERE state = 'ON_SALE'
@@ -140,7 +137,7 @@
     </select>
 
     <!-- 24h 待审超时提醒扫描：进入待审（review_entered_at）早于 before 的待审商品 -->
-    <select id="selectReviewTimeoutIds" resultType="long">
+    <select id="selectReviewTimeoutIds" resultType="string">
         SELECT product_id
         FROM product
         WHERE state = 'PENDING_REVIEW'
@@ -250,29 +247,35 @@
             <!-- 五档排序（market-feed-uv 票 04）与索引路径语义同构：热度 = 浏览 UV 数、tie-break 同向。
                  已知口径差：时间键这里取主表 create_time，索引取 feed_time（进入当前可见轮的通过时刻）——
                  降级本就发生在「索引不可用」时，拿不到 feed_time，只能取主表最近似的时刻；
-                 tie-break 的 id 与 product_id 在本库恒等（sql.md 主键口径：业务 ID 与物理自增同值），实际同一列 -->
-            <when test="sort == 'hot'">IFNULL(pvc.view_count, 0) DESC, p.id DESC</when>
-            <when test="sort == 'price_asc'">p.price ASC, p.id ASC</when>
-            <when test="sort == 'price_desc'">p.price DESC, p.id DESC</when>
-            <when test="sort == 'time_asc'">p.create_time ASC, p.id ASC</when>
-            <otherwise>p.create_time DESC, p.id DESC</otherwise>
+                 热度档与帖子热榜同构（uuid-biz-id 票 05）：view_count 同值按 create_time DESC 收敛成确定序
+                 （业务 ID 是 UUID 无序，不再拿 id/product_id 当时间代理），其余档 tie-break 用 product_id -->
+            <when test="sort == 'hot'">IFNULL(pvc.view_count, 0) DESC, p.create_time DESC, p.product_id DESC</when>
+            <when test="sort == 'price_asc'">p.price ASC, p.product_id ASC</when>
+            <when test="sort == 'price_desc'">p.price DESC, p.product_id DESC</when>
+            <when test="sort == 'time_asc'">p.create_time ASC, p.product_id ASC</when>
+            <otherwise>p.create_time DESC, p.product_id DESC</otherwise>
         </choose>
         LIMIT #{offset}, #{limit}
     </select>
 
     <!-- 闲置推荐页索引序扫描（market-feed-uv 票 04）：state 过滤 + (排序键, product_id) 索引序 range scan。
-         五档排序共用一条语句——热度 (state, view_count, product_id)、最新/最早 (state, feed_time, product_id)
-         正向/反向扫描、价格升降 (state, price, product_id)；续页谓词与排序方向同构（降序 &lt;、升序 &gt;），
-         配合 ORDER BY 的列序方向才能走 range scan 而不是全表 filesort。排序键随行带出，供编下一页游标 -->
+         五档排序共用一条语句——热度 (state, view_count, create_time, product_id)、最新/最早
+         (state, feed_time, product_id) 正向/反向扫描、价格升降 (state, price, product_id)；
+         续页谓词与排序方向同构（降序 &lt;、升序 &gt;），配合 ORDER BY 的列序方向才能走 range scan
+         而不是全表 filesort。排序键随行带出，供编下一页游标。
+         热度档三段收敛（uuid-biz-id 票 05）：view_count 同值按 create_time DESC、product_id DESC
+         收敛成确定序（业务 ID 是 UUID 无序，不能再拿它当时间代理） -->
     <select id="selectFeedIndex" resultType="com.betterschool.domain.trade.model.valobj.ProductFeedIndexItemVO">
-        SELECT product_id, feed_time, price, view_count
+        SELECT product_id, feed_time, create_time, price, view_count
         FROM product_feed_index
         WHERE state = 'ON_SALE'
         <if test="cursor != null and !cursor.isFirstPage()">
             <choose>
                 <when test="sort == 'hot'">
                     AND (view_count &lt; #{cursor.viewCount}
-                        OR (view_count = #{cursor.viewCount} AND product_id &lt; #{cursor.productId}))
+                        OR (view_count = #{cursor.viewCount} AND create_time &lt; #{cursor.createTime})
+                        OR (view_count = #{cursor.viewCount} AND create_time = #{cursor.createTime}
+                            AND product_id &lt; #{cursor.productId}))
                 </when>
                 <when test="sort == 'time_asc'">
                     AND (feed_time &gt; #{cursor.feedTime}
@@ -294,7 +297,7 @@
         </if>
         ORDER BY
         <choose>
-            <when test="sort == 'hot'">view_count DESC, product_id DESC</when>
+            <when test="sort == 'hot'">view_count DESC, create_time DESC, product_id DESC</when>
             <when test="sort == 'time_asc'">feed_time ASC, product_id ASC</when>
             <when test="sort == 'price_asc'">price ASC, product_id ASC</when>
             <when test="sort == 'price_desc'">price DESC, product_id DESC</when>
@@ -327,7 +330,7 @@
         LEFT JOIN bs_user u ON p.user_id = u.user_id
         WHERE p.user_id = #{userId}
           AND p.state != 'DELETED'
-        ORDER BY p.create_time DESC, p.id DESC
+        ORDER BY p.create_time DESC, p.product_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -347,7 +350,7 @@
         LEFT JOIN bs_user u ON p.user_id = u.user_id
         WHERE p.user_id = #{userId}
           AND p.state = 'ON_SALE'
-        ORDER BY p.create_time DESC, p.id DESC
+        ORDER BY p.create_time DESC, p.product_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -429,7 +432,7 @@
 
     <!-- 已读灰显批量回显（market-feed-uv 票 05，照帖子 selectViewedPostIds）：明细表主键 (user_id, product_id)
          前缀先钉人、再按页内 id 集合 IN，一页一次查询，不做 N+1 -->
-    <select id="selectViewedProductIds" resultType="long">
+    <select id="selectViewedProductIds" resultType="string">
         SELECT product_id
         FROM product_view_history
         WHERE user_id = #{userId}
@@ -440,14 +443,15 @@
     <!-- ── feed 异构索引同事务直写（market-feed-uv 票 03：索引行与 product 行同库，
          状态流转 / 改价 / 浏览合并事务带写，照帖子 post_feed_index 先例）── -->
 
-    <!-- 审核通过：行诞生 / 翻回 ON_SALE。INSERT...SELECT 从 product 行取 price 快照（approve 彼时的价格）；
+    <!-- 审核通过：行诞生 / 翻回 ON_SALE。INSERT...SELECT 从 product 行取 price 快照（approve 彼时的价格）
+         与 create_time 快照（热度档同值收敛键，uuid-biz-id 票 05）；
          feed_time = 本次通过时刻——行诞生落第一次，重提再通过（relist / 在售改内容回审 / 下架后重提）
          经 ODKU 刷新为「进入当前对外可见轮」的时刻（schema 注释口径，与票 01 回填、票 06 重建的
          MAX(APPROVE) 一致；帖子先例不刷新是因其 ODKU 不可达，商品的重提是正常路径）。
          ODKU 不碰 view_count（浏览合并事务旁路独占维护） -->
     <update id="upsertFeedIndexOnApprove">
-        INSERT INTO product_feed_index (product_id, state, feed_time, price, view_count, update_time)
-        SELECT p.product_id, 'ON_SALE', NOW(), p.price, 0, NOW()
+        INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, view_count, update_time)
+        SELECT p.product_id, 'ON_SALE', NOW(), p.create_time, p.price, 0, NOW()
         FROM product p
         WHERE p.product_id = #{productId}
         ON DUPLICATE KEY UPDATE
@@ -498,7 +502,7 @@
          view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步同时把「过审前被浏览、旁路命中 0 行」
          漏计的那部分追平（运行期旁路只在本行存在后累加），也与热度排序键的读口径一致 -->
     <insert id="rebuildFeedIndexProjection">
-        INSERT INTO product_feed_index (product_id, state, feed_time, price, view_count, update_time)
+        INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, view_count, update_time)
         SELECT p.product_id,
                p.state,
                COALESCE((SELECT MAX(cr.create_time)
@@ -507,6 +511,7 @@
                             AND cr.target_id = p.product_id
                             AND cr.action = 'APPROVE'),
                         p.create_time),
+               p.create_time,
                p.price,
                COALESCE(pvc.view_count, 0),
                NOW()

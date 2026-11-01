@@ -28,6 +28,7 @@ import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import com.betterschool.types.exception.FrameworkException;
+import com.betterschool.types.id.IIdGenerator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -66,19 +67,21 @@ public class TradeRepository implements ITradeRepository {
     private final TransactionTemplate transactionTemplate;
     /** 浏览类写入的唯一通道（fire-and-forget，窗口后一组一个事务三步落 UV 明细 + 加速列） */
     private final ViewMergeWriter viewMergeWriter;
+    /** 业务 ID 发号器（uuid-biz-id 票 05）：36 位小写 UUID 字符串，insert 前生成、随行一次写入 */
+    private final IIdGenerator idGenerator;
 
     // ---------- 商品 ----------
 
     @Override
     public void save(ProductEntity productEntity) {
         transactionTemplate.execute(status -> {
+            // 业务 ID 落库前发号（uuid-biz-id 票 05）：随行一次写入，不再自增同值回写
+            productEntity.setProductId(idGenerator.nextId());
             ProductPO productPO = toPO(productEntity);
             productDao.insert(productPO);
-            productDao.bindBizId(productPO.getId());
-            productEntity.setProductId(productPO.getId());
             // 入池点（spec §5.1）：提交落库即待审，工单开单与状态同事务（草稿行 DRAFT 不入池）
             if (productEntity.getStatus() == ProductStatusVO.PENDING_REVIEW) {
-                reviewTaskPoolStore.enter(ReviewTargetTypeVO.PRODUCT, String.valueOf(productEntity.getProductId()),
+                reviewTaskPoolStore.enter(ReviewTargetTypeVO.PRODUCT, productEntity.getProductId(),
                         productEntity.getReviewRound(), productEntity.getUserId(), productEntity.getReviewEnteredAt());
             }
             return null;
@@ -86,12 +89,12 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public ProductEntity findById(Long productId) {
+    public ProductEntity findById(String productId) {
         return toProductEntity(productDao.selectById(productId));
     }
 
     @Override
-    public void deleteById(Long productId) {
+    public void deleteById(String productId) {
         transactionTemplate.execute(status -> {
             if (productDao.softDelete(productId) > 0) {
                 // feed 索引行同事务不可见化（market-feed-uv 票 03）：行不存在（从未通过审）时 0 行静默
@@ -102,7 +105,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public void markSold(Long productId) {
+    public void markSold(String productId) {
         transactionTemplate.execute(status -> {
             if (productDao.markSold(productId) > 0) {
                 syncFeedIndexState(productId, ProductStatusVO.SOLD);
@@ -112,7 +115,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public void relist(Long productId) {
+    public void relist(String productId) {
         transactionTemplate.execute(status -> {
             if (productDao.relist(productId) == 0) {
                 return null; // 条件 UPDATE 0 行由上层终态判定
@@ -131,7 +134,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean submitDraft(Long productId) {
+    public boolean submitDraft(String productId) {
         Boolean submitted = transactionTemplate.execute(status -> {
             boolean updated = productDao.submitDraft(productId) > 0;
             if (updated) {
@@ -147,7 +150,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean takeDown(Long productId) {
+    public boolean takeDown(String productId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean takenDown = productDao.takeDown(productId) > 0;
             if (takenDown) {
@@ -159,22 +162,22 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public List<Long> listExpiredOnSaleIds(LocalDateTime before, int limit) {
+    public List<String> listExpiredOnSaleIds(LocalDateTime before, int limit) {
         return productDao.selectExpiredOnSaleIds(before, limit);
     }
 
     @Override
-    public List<Long> listReviewTimeoutIds(LocalDateTime before, int limit) {
+    public List<String> listReviewTimeoutIds(LocalDateTime before, int limit) {
         return productDao.selectReviewTimeoutIds(before, limit);
     }
 
     @Override
-    public boolean withdraw(Long productId) {
+    public boolean withdraw(String productId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean withdrawn = productDao.withdraw(productId) > 0;
             if (withdrawn) {
                 // 退出待审（撤回回草稿箱）：在途工单出池停 DONE，防池中遗留指向非待审行的幽灵工单
-                reviewTaskPoolStore.close(ReviewTargetTypeVO.PRODUCT, String.valueOf(productId));
+                reviewTaskPoolStore.close(ReviewTargetTypeVO.PRODUCT, productId);
                 // 索引行同事务不可见化：行不存在（从未通过审，撤回的常态）时 0 行静默
                 syncFeedIndexState(productId, ProductStatusVO.DRAFT);
             }
@@ -183,7 +186,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean rejectToDraft(Long productId) {
+    public boolean rejectToDraft(String productId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = productDao.rejectToDraft(productId) > 0;
             if (updated) {
@@ -218,7 +221,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean updateOnSalePrice(Long productId, BigDecimal price) {
+    public boolean updateOnSalePrice(String productId, BigDecimal price) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = productDao.updateOnSalePrice(productId, price) > 0;
             if (updated) {
@@ -232,7 +235,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean reviewApproveById(Long productId) {
+    public boolean reviewApproveById(String productId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean approved = productDao.reviewApproveById(productId) > 0;
             if (approved) {
@@ -245,7 +248,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean reviewRejectById(Long productId) {
+    public boolean reviewRejectById(String productId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean rejected = productDao.reviewRejectById(productId) > 0;
             if (rejected) {
@@ -257,7 +260,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean lock(Long productId) {
+    public boolean lock(String productId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean locked = productDao.lock(productId) > 0;
             if (locked) {
@@ -268,7 +271,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean release(Long productId) {
+    public boolean release(String productId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean released = productDao.release(productId) > 0;
             if (released) {
@@ -281,7 +284,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean lockToSold(Long productId) {
+    public boolean lockToSold(String productId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean sold = productDao.lockToSold(productId) > 0;
             if (sold) {
@@ -329,22 +332,22 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean addFavorite(Long productId, String userId) {
+    public boolean addFavorite(String productId, String userId) {
         return productDao.insertFavorite(productId, userId) > 0;
     }
 
     @Override
-    public boolean removeFavorite(Long productId, String userId) {
+    public boolean removeFavorite(String productId, String userId) {
         return productDao.deleteFavorite(productId, userId) > 0;
     }
 
     @Override
-    public boolean isFavorited(Long productId, String userId) {
+    public boolean isFavorited(String productId, String userId) {
         return productDao.existsFavorite(productId, userId) > 0;
     }
 
     @Override
-    public long countFavorites(Long productId) {
+    public long countFavorites(String productId) {
         return productDao.countFavorites(productId);
     }
 
@@ -374,7 +377,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public void recordProductView(Long productId, String userId) {
+    public void recordProductView(String productId, String userId) {
         // 浏览计数（UV 口径）：入队即返回，窗口过后一组一个事务——明细表 INSERT IGNORE + viewed_at
         // 刷新 + 加速列 += 新增数。匿名访问落不了明细行（product_view_history 主键的一半是 user_id），
         // 按「INSERT 成功才算浏览」的口径不计入（商品语义变更：旧口径匿名也累加 PV）；
@@ -382,17 +385,17 @@ public class TradeRepository implements ITradeRepository {
         if (userId == null) {
             return;
         }
-        // 商品业务 ID 过渡期仍是数值（trade 域 String 化在 uuid-biz-id 票 05）：合并器键统一走字符串外观
-        viewMergeWriter.write(CountAction.PRODUCT_VIEW, String.valueOf(productId), userId);
+        // 商品业务 ID 已是 UUID 字符串（uuid-biz-id 票 05）：合并器键直传
+        viewMergeWriter.write(CountAction.PRODUCT_VIEW, productId, userId);
     }
 
     @Override
-    public List<ProductEntity> listByIds(List<Long> productIds) {
+    public List<ProductEntity> listByIds(List<String> productIds) {
         return productDao.selectByIds(productIds).stream().map(this::toProductEntity).toList();
     }
 
     @Override
-    public List<Long> selectViewedProductIds(String userId, List<Long> productIds) {
+    public List<String> selectViewedProductIds(String userId, List<String> productIds) {
         if (userId == null || productIds == null || productIds.isEmpty()) {
             return List.of();
         }
@@ -400,14 +403,14 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public List<Long> listIdsAfter(Long lastId, int limit) {
-        return productDao.selectIdsAfter(lastId, limit);
+    public List<String> listIdsAfter(String lastProductId, int limit) {
+        return productDao.selectIdsAfter(lastProductId, limit);
     }
 
     @Override
-    public void saveSearchSyncMessage(Long productId) {
+    public void saveSearchSyncMessage(String productId) {
         outboxMessageStore.save(Constants.SEARCH_SYNC_TOPIC,
-                new SearchSyncMessage(SearchEntityType.PRODUCT.name().toLowerCase(), String.valueOf(productId)));
+                new SearchSyncMessage(SearchEntityType.PRODUCT.name().toLowerCase(), productId));
     }
 
     // ---------- 计数合并器的落库方法：商品浏览（UV 口径，market-feed-uv 票 02） ----------
@@ -435,10 +438,8 @@ public class TradeRepository implements ITradeRepository {
      * <p><b>不再写主表列</b>：{@code product.view_count} 旧 PV 列随本票停写（读路径已换源
      * {@code product_view_count}），删列随收口票 06。
      */
-    public List<LikeState> flushViewGroup(String productIdKey, List<CountEvent> events) {
-        // 合并器键是字符串（uuid-biz-id）：商品业务 ID 过渡期仍是数值，这里解析回 long，
-        // 票 05 商品 ID 变字符串后本行连同 DAO 参数一起去掉
-        long productId = Long.parseLong(productIdKey);
+    public List<LikeState> flushViewGroup(String productId, List<CountEvent> events) {
+        // 合并器键即商品业务 ID 字符串（UUID，uuid-biz-id 票 05 起直传，过渡期的 parseLong 缝合已拆）
         return transactionTemplate.execute(status -> {
             List<String> userIds = distinctUserIds(events);
             int inserted = productDao.insertProductViewHistory(productId, userIds);
@@ -457,7 +458,7 @@ public class TradeRepository implements ITradeRepository {
      * 纯 UPDATE 不 upsert——行不存在的常态（从未通过审的待审/驳回/草稿/草稿软删）0 行静默，
      * 不在写路径凭空补行
      */
-    private void syncFeedIndexState(long productId, ProductStatusVO state) {
+    private void syncFeedIndexState(String productId, ProductStatusVO state) {
         productDao.updateFeedIndexState(productId, state.name());
     }
 
@@ -465,7 +466,7 @@ public class TradeRepository implements ITradeRepository {
      * feed 索引行热度键旁路 ±N（浏览没有取消语义，恒 +）：纯 UPDATE 不 upsert。命中 0 行 =
      * 索引行缺失（未过审商品被本人浏览、或存量异常），落 warn 交重建 job（票 06），不在写路径补行
      */
-    private void syncFeedIndexViewCount(long productId, int delta) {
+    private void syncFeedIndexViewCount(String productId, int delta) {
         if (productDao.updateFeedIndexViewCount(productId, delta) == 0) {
             log.warn("[TradeRepository] 商品浏览旁路落 0 行：索引行缺失（未过审商品的浏览或存量异常），交重建 job 兜底 productId={}", productId);
         }
@@ -480,22 +481,22 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public void saveOrder(ProductOrderEntity orderEntity) {
+        // 业务 ID 落库前发号（uuid-biz-id 票 05）：随行一次写入，不再自增同值回写
+        orderEntity.setOrderId(idGenerator.nextId());
         ProductOrderPO orderPO = toPO(orderEntity);
         productOrderDao.insert(orderPO);
-        productOrderDao.bindBizId(orderPO.getId());
-        orderEntity.setOrderId(orderPO.getId());
         // 创建事件：from_state 为 NULL（sql.md 口径），操作方恒买家
-        saveEvent(orderPO.getId(), "CREATED", null, orderPO.getState(),
+        saveEvent(orderPO.getProductOrderId(), "CREATED", null, orderPO.getState(),
                 orderPO.getBuyerId(), "BUYER");
     }
 
     @Override
-    public ProductOrderEntity findOrderById(Long orderId) {
+    public ProductOrderEntity findOrderById(String orderId) {
         return toOrderEntity(productOrderDao.selectById(orderId));
     }
 
     @Override
-    public boolean payOrderById(Long orderId, String buyerId) {
+    public boolean payOrderById(String orderId, String buyerId) {
         boolean updated = productOrderDao.payById(orderId, buyerId) > 0;
         if (updated) {
             saveEvent(orderId, "PAID", "PENDING_PAYMENT", "PAID", buyerId, "BUYER");
@@ -504,7 +505,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean markDeliveredOrderById(Long orderId, String sellerId) {
+    public boolean markDeliveredOrderById(String orderId, String sellerId) {
         boolean updated = productOrderDao.markDeliveredById(orderId, sellerId) > 0;
         if (updated) {
             saveEvent(orderId, "DELIVERED", "PAID", "DELIVERED", sellerId, "SELLER");
@@ -513,7 +514,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean confirmOrderById(Long orderId, String buyerId) {
+    public boolean confirmOrderById(String orderId, String buyerId) {
         boolean updated = productOrderDao.confirmById(orderId, buyerId) > 0;
         if (updated) {
             saveEvent(orderId, "COMPLETED", "DELIVERED", "COMPLETED", buyerId, "BUYER");
@@ -522,7 +523,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean cancelOrderById(Long orderId, String buyerId) {
+    public boolean cancelOrderById(String orderId, String buyerId) {
         // 取消允许 PENDING_PAYMENT/PAID 两个前态，前态要落事件必须在 UPDATE 之前读（更新后该行已是新态）
         ProductOrderPO prior = productOrderDao.selectById(orderId);
         String fromState = prior == null ? null : prior.getState();
@@ -534,7 +535,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean cancelPendingPaymentOrder(Long orderId) {
+    public boolean cancelPendingPaymentOrder(String orderId) {
         boolean updated = productOrderDao.cancelPendingPayment(orderId) > 0;
         if (updated) {
             saveEvent(orderId, "CANCELLED", "PENDING_PAYMENT", "CANCELLED", null, "SYSTEM", "PAY_TIMEOUT");
@@ -563,17 +564,17 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public void schedulePayTimeout(Long orderId, LocalDateTime actionTime) {
+    public void schedulePayTimeout(String orderId, LocalDateTime actionTime) {
         // 业务事务内直插超时任务行（内嵌超时中心，注册 outbox 已删）：与业务写同一条连接同一事务，
         // 回滚即无行、提交即被扫描可见；同键重入的三分支幂等（新插入/在途不改期/终态复活）在仓储内裁决
         timeoutRepository.register(TimeoutTaskEntity.newWaiting(
-                Constants.PRODUCT_ORDER_PAY_TIMEOUT, String.valueOf(orderId), actionTime, LocalDateTime.now()));
+                Constants.PRODUCT_ORDER_PAY_TIMEOUT, orderId, actionTime, LocalDateTime.now()));
     }
 
     // ---------- 跨商品与订单的原子用例 ----------
 
     @Override
-    public Long createOrderWithLock(ProductOrderEntity orderEntity, Long productId, int payTimeoutMinutes) {
+    public String createOrderWithLock(ProductOrderEntity orderEntity, String productId, int payTimeoutMinutes) {
         transactionTemplate.execute(status -> {
             saveOrder(orderEntity);
             if (!lock(productId)) {
@@ -590,7 +591,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean payOrderWithSearchSync(Long orderId, String buyerId) {
+    public boolean payOrderWithSearchSync(String orderId, String buyerId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (!payOrderById(orderId, buyerId)) {
                 return false;
@@ -602,13 +603,13 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean confirmOrderWithSearchSync(Long orderId, String buyerId) {
+    public boolean confirmOrderWithSearchSync(String orderId, String buyerId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (!confirmOrderById(orderId, buyerId)) {
                 return false;
             }
             // 确认收货即交易完成：商品 LOCKED → SOLD（幂等，0 行无妨），落搜索同步消息保持文档不存在
-            Long productId = findOrderById(orderId).getProductId();
+            String productId = findOrderById(orderId).getProductId();
             lockToSold(productId);
             saveSearchSyncMessage(productId);
             return true;
@@ -616,12 +617,12 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean cancelOrderWithSearchSync(Long orderId, String buyerId) {
+    public boolean cancelOrderWithSearchSync(String orderId, String buyerId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (!cancelOrderById(orderId, buyerId)) {
                 return false;
             }
-            Long productId = findOrderById(orderId).getProductId();
+            String productId = findOrderById(orderId).getProductId();
             // 商品锁定释放回在售，落搜索同步消息（重新可搜）
             if (!release(productId)) {
                 // 商品已被卖家软删/其他终态：release 0 行无妨，同步消息兜底删除/幂等
@@ -633,12 +634,12 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean cancelPendingPaymentWithSearchSync(Long orderId) {
+    public boolean cancelPendingPaymentWithSearchSync(String orderId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (!cancelPendingPaymentOrder(orderId)) {
                 return false;
             }
-            Long productId = findOrderById(orderId).getProductId();
+            String productId = findOrderById(orderId).getProductId();
             release(productId);
             saveSearchSyncMessage(productId);
             return true;
@@ -648,7 +649,7 @@ public class TradeRepository implements ITradeRepository {
     // ---------- 商品状态变更 + 搜索同步 ----------
 
     @Override
-    public boolean takeDownWithSearchSync(Long productId) {
+    public boolean takeDownWithSearchSync(String productId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (!takeDown(productId)) {
                 return false;
@@ -672,7 +673,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public void reviewApproveWithSearchSync(Long productId) {
+    public void reviewApproveWithSearchSync(String productId) {
         transactionTemplate.execute(status -> {
             if (!reviewApproveById(productId)) {
                 // 0 行即抛，在事务内回滚（异常点与改造前一致，不在域内抛）
@@ -685,7 +686,7 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public void deleteWithSearchSync(Long productId, boolean publiclyVisible) {
+    public void deleteWithSearchSync(String productId, boolean publiclyVisible) {
         transactionTemplate.execute(status -> {
             deleteById(productId);
             // 在售商品对外可见过，软删后需同步删除搜索文档；草稿从未对外可见，无需同步
@@ -693,13 +694,13 @@ public class TradeRepository implements ITradeRepository {
                 saveSearchSyncMessage(productId);
             }
             // 待审商品可被卖家删除：退出待审同事务出池（其余状态无在途工单，幂等 0 行无害）
-            reviewTaskPoolStore.close(ReviewTargetTypeVO.PRODUCT, String.valueOf(productId));
+            reviewTaskPoolStore.close(ReviewTargetTypeVO.PRODUCT, productId);
             return null;
         });
     }
 
     @Override
-    public void markSoldWithSearchSync(Long productId) {
+    public void markSoldWithSearchSync(String productId) {
         transactionTemplate.execute(status -> {
             markSold(productId);
             // 售出后商品退出搜索结果，落搜索同步消息（消费方删除 ES 文档）
@@ -714,9 +715,9 @@ public class TradeRepository implements ITradeRepository {
      * 商品入池开单（须处于状态迁移的同事务内）：读回刚翻转为 PENDING_REVIEW 的行的
      * 轮次 / 进入待审时刻 / 作者，交 ReviewTaskPoolStore 幂等开单（uk_target_round 吸收重复）
      */
-    private void enterPoolForPendingReview(Long productId) {
+    private void enterPoolForPendingReview(String productId) {
         ProductPO pending = productDao.selectById(productId);
-        reviewTaskPoolStore.enter(ReviewTargetTypeVO.PRODUCT, String.valueOf(productId),
+        reviewTaskPoolStore.enter(ReviewTargetTypeVO.PRODUCT, productId,
                 pending.getReviewRound() == null ? 1 : pending.getReviewRound(),
                 pending.getUserId(), pending.getReviewEnteredAt());
     }
@@ -858,12 +859,12 @@ public class TradeRepository implements ITradeRepository {
     }
 
     /** 订单状态流转事件落表（与条件 UPDATE 同事务，只插入；from_state 为 NULL 表示创建事件） */
-    private void saveEvent(Long orderId, String eventType, String fromState, String toState,
+    private void saveEvent(String orderId, String eventType, String fromState, String toState,
                            String actorId, String actorRole) {
         saveEvent(orderId, eventType, fromState, toState, actorId, actorRole, null);
     }
 
-    private void saveEvent(Long orderId, String eventType, String fromState, String toState,
+    private void saveEvent(String orderId, String eventType, String fromState, String toState,
                            String actorId, String actorRole, String reasonType) {
         LocalDateTime now = LocalDateTime.now();
         ProductOrderEventPO eventPO = new ProductOrderEventPO();

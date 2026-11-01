@@ -14,7 +14,6 @@ import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -28,8 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("商品 feed 索引全量重建：严格一致 / 缺行与漂移修复 / 计数校准 / 幂等")
 class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
 
-    /** 夹具业务 ID 序列：同一用例内多次直插不撞 uk_product_id */
-    private static final AtomicLong SEQ = new AtomicLong();
+    
 
     @Autowired
     private MarketFeedIndexRebuildJob rebuildJob;
@@ -45,29 +43,29 @@ class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     void 重建后索引与源表严格一致且修复缺行漂移() {
         // 真实链路四态：通过（有审批流水）、通过后软删（有行的不可见态）、从未通过审（不该有行）、
         // 存量在售（直插 ON_SALE、无审批流水，feed_time 取 create_time 兜底）
-        long approvedId = insertProduct("PENDING_REVIEW", "10.00");
+        String approvedId = insertProduct("PENDING_REVIEW", "10.00");
         approve(approvedId);
-        long deletedId = insertProduct("PENDING_REVIEW", "20.00");
+        String deletedId = insertProduct("PENDING_REVIEW", "20.00");
         approve(deletedId);
         tradeRepository.deleteById(deletedId); // 通过后软删：索引行保留、快照翻 DELETED
-        long pendingId = insertProduct("PENDING_REVIEW", "30.00");
-        long legacyId = insertLegacyOnSaleProduct("40.00");
+        String pendingId = insertProduct("PENDING_REVIEW", "30.00");
+        String legacyId = insertLegacyOnSaleProduct("40.00");
 
         // 缺行边角：索引行被删后浏览——旁路 UPDATE 命中 0 行、窄表照涨；再把窄表直改成 99 制造漂移
-        long missingRowId = insertProduct("PENDING_REVIEW", "50.00");
+        String missingRowId = insertProduct("PENDING_REVIEW", "50.00");
         approve(missingRowId);
         jdbcTemplate.update("DELETE FROM product_feed_index WHERE product_id = ?", missingRowId);
         flushViews(missingRowId, "u301");
         jdbcTemplate.update("UPDATE product_view_count SET view_count = 99 WHERE product_id = ?", missingRowId);
 
         // 过审前被浏览：明细与窄表已记、索引行彼时不存在（0 行 warn 交重建）——重建把这段漏计追平
-        long preViewId = insertProduct("PENDING_REVIEW", "60.00");
+        String preViewId = insertProduct("PENDING_REVIEW", "60.00");
         flushViews(preViewId, "u302");
         approve(preViewId);
         assertThat(indexViewCountOf(preViewId)).as("过审前浏览旁路命中 0 行，索引热度键未计").isZero();
 
         // 孤儿计数行：无浏览明细却建了行（懒建行口径下不该存在）
-        long orphanId = insertProduct("PENDING_REVIEW", "70.00");
+        String orphanId = insertProduct("PENDING_REVIEW", "70.00");
         approve(orphanId);
         jdbcTemplate.update("INSERT INTO product_view_count (product_id, view_count, create_time, update_time) "
                 + "VALUES (?, 7, NOW(), NOW())", orphanId);
@@ -114,13 +112,13 @@ class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     @Test
     @DisplayName("浏览加速列校准为明细行数：漂移刷回、缺行补建、孤儿清掉，索引热度键同步追平")
     void 浏览加速列校准为明细行数并清孤儿补缺行() {
-        long viewedId = insertProduct("PENDING_REVIEW", "10.00");
+        String viewedId = insertProduct("PENDING_REVIEW", "10.00");
         approve(viewedId);
         flushViews(viewedId, "u401", "u402", "u401"); // 重复浏览：明细只刷 viewed_at，UV 不加数
-        long lostRowId = insertProduct("PENDING_REVIEW", "20.00");
+        String lostRowId = insertProduct("PENDING_REVIEW", "20.00");
         approve(lostRowId);
         flushViews(lostRowId, "u401");
-        long orphanId = insertProduct("PENDING_REVIEW", "30.00");
+        String orphanId = insertProduct("PENDING_REVIEW", "30.00");
         approve(orphanId); // 无浏览，人为插计数行
 
         // 漂移：直接改加速列（明细行数的真值是 2）
@@ -146,9 +144,9 @@ class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 夹具与可观察状态 ----------
 
-    /** 直插一行指定态商品（存量形态），返回业务 ID */
-    private long insertProduct(String state, String price) {
-        long productId = 910_000L + SEQ.incrementAndGet();
+    /** 直插一行指定态商品（存量形态；uuid-biz-id 票 05 起业务 id 直插 UUID，应用侧发号），返回业务 ID */
+    private String insertProduct(String state, String price) {
+        String productId = java.util.UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
                         + "trade_location, category, state, review_round, create_time, update_time, expire_at) "
                         + "VALUES (?, 999, '重建夹具', '夹具描述', ?, '驿站', 'BOOKS', ?, 1, NOW(), NOW(), "
@@ -158,8 +156,8 @@ class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 直插一行存量 ON_SALE 商品（绕过审核链路：无审批流水），create_time 拨回两天前供 feed_time 兜底断言 */
-    private long insertLegacyOnSaleProduct(String price) {
-        long productId = 910_000L + SEQ.incrementAndGet();
+    private String insertLegacyOnSaleProduct(String price) {
+        String productId = java.util.UUID.randomUUID().toString();
         Timestamp twoDaysAgo = Timestamp.valueOf(LocalDateTime.now().minusDays(2));
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
                         + "trade_location, category, state, review_round, create_time, update_time, expire_at) "
@@ -174,7 +172,7 @@ class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
      * 真实链路里「审核记录」与「索引 feed_time」出自同一事件（秒级精度下可能跨秒），夹具按索引落下的
      * 时刻补记录，让「feed_time = MAX(APPROVE) 兜底 create_time」这条投影口径在数据上严格成立
      */
-    private void approve(long productId) {
+    private void approve(String productId) {
         assertThat(tradeRepository.reviewApproveById(productId)).as("待审商品通过").isTrue();
         LocalDateTime feedTime = queryFeedTime(productId);
         jdbcTemplate.update("INSERT INTO content_review (target_type, target_id, author_id, review_round, "
@@ -184,45 +182,45 @@ class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 一组浏览落库（同步合并，等价于合并窗口过后的三步 + 索引旁路） */
-    private void flushViews(long productId, String... userIds) {
+    private void flushViews(String productId, String... userIds) {
         List<CountEvent> events = java.util.Arrays.stream(userIds)
-                .map(userId -> new CountEvent(CountAction.PRODUCT_VIEW, String.valueOf(productId), userId))
+                .map(userId -> new CountEvent(CountAction.PRODUCT_VIEW, productId, userId))
                 .toList();
-        flushHandler.flushGroup(CountAction.PRODUCT_VIEW, String.valueOf(productId), events);
+        flushHandler.flushGroup(CountAction.PRODUCT_VIEW, productId, events);
     }
 
     /** 索引行整行（无行 = null） */
-    private Map<String, Object> feedRow(long productId) {
+    private Map<String, Object> feedRow(String productId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT state, feed_time, price, view_count FROM product_feed_index WHERE product_id = ?", productId);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    private String feedState(long productId) {
+    private String feedState(String productId) {
         Map<String, Object> row = feedRow(productId);
         return row == null ? null : (String) row.get("state");
     }
 
-    private LocalDateTime queryFeedTime(long productId) {
+    private LocalDateTime queryFeedTime(String productId) {
         return ((LocalDateTime) feedRow(productId).get("feed_time"));
     }
 
-    private LocalDateTime queryCreateTime(long productId) {
+    private LocalDateTime queryCreateTime(String productId) {
         return jdbcTemplate.queryForObject(
                 "SELECT create_time FROM product WHERE product_id = ?", Timestamp.class, productId).toLocalDateTime();
     }
 
-    private int indexViewCountOf(long productId) {
+    private int indexViewCountOf(String productId) {
         return ((Number) feedRow(productId).get("view_count")).intValue();
     }
 
-    private int acceleratedCountOf(long productId) {
+    private int acceleratedCountOf(String productId) {
         List<Integer> rows = jdbcTemplate.queryForList(
                 "SELECT view_count FROM product_view_count WHERE product_id = ?", Integer.class, productId);
         return rows.isEmpty() ? 0 : rows.get(0);
     }
 
-    private boolean countRowExists(long productId) {
+    private boolean countRowExists(String productId) {
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM product_view_count WHERE product_id = ?", Long.class, productId);
         return count != null && count > 0;
@@ -230,7 +228,7 @@ class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
 
     /** 逐行扫一致性破坏者：state ≠ product.state、price ≠ product.price、view_count ≠ 窄表（无行 = 0），
      *  或 feed_time ≠ 最近通过（兜底 create_time）的索引行 */
-    private List<Long> inconsistentIndexProductIds() {
+    private List<String> inconsistentIndexProductIds() {
         return jdbcTemplate.queryForList(
                 "SELECT fi.product_id FROM product_feed_index fi "
                         + "JOIN product p ON p.product_id = fi.product_id "
@@ -239,33 +237,33 @@ class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
                         + "OR fi.view_count <> COALESCE(pvc.view_count, 0) "
                         + "OR fi.feed_time <> COALESCE((SELECT MAX(cr.create_time) FROM content_review cr "
                         + "  WHERE cr.target_type = 'PRODUCT' AND cr.target_id = fi.product_id "
-                        + "    AND cr.action = 'APPROVE'), p.create_time)", Long.class);
+                        + "    AND cr.action = 'APPROVE'), p.create_time)", String.class);
     }
 
     /** 覆盖破坏者：该有行而没有行的商品（在售 ∪ 通过过审） */
-    private List<Long> productsWithoutIndexRow() {
+    private List<String> productsWithoutIndexRow() {
         return jdbcTemplate.queryForList(
                 "SELECT p.product_id FROM product p "
                         + "LEFT JOIN product_feed_index fi ON fi.product_id = p.product_id "
                         + "WHERE fi.product_id IS NULL AND (p.state = 'ON_SALE' "
                         + "  OR EXISTS (SELECT 1 FROM content_review cr WHERE cr.target_type = 'PRODUCT' "
-                        + "       AND cr.target_id = p.product_id AND cr.action = 'APPROVE'))", Long.class);
+                        + "       AND cr.target_id = p.product_id AND cr.action = 'APPROVE'))", String.class);
     }
 
     /** 投影破坏者：view_count ≠ 明细行数的加速列行 */
-    private List<Long> viewCountRowsMismatchingHistory() {
+    private List<String> viewCountRowsMismatchingHistory() {
         return jdbcTemplate.queryForList(
                 "SELECT vc.product_id FROM product_view_count vc "
                         + "LEFT JOIN (SELECT product_id, COUNT(*) AS cnt FROM product_view_history GROUP BY product_id) h "
                         + "  ON h.product_id = vc.product_id "
-                        + "WHERE vc.view_count <> COALESCE(h.cnt, 0)", Long.class);
+                        + "WHERE vc.view_count <> COALESCE(h.cnt, 0)", String.class);
     }
 
     /** 覆盖破坏者：有浏览明细却没有计数行的商品 */
-    private List<Long> historyProductsWithoutCountRow() {
+    private List<String> historyProductsWithoutCountRow() {
         return jdbcTemplate.queryForList(
                 "SELECT DISTINCT h.product_id FROM product_view_history h "
                         + "LEFT JOIN product_view_count vc ON vc.product_id = h.product_id "
-                        + "WHERE vc.product_id IS NULL", Long.class);
+                        + "WHERE vc.product_id IS NULL", String.class);
     }
 }

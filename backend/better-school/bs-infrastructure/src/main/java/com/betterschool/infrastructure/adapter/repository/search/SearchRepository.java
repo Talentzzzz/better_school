@@ -135,15 +135,15 @@ public class SearchRepository implements ISearchRepository {
     }
 
     @Override
-    public SearchPageVO<Long> searchProducts(String keyword, int page, int pageSize) {
+    public SearchPageVO<String> searchProducts(String keyword, int page, int pageSize) {
         return search("bs_product", List.of("title", "description", "tradeLocation"),
-                PUBLIC_PRODUCT_STATUSES, keyword, page, pageSize, Long::valueOf);
+                PUBLIC_PRODUCT_STATUSES, keyword, page, pageSize, Function.identity());
     }
 
     @Override
-    public SearchPageVO<Long> searchErrands(String keyword, int page, int pageSize) {
+    public SearchPageVO<String> searchErrands(String keyword, int page, int pageSize) {
         return search("bs_errand", List.of("description", "pickupLocation", "deliveryLocation"),
-                PUBLIC_ERRAND_STATUSES, keyword, page, pageSize, Long::valueOf);
+                PUBLIC_ERRAND_STATUSES, keyword, page, pageSize, Function.identity());
     }
 
     @Override
@@ -228,7 +228,7 @@ public class SearchRepository implements ISearchRepository {
      * 文档序列化用 Spring ObjectMapper（JavaTimeModule，createdAt 输出 ISO 字符串，ES date 默认格式可解析），
      * 经 JsonData 走原始 JSON 通道，避免 client 内部 mapper 序列化 POJO 的日期格式差异
      */
-    // 文档 _id 类型随实体（post/product/errand 数值 id；user 是 UUID 字符串）
+    // 文档 _id 类型随实体：业务 id 统一是 UUID 字符串（uuid-biz-id 票 05）
     private <T, I> void bulkUpsert(String indexName, List<T> docs, java.util.function.Function<T, I> idGetter) {
         if (docs.isEmpty()) {
             return;
@@ -261,12 +261,12 @@ public class SearchRepository implements ISearchRepository {
     }
 
     @Override
-    public void deleteProductDoc(Long productId) {
+    public void deleteProductDoc(String productId) {
         deleteDoc("bs_product", productId);
     }
 
     @Override
-    public void deleteErrandDoc(Long orderId) {
+    public void deleteErrandDoc(String orderId) {
         deleteDoc("bs_errand", orderId);
     }
 

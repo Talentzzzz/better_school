@@ -39,10 +39,10 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
         // 改文案重发：商品进待审
         JsonNode productRetry = postJson("/api/trade/products", productBody("出售九成新吉他"), seller);
         assertSuccess(productRetry, "改文案重发商品");
-        assertThat(productStatus(productRetry.path("data").asLong())).isEqualTo("PENDING_REVIEW");
+        assertThat(productStatus(productRetry.path("data").asText())).isEqualTo("PENDING_REVIEW");
 
         // 草稿提交命中：停留草稿，可改后重新提交
-        long draftId = saveProductDraft(seller, "九成新台灯");
+        String draftId = saveProductDraft(seller, "九成新台灯");
         updateProductDraft(seller, draftId, "九成新台灯", "可代考复习资料");
         JsonNode draftHit = postJson("/api/trade/products/" + draftId + "/submit", null, seller);
         assertThat(draftHit.path("code").asText()).as("草稿提交初筛命中应失败：%s", draftHit).isEqualTo("500");
@@ -58,7 +58,7 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
     @Test
     void 商品通过链路_发布待审看图裁决通过对外可见并通知() {
         Session seller = registerAndLogin("13800009003", "卖家2");
-        long productId = createProduct(seller, "九成新吉他", List.of(
+        String productId = createProduct(seller, "九成新吉他", List.of(
                 "http://minio/bs-files/it/f-1.jpg", "http://minio/bs-files/it/f-2.jpg"));
         Session admin = adminSession();
 
@@ -85,7 +85,7 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
     void 商品拒绝链路_理由必填_不可见含理由通知_转草稿重提两轮记录不冲突() {
         Session seller = registerAndLogin("13800009004", "卖家3");
         Session other = registerAndLogin("13800009005", "路人1");
-        long productId = createProduct(seller, "九成新滑板", List.of());
+        String productId = createProduct(seller, "九成新滑板", List.of());
         Session admin = adminSession();
 
         // 理由必填
@@ -132,7 +132,7 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
         Session seller = registerAndLogin("13800009011", "卖家4");
 
         // 商品待审撤回 → 草稿可编辑 → 删除
-        long productId = createProduct(seller, "九成新台灯", List.of());
+        String productId = createProduct(seller, "九成新台灯", List.of());
         assertSuccess(postJson("/api/trade/products/" + productId + "/withdraw", null, seller), "商品待审撤回");
         assertThat(productStatus(productId)).as("撤回进草稿箱").isEqualTo("DRAFT");
         updateProductDraft(seller, productId, "九五新护眼台灯", "撤回后改了文案");
@@ -140,7 +140,7 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
         assertThat(productStatus(productId)).isEqualTo("DELETED");
 
         // 商品在售下架 → 草稿 → 重提回待审
-        long onSaleId = createApprovedProduct(seller, "九成新吉他");
+        String onSaleId = createApprovedProduct(seller, "九成新吉他");
         assertSuccess(postJson("/api/trade/products/" + onSaleId + "/takedown", null, seller), "在售商品下架");
         assertThat(productStatus(onSaleId)).as("下架汇入草稿箱").isEqualTo("DRAFT");
         updateProductDraft(seller, onSaleId, "九五新单板吉他", "下架后改了文案");
@@ -157,7 +157,7 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
         Session admin = adminSession();
 
         // 商品：改价立即生效不进审核
-        long productId = createProduct(seller, "九成新台灯", List.of());
+        String productId = createProduct(seller, "九成新台灯", List.of());
         approveProduct(admin, productId);
         assertSuccess(putJson("/api/trade/products/" + productId, Map.of("price", 29.9), seller), "仅改价");
         assertThat(productStatus(productId)).as("改价状态不变").isEqualTo("ON_SALE");
@@ -184,7 +184,7 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
     @Test
     void 下架到期扫描_商品进草稿() {
         Session seller = registerAndLogin("13800009016", "卖家6");
-        long productId = createApprovedProduct(seller, "九成新台灯");
+        String productId = createApprovedProduct(seller, "九成新台灯");
 
         jdbcTemplate.update("UPDATE product SET expire_at = DATE_SUB(NOW(), INTERVAL 1 HOUR) WHERE product_id = ?", productId);
         tradeExpireScanJob.scan(null);
@@ -203,7 +203,7 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
         jdbcTemplate.update("UPDATE bs_user SET role = 'ADMIN' WHERE user_id = ?", admin.userId());
         jdbcTemplate.update("UPDATE bs_user SET role = 'AUDITOR' WHERE user_id = ?", auditor.userId());
 
-        long productId = createProduct(seller, "九成新滑板", List.of());
+        String productId = createProduct(seller, "九成新滑板", List.of());
         jdbcTemplate.update("UPDATE product SET review_entered_at = DATE_SUB(NOW(), INTERVAL 25 HOUR) WHERE product_id = ?",
                 productId);
 
@@ -225,10 +225,10 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
         Session seller = registerAndLogin("13800009030", "卖家8");
         Session buyer = registerAndLogin("13800009031", "买家1");
         Session admin = adminSession();
-        long productId = createApprovedProduct(seller, "九成新台灯");
+        String productId = createApprovedProduct(seller, "九成新台灯");
 
         // 下单 → 支付 → 交付 → 确认：四次流转各落一条事件
-        long orderId = createProductOrder(buyer, productId);
+        String orderId = createProductOrder(buyer, productId);
         assertThat(eventTypesOf(orderId)).as("下单只落创建事件").containsExactly("CREATED");
         assertThat(eventFromStateOf(orderId, "CREATED")).as("创建事件无前态").isNull();
         assertThat(eventRowOf(orderId, "CREATED"))
@@ -262,7 +262,7 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
                 .containsEntry("actor_role", "BUYER");
 
         // 另一单走取消：事件同样落表，且原因类型与操作方与正常链路可区分
-        long cancelledOrderId = createProductOrder(buyer, createApprovedProduct(seller, "九成新耳机"));
+        String cancelledOrderId = createProductOrder(buyer, createApprovedProduct(seller, "九成新耳机"));
         assertSuccess(postJson("/api/trade/orders/" + cancelledOrderId + "/cancel", null, buyer), "买家取消");
         assertThat(eventTypesOf(cancelledOrderId))
                 .as("取消单只落创建 + 取消").containsExactly("CREATED", "CANCELLED");
@@ -286,7 +286,7 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
                 "pickupLocation", "菜鸟驿站", "deliveryLocation", "6号楼楼下",
                 "reward", 10, "timeLimit", "HOURS_2"), user);
         assertSuccess(create, "发布跑腿");
-        long orderId = create.path("data").asLong();
+        String orderId = create.path("data").asText();
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, user), "跑腿支付");
         assertThat(errandStatusOf(orderId)).isEqualTo("PENDING_REVIEW");
         assertSuccess(postJson("/api/admin/reviews/decide",
@@ -294,7 +294,7 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
         assertThat(errandStatusOf(orderId)).isEqualTo("PUBLISHED");
         JsonNode publicOrders = getJson("/api/errand/orders?page=1&pageSize=10", null);
         assertThat(StreamSupport.stream(publicOrders.path("data").path("list").spliterator(), false)
-                .map(node -> node.path("orderId").asLong())).contains(orderId);
+                .map(node -> node.path("orderId").asText())).contains(orderId);
 
         // 帖子：先审后发（票 01）——正常内容落库即待审，人工通过后公开；命中敏感词报错不落库
         String postId = publishPost(user, "正常帖子内容");
@@ -350,7 +350,7 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
                 Map.entry("category", "BOOKS"));
     }
 
-    private long createProduct(Session seller, String title, List<String> images) {
+    private String createProduct(Session seller, String title, List<String> images) {
         JsonNode response = postJson("/api/trade/products", Map.ofEntries(
                 Map.entry("title", title),
                 Map.entry("description", "自用闲置，九成新"),
@@ -359,30 +359,30 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
                 Map.entry("tradeLocation", "图书馆门口"),
                 Map.entry("category", "BOOKS")), seller);
         assertSuccess(response, "发布商品");
-        long productId = response.path("data").asLong();
+        String productId = response.path("data").asText();
         assertThat(productStatus(productId)).as("先审后售：提交即待审").isEqualTo("PENDING_REVIEW");
         return productId;
     }
 
-    private long createApprovedProduct(Session seller, String title) {
-        long productId = createProduct(seller, title, List.of());
+    private String createApprovedProduct(Session seller, String title) {
+        String productId = createProduct(seller, title, List.of());
         approveProduct(adminSession(), productId);
         return productId;
     }
 
-    private void approveProduct(Session admin, long productId) {
+    private void approveProduct(Session admin, String productId) {
         assertSuccess(postJson("/api/admin/reviews/decide",
                 Map.of("targetType", "PRODUCT", "targetId", productId, "approve", true), admin), "商品裁决通过");
         assertThat(productStatus(productId)).isEqualTo("ON_SALE");
     }
 
-    private long saveProductDraft(Session seller, String title) {
+    private String saveProductDraft(Session seller, String title) {
         JsonNode save = postJson("/api/trade/products/draft", Map.of("title", title), seller);
         assertSuccess(save, "保存商品草稿");
-        return save.path("data").asLong();
+        return save.path("data").asText();
     }
 
-    private void updateProductDraft(Session seller, long productId, String title, String description) {
+    private void updateProductDraft(Session seller, String productId, String title, String description) {
         assertSuccess(putJson("/api/trade/products/" + productId + "/draft", Map.ofEntries(
                 Map.entry("title", title),
                 Map.entry("description", description),
@@ -393,11 +393,11 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 审核队列中指定目标的条目（断言队列带出内容/配图用） */
-    private JsonNode queueItemOf(String targetType, long targetId, Session admin) {
+    private JsonNode queueItemOf(String targetType, String targetId, Session admin) {
         JsonNode queue = getJson("/api/moderation/queue?targetType=" + targetType + "&page=1&pageSize=50", admin);
         assertSuccess(queue, "审核队列");
         return StreamSupport.stream(queue.path("data").path("list").spliterator(), false)
-                .filter(node -> node.path("targetId").asLong() == targetId)
+                .filter(node -> node.path("targetId").asText().equals(targetId))
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("目标 %s 不在 %s 审核队列中：%s".formatted(targetId, targetType, queue)));
     }
@@ -408,20 +408,20 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
                 String.class, userId, type, "%" + keyword + "%");
     }
 
-    private long countReviewReminders(String userId, List<Long> targetIds) {
+    private long countReviewReminders(String userId, List<String> targetIds) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM notification WHERE user_id = ? AND type = 'ORDER_EVENT' "
                         + "AND content LIKE '%24 小时%' AND ref_id IN ("
-                        + targetIds.stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse("0") + ")",
+                        + targetIds.stream().map(id -> "'" + id + "'").reduce((a, b) -> a + "," + b).orElse("''") + ")",
                 Integer.class, userId);
         return count == null ? 0 : count;
     }
 
-    private String productStatus(long productId) {
+    private String productStatus(String productId) {
         return jdbcTemplate.queryForObject("SELECT state FROM product WHERE product_id = ?", String.class, productId);
     }
 
-    private String errandStatusOf(long orderId) {
+    private String errandStatusOf(String orderId) {
         return jdbcTemplate.queryForObject("SELECT state FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }
 
@@ -430,20 +430,20 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 买家对已上架商品下单，返回商品订单业务 ID */
-    private long createProductOrder(Session buyer, long productId) {
+    private String createProductOrder(Session buyer, String productId) {
         JsonNode response = postJson("/api/trade/orders?productId=" + productId, null, buyer);
         assertSuccess(response, "商品下单");
-        return response.path("data").asLong();
+        return response.path("data").asText();
     }
 
     /** 该商品订单的事件流水类型序（id 递增即状态流转顺序） */
-    private List<String> eventTypesOf(long orderId) {
+    private List<String> eventTypesOf(String orderId) {
         return jdbcTemplate.queryForList(
                 "SELECT event_type FROM product_order_event WHERE order_id = ? ORDER BY id", String.class, orderId);
     }
 
     /** 某类事件的行（一条链路里每类事件至多一条；取首条足够） */
-    private Map<String, Object> eventRowOf(long orderId, String eventType) {
+    private Map<String, Object> eventRowOf(String orderId, String eventType) {
         return jdbcTemplate.queryForMap(
                 "SELECT from_state, to_state, actor_id, actor_role, reason_type, reason "
                         + "FROM product_order_event WHERE order_id = ? AND event_type = ? ORDER BY id LIMIT 1",
@@ -451,7 +451,7 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 事件前态；无该事件行或该列为 NULL 都返回 null（创建事件即 NULL 前态） */
-    private String eventFromStateOf(long orderId, String eventType) {
+    private String eventFromStateOf(String orderId, String eventType) {
         List<String> states = jdbcTemplate.queryForList(
                 "SELECT from_state FROM product_order_event WHERE order_id = ? AND event_type = ? ORDER BY id LIMIT 1",
                 String.class, orderId, eventType);
@@ -463,8 +463,8 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
         return count == null ? 0 : count;
     }
 
-    private List<Long> productIdsOf(JsonNode response) {
+    private List<String> productIdsOf(JsonNode response) {
         return StreamSupport.stream(response.path("data").path("list").spliterator(), false)
-                .map(node -> node.path("productId").asLong()).toList();
+                .map(node -> node.path("productId").asText()).toList();
     }
 }

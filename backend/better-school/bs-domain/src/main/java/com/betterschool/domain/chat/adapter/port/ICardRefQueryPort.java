@@ -14,9 +14,9 @@ public interface ICardRefQueryPort {
     /** 帖子状态；不存在返回 null（走 post 域自己的读路径，详情缓存口径与 chat 之外一致） */
     PostStatusVO findPostStatus(String postId);
 
-    /** 商品状态；不存在返回 null */
-    ProductStatusVO findProductStatus(Long productId);
+    /** 商品状态；不存在返回 null（业务 id 是 UUID 字符串） */
+    ProductStatusVO findProductStatus(String productId);
 
-    /** 跑腿订单状态；不存在返回 null */
-    ErrandStatusVO findErrandStatus(Long errandId);
+    /** 跑腿订单状态；不存在返回 null（业务 id 是 UUID 字符串） */
+    ErrandStatusVO findErrandStatus(String errandId);
 }

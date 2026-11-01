@@ -15,7 +15,6 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -37,13 +36,12 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     @Autowired
     private ICountFlushHandler flushHandler;
 
-    /** 夹具业务 ID 序列：同一用例内多次直插不撞主表唯一键 */
-    private static final AtomicLong SEQ = new AtomicLong();
+    
 
     @Test
     @DisplayName("审核通过诞生索引行（price 快照随行）；重提再通过 ODKU 刷新 feed_time 与 price")
     void 审核通过诞生索引行_重提再通过刷新feed_time与价格() {
-        long productId = insertProduct("PENDING_REVIEW", "10.00");
+        String productId = insertProduct("PENDING_REVIEW", "10.00");
 
         LocalDateTime firstApproveAt = LocalDateTime.now();
         assertThat(tradeRepository.reviewApproveById(productId)).as("待审商品通过").isTrue();
@@ -85,7 +83,7 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     @DisplayName("状态快照逐点镜像七态流转；从未通过审的流转点 0 行静默不产行；删除后 release 不复活索引")
     void 状态快照逐点镜像_未通过审不产行_删除后不复活() {
         // 主链：通过 → 下架回草稿 → 重提 → 锁定 → 释放回在售 → 锁定 → 已出
-        long chainId = insertProduct("PENDING_REVIEW", "10.00");
+        String chainId = insertProduct("PENDING_REVIEW", "10.00");
         tradeRepository.reviewApproveById(chainId);
         tradeRepository.takeDown(chainId);
         assertThat(feedState(chainId)).as("下架汇入草稿箱 → DRAFT").isEqualTo("DRAFT");
@@ -101,7 +99,7 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
         assertThat(feedState(chainId)).as("确认收货 → SOLD").isEqualTo("SOLD");
 
         // 卖家标记售出 + 重新上架
-        long soldId = insertProduct("PENDING_REVIEW", "30.00");
+        String soldId = insertProduct("PENDING_REVIEW", "30.00");
         tradeRepository.reviewApproveById(soldId);
         tradeRepository.markSold(soldId);
         assertThat(feedState(soldId)).as("卖家标记售出 → SOLD").isEqualTo("SOLD");
@@ -109,7 +107,7 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
         assertThat(feedState(soldId)).as("重新上架回待审 → PENDING_REVIEW").isEqualTo("PENDING_REVIEW");
 
         // 软删：行翻 DELETED 不消失；此态下 release 条件 UPDATE 0 行，索引必须不被复活
-        long deletedId = insertProduct("PENDING_REVIEW", "40.00");
+        String deletedId = insertProduct("PENDING_REVIEW", "40.00");
         tradeRepository.reviewApproveById(deletedId);
         tradeRepository.deleteById(deletedId);
         assertThat(feedState(deletedId)).as("软删 → DELETED").isEqualTo("DELETED");
@@ -119,7 +117,7 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
                 .as("条件 UPDATE 未命中不得写索引（否则已删商品在 feed 复活）").isEqualTo("DELETED");
 
         // 从未通过审：驳回 → 转草稿 → 重提 → 撤回，全程不凭空产行
-        long neverId = insertProduct("PENDING_REVIEW", "50.00");
+        String neverId = insertProduct("PENDING_REVIEW", "50.00");
         assertThat(tradeRepository.reviewRejectById(neverId)).isTrue();
         assertThat(feedRow(neverId)).as("驳回不产索引行").isNull();
         assertThat(tradeRepository.rejectToDraft(neverId)).isTrue();
@@ -133,7 +131,7 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     @Test
     @DisplayName("在售改价立即生效：索引 price 列同事务跟上（价格排序键不漂移）")
     void 在售改价索引同事务跟上() {
-        long productId = insertProduct("PENDING_REVIEW", "10.00");
+        String productId = insertProduct("PENDING_REVIEW", "10.00");
         tradeRepository.reviewApproveById(productId);
 
         assertThat(tradeRepository.updateOnSalePrice(productId, new BigDecimal("66.60"))).isTrue();
@@ -147,36 +145,36 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     @Test
     @DisplayName("浏览合并事务旁路 ±N 推进热度键；0 行不补行（未过审商品的浏览只落明细）")
     void 浏览旁路推进热度键_未过审不补行() {
-        long onSaleId = insertProduct("PENDING_REVIEW", "10.00");
+        String onSaleId = insertProduct("PENDING_REVIEW", "10.00");
         tradeRepository.reviewApproveById(onSaleId);
 
-        List<LikeState> results = flushHandler.flushGroup(CountAction.PRODUCT_VIEW, String.valueOf(onSaleId),
+        List<LikeState> results = flushHandler.flushGroup(CountAction.PRODUCT_VIEW, onSaleId,
                 List.of(viewEvent(onSaleId, "u101"), viewEvent(onSaleId, "u101"), viewEvent(onSaleId, "u102")));
         assertThat(results).hasSize(3).containsOnly(LikeState.APPLIED);
         assertThat(indexViewCount(onSaleId)).as("索引热度键按新增 UV 数 +N").isEqualTo(2);
         assertThat(acceleratedCountOf(onSaleId)).as("窄表真源同步推进").isEqualTo(2);
 
         // 全重复组：INSERT IGNORE 全撞键，索引热度键与窄表都不动（幂等不动点）
-        flushHandler.flushGroup(CountAction.PRODUCT_VIEW, String.valueOf(onSaleId),
+        flushHandler.flushGroup(CountAction.PRODUCT_VIEW, onSaleId,
                 List.of(viewEvent(onSaleId, "u101")));
         assertThat(indexViewCount(onSaleId)).as("重复浏览不计入").isEqualTo(2);
 
         // 未过审商品（行不存在）：浏览旁路 0 行不补行，窄表照常推进（交重建 job 兜底）
-        long pendingId = insertProduct("PENDING_REVIEW", "10.00");
-        flushHandler.flushGroup(CountAction.PRODUCT_VIEW, String.valueOf(pendingId), List.of(viewEvent(pendingId, "u103")));
+        String pendingId = insertProduct("PENDING_REVIEW", "10.00");
+        flushHandler.flushGroup(CountAction.PRODUCT_VIEW, pendingId, List.of(viewEvent(pendingId, "u103")));
         assertThat(feedRow(pendingId)).as("索引行缺失不被凭空补行").isNull();
         assertThat(acceleratedCountOf(pendingId)).as("窄表真源不受索引缺失影响").isEqualTo(1);
     }
 
     // ---------- 夹具与可观察状态 ----------
 
-    private static CountEvent viewEvent(long productId, String userId) {
-        return new CountEvent(CountAction.PRODUCT_VIEW, String.valueOf(productId), userId);
+    private static CountEvent viewEvent(String productId, String userId) {
+        return new CountEvent(CountAction.PRODUCT_VIEW, productId, userId);
     }
 
-    /** 直插一行指定态商品（存量形态），返回业务 ID */
-    private long insertProduct(String state, String price) {
-        long productId = 910_000L + SEQ.incrementAndGet();
+    /** 直插一行指定态商品（存量形态；uuid-biz-id 票 05 起业务 id 直插 UUID，应用侧发号），返回业务 ID */
+    private String insertProduct(String state, String price) {
+        String productId = java.util.UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
                         + "trade_location, category, state, review_round, create_time, update_time, expire_at) "
                         + "VALUES (?, 999, '索引同步夹具', '夹具描述', ?, '驿站', 'BOOKS', ?, 1, "
@@ -186,26 +184,26 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 索引行整行（无行 = null） */
-    private Map<String, Object> feedRow(long productId) {
+    private Map<String, Object> feedRow(String productId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT state, feed_time, price, view_count FROM product_feed_index WHERE product_id = ?", productId);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    private String feedState(long productId) {
+    private String feedState(String productId) {
         Map<String, Object> row = feedRow(productId);
         return row == null ? null : (String) row.get("state");
     }
 
-    private BigDecimal feedPrice(long productId) {
+    private BigDecimal feedPrice(String productId) {
         return (BigDecimal) feedRow(productId).get("price");
     }
 
-    private int indexViewCount(long productId) {
+    private int indexViewCount(String productId) {
         return ((Number) feedRow(productId).get("view_count")).intValue();
     }
 
-    private int acceleratedCountOf(long productId) {
+    private int acceleratedCountOf(String productId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT view_count FROM product_view_count WHERE product_id = ?", Integer.class, productId);
         return count == null ? 0 : count;

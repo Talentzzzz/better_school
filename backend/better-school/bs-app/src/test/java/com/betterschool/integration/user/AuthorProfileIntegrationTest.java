@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class AuthorProfileIntegrationTest extends CommunityApiTestBase {
 
-    /** 直插夹具的业务 ID 序号（取 900_000 以上的高位段，与应用自增 id 不撞） */
+    /** 直插夹具的序号（post/comment 夹具的数字串 id 取号用；product/errand 已改 UUID 直插，uuid-biz-id 票 05） */
     private long fixtureSeq = 0;
 
     // ---------- 公开资料 ----------
@@ -194,7 +194,7 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
     @Test
     void 闲置tab只在售_草稿与待审不外露() {
         Session author = registerAndLogin("13800009010", "闲置作者");
-        long onSale = insertProduct(author.userId(), "ON_SALE", "在售商品");
+        String onSale = insertProduct(author.userId(), "ON_SALE", "在售商品");
         insertProduct(author.userId(), "DRAFT", "草稿商品");
         insertProduct(author.userId(), "PENDING_REVIEW", "待审商品");
         insertProduct(author.userId(), "SOLD", "已售商品");
@@ -209,8 +209,8 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
     void 跑腿tab只出发布中_不含接单与终态() {
         Session author = registerAndLogin("13800009011", "跑腿作者");
         Session other = registerAndLogin("13800009012", "接单者");
-        long published = insertErrand(author.userId(), "PUBLISHED", "发布中的单", null);
-        long confirmed = insertErrand(author.userId(), "CONFIRMED", "已被接的单", other.userId());
+        String published = insertErrand(author.userId(), "PUBLISHED", "发布中的单", null);
+        String confirmed = insertErrand(author.userId(), "CONFIRMED", "已被接的单", other.userId());
         insertErrand(author.userId(), "PENDING_PAYMENT", "待支付的单", null);
         insertErrand(author.userId(), "COMPLETED", "已完成的单", null);
         // 别人发布的、该作者接的单：不应出现在其主页
@@ -237,8 +237,9 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
         return postId;
     }
 
-    private long insertProduct(String userId, String status, String title) {
-        long productId = 900_000L + (++fixtureSeq);
+    /** 直插一行商品（uuid-biz-id 票 05 起业务 id UUID 形态、应用侧发号），返回业务 ID */
+    private String insertProduct(String userId, String status, String title) {
+        String productId = java.util.UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, images, price, "
                         + "trade_location, category, state, create_time, update_time) "
                         + "VALUES (?, ?, ?, '描述', '[]', 10.00, '驿站', 'BOOKS', ?, NOW(), NOW())",
@@ -246,8 +247,9 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
         return productId;
     }
 
-    private long insertErrand(String publisherId, String status, String description, String takerId) {
-        long orderId = 900_000L + (++fixtureSeq);
+    /** 直插一行跑腿单（uuid-biz-id 票 05 起业务 id UUID 形态、应用侧发号），返回业务 ID */
+    private String insertErrand(String publisherId, String status, String description, String takerId) {
+        String orderId = java.util.UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, taker_id, type, description, "
                         + "pickup_location, delivery_location, reward, time_limit_hours, state, taker_canceled, "
                         + "create_time, update_time) "
@@ -270,15 +272,15 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
                 .toList();
     }
 
-    private List<Long> productIdsOf(JsonNode listData) {
+    private List<String> productIdsOf(JsonNode listData) {
         return StreamSupport.stream(listData.path("list").spliterator(), false)
-                .map(node -> node.path("productId").asLong())
+                .map(node -> node.path("productId").asText())
                 .toList();
     }
 
-    private List<Long> orderIdsOf(JsonNode listData) {
+    private List<String> orderIdsOf(JsonNode listData) {
         return StreamSupport.stream(listData.path("list").spliterator(), false)
-                .map(node -> node.path("orderId").asLong())
+                .map(node -> node.path("orderId").asText())
                 .toList();
     }
 }

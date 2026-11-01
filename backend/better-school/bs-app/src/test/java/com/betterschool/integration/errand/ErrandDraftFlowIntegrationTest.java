@@ -34,7 +34,8 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
         // 未填完（只有描述）也能存；且不做同步初筛
         JsonNode save = postJson("/api/errand/orders/draft", Map.of("description", "先写一半"), author);
         assertSuccess(save, "保存跑腿草稿");
-        long orderId = save.path("data").asLong();
+        String orderId = save.path("data").asText();
+        assertUuidId(orderId);
 
         assertThat(stateOf(orderId)).as("草稿入口应落 DRAFT").isEqualTo("DRAFT");
         assertThat(payTimeoutRegistrations(orderId)).as("草稿态不注册支付超时（支付钟只在提交后起算）").isZero();
@@ -50,7 +51,7 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
         // 本人：我的列表含草稿、详情可见
         JsonNode mine = getJson("/api/errand/orders/mine?role=publish", author);
         List<JsonNode> mineItems = itemsOf(mine).stream()
-                .filter(node -> node.path("orderId").asLong() == orderId).toList();
+                .filter(node -> node.path("orderId").asText().equals(orderId)).toList();
         assertThat(mineItems).as("我的列表应含自己的草稿").hasSize(1);
         assertThat(mineItems.get(0).path("status").asText()).isEqualTo("DRAFT");
 
@@ -64,7 +65,7 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
     @Test
     void 草稿可编辑全部内容字段_不改状态与作者() {
         Session author = registerAndLogin("13800003003", "草稿用户2");
-        long orderId = saveDraft(author, Map.of("description", "占位"));
+        String orderId = saveDraft(author, Map.of("description", "占位"));
 
         JsonNode update = putJson("/api/errand/orders/" + orderId + "/draft", Map.ofEntries(
                 Map.entry("type", "BUY"),
@@ -96,7 +97,7 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
     @Test
     void 软删草稿后公开与本人均不可见_非草稿不可删() {
         Session author = registerAndLogin("13800003004", "草稿用户3");
-        long draftId = saveDraft(author, Map.of("description", "待删草稿"));
+        String draftId = saveDraft(author, Map.of("description", "待删草稿"));
 
         JsonNode deleteDraft = deleteJson("/api/errand/orders/" + draftId, author);
         assertSuccess(deleteDraft, "删除草稿");
@@ -112,7 +113,7 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
                 .as("已删草稿详情不可见").isEqualTo("404");
 
         // 非草稿不可走草稿删除：直接发布单（PENDING_PAYMENT）删除被拒且状态不变
-        long publishId = createDirectOrder(author, "正常发布");
+        String publishId = createDirectOrder(author, "正常发布");
         JsonNode deletePublished = deleteJson("/api/errand/orders/" + publishId, author);
         assertThat(deletePublished.path("code").asText())
                 .as("仅 DRAFT 可达 DELETED：%s", deletePublished).isEqualTo("500");
@@ -124,7 +125,7 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
     @Test
     void 不完整草稿提交失败停留草稿() {
         Session author = registerAndLogin("13800003005", "草稿用户4");
-        long draftId = saveDraft(author, Map.of("description", "只写了描述"));
+        String draftId = saveDraft(author, Map.of("description", "只写了描述"));
 
         JsonNode submit = postJson("/api/errand/orders/" + draftId + "/submit", null, author);
         assertThat(submit.path("code").asText()).as("缺必填项应拒绝提交：%s", submit).isEqualTo("500");
@@ -136,7 +137,7 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
     @Test
     void 提交初筛命中停留草稿_改后提交转待支付并注册支付超时() {
         Session author = registerAndLogin("13800003006", "草稿用户5");
-        long draftId = saveDraft(author, Map.of("description", "占位"));
+        String draftId = saveDraft(author, Map.of("description", "占位"));
 
         // 编辑成完整但含违禁词：草稿保存/编辑不做初筛，提交才做
         editCompleteDraft(author, draftId, "帮我代考");
@@ -162,7 +163,7 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
     @Test
     void 草稿全链路_草稿到编辑到提交到支付到待审() {
         Session author = registerAndLogin("13800003007", "草稿用户6");
-        long draftId = saveDraft(author, Map.of("description", "占位"));
+        String draftId = saveDraft(author, Map.of("description", "占位"));
 
         editCompleteDraft(author, draftId, "帮我取快递");
         assertSuccess(postJson("/api/errand/orders/" + draftId + "/submit", null, author), "提交草稿");
@@ -185,7 +186,7 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
     @Test
     void 早创建晚提交的草稿不被待支付兜底扫描误杀() {
         Session author = registerAndLogin("13800003009", "草稿用户7");
-        long draftId = saveDraft(author, Map.of("description", "压了几天的草稿"));
+        String draftId = saveDraft(author, Map.of("description", "压了几天的草稿"));
         editCompleteDraft(author, draftId, "帮我取快递");
         // 草稿是几天前存的：创建时间回拨；支付钟只在提交后起算，兜底扫描不得按创建时刻判定
         jdbcTemplate.update(
@@ -205,7 +206,7 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
     @Test
     void 直接发布入口仍落待支付并注册支付超时() {
         Session author = registerAndLogin("13800003008", "发布用户1");
-        long orderId = createDirectOrder(author, "帮忙取个快递");
+        String orderId = createDirectOrder(author, "帮忙取个快递");
 
         assertThat(stateOf(orderId)).as("直接发布保持现状：落 PENDING_PAYMENT").isEqualTo("PENDING_PAYMENT");
         assertThat(payTimeoutRegistrations(orderId)).as("直接发布仍注册支付超时").isEqualTo(1);
@@ -213,14 +214,16 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 工具 ----------
 
-    private long saveDraft(Session author, Map<String, Object> body) {
+    private String saveDraft(Session author, Map<String, Object> body) {
         JsonNode save = postJson("/api/errand/orders/draft", body, author);
         assertSuccess(save, "保存跑腿草稿");
-        return save.path("data").asLong();
+        String orderId = save.path("data").asText();
+        assertUuidId(orderId);
+        return orderId;
     }
 
     /** 编辑成一份"必填齐全"的草稿（描述可变，用于校验/初筛双路径） */
-    private void editCompleteDraft(Session author, long orderId, String description) {
+    private void editCompleteDraft(Session author, String orderId, String description) {
         JsonNode update = putJson("/api/errand/orders/" + orderId + "/draft", Map.ofEntries(
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", description),
@@ -231,7 +234,7 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
         assertSuccess(update, "编辑跑腿草稿");
     }
 
-    private long createDirectOrder(Session author, String description) {
+    private String createDirectOrder(Session author, String description) {
         JsonNode response = postJson("/api/errand/orders", Map.ofEntries(
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", description),
@@ -240,51 +243,53 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
                 Map.entry("reward", 10),
                 Map.entry("timeLimit", "HOURS_2")), author);
         assertSuccess(response, "发布跑腿");
-        return response.path("data").asLong();
+        String orderId = response.path("data").asText();
+        assertUuidId(orderId);
+        return orderId;
     }
 
-    private String stateOf(long orderId) {
+    private String stateOf(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT state FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }
 
-    private long rowCount(long orderId) {
+    private long rowCount(String orderId) {
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM errand_order WHERE errand_order_id = ?", Long.class, orderId);
         return count == null ? 0 : count;
     }
 
-    private String publisherIdOf(long orderId) {
+    private String publisherIdOf(String orderId) {
         String publisherId = jdbcTemplate.queryForObject(
                 "SELECT publisher_id FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
         return publisherId == null ? null : publisherId;
     }
 
-    private Integer timeLimitHoursOf(long orderId) {
+    private Integer timeLimitHoursOf(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT time_limit_hours FROM errand_order WHERE errand_order_id = ?", Integer.class, orderId);
     }
 
     /** 该订单在 timeout_task 里的支付超时任务行数（草稿态应为 0，提交后为 1；同事务直插，见票 03） */
-    private int payTimeoutRegistrations(long orderId) {
+    private int payTimeoutRegistrations(String orderId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM timeout_task WHERE task_type = ? AND biz_id = ?",
-                Integer.class, Constants.ERRAND_PAY_TIMEOUT, String.valueOf(orderId));
+                Integer.class, Constants.ERRAND_PAY_TIMEOUT, orderId);
         return count == null ? 0 : count;
     }
 
     /** 到期时刻落在 [now+14min, now+16min] 的注册行数（核对"提交时刻 + 15 分钟"） */
-    private int payTimeoutWithinFifteenMinutes(long orderId) {
+    private int payTimeoutWithinFifteenMinutes(String orderId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM timeout_task WHERE task_type = ? AND biz_id = ? "
                         + "AND action_time > DATE_ADD(NOW(), INTERVAL 14 MINUTE) "
                         + "AND action_time <= DATE_ADD(NOW(), INTERVAL 16 MINUTE)",
-                Integer.class, Constants.ERRAND_PAY_TIMEOUT, String.valueOf(orderId));
+                Integer.class, Constants.ERRAND_PAY_TIMEOUT, orderId);
         return count == null ? 0 : count;
     }
 
-    private List<Long> orderIdsOf(JsonNode response) {
-        return itemsOf(response).stream().map(node -> node.path("orderId").asLong()).toList();
+    private List<String> orderIdsOf(JsonNode response) {
+        return itemsOf(response).stream().map(node -> node.path("orderId").asText()).toList();
     }
 
     private List<JsonNode> itemsOf(JsonNode response) {

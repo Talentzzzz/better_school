@@ -32,14 +32,14 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
         // 帖子（带配图）：发布落库即待审
         String postId = publishPendingPostWithImages(author);
         // 商品：提交落库即待审
-        long productId = createProduct(author);
+        String productId = createProduct(author);
         // 评论：宿主帖由另一用户发布并裁决通过（其工单停 DONE；且其裁决记录不落入 author 的作者历史），根评论 + 回复各开一张工单
         Session hostAuthor = registerAndLogin("13800007004", "宿主作者");
         String hostPostId = publishPostWithCustomTitle(hostAuthor, "评论宿主帖子标题");
         String rootCommentId = publishCommentAndGetId(hostPostId, author, "根评论正文");
         String replyCommentId = publishReplyAndGetId(hostPostId, rootCommentId, author, "楼中楼回复正文");
         // 跑腿：支付成功进待审
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
 
         // ---- 帖子详情：通用列齐 + 无类型专属上下文 ----
         JsonNode postDetail = taskDetail(admin, taskIdOf("POST", postId));
@@ -60,7 +60,7 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
         assertThat(postDetail.path("authorReviews").size()).isZero();
 
         // ---- 商品详情：价格沿用 reward 列 ----
-        JsonNode productDetail = taskDetail(admin, taskIdOf("PRODUCT", String.valueOf(productId)));
+        JsonNode productDetail = taskDetail(admin, taskIdOf("PRODUCT", productId));
         assertThat(productDetail.path("targetType").asText()).isEqualTo("PRODUCT");
         assertThat(productDetail.path("content").asText()).contains("待审商品", "自用闲置九成新");
         assertThat(productDetail.path("reward").decimalValue()).isEqualByComparingTo("19.9");
@@ -68,7 +68,7 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
         assertThat(productDetail.path("enteredAt").isNull()).isFalse();
 
         // ---- 跑腿详情：悬赏 ----
-        JsonNode errandDetail = taskDetail(admin, taskIdOf("ERRAND", String.valueOf(orderId)));
+        JsonNode errandDetail = taskDetail(admin, taskIdOf("ERRAND", orderId));
         assertThat(errandDetail.path("targetType").asText()).isEqualTo("ERRAND");
         assertThat(errandDetail.path("content").asText()).isEqualTo("帮忙取个快递");
         assertThat(errandDetail.path("reward").decimalValue()).isEqualByComparingTo("10");
@@ -110,15 +110,15 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
         Session admin = adminSession();
 
         // 商品两轮：提交 → 拒(轮1) → 转草稿 → 重提(轮2) → 拒(轮2)（遗留入口收口：裁决前先领单）
-        long productId = createProduct(author);
-        claimTaskOf(admin, "PRODUCT", String.valueOf(productId));
+        String productId = createProduct(author);
+        claimTaskOf(admin, "PRODUCT", productId);
         assertSuccess(postJson("/api/moderation/review",
-                Map.of("targetType", "PRODUCT", "targetId", String.valueOf(productId), "action", "REJECT",
+                Map.of("targetType", "PRODUCT", "targetId", productId, "action", "REJECT",
                         "reasonCode", "OTHER", "supplement", "图片与实物不符"), admin), "轮1拒绝");
-        long round1TaskId = taskIdOf("PRODUCT", String.valueOf(productId));
+        long round1TaskId = taskIdOf("PRODUCT", productId);
         assertSuccess(postJson("/api/trade/products/" + productId + "/to-draft", null, author), "被拒转草稿");
         assertSuccess(postJson("/api/trade/products/" + productId + "/submit", null, author), "重提");
-        long round2TaskId = taskIdOf("PRODUCT", String.valueOf(productId));
+        long round2TaskId = taskIdOf("PRODUCT", productId);
         assertThat(round2TaskId).as("重提 = 新轮次 = 新工单行").isNotEqualTo(round1TaskId);
 
         // 轮 2 在途时详情：历轮已有轮 1 的拒绝记录
@@ -131,9 +131,9 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
         assertThat(pendingDetail.path("targetReviews").get(0).path("reason").asText()).contains("图片与实物不符");
 
         // 轮 2 再拒：DONE 工单详情仍可看（不筛业务行状态），两轮各自结论与拒绝理由齐
-        claimTaskOf(admin, "PRODUCT", String.valueOf(productId));
+        claimTaskOf(admin, "PRODUCT", productId);
         assertSuccess(postJson("/api/moderation/review",
-                Map.of("targetType", "PRODUCT", "targetId", String.valueOf(productId), "action", "REJECT",
+                Map.of("targetType", "PRODUCT", "targetId", productId, "action", "REJECT",
                         "reasonCode", "OTHER", "supplement", "描述与实物不符"), admin), "轮2拒绝");
         JsonNode doneDetail = taskDetail(admin, round2TaskId);
         assertThat(doneDetail.path("claimState").asText()).isEqualTo("DONE");
@@ -145,8 +145,8 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
         assertThat(doneDetail.path("targetReviews").get(1).path("reason").asText()).contains("描述与实物不符");
 
         // 同作者另一内容（跑腿）被拒：作者历史单表聚合（content_review.author_id 直查，免 join 工单表）
-        long orderId = createPaidOrder(author);
-        claimTaskOf(admin, "ERRAND", String.valueOf(orderId));
+        String orderId = createPaidOrder(author);
+        claimTaskOf(admin, "ERRAND", orderId);
         assertSuccess(postJson("/api/moderation/review",
                 Map.of("targetType", "ERRAND", "targetId", orderId, "action", "REJECT",
                         "reasonCode", "OTHER", "supplement", "与描述不符"), admin), "跑腿拒绝");
@@ -154,8 +154,8 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
         JsonNode detailWithHistory = taskDetail(admin, round2TaskId);
         JsonNode authorReviews = detailWithHistory.path("authorReviews");
         assertThat(authorReviews.size()).as("同作者 3 条裁决：商品两轮 + 跑腿一轮").isEqualTo(3);
-        List<Long> historyTargetIds = StreamSupport.stream(authorReviews.spliterator(), false)
-                .map(node -> node.path("targetId").asLong()).toList();
+        List<String> historyTargetIds = StreamSupport.stream(authorReviews.spliterator(), false)
+                .map(node -> node.path("targetId").asText()).toList();
         assertThat(historyTargetIds).contains(productId, orderId);
         StreamSupport.stream(authorReviews.spliterator(), false)
                 .forEach(node -> assertThat(node.path("targetType").asText())
@@ -176,8 +176,8 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
         assertThat(notFound.path("code").asText()).isEqualTo("404");
 
         // 用真实存在的工单验证越权：作者自己发的跑腿单的工单 id
-        long orderId = createPaidOrder(author);
-        long taskId = taskIdOf("ERRAND", String.valueOf(orderId));
+        String orderId = createPaidOrder(author);
+        long taskId = taskIdOf("ERRAND", orderId);
         JsonNode forbidden = getJson("/api/moderation/tasks/" + taskId, author);
         assertThat(forbidden.path("code").asText()).as("普通用户不可读工单详情").isEqualTo("403");
     }
@@ -230,7 +230,7 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
         return response.path("data").path("commentId").asText();
     }
 
-    private long createProduct(Session seller) {
+    private String createProduct(Session seller) {
         JsonNode response = postJson("/api/trade/products", Map.ofEntries(
                 Map.entry("title", "待审商品"),
                 Map.entry("description", "自用闲置九成新"),
@@ -239,10 +239,10 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
                 Map.entry("tradeLocation", "图书馆门口"),
                 Map.entry("category", "BOOKS")), seller);
         assertSuccess(response, "发布商品");
-        return response.path("data").asLong();
+        return response.path("data").asText();
     }
 
-    private long createPaidOrder(Session author) {
+    private String createPaidOrder(Session author) {
         Map<String, Object> body = new HashMap<>();
         body.put("type", "EXPRESS_PICKUP");
         body.put("description", "帮忙取个快递");
@@ -252,7 +252,7 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
         body.put("timeLimit", "HOURS_2");
         JsonNode createResponse = postJson("/api/errand/orders", body, author);
         assertSuccess(createResponse, "发布跑腿");
-        long orderId = createResponse.path("data").asLong();
+        String orderId = createResponse.path("data").asText();
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付");
         return orderId;
     }

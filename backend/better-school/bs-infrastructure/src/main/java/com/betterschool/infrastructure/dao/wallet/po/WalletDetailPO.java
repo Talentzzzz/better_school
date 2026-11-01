@@ -13,7 +13,8 @@ public class WalletDetailPO {
     private String userId;
     private String type;
     private BigDecimal amount;
-    private Long orderId;
+    /** wallet_detail.order_id 是 VARCHAR(36)，存订单业务 UUID（uuid-biz-id 票 05） */
+    private String orderId;
     private int bizRound;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;

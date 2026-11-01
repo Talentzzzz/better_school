@@ -11,56 +11,56 @@ import java.util.List;
  */
 public interface IProductService {
 
-    Long publishProduct(String userId, String title, String description, List<String> images, BigDecimal price,
+    String publishProduct(String userId, String title, String description, List<String> images, BigDecimal price,
                         String tradeLocation, String category);
 
     /** 保存草稿（字段可缺省，不做初筛，仅本人可见），返回草稿 id */
-    Long saveProductDraft(String userId, String title, String description, List<String> images, BigDecimal price,
+    String saveProductDraft(String userId, String title, String description, List<String> images, BigDecimal price,
                           String tradeLocation, String category);
 
     /** 编辑草稿（仅 DRAFT；待审中不可编辑，需先撤回） */
-    void updateProductDraft(String userId, Long productId, String title, String description, List<String> images,
+    void updateProductDraft(String userId, String productId, String title, String description, List<String> images,
                             BigDecimal price, String tradeLocation, String category);
 
     /** 取本人的草稿（供用例层做完整性校验与初筛） */
-    ProductEntity getOwnedProductDraft(String userId, Long productId);
+    ProductEntity getOwnedProductDraft(String userId, String productId);
 
     /** 提交草稿：DRAFT → PENDING_REVIEW（初筛由用例层前置） */
-    void submitProductDraft(String userId, Long productId);
+    void submitProductDraft(String userId, String productId);
 
     /** 撤回待审商品进草稿箱：PENDING_REVIEW → DRAFT */
-    void withdrawProduct(String userId, Long productId);
+    void withdrawProduct(String userId, String productId);
 
     /** 上架后主动下架进草稿箱：ON_SALE → DRAFT，同事务落搜索同步消息（退出对外可见态） */
-    void takeDownProduct(String userId, Long productId);
+    void takeDownProduct(String userId, String productId);
 
     /** 到期下架（扫描调用）：ON_SALE → DRAFT，同事务落搜索同步消息；非 ON_SALE 幂等跳过 */
-    void expireProductToDraft(Long productId);
+    void expireProductToDraft(String productId);
 
     /** 到期扫描：ON_SALE 且 expire_at 已过的商品 id 列表 */
-    List<Long> listExpiredProductIds();
+    List<String> listExpiredProductIds();
 
     /** 24h 待审超时提醒扫描：PENDING_REVIEW 且进入待审超时的商品 id 列表 */
-    List<Long> listReviewTimeoutProductIds();
+    List<String> listReviewTimeoutProductIds();
 
     /** 取本人可编辑的在售商品（供用例层做初筛）：待审中不可编辑（先撤回转草稿）、被拒引导转草稿箱 */
-    ProductEntity getOwnedOnSaleProduct(String userId, Long productId);
+    ProductEntity getOwnedOnSaleProduct(String userId, String productId);
 
     /**
      * 上架后编辑（编辑语义）：仅改价格立即生效（状态不变、不进审核、无通知）；
      * 改标题/描述/图片则回待审（轮次 +1，期间他人不可见、卖家本人可见），同事务落搜索同步消息（消费方按状态删/更文档）。
      * 归属与状态守卫由 getOwnedOnSaleProduct 前置，此处靠条件 UPDATE 兜底竞态
      */
-    void editOnSaleProduct(Long productId, String title, String description, List<String> images, BigDecimal price);
+    void editOnSaleProduct(String productId, String title, String description, List<String> images, BigDecimal price);
 
     /** 被拒商品转入草稿箱：REJECTED → DRAFT（修改后重新提交走草稿提交流程，产生第二次审核） */
-    void moveRejectedProductToDraft(String userId, Long productId);
+    void moveRejectedProductToDraft(String userId, String productId);
 
     /** 审核通过（统一裁决用例调用）：PENDING_REVIEW → ON_SALE，事务内落搜索同步消息；已 ON_SALE 幂等跳过 */
-    void reviewApproveProduct(Long productId);
+    void reviewApproveProduct(String productId);
 
     /** 审核拒绝（统一裁决用例调用）：PENDING_REVIEW → REJECTED，无资金环节；已 REJECTED 幂等跳过 */
-    void reviewRejectProduct(Long productId);
+    void reviewRejectProduct(String productId);
 
     /**
      * 闲置推荐页（market-feed-uv 票 04）：无筛选走 product_feed_index 索引序扫描 + keyset 游标分页，
@@ -83,22 +83,22 @@ public interface IProductService {
      * 当前用户在给定商品集合里浏览过的商品 id（推荐列表已读灰显，market-feed-uv 票 05）：
      * 一页一次批量回查，未登录或集合为空返回空集
      */
-    List<Long> listViewedProductIds(String userId, List<Long> productIds);
+    List<String> listViewedProductIds(String userId, List<String> productIds);
 
     /** 详情：浏览计数 +1，登录时返回是否已收藏 */
-    ProductEntity productDetail(Long productId, String currentUserId);
+    ProductEntity productDetail(String productId, String currentUserId);
 
-    void deleteProduct(Long productId, String currentUserId);
+    void deleteProduct(String productId, String currentUserId);
 
     /** 标记已出（作者本人） */
-    void markSold(Long productId, String currentUserId);
+    void markSold(String productId, String currentUserId);
 
     /** 重新上架（作者本人） */
-    void relistProduct(Long productId, String currentUserId);
+    void relistProduct(String productId, String currentUserId);
 
-    void favoriteProduct(Long productId, String userId);
+    void favoriteProduct(String productId, String userId);
 
-    void unfavoriteProduct(Long productId, String userId);
+    void unfavoriteProduct(String productId, String userId);
 
     List<ProductEntity> listFavorites(String userId, int page, int pageSize);
 

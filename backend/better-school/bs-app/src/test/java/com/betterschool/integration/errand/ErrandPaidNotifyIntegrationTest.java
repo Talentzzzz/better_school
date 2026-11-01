@@ -28,21 +28,18 @@ class ErrandPaidNotifyIntegrationTest extends CommunityApiTestBase {
     @Autowired
     private ErrandTimeoutScanJob errandTimeoutScanJob;
 
-    /** 直插夹具的业务 ID 序号（取 900_000 以上的高位段，与应用自增 id 不撞） */
-    private long fixtureSeq = 0;
-
     // ---------- 支付消费者：作者"进入人工审核"通知 ----------
 
     @Test
     void 消费支付消息作者收到进入待审通知且重复消费只一条() {
         Session author = registerAndLogin("13800004001", "发单作者");
-        long orderId = createPaidOrder(author);
+        String orderId = createPaidOrder(author);
 
         List<String> payloads = jdbcTemplate.queryForList(
                 "SELECT payload FROM outbox_message WHERE destination = ? AND state = 0",
                 String.class, Constants.ERRAND_PAID_TOPIC);
         assertThat(payloads).as("支付应落 bs-errand-paid outbox").hasSize(1);
-        assertThat(readTree(payloads.get(0)).path("orderId").asLong()).isEqualTo(orderId);
+        assertThat(readTree(payloads.get(0)).path("orderId").asText()).as("载荷 orderId 为 UUID 字符串（uuid-biz-id 票 05）").isEqualTo(orderId);
 
         // 消费两次（broker 重投场景）：dedup_key 幂等，作者只一条通知
         errandPaidConsumer.onMessage(payloads.get(0));
@@ -57,7 +54,7 @@ class ErrandPaidNotifyIntegrationTest extends CommunityApiTestBase {
 
     @Test
     void 消费不存在的订单id静默忽略() {
-        errandPaidConsumer.onMessage("{\"orderId\":99999}");
+        errandPaidConsumer.onMessage("{\"orderId\":\"" + java.util.UUID.randomUUID() + "\"}");
         Integer noticeRows = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM notification", Integer.class);
         assertThat(noticeRows).as("订单不存在不应落任何通知").isZero();
     }
@@ -73,8 +70,8 @@ class ErrandPaidNotifyIntegrationTest extends CommunityApiTestBase {
         jdbcTemplate.update("UPDATE bs_user SET role = 'AUDITOR' WHERE user_id = ?", auditor.userId());
         Session normalUser = registerAndLogin("13800004005", "普通用户");
 
-        long overdueOrderId = insertOrderWithAge("超时待审单", "PENDING_REVIEW", 25);
-        long freshOrderId = insertOrderWithAge("刚待审单", "PENDING_REVIEW", 1);
+        String overdueOrderId = insertOrderWithAge("超时待审单", "PENDING_REVIEW", 25);
+        String freshOrderId = insertOrderWithAge("刚待审单", "PENDING_REVIEW", 1);
 
         errandTimeoutScanJob.scan(null);
         errandTimeoutScanJob.scan(null);
@@ -109,7 +106,7 @@ class ErrandPaidNotifyIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 工具 ----------
 
-    private long createPaidOrder(Session author) {
+    private String createPaidOrder(Session author) {
         JsonNode createResponse = postJson("/api/errand/orders", Map.ofEntries(
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", "帮忙取个快递"),
@@ -118,16 +115,17 @@ class ErrandPaidNotifyIntegrationTest extends CommunityApiTestBase {
                 Map.entry("reward", 10),
                 Map.entry("timeLimit", "HOURS_2")), author);
         assertSuccess(createResponse, "发布跑腿");
-        long orderId = createResponse.path("data").asLong();
+        String orderId = createResponse.path("data").asText();
+        assertUuidId(orderId);
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付");
         return orderId;
     }
 
-    /** 直插订单（create_time/update_time 回拨 hoursAgo 小时）；业务 ID 取夹具高位段，避开应用自增 id。
+    /** 直插订单（create_time/update_time 回拨 hoursAgo 小时）；业务 ID 为 UUID（uuid-biz-id 票 05）。
      *  时间回拨在 Java 侧算好当普通 ? 传：`INTERVAL ?` 占位符会被 ShardingSphere 的 SQL 解析弄丢
      *  （内嵌化票 02 起 datasource 坐 SS 驱动），生产代码无此形态，夹具避让即可 */
-    private long insertOrderWithAge(String description, String status, int hoursAgo) {
-        long orderId = 900_000L + (++fixtureSeq);
+    private String insertOrderWithAge(String description, String status, int hoursAgo) {
+        String orderId = java.util.UUID.randomUUID().toString();
         LocalDateTime aged = LocalDateTime.now().minusHours(hoursAgo).truncatedTo(ChronoUnit.SECONDS);
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, pickup_location, "
                         + "delivery_location, reward, time_limit_hours, state, create_time, update_time) "
@@ -136,7 +134,7 @@ class ErrandPaidNotifyIntegrationTest extends CommunityApiTestBase {
         return orderId;
     }
 
-    private int countReviewReminders(String userId, long orderId) {
+    private int countReviewReminders(String userId, String orderId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM notification WHERE user_id = ? AND type = 'ORDER_EVENT' "
                         + "AND content LIKE '%24 小时%' AND ref_id = ?",

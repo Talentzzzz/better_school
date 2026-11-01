@@ -36,7 +36,7 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800005001", "发单用户1");
         Session taker = registerAndLogin("13800005002", "接单用户1");
         Session other = registerAndLogin("13800005003", "接单用户2");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
 
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/grab", null, taker), "抢单");
 
@@ -74,7 +74,7 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800005004", "发单用户2");
         Session takerA = registerAndLogin("13800005005", "接单用户3");
         Session takerB = registerAndLogin("13800005006", "接单用户4");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
 
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService pool = Executors.newFixedThreadPool(2);
@@ -109,7 +109,7 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800005007", "发单用户3");
         Session taker = registerAndLogin("13800005008", "接单用户5");
         Session outsider = registerAndLogin("13800005009", "路人");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
         grab(orderId, taker);
 
         JsonNode byOutsider = postJson("/api/errand/orders/" + orderId + "/accept", null, outsider);
@@ -134,7 +134,7 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800005010", "发单用户4");
         Session takerA = registerAndLogin("13800005011", "接单用户6");
         Session takerB = registerAndLogin("13800005012", "接单用户7");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
         grab(orderId, takerA);
 
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/abandon", null, takerA), "放弃接单");
@@ -166,7 +166,7 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
     void 已确认后接单方取消仍扣分_原路径不变() {
         Session author = registerAndLogin("13800005013", "发单用户5");
         Session taker = registerAndLogin("13800005014", "接单用户8");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
         grab(orderId, taker);
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/accept", null, taker), "确认接单");
 
@@ -186,7 +186,7 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
     void 锁单期发布方取消退款且不扣接单方分() {
         Session author = registerAndLogin("13800005015", "发单用户6");
         Session taker = registerAndLogin("13800005016", "接单用户9");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
         grab(orderId, taker);
 
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/cancel", null, author), "锁单期发布方取消");
@@ -201,7 +201,7 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
     void 取货后仍不可取消() {
         Session author = registerAndLogin("13800005021", "发单用户9");
         Session taker = registerAndLogin("13800005022", "接单用户12");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
         grab(orderId, taker);
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/accept", null, taker), "确认接单");
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pickup", null, taker), "确认取货");
@@ -220,7 +220,7 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
     void 锁单期不可发起争议() {
         Session author = registerAndLogin("13800005017", "发单用户7");
         Session taker = registerAndLogin("13800005018", "接单用户10");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
         grab(orderId, taker);
 
         JsonNode byTaker = postJson("/api/errand/orders/" + orderId + "/dispute", null, taker);
@@ -236,7 +236,7 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
     void 锁单中被执行时限扫描取消() {
         Session author = registerAndLogin("13800005019", "发单用户8");
         Session taker = registerAndLogin("13800005020", "接单用户11");
-        long orderId = publishableOrder(author);
+        String orderId = publishableOrder(author);
         grab(orderId, taker);
 
         // 执行时限到点而单仍在 LOCKED：超时扫描的状态集与条件 UPDATE 都含 LOCKED，否则无人收口
@@ -258,7 +258,7 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
     // ---------- 工具 ----------
 
     /** 走到 PUBLISHED 的完整前置：发布 → 支付冻结 → 人工裁决通过 */
-    private long publishableOrder(Session author) {
+    private String publishableOrder(Session author) {
         JsonNode created = postJson("/api/errand/orders", Map.ofEntries(
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", "帮忙取个快递"),
@@ -267,35 +267,36 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
                 Map.entry("reward", 10),
                 Map.entry("timeLimit", "HOURS_2")), author);
         assertSuccess(created, "发布跑腿");
-        long orderId = created.path("data").asLong();
+        String orderId = created.path("data").asText();
+        assertUuidId(orderId);
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付");
-        reviewCase.decide("ERRAND", String.valueOf(orderId), true, null, null, "auditor-1");
+        reviewCase.decide("ERRAND", orderId, true, null, null, "auditor-1");
         assertThat(statusOf(orderId)).as("前置：订单应已发布").isEqualTo("PUBLISHED");
         return orderId;
     }
 
-    private void grab(long orderId, Session taker) {
+    private void grab(String orderId, Session taker) {
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/grab", null, taker), "抢单");
         assertThat(statusOf(orderId)).isEqualTo("LOCKED");
     }
 
-    private String statusOf(long orderId) {
+    private String statusOf(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT state FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }
 
-    private String takerIdOf(long orderId) {
+    private String takerIdOf(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT taker_id FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }
 
-    private int lockSeqOf(long orderId) {
+    private int lockSeqOf(String orderId) {
         Integer lockSeq = jdbcTemplate.queryForObject(
                 "SELECT lock_seq FROM errand_order WHERE errand_order_id = ?", Integer.class, orderId);
         return lockSeq == null ? -1 : lockSeq;
     }
 
-    private int takerCanceledOf(long orderId) {
+    private int takerCanceledOf(String orderId) {
         Integer canceled = jdbcTemplate.queryForObject(
                 "SELECT taker_canceled FROM errand_order WHERE errand_order_id = ?", Integer.class, orderId);
         return canceled == null ? -1 : canceled;
@@ -314,7 +315,7 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
         return count == null ? 0 : count;
     }
 
-    private int countWalletTransactions(long orderId, String type) {
+    private int countWalletTransactions(String orderId, String type) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM wallet_detail WHERE order_id = ? AND type = ?",
                 Integer.class, orderId, type);
@@ -330,43 +331,43 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 事件行的五要素（每类事件在一条链路里至多一条，取首条足够） */
-    private Map<String, Object> eventRowOf(long orderId, String eventType) {
+    private Map<String, Object> eventRowOf(String orderId, String eventType) {
         return jdbcTemplate.queryForMap(
                 "SELECT from_state, to_state, actor_id, actor_role, reason_type "
                         + "FROM errand_order_event WHERE order_id = ? AND event_type = ? ORDER BY id LIMIT 1",
                 orderId, eventType);
     }
 
-    private List<Long> myOrderIds(Session user, String role) {
+    private List<String> myOrderIds(Session user, String role) {
         JsonNode response = getJson("/api/errand/orders/mine?role=" + role, user);
         assertSuccess(response, "我的跑腿");
         return orderIdsOf(response);
     }
 
-    private String myOrderStatus(Session user, String role, long orderId) {
+    private String myOrderStatus(Session user, String role, String orderId) {
         JsonNode response = getJson("/api/errand/orders/mine?role=" + role, user);
         assertSuccess(response, "我的跑腿");
         return itemsOf(response).stream()
-                .filter(node -> node.path("orderId").asLong() == orderId)
+                .filter(node -> node.path("orderId").asText().equals(orderId))
                 .map(node -> node.path("status").asText())
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("我的列表里没有订单 " + orderId));
     }
 
-    private List<Long> authorProfileIds(String userId) {
+    private List<String> authorProfileIds(String userId) {
         JsonNode response = getJson("/api/errand/users/" + userId + "/orders", null);
         assertSuccess(response, "作者主页跑腿");
         return orderIdsOf(response);
     }
 
-    private List<Long> publicOrderIds() {
+    private List<String> publicOrderIds() {
         JsonNode response = getJson("/api/errand/orders?page=1&pageSize=20", null);
         assertSuccess(response, "公开跑腿列表");
         return orderIdsOf(response);
     }
 
-    private List<Long> orderIdsOf(JsonNode response) {
-        return itemsOf(response).stream().map(node -> node.path("orderId").asLong()).toList();
+    private List<String> orderIdsOf(JsonNode response) {
+        return itemsOf(response).stream().map(node -> node.path("orderId").asText()).toList();
     }
 
     private List<JsonNode> itemsOf(JsonNode response) {

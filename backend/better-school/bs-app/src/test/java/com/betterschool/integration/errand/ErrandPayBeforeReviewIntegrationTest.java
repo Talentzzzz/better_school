@@ -26,9 +26,6 @@ class ErrandPayBeforeReviewIntegrationTest extends CommunityApiTestBase {
     @Autowired
     private ErrandTimeoutScanJob errandTimeoutScanJob;
 
-    /** 直插夹具的业务 ID 序号（取 900_000 以上的高位段，与应用自增 id 不撞） */
-    private long fixtureSeq = 0;
-
     // ---------- 创建：同步初筛硬拦截 ----------
 
     @Test
@@ -46,7 +43,7 @@ class ErrandPayBeforeReviewIntegrationTest extends CommunityApiTestBase {
     @Test
     void 创建成功进入待支付() {
         Session user = registerAndLogin("13800002002", "发单用户2");
-        long orderId = createErrand(user, "帮忙取个快递");
+        String orderId = createErrand(user, "帮忙取个快递");
 
         String status = jdbcTemplate.queryForObject(
                 "SELECT state FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
@@ -58,7 +55,7 @@ class ErrandPayBeforeReviewIntegrationTest extends CommunityApiTestBase {
     @Test
     void 支付成功转已付款待审并落outbox与冻结() {
         Session user = registerAndLogin("13800002003", "发单用户3");
-        long orderId = createErrand(user, "帮忙取个快递");
+        String orderId = createErrand(user, "帮忙取个快递");
 
         JsonNode payResponse = postJson("/api/errand/orders/" + orderId + "/pay", null, user);
         assertSuccess(payResponse, "支付");
@@ -72,7 +69,7 @@ class ErrandPayBeforeReviewIntegrationTest extends CommunityApiTestBase {
                 "SELECT payload FROM outbox_message WHERE destination = ? AND state = 0",
                 String.class, Constants.ERRAND_PAID_TOPIC);
         assertThat(payloads).as("bs-errand-paid 消息应已落 outbox").hasSize(1);
-        assertThat(readTree(payloads.get(0)).path("orderId").asLong()).isEqualTo(orderId);
+        assertThat(readTree(payloads.get(0)).path("orderId").asText()).as("载荷 orderId 为 UUID 字符串（uuid-biz-id 票 05）").isEqualTo(orderId);
 
         // 资金冻结：FROZEN 流水 + frozen_amount
         Integer frozenRows = jdbcTemplate.queryForObject(
@@ -87,7 +84,7 @@ class ErrandPayBeforeReviewIntegrationTest extends CommunityApiTestBase {
     @Test
     void 支付幂等重试不重复转态冻结与落消息() {
         Session user = registerAndLogin("13800002004", "发单用户4");
-        long orderId = createErrand(user, "帮忙取个快递");
+        String orderId = createErrand(user, "帮忙取个快递");
         postJson("/api/errand/orders/" + orderId + "/pay", null, user);
 
         JsonNode retryResponse = postJson("/api/errand/orders/" + orderId + "/pay", null, user);
@@ -107,7 +104,7 @@ class ErrandPayBeforeReviewIntegrationTest extends CommunityApiTestBase {
     @Test
     void 待审期取消转CANCELLED并解冻退款() {
         Session user = registerAndLogin("13800002005", "发单用户5");
-        long orderId = createErrand(user, "帮忙取个快递");
+        String orderId = createErrand(user, "帮忙取个快递");
         postJson("/api/errand/orders/" + orderId + "/pay", null, user);
 
         JsonNode cancelResponse = postJson("/api/errand/orders/" + orderId + "/cancel", null, user);
@@ -128,7 +125,7 @@ class ErrandPayBeforeReviewIntegrationTest extends CommunityApiTestBase {
     @Test
     void 取消重试解冻流水幂等不重复() {
         Session user = registerAndLogin("13800002006", "发单用户6");
-        long orderId = createErrand(user, "帮忙取个快递");
+        String orderId = createErrand(user, "帮忙取个快递");
         postJson("/api/errand/orders/" + orderId + "/pay", null, user);
         postJson("/api/errand/orders/" + orderId + "/cancel", null, user);
 
@@ -141,7 +138,7 @@ class ErrandPayBeforeReviewIntegrationTest extends CommunityApiTestBase {
     @Test
     void 待支付期取消不产生退款流水() {
         Session user = registerAndLogin("13800002007", "发单用户7");
-        long orderId = createErrand(user, "帮忙取个快递");
+        String orderId = createErrand(user, "帮忙取个快递");
 
         JsonNode cancelResponse = postJson("/api/errand/orders/" + orderId + "/cancel", null, user);
         assertSuccess(cancelResponse, "待支付取消");
@@ -157,8 +154,8 @@ class ErrandPayBeforeReviewIntegrationTest extends CommunityApiTestBase {
 
     @Test
     void 超时扫描取消超时待支付单但不动待审单() {
-        long payTimeoutId = insertOrderWithAge("超时待支付单", "PENDING_PAYMENT", 20);
-        long reviewId = insertOrderWithAge("已付款待审单", "PENDING_REVIEW", 20);
+        String payTimeoutId = insertOrderWithAge("超时待支付单", "PENDING_PAYMENT", 20);
+        String reviewId = insertOrderWithAge("已付款待审单", "PENDING_REVIEW", 20);
 
         errandTimeoutScanJob.scan(null);
 
@@ -174,10 +171,12 @@ class ErrandPayBeforeReviewIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 工具 ----------
 
-    private long createErrand(Session user, String description) {
+    private String createErrand(Session user, String description) {
         JsonNode response = postJson("/api/errand/orders", errandBody(description), user);
         assertSuccess(response, "发布跑腿");
-        return response.path("data").asLong();
+        String orderId = response.path("data").asText();
+        assertUuidId(orderId);
+        return orderId;
     }
 
     private Map<String, Object> errandBody(String description) {
@@ -190,18 +189,18 @@ class ErrandPayBeforeReviewIntegrationTest extends CommunityApiTestBase {
                 Map.entry("timeLimit", "HOURS_2"));
     }
 
-    private int countWalletTransactions(long orderId, String type) {
+    private int countWalletTransactions(String orderId, String type) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM wallet_detail WHERE order_id = ? AND type = ?",
                 Integer.class, orderId, type);
         return count == null ? 0 : count;
     }
 
-    /** 直插订单（create_time/update_time 回拨 minutesAgo 分钟）；业务 ID 取夹具高位段，避开应用自增 id。
+    /** 直插订单（create_time/update_time 回拨 minutesAgo 分钟）；业务 ID 为 UUID（uuid-biz-id 票 05）。
      *  时间回拨在 Java 侧算好当普通 ? 传：`INTERVAL ?` 占位符会被 ShardingSphere 的 SQL 解析弄丢
      *  （内嵌化票 02 起 datasource 坐 SS 驱动），生产代码无此形态，夹具避让即可 */
-    private long insertOrderWithAge(String description, String status, int minutesAgo) {
-        long orderId = 900_000L + (++fixtureSeq);
+    private String insertOrderWithAge(String description, String status, int minutesAgo) {
+        String orderId = java.util.UUID.randomUUID().toString();
         LocalDateTime aged = LocalDateTime.now().minusMinutes(minutesAgo).truncatedTo(ChronoUnit.SECONDS);
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, pickup_location, "
                         + "delivery_location, reward, time_limit_hours, state, create_time, update_time) "
@@ -210,7 +209,7 @@ class ErrandPayBeforeReviewIntegrationTest extends CommunityApiTestBase {
         return orderId;
     }
 
-    private String statusOf(long orderId) {
+    private String statusOf(String orderId) {
         return jdbcTemplate.queryForObject(
                 "SELECT state FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
     }

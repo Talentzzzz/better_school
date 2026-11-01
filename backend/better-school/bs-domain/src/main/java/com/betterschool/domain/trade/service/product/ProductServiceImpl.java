@@ -32,7 +32,7 @@ public class ProductServiceImpl implements IProductService {
     private final ITradeRepository tradeRepository;
 
     @Override
-    public Long publishProduct(String userId, String title, String description, List<String> images, BigDecimal price,
+    public String publishProduct(String userId, String title, String description, List<String> images, BigDecimal price,
                                String tradeLocation, String category) {
         // 信用分门槛与同步初筛由 case 层前置校验
         ProductEntity productEntity = ProductEntity.create(userId, title, description, images, price,
@@ -43,7 +43,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public Long saveProductDraft(String userId, String title, String description, List<String> images, BigDecimal price,
+    public String saveProductDraft(String userId, String title, String description, List<String> images, BigDecimal price,
                                  String tradeLocation, String category) {
         // 草稿为私有停靠内容：不做初筛、不做信用分门槛（提交时才校验），字段可缺省
         ProductCategoryVO categoryVO = category == null ? null : ProductCategoryVO.from(category);
@@ -54,7 +54,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void updateProductDraft(String userId, Long productId, String title, String description, List<String> images,
+    public void updateProductDraft(String userId, String productId, String title, String description, List<String> images,
                                    BigDecimal price, String tradeLocation, String category) {
         ProductEntity productEntity = getOwnedProductDraft(userId, productId);
         ProductCategoryVO categoryVO = category == null ? null : ProductCategoryVO.from(category);
@@ -63,7 +63,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public ProductEntity getOwnedProductDraft(String userId, Long productId) {
+    public ProductEntity getOwnedProductDraft(String userId, String productId) {
         ProductEntity productEntity = tradeRepository.findById(productId);
         if (productEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "草稿不存在");
@@ -78,7 +78,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void submitProductDraft(String userId, Long productId) {
+    public void submitProductDraft(String userId, String productId) {
         // 完整性校验与同步初筛由 case 层前置
         getOwnedProductDraft(userId, productId);
         if (!tradeRepository.submitDraft(productId)) {
@@ -87,7 +87,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void withdrawProduct(String userId, Long productId) {
+    public void withdrawProduct(String userId, String productId) {
         ProductEntity productEntity = tradeRepository.findById(productId);
         if (productEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在");
@@ -104,7 +104,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void takeDownProduct(String userId, Long productId) {
+    public void takeDownProduct(String userId, String productId) {
         ProductEntity productEntity = tradeRepository.findById(productId);
         if (productEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在");
@@ -119,30 +119,30 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void expireProductToDraft(Long productId) {
+    public void expireProductToDraft(String productId) {
         // 幂等：扫描只选 ON_SALE，此处条件 UPDATE 兜底并发（已下架/已成交静默跳过）
         doTakeDownToDraft(productId);
     }
 
     /** 在售退出可见态共用路径：条件 UPDATE ON_SALE → DRAFT + 同事务搜索同步（消费方删文档） */
-    private void doTakeDownToDraft(Long productId) {
+    private void doTakeDownToDraft(String productId) {
         tradeRepository.takeDownWithSearchSync(productId);
     }
 
     @Override
-    public List<Long> listExpiredProductIds() {
+    public List<String> listExpiredProductIds() {
         return tradeRepository.listExpiredOnSaleIds(LocalDateTime.now(), SCAN_BATCH_SIZE);
     }
 
     @Override
-    public List<Long> listReviewTimeoutProductIds() {
+    public List<String> listReviewTimeoutProductIds() {
         // PENDING_REVIEW 由提交/编辑条件 UPDATE 翻转而来，update_time 即进入待审时间
         LocalDateTime cutoff = LocalDateTime.now().minusHours(REVIEW_REMINDER_HOURS);
         return tradeRepository.listReviewTimeoutIds(cutoff, SCAN_BATCH_SIZE);
     }
 
     @Override
-    public ProductEntity getOwnedOnSaleProduct(String userId, Long productId) {
+    public ProductEntity getOwnedOnSaleProduct(String userId, String productId) {
         ProductEntity productEntity = tradeRepository.findById(productId);
         if (productEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在");
@@ -164,7 +164,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void editOnSaleProduct(Long productId, String title, String description, List<String> images, BigDecimal price) {
+    public void editOnSaleProduct(String productId, String title, String description, List<String> images, BigDecimal price) {
         boolean contentChanged = title != null || description != null || images != null;
         if (!contentChanged && price == null) {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "无变更内容");
@@ -187,7 +187,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void moveRejectedProductToDraft(String userId, Long productId) {
+    public void moveRejectedProductToDraft(String userId, String productId) {
         ProductEntity productEntity = tradeRepository.findById(productId);
         if (productEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在");
@@ -204,7 +204,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void reviewApproveProduct(Long productId) {
+    public void reviewApproveProduct(String productId) {
         ProductEntity productEntity = tradeRepository.findById(productId);
         if (productEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在");
@@ -221,7 +221,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void reviewRejectProduct(Long productId) {
+    public void reviewRejectProduct(String productId) {
         ProductEntity productEntity = tradeRepository.findById(productId);
         if (productEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在");
@@ -275,9 +275,9 @@ public class ProductServiceImpl implements IProductService {
         if (hasMore) {
             rows = rows.subList(0, pageSize);
         }
-        List<Long> productIds = rows.stream().map(ProductFeedIndexItemVO::getProductId).toList();
+        List<String> productIds = rows.stream().map(ProductFeedIndexItemVO::getProductId).toList();
         // 浏览量不取索引快照：listByIds 已 JOIN 计数窄表拿到精确 UV（与详情同源），索引列只是排序键
-        Map<Long, ProductEntity> byId = tradeRepository.listByIds(productIds).stream()
+        Map<String, ProductEntity> byId = tradeRepository.listByIds(productIds).stream()
                 .collect(Collectors.toMap(ProductEntity::getProductId, Function.identity(), (a, b) -> a, HashMap::new));
         // 索引行缺 product 行（存量异常，重建 job 修）只跳过不补位：游标锚在扫描序上，补位会引入重复
         List<ProductEntity> products = productIds.stream()
@@ -308,12 +308,12 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public List<Long> listViewedProductIds(String userId, List<Long> productIds) {
+    public List<String> listViewedProductIds(String userId, List<String> productIds) {
         return tradeRepository.selectViewedProductIds(userId, productIds);
     }
 
     @Override
-    public ProductEntity productDetail(Long productId, String currentUserId) {
+    public ProductEntity productDetail(String productId, String currentUserId) {
         ProductEntity productEntity = getVisibleProduct(productId, currentUserId);
         // 浏览计数（UV 口径）：fire-and-forget，入队即返回（窗口过后一组一个事务落明细 + 加速列）。
         // 匿名不计入（仓储层拦下——商品语义变更，旧口径匿名也累加 PV）；允许丢、不影响本次请求结果，
@@ -327,7 +327,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void deleteProduct(Long productId, String currentUserId) {
+    public void deleteProduct(String productId, String currentUserId) {
         ProductEntity productEntity = tradeRepository.findById(productId);
         if (productEntity == null
                 || (productEntity.getStatus() != ProductStatusVO.ON_SALE
@@ -343,7 +343,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void markSold(Long productId, String currentUserId) {
+    public void markSold(String productId, String currentUserId) {
         ProductEntity productEntity = getOnSaleProduct(productId);
         if (!productEntity.isOwner(currentUserId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只能操作自己发布的商品");
@@ -353,7 +353,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void relistProduct(Long productId, String currentUserId) {
+    public void relistProduct(String productId, String currentUserId) {
         ProductEntity productEntity = tradeRepository.findById(productId);
         if (productEntity == null || productEntity.getStatus() == ProductStatusVO.DELETED) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在");
@@ -370,7 +370,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void favoriteProduct(Long productId, String userId) {
+    public void favoriteProduct(String productId, String userId) {
         getOnSaleProduct(productId);
         if (!tradeRepository.addFavorite(productId, userId)) {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "请勿重复收藏");
@@ -378,7 +378,7 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public void unfavoriteProduct(Long productId, String userId) {
+    public void unfavoriteProduct(String productId, String userId) {
         getOnSaleProduct(productId);
         if (!tradeRepository.removeFavorite(productId, userId)) {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "尚未收藏");
@@ -412,7 +412,7 @@ public class ProductServiceImpl implements IProductService {
         return tradeRepository.countOnSaleByUser(userId);
     }
 
-    private ProductEntity getOnSaleProduct(Long productId) {
+    private ProductEntity getOnSaleProduct(String productId) {
         ProductEntity productEntity = tradeRepository.findById(productId);
         if (productEntity == null || productEntity.getStatus() != ProductStatusVO.ON_SALE) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在或已下架");
@@ -424,7 +424,7 @@ public class ProductServiceImpl implements IProductService {
      * 详情/浏览可见性：ON_SALE/LOCKED/SOLD 对外可见（交易中与已售对双方可回看）；
      * DRAFT/PENDING_REVIEW/REJECTED 仅卖家本人可见（待审/草稿/被拒不外露）；软删对所有人不可见
      */
-    private ProductEntity getVisibleProduct(Long productId, String currentUserId) {
+    private ProductEntity getVisibleProduct(String productId, String currentUserId) {
         ProductEntity productEntity = tradeRepository.findById(productId);
         if (productEntity == null || productEntity.getStatus() == ProductStatusVO.DELETED) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在或已删除");

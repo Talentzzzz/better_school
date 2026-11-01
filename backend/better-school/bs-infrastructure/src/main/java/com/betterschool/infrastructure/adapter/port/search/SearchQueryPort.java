@@ -44,32 +44,32 @@ public class SearchQueryPort implements ISearchQueryPort {
     }
 
     @Override
-    public ProductEntity findProduct(Long productId) {
+    public ProductEntity findProduct(String productId) {
         return tradeRepository.findById(productId);
     }
 
     @Override
-    public List<ProductEntity> listProductsByIds(List<Long> productIds) {
+    public List<ProductEntity> listProductsByIds(List<String> productIds) {
         return tradeRepository.listByIds(productIds);
     }
 
     @Override
-    public List<Long> listProductIdsAfter(Long lastProductId, int limit) {
+    public List<String> listProductIdsAfter(String lastProductId, int limit) {
         return tradeRepository.listIdsAfter(lastProductId, limit);
     }
 
     @Override
-    public ErrandOrderEntity findErrand(Long orderId) {
+    public ErrandOrderEntity findErrand(String orderId) {
         return errandRepository.findById(orderId);
     }
 
     @Override
-    public List<ErrandOrderEntity> listErrandsByIds(List<Long> orderIds) {
+    public List<ErrandOrderEntity> listErrandsByIds(List<String> orderIds) {
         return errandRepository.listByIds(orderIds);
     }
 
     @Override
-    public List<Long> listErrandIdsAfter(Long lastOrderId, int limit) {
+    public List<String> listErrandIdsAfter(String lastOrderId, int limit) {
         return errandRepository.listIdsAfter(lastOrderId, limit);
     }
 

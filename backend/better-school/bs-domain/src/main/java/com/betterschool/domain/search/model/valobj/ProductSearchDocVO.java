@@ -10,7 +10,8 @@ import java.time.LocalDateTime;
 @Data
 public class ProductSearchDocVO {
 
-    private Long productId;
+    /** 业务 id 是 UUID 字符串（uuid-biz-id 票 05） */
+    private String productId;
     private String title;
     private String description;
     private String tradeLocation;

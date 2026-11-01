@@ -103,7 +103,8 @@ public class ReportCase {
         }
         if (result.isNeedDeduct()) {
             // 流水先行幂等：uk_user_reason_ref(user_id, REPORT_CONFIRMED, report_id) 冲突 = 已扣过；一内容一罚由 needDeduct 判定
-            creditAccountService.applyChange(result.getAuthorId(), CreditReasonTypeVO.REPORT_CONFIRMED, reportId);
+            // report_id 是物理自增 id，refId 统一字符串形（uuid-biz-id 票 05）
+            creditAccountService.applyChange(result.getAuthorId(), CreditReasonTypeVO.REPORT_CONFIRMED, String.valueOf(reportId));
         }
         notificationService.sendToUser(result.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.REPORT_RESULT, "内容处理通知",
                 "您发布的内容因被举报核实违规，已下架并扣除 10 信用分", "REPORT", String.valueOf(reportId));

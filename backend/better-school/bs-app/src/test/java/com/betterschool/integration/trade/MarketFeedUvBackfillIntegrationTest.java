@@ -36,20 +36,20 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13900001501", "商品回填作者");
 
         // 无审批流水的存量老商品（直插 ON_SALE，绕过审核链路）——feed_time 兜底 create_time
-        long legacyProductId = insertProduct(author.userId(), "ON_SALE", "5.00");
+        String legacyProductId = insertProduct(author.userId(), "ON_SALE", "5.00");
         // 有审批流水但无按人明细的在售商品——索引热度键不抄存量 PV，按默认 0 起
-        long viewedProductId = insertProduct(author.userId(), "ON_SALE", "12.50");
+        String viewedProductId = insertProduct(author.userId(), "ON_SALE", "12.50");
         // 多轮审核：第一轮三天前通过、第二轮一小时前重提再通过——feed_time 应取最近一次
-        long reapprovedProductId = insertProduct(author.userId(), "ON_SALE", "8.00");
+        String reapprovedProductId = insertProduct(author.userId(), "ON_SALE", "8.00");
         insertApproveReview("PRODUCT", reapprovedProductId, author.userId(), 1, ts(-3 * 24));
         insertApproveReview("PRODUCT", reapprovedProductId, author.userId(), 2, ts(-1));
         // 非 ON_SALE 商品不进索引（售出/被拒）
-        long soldProductId = insertProduct(author.userId(), "SOLD", "9.99");
-        long rejectedProductId = insertProduct(author.userId(), "REJECTED", "1.00");
+        String soldProductId = insertProduct(author.userId(), "SOLD", "9.99");
+        String rejectedProductId = insertProduct(author.userId(), "REJECTED", "1.00");
 
         runScript(BACKFILL_RELATIVE);
 
-        List<Long> indexedIds = jdbcTemplate.queryForList("SELECT product_id FROM product_feed_index", Long.class);
+        List<String> indexedIds = jdbcTemplate.queryForList("SELECT product_id FROM product_feed_index", String.class);
         assertThat(indexedIds).as("只回填 ON_SALE 商品：售出/被拒不进索引")
                 .containsExactlyInAnyOrder(legacyProductId, viewedProductId, reapprovedProductId);
 
@@ -73,18 +73,18 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13900001502", "跑腿回填作者");
 
         // 无审批流水的存量老单——feed_time 兜底 create_time
-        long legacyErrandId = insertErrand(author.userId(), "PUBLISHED", "6.00");
+        String legacyErrandId = insertErrand(author.userId(), "PUBLISHED", "6.00");
         // 有审批流水的大厅单——feed_time 取通过时刻
-        long approvedErrandId = insertErrand(author.userId(), "PUBLISHED", "8.88");
+        String approvedErrandId = insertErrand(author.userId(), "PUBLISHED", "8.88");
         insertApproveReview("ERRAND", approvedErrandId, author.userId(), 1, ts(-2));
         // 非 PUBLISHED 不进索引（已付待审/已锁定/已取消）
-        long pendingErrandId = insertErrand(author.userId(), "PENDING_REVIEW", "5.00");
-        long lockedErrandId = insertErrand(author.userId(), "LOCKED", "3.00");
-        long cancelledErrandId = insertErrand(author.userId(), "CANCELLED", "2.00");
+        String pendingErrandId = insertErrand(author.userId(), "PENDING_REVIEW", "5.00");
+        String lockedErrandId = insertErrand(author.userId(), "LOCKED", "3.00");
+        String cancelledErrandId = insertErrand(author.userId(), "CANCELLED", "2.00");
 
         runScript(BACKFILL_RELATIVE);
 
-        assertThat(jdbcTemplate.queryForList("SELECT errand_order_id FROM errand_feed_index", Long.class))
+        assertThat(jdbcTemplate.queryForList("SELECT errand_order_id FROM errand_feed_index", String.class))
                 .as("只回填 PUBLISHED 跑腿：待审/锁定/取消不进索引")
                 .containsExactlyInAnyOrder(legacyErrandId, approvedErrandId);
 
@@ -104,10 +104,10 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
     void 脚本可重复执行且重跑追平窗口期漂移() {
         Session author = registerAndLogin("13900001503", "幂等作者");
         // 仍在售的商品：窗口期改价——重跑追平
-        long productId = insertProduct(author.userId(), "ON_SALE", "10.00");
+        String productId = insertProduct(author.userId(), "ON_SALE", "10.00");
         // 离场商品：窗口期售出——收口段同步不可见
-        long soldProductId = insertProduct(author.userId(), "ON_SALE", "4.00");
-        long errandId = insertErrand(author.userId(), "PUBLISHED", "7.00");
+        String soldProductId = insertProduct(author.userId(), "ON_SALE", "4.00");
+        String errandId = insertErrand(author.userId(), "PUBLISHED", "7.00");
 
         runScript(BACKFILL_RELATIVE);
         // 首跑后的"窗口期"：旧代码还在写旧表——改价、商品售出、跑腿被锁定
@@ -130,24 +130,19 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
         runScript(BACKFILL_RELATIVE);
         assertThat(queryIndexPrice("product_feed_index", "product_id", productId)).isEqualTo("66.00");
         assertThat(jdbcTemplate.queryForList(
-                "SELECT product_id FROM product_feed_index WHERE state = 'ON_SALE'", Long.class))
+                "SELECT product_id FROM product_feed_index WHERE state = 'ON_SALE'", String.class))
                 .as("幂等不动点：商品索引行不再漂移").containsExactly(productId);
         assertThat(jdbcTemplate.queryForList(
-                "SELECT errand_order_id FROM errand_feed_index WHERE state = 'PUBLISHED'", Long.class))
+                "SELECT errand_order_id FROM errand_feed_index WHERE state = 'PUBLISHED'", String.class))
                 .as("幂等不动点：跑腿索引行不再漂移").isEmpty();
     }
 
     // ---------- 夹具与脚本执行 ----------
 
-    /** 高位段业务 ID 取号：nanoTime 低位做起点 + 递增，同测试内连续直插不会撞 uk（nanoTime 直接取模会撞） */
-    private static final java.util.concurrent.atomic.AtomicLong PRODUCT_SEQ =
-            new java.util.concurrent.atomic.AtomicLong(System.nanoTime() % 10_000L);
-    private static final java.util.concurrent.atomic.AtomicLong ERRAND_SEQ =
-            new java.util.concurrent.atomic.AtomicLong(System.nanoTime() % 10_000L);
 
-    /** 直插一行指定态商品（存量形态；业务 ID 取高位段避开应用自增 id，口径同 ProductViewMergeIntegrationTest） */
-    private long insertProduct(String userId, String state, String price) {
-        long productId = 920_000L + PRODUCT_SEQ.incrementAndGet() % 10_000L;
+    /** 直插一行指定态商品（存量形态；uuid-biz-id 票 05 起业务 id 直插 UUID，应用侧发号） */
+    private String insertProduct(String userId, String state, String price) {
+        String productId = java.util.UUID.randomUUID().toString();
         // 时间参数 Java 侧算好再绑：ShardingSphere 解析 NOW() - INTERVAL n DAY 会 bad SQL grammar
         Timestamp threeDaysAgo = ts(-3 * 24);
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
@@ -159,8 +154,8 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 直插一行指定态跑腿单（存量形态） */
-    private long insertErrand(String userId, String state, String reward) {
-        long errandId = 930_000L + ERRAND_SEQ.incrementAndGet() % 10_000L;
+    private String insertErrand(String userId, String state, String reward) {
+        String errandId = java.util.UUID.randomUUID().toString();
         Timestamp twoDaysAgo = ts(-2 * 24);
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
                         + "pickup_location, delivery_location, reward, time_limit_hours, state, "
@@ -171,7 +166,7 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 直插一条审核通过流水（重放存量审批历史，造多轮时间差用） */
-    private void insertApproveReview(String targetType, long targetId, String operatorId, int round, Timestamp at) {
+    private void insertApproveReview(String targetType, String targetId, String operatorId, int round, Timestamp at) {
         jdbcTemplate.update("INSERT INTO content_review (target_type, target_id, author_id, review_round, "
                         + "action, operator_id, create_time, update_time) "
                         + "VALUES (?, ?, ?, ?, 'APPROVE', ?, ?, ?)",
@@ -182,28 +177,28 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
         return Timestamp.valueOf(LocalDateTime.now().minusMinutes((long) (hoursAgo * 60)));
     }
 
-    private LocalDateTime lastApproveTime(String targetType, long targetId) {
+    private LocalDateTime lastApproveTime(String targetType, String targetId) {
         return jdbcTemplate.queryForObject(
                 "SELECT MAX(create_time) FROM content_review WHERE target_type = ? AND target_id = ? AND action = 'APPROVE'",
                 Timestamp.class, targetType, targetId).toLocalDateTime();
     }
 
-    private LocalDateTime queryIndexFeedTime(String table, String idColumn, long id) {
+    private LocalDateTime queryIndexFeedTime(String table, String idColumn, String id) {
         return queryColumnTime(table, idColumn, "feed_time", id);
     }
 
-    private LocalDateTime queryColumnTime(String table, String idColumn, String column, long id) {
+    private LocalDateTime queryColumnTime(String table, String idColumn, String column, String id) {
         return jdbcTemplate.queryForObject(
                 "SELECT " + column + " FROM " + table + " WHERE " + idColumn + " = ?", Timestamp.class, id)
                 .toLocalDateTime();
     }
 
-    private String queryIndexPrice(String table, String idColumn, long id) {
+    private String queryIndexPrice(String table, String idColumn, String id) {
         return jdbcTemplate.queryForObject(
                 "SELECT price FROM " + table + " WHERE " + idColumn + " = ?", String.class, id);
     }
 
-    private int indexViewCountOf(String table, String idColumn, long id) {
+    private int indexViewCountOf(String table, String idColumn, String id) {
         return jdbcTemplate.queryForObject(
                 "SELECT view_count FROM " + table + " WHERE " + idColumn + " = ?", Integer.class, id);
     }

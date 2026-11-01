@@ -11,18 +11,23 @@ import java.time.format.DateTimeParseException;
 import java.util.Base64;
 
 /**
- * 商品 feed 游标（market-feed-uv 票 04）：keyset 分页的续页锚点，封装 {@code (排序键, product_id)}——
- * 下一页查询即 {@code WHERE (排序键, product_id) < / > (?, ?)}。排序键随 sort 而异：
+ * 商品 feed 游标（market-feed-uv 票 04；uuid-biz-id 票 05 起热度档带时间收敛键）：keyset 分页的续页锚点，
+ * 封装 {@code (排序键, [create_time], product_id)}——下一页查询即
+ * {@code WHERE (排序键, [create_time], product_id) < / > (?, ?[, ?])}。排序键随 sort 而异：
  * hot = view_count、time / time_asc = feed_time、price_asc / price_desc = price；
  * product_id 是同值并列的 tie-break（与索引尾列一致）。
  *
- * <p>对外是不透明串（Base64url），内部 {@code product|排序键|业务ID}；由域内编码解码（照帖子
- * {@code FeedCursorVO} 先例，各域各写一份）。换 tab 复用旧游标 / 跨域复用（跑腿游标） / 篡改内容
- * 都会在解码时报 PARAM_ERROR，而不是静默错位。游标失效（排序键值已漂移）不报错——keyset 语义下
- * 最多边界附近的行有出入，不重不漏由 {@code product_id} 唯一锚点保证。
+ * <p>热度档三段收敛（uuid-biz-id 票 05）：业务 ID 是 UUID、无序，view_count 同值时按
+ * {@code create_time DESC, product_id DESC} 收敛成确定序，游标因此必须同时携带 create_time 与
+ * product_id，否则翻页会在同值段重复/漏行。
+ *
+ * <p>对外是不透明串（Base64url），内部 {@code product|sort|排序键|create_time|product_id}（5 段，
+ * 该档用不到的 create_time 格留空串；照帖子 {@code FeedCursorVO} 先例，各域各写一份）。换 tab 复用旧
+ * 游标 / 跨域复用（跑腿游标） / 篡改内容都会在解码时报 PARAM_ERROR，而不是静默错位。游标失效
+ * （排序键值已漂移）不报错——keyset 语义下最多边界附近的行有出入，不重不漏由尾段唯一锚点保证。
  */
 public record ProductFeedCursorVO(String sortType, LocalDateTime feedTime, BigDecimal price, Long viewCount,
-                                  Long productId) {
+                                  LocalDateTime createTime, String productId) {
 
     /** 热度（浏览 UV 数降序） */
     public static final String SORT_HOT = "hot";
@@ -35,6 +40,8 @@ public record ProductFeedCursorVO(String sortType, LocalDateTime feedTime, BigDe
 
     private static final DateTimeFormatter FEED_TIME_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
     private static final String SEPARATOR = "|";
+    /** 编码字段数：domain | sort | 排序键 | create_time（仅热度档携带） | product_id */
+    private static final int PARTS = 5;
     /** 域标签：游标串里钉住来源域，跨域复用（闲置游标喂给跑腿大厅）在解码时即被拒 */
     private static final String DOMAIN = "product";
 
@@ -54,17 +61,17 @@ public record ProductFeedCursorVO(String sortType, LocalDateTime feedTime, BigDe
 
     /** 首页锚点（无游标入参时） */
     public static ProductFeedCursorVO firstPage(String sortType) {
-        return new ProductFeedCursorVO(sortType, null, null, null, null);
+        return new ProductFeedCursorVO(sortType, null, null, null, null, null);
     }
 
-    /** 从索引扫描行取续页锚点：排序键随 sort 而异，product_id 收并列 */
+    /** 从索引扫描行取续页锚点：排序键随 sort 而异，热度档另带 create_time 收敛键，product_id 收并列 */
     public static ProductFeedCursorVO anchorOf(String sortType, ProductFeedIndexItemVO row) {
         return switch (sortType) {
             case SORT_HOT -> new ProductFeedCursorVO(sortType, null, null, (long) row.getViewCount(),
-                    row.getProductId());
+                    row.getCreateTime(), row.getProductId());
             case SORT_PRICE_ASC, SORT_PRICE_DESC -> new ProductFeedCursorVO(sortType, null, row.getPrice(), null,
-                    row.getProductId());
-            default -> new ProductFeedCursorVO(sortType, row.getFeedTime(), null, null, row.getProductId());
+                    null, row.getProductId());
+            default -> new ProductFeedCursorVO(sortType, row.getFeedTime(), null, null, null, row.getProductId());
         };
     }
 
@@ -79,7 +86,9 @@ public record ProductFeedCursorVO(String sortType, LocalDateTime feedTime, BigDe
             case SORT_PRICE_ASC, SORT_PRICE_DESC -> price.toPlainString();
             default -> FEED_TIME_FORMAT.format(feedTime);
         };
-        String raw = DOMAIN + SEPARATOR + sortType + SEPARATOR + key + SEPARATOR + productId;
+        String raw = DOMAIN + SEPARATOR + sortType + SEPARATOR + key + SEPARATOR
+                + (SORT_HOT.equals(sortType) ? FEED_TIME_FORMAT.format(createTime) : "") + SEPARATOR
+                + productId;
         return Base64.getUrlEncoder().withoutPadding().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
     }
 
@@ -92,18 +101,19 @@ public record ProductFeedCursorVO(String sortType, LocalDateTime feedTime, BigDe
             throw new BusinessException(ResponseCode.PARAM_ERROR, "无效的游标");
         }
         String[] parts = raw.split("\\|", -1);
-        if (parts.length != 4 || !DOMAIN.equals(parts[0]) || !parts[1].equals(expectedSort)) {
+        if (parts.length != PARTS || !DOMAIN.equals(parts[0]) || !parts[1].equals(expectedSort)
+                || parts[2].isEmpty() || (SORT_HOT.equals(expectedSort) && parts[3].isEmpty())) {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "无效的游标");
         }
         try {
-            long productId = Long.parseLong(parts[3]);
+            String productId = parts[4];
             return switch (expectedSort) {
                 case SORT_HOT -> new ProductFeedCursorVO(expectedSort, null, null, Long.parseLong(parts[2]),
-                        productId);
+                        LocalDateTime.parse(parts[3], FEED_TIME_FORMAT), productId);
                 case SORT_PRICE_ASC, SORT_PRICE_DESC -> new ProductFeedCursorVO(expectedSort, null,
-                        new BigDecimal(parts[2]), null, productId);
+                        new BigDecimal(parts[2]), null, null, productId);
                 default -> new ProductFeedCursorVO(expectedSort,
-                        LocalDateTime.parse(parts[2], FEED_TIME_FORMAT), null, null, productId);
+                        LocalDateTime.parse(parts[2], FEED_TIME_FORMAT), null, null, null, productId);
             };
         } catch (NumberFormatException | DateTimeParseException e) {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "无效的游标");

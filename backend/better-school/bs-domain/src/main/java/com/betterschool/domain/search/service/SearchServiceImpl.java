@@ -54,11 +54,11 @@ public class SearchServiceImpl implements ISearchService {
 
     @Override
     public void handleSync(SearchSyncMessage message) {
-        // 消息 id 统一 String（user_id / post_id 是 UUID）；product/errand 的业务 id 过渡期仍是数值，消费侧解析回 Long
+        // 消息 id 统一 String：业务 id 均为 UUID 字符串，直传不再解析（uuid-biz-id 票 05）
         switch (message.getType()) {
             case "post" -> syncPost(message.getId());
-            case "product" -> syncProduct(Long.parseLong(message.getId()));
-            case "errand" -> syncErrand(Long.parseLong(message.getId()));
+            case "product" -> syncProduct(message.getId());
+            case "errand" -> syncErrand(message.getId());
             case "user" -> syncUser(message.getId());
             default -> log.warn("[SearchSync] 未知实体类型 type={}, id={}", message.getType(), message.getId());
         }
@@ -73,7 +73,7 @@ public class SearchServiceImpl implements ISearchService {
         }
     }
 
-    private void syncProduct(Long productId) {
+    private void syncProduct(String productId) {
         ProductEntity product = searchQueryPort.findProduct(productId);
         if (product != null && product.getStatus() == ProductStatusVO.ON_SALE) {
             searchRepository.bulkUpsertProductDocs(List.of(toProductSearchDocVO(product)));
@@ -82,7 +82,7 @@ public class SearchServiceImpl implements ISearchService {
         }
     }
 
-    private void syncErrand(Long orderId) {
+    private void syncErrand(String orderId) {
         ErrandOrderEntity order = searchQueryPort.findErrand(orderId);
         if (order != null && PUBLIC_ERRAND_STATUSES.contains(order.getStatus())) {
             searchRepository.bulkUpsertErrandDocs(List.of(toErrandSearchDocVO(order)));
@@ -114,11 +114,11 @@ public class SearchServiceImpl implements ISearchService {
 
     @Override
     public SearchPageVO<ProductEntity> searchProducts(String keyword, int page, int pageSize) {
-        SearchPageVO<Long> idPage = searchRepository.searchProducts(keyword, page, pageSize);
+        SearchPageVO<String> idPage = searchRepository.searchProducts(keyword, page, pageSize);
         if (idPage.getItems().isEmpty()) {
             return new SearchPageVO<>(idPage.getTotal(), List.of());
         }
-        Map<Long, ProductEntity> byId = searchQueryPort.listProductsByIds(idPage.getItems()).stream()
+        Map<String, ProductEntity> byId = searchQueryPort.listProductsByIds(idPage.getItems()).stream()
                 .filter(product -> product.getStatus() == ProductStatusVO.ON_SALE)
                 .collect(Collectors.toMap(ProductEntity::getProductId, Function.identity()));
         return new SearchPageVO<>(idPage.getTotal(), orderByIds(idPage.getItems(), byId));
@@ -126,11 +126,11 @@ public class SearchServiceImpl implements ISearchService {
 
     @Override
     public SearchPageVO<ErrandOrderEntity> searchErrands(String keyword, int page, int pageSize) {
-        SearchPageVO<Long> idPage = searchRepository.searchErrands(keyword, page, pageSize);
+        SearchPageVO<String> idPage = searchRepository.searchErrands(keyword, page, pageSize);
         if (idPage.getItems().isEmpty()) {
             return new SearchPageVO<>(idPage.getTotal(), List.of());
         }
-        Map<Long, ErrandOrderEntity> byId = searchQueryPort.listErrandsByIds(idPage.getItems()).stream()
+        Map<String, ErrandOrderEntity> byId = searchQueryPort.listErrandsByIds(idPage.getItems()).stream()
                 .filter(order -> PUBLIC_ERRAND_STATUSES.contains(order.getStatus()))
                 .collect(Collectors.toMap(ErrandOrderEntity::getOrderId, Function.identity()));
         return new SearchPageVO<>(idPage.getTotal(), orderByIds(idPage.getItems(), byId));
@@ -165,7 +165,7 @@ public class SearchServiceImpl implements ISearchService {
     /**
      * 重建一类索引：游标拉批（宽度 = 批大小）→ 批内扇出反查转文档 → 回主线程过滤汇总成一次 bulk 写。
      * 游标推进到空批是**唯一**终止条件——旧实现「只取前 N 行」等于静默不完整的索引。
-     * 游标与 id 同型（post/user 的游标是 UUID 字符串业务 id，字典序推进；product/errand 过渡期仍是数值 id）
+     * 游标与 id 同型：游标是 UUID 字符串业务 id，字典序推进（uuid-biz-id 票 05）
      */
     private <I, T> void rebuild(String index, String threadPrefix, I startId,
                                 BiFunction<I, Integer, List<I>> pageOfIds,
@@ -193,13 +193,13 @@ public class SearchServiceImpl implements ISearchService {
     }
 
     private void rebuildProducts() {
-        rebuild("product", "search-rebuild-product-", 0L,
+        rebuild("product", "search-rebuild-product-", "",
                 (cursor, limit) -> searchQueryPort.listProductIdsAfter(cursor, limit),
                 this::productSearchDocOf, searchRepository::bulkUpsertProductDocs);
     }
 
     private void rebuildErrands() {
-        rebuild("errand", "search-rebuild-errand-", 0L,
+        rebuild("errand", "search-rebuild-errand-", "",
                 (cursor, limit) -> searchQueryPort.listErrandIdsAfter(cursor, limit),
                 this::errandSearchDocOf, searchRepository::bulkUpsertErrandDocs);
     }
@@ -220,7 +220,7 @@ public class SearchServiceImpl implements ISearchService {
                 .orElse(null);
     }
 
-    private ProductSearchDocVO productSearchDocOf(Long productId) {
+    private ProductSearchDocVO productSearchDocOf(String productId) {
         return searchQueryPort.listProductsByIds(List.of(productId)).stream()
                 .filter(product -> product.getStatus() == ProductStatusVO.ON_SALE)
                 .map(this::toProductSearchDocVO)
@@ -228,7 +228,7 @@ public class SearchServiceImpl implements ISearchService {
                 .orElse(null);
     }
 
-    private ErrandSearchDocVO errandSearchDocOf(Long orderId) {
+    private ErrandSearchDocVO errandSearchDocOf(String orderId) {
         return searchQueryPort.listErrandsByIds(List.of(orderId)).stream()
                 .filter(order -> PUBLIC_ERRAND_STATUSES.contains(order.getStatus()))
                 .map(this::toErrandSearchDocVO)

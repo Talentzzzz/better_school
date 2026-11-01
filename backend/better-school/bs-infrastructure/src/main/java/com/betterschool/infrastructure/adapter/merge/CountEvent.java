@@ -7,7 +7,7 @@ package com.betterschool.infrastructure.adapter.merge;
  * （{@code submitAndWait(shardKey, event)}），合并器不从 payload 推导 key——否则将来网关按 key
  * 分流时两层路由会分叉（spec §2.8）。
  *
- * <p><b>业务行主键是字符串</b>（uuid-biz-id）：帖/评是 UUID，商品/跑腿过渡期仍是数值 id 的字符串形。
+ * <p><b>业务行主键是字符串</b>（uuid-biz-id 票 05）：帖/评/商品/跑腿的业务 id 统一是 UUID 字符串。
  * 分片键与分组键必须是<b>原值本身</b>而不是它的哈希——分组要求「同一行」严格相等，哈希碰撞会把两行
  * 合成一组（一组一条 UPDATE 就会写错行）；只有分片下标那一步才允许拿哈希折位。
  *

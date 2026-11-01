@@ -19,10 +19,14 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class ProductFeedIndexItemVO {
 
-    private Long productId;
+    /** 商品业务 ID（UUID 字符串，uuid-biz-id 票 05） */
+    private String productId;
 
     /** 「最新 / 最早」排序键（通过时刻） */
     private LocalDateTime feedTime;
+
+    /** 「热度」同值收敛键（发布时刻快照，uuid-biz-id 票 05：view_count 同值按 create_time DESC 收敛） */
+    private LocalDateTime createTime;
 
     /** 「价格升降」排序键（价格快照） */
     private BigDecimal price;

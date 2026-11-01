@@ -38,13 +38,14 @@ public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
 
     /**
      * {@code taskType → 到期动作}。{@code bizId} 的形状**按 taskType 各自解析**：
-     * 支付超时是十进制 id，锁单/租约超时是复合键 {@code {id}:{seq}}（不能走 {@code Long.parseLong} 那条路）。
+     * 支付超时是 UUID 字符串订单业务 id（直传，uuid-biz-id 票 05），
+     * 锁单/租约超时是复合键 {@code {uuid}:{seq}}（锁单）与 {@code {taskId}:{claimSeq}}（租约，物理自增）。
      */
     @Override
     public void callback(TimeoutTaskEntity task) {
         switch (task.getTaskType()) {
-            case Constants.PRODUCT_ORDER_PAY_TIMEOUT -> productOrderCase.handlePayTimeout(parseNumericBizId(task));
-            case Constants.ERRAND_PAY_TIMEOUT -> errandOrderCase.handlePayTimeout(parseNumericBizId(task));
+            case Constants.PRODUCT_ORDER_PAY_TIMEOUT -> productOrderCase.handlePayTimeout(task.getBizId());
+            case Constants.ERRAND_PAY_TIMEOUT -> errandOrderCase.handlePayTimeout(task.getBizId());
             case Constants.ERRAND_LOCK_TIMEOUT -> {
                 CompositeBizId lockBizId = parseCompositeBizId(task, "{orderId}:{lockSeq}");
                 errandOrderCase.handleLockTimeout(lockBizId.id(), lockBizId.seq());
@@ -52,7 +53,7 @@ public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
             case Constants.REVIEW_LEASE_TIMEOUT -> {
                 // 审核租约回收：轮次守卫条件 UPDATE，未命中（已裁决/已放回/已按新轮次重领）＝幂等成功零副作用
                 CompositeBizId leaseBizId = parseCompositeBizId(task, "{taskId}:{claimSeq}");
-                reviewService.handleLeaseTimeout(leaseBizId.id(), leaseBizId.seq());
+                reviewService.handleLeaseTimeout(Long.parseLong(leaseBizId.id()), leaseBizId.seq());
             }
             // 业务侧不认识这个 taskType = 注册与消费的代码不一致（如改了 Constants 取值），
             // 按失败重投直到进死信，在管理面显式暴露，不静默吞掉
@@ -60,20 +61,11 @@ public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
         }
     }
 
-    /** 坏的 bizId 是注册方的编程错误：抛出去按失败重投（16 次后进死信，管理面可查），不静默当成功吞掉 */
-    private static long parseNumericBizId(TimeoutTaskEntity task) {
-        try {
-            return Long.parseLong(task.getBizId());
-        } catch (NumberFormatException e) {
-            throw new IllegalStateException("业务引用 id 不是数字：" + task.getBizId(), e);
-        }
+    /** 复合 bizId：{id}:{seq}（锁单超时 = orderId:lockSeq，orderId 是 UUID 字符串；审核租约超时 = taskId:claimSeq，taskId 是物理自增） */
+    private record CompositeBizId(String id, int seq) {
     }
 
-    /** 复合 bizId：{id}:{seq}（锁单超时 = orderId:lockSeq，审核租约超时 = taskId:claimSeq） */
-    private record CompositeBizId(long id, int seq) {
-    }
-
-    /** 形状不对同样是编程错误：抛出去按失败重投，不静默当成功（与 {@link #parseNumericBizId} 同口径） */
+    /** 形状不对同样是编程错误：抛出去按失败重投，不静默当成功（uuid-biz-id 票 05：id 段直传不解析） */
     private static CompositeBizId parseCompositeBizId(TimeoutTaskEntity task, String shape) {
         String bizId = task.getBizId();
         int separator = bizId == null ? -1 : bizId.indexOf(':');
@@ -81,7 +73,7 @@ public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
             throw new IllegalStateException("复合业务引用形状应为 " + shape + "：" + bizId);
         }
         try {
-            return new CompositeBizId(Long.parseLong(bizId.substring(0, separator)),
+            return new CompositeBizId(bizId.substring(0, separator),
                     Integer.parseInt(bizId.substring(separator + 1)));
         } catch (NumberFormatException e) {
             throw new IllegalStateException("复合业务引用形状应为 " + shape + "：" + bizId, e);

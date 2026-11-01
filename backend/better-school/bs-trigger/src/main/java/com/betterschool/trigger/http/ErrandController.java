@@ -44,8 +44,8 @@ public class ErrandController implements IErrandService {
 
     @Override
     @PostMapping("/orders")
-    public Response<Long> createOrder(@Valid @RequestBody ErrandOrderPublishRequestDTO request) {
-        Long orderId = errandOrderCase.createOrder(SecurityUtils.currentUserId(), request.getType(),
+    public Response<String> createOrder(@Valid @RequestBody ErrandOrderPublishRequestDTO request) {
+        String orderId = errandOrderCase.createOrder(SecurityUtils.currentUserId(), request.getType(),
                 request.getDescription(), request.getPickupLocation(), request.getDeliveryLocation(),
                 request.getReward(), request.getImages(), request.getTimeLimit());
         return Response.ok(orderId);
@@ -53,15 +53,15 @@ public class ErrandController implements IErrandService {
 
     @Override
     @PostMapping("/orders/{orderId}/pay")
-    public Response<Void> payOrder(@PathVariable Long orderId) {
+    public Response<Void> payOrder(@PathVariable String orderId) {
         errandOrderCase.payOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/draft")
-    public Response<Long> saveDraft(@Valid @RequestBody ErrandDraftSaveRequestDTO request) {
-        Long orderId = errandOrderCase.createDraft(SecurityUtils.currentUserId(), request.getType(),
+    public Response<String> saveDraft(@Valid @RequestBody ErrandDraftSaveRequestDTO request) {
+        String orderId = errandOrderCase.createDraft(SecurityUtils.currentUserId(), request.getType(),
                 request.getDescription(), request.getPickupLocation(), request.getDeliveryLocation(),
                 request.getReward(), request.getImages(), request.getTimeLimit());
         return Response.ok(orderId);
@@ -69,7 +69,7 @@ public class ErrandController implements IErrandService {
 
     @Override
     @PutMapping("/orders/{orderId}/draft")
-    public Response<Void> updateDraft(@PathVariable Long orderId,
+    public Response<Void> updateDraft(@PathVariable String orderId,
                                       @Valid @RequestBody ErrandDraftSaveRequestDTO request) {
         errandOrderCase.updateDraft(orderId, SecurityUtils.currentUserId(), request.getType(),
                 request.getDescription(), request.getPickupLocation(), request.getDeliveryLocation(),
@@ -79,14 +79,14 @@ public class ErrandController implements IErrandService {
 
     @Override
     @PostMapping("/orders/{orderId}/submit")
-    public Response<Void> submitDraft(@PathVariable Long orderId) {
+    public Response<Void> submitDraft(@PathVariable String orderId) {
         errandOrderCase.submitDraft(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @DeleteMapping("/orders/{orderId}")
-    public Response<Void> deleteDraft(@PathVariable Long orderId) {
+    public Response<Void> deleteDraft(@PathVariable String orderId) {
         errandOrderCase.deleteDraft(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
@@ -109,14 +109,14 @@ public class ErrandController implements IErrandService {
         List<ErrandOrderResponseDTO> dtoList = feedPage.getOrders().stream().map(this::toOrderResponseDTO).toList();
         // 已读灰显（market-feed-uv 票 05，照帖子 listPosts）：页内 order_id 批量回查浏览明细，
         // 登录用户带 viewed 标记；未登录为空集 ⇒ 恒 false（大厅匿名可浏览）
-        Set<Long> viewedIds = viewedOrderIdsOf(feedPage.getOrders(), SecurityUtils.currentUserId());
+        Set<String> viewedIds = viewedOrderIdsOf(feedPage.getOrders(), SecurityUtils.currentUserId());
         dtoList.forEach(dto -> dto.setViewed(viewedIds.contains(dto.getOrderId())));
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList, feedPage.getNextCursor()));
     }
 
     @Override
     @GetMapping("/orders/{orderId}")
-    public Response<ErrandOrderResponseDTO> orderDetail(@PathVariable Long orderId) {
+    public Response<ErrandOrderResponseDTO> orderDetail(@PathVariable String orderId) {
         String currentUserId = SecurityUtils.currentUserId();
         ErrandOrderEntity orderEntity = errandOrderCase.orderDetail(orderId, currentUserId);
         ErrandOrderResponseDTO dto = toOrderResponseDTO(orderEntity);
@@ -129,63 +129,63 @@ public class ErrandController implements IErrandService {
 
     @Override
     @PostMapping("/orders/{orderId}/grab")
-    public Response<Void> grabOrder(@PathVariable Long orderId) {
+    public Response<Void> grabOrder(@PathVariable String orderId) {
         errandOrderCase.grabOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/accept")
-    public Response<Void> acceptLockedOrder(@PathVariable Long orderId) {
+    public Response<Void> acceptLockedOrder(@PathVariable String orderId) {
         errandOrderCase.acceptLockedOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/abandon")
-    public Response<Void> abandonLockedOrder(@PathVariable Long orderId) {
+    public Response<Void> abandonLockedOrder(@PathVariable String orderId) {
         errandOrderCase.abandonLockedOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/pickup")
-    public Response<Void> pickupOrder(@PathVariable Long orderId) {
+    public Response<Void> pickupOrder(@PathVariable String orderId) {
         errandOrderCase.pickupOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/deliver")
-    public Response<Void> deliverOrder(@PathVariable Long orderId) {
+    public Response<Void> deliverOrder(@PathVariable String orderId) {
         errandOrderCase.deliverOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/confirm")
-    public Response<Void> confirmOrder(@PathVariable Long orderId) {
+    public Response<Void> confirmOrder(@PathVariable String orderId) {
         errandOrderCase.confirmOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/cancel")
-    public Response<Void> cancelOrder(@PathVariable Long orderId) {
+    public Response<Void> cancelOrder(@PathVariable String orderId) {
         errandOrderCase.cancelOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/dispute")
-    public Response<Void> disputeOrder(@PathVariable Long orderId) {
+    public Response<Void> disputeOrder(@PathVariable String orderId) {
         errandOrderCase.disputeOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/arbitrate")
-    public Response<Void> arbitrateOrder(@PathVariable Long orderId, @RequestParam String result) {
+    public Response<Void> arbitrateOrder(@PathVariable String orderId, @RequestParam String result) {
         if (!"ADMIN".equals(SecurityUtils.currentRole())) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "无权限，仅管理员可仲裁结案");
         }
@@ -224,8 +224,8 @@ public class ErrandController implements IErrandService {
     }
 
     /** 当前用户浏览过的订单 id 集合（未登录为空集；一页一次批量查询，不做 N+1） */
-    private Set<Long> viewedOrderIdsOf(List<ErrandOrderEntity> orderList, String currentUserId) {
-        List<Long> orderIds = orderList.stream().map(ErrandOrderEntity::getOrderId).toList();
+    private Set<String> viewedOrderIdsOf(List<ErrandOrderEntity> orderList, String currentUserId) {
+        List<String> orderIds = orderList.stream().map(ErrandOrderEntity::getOrderId).toList();
         return new HashSet<>(errandOrderCase.listViewedOrderIds(currentUserId, orderIds));
     }
 

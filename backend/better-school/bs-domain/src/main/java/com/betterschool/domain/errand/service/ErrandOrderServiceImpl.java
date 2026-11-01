@@ -65,7 +65,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     private final IErrandGrabAbusePort errandGrabAbusePort;
 
     @Override
-    public Long createOrder(String userId, String type, String description, String pickupLocation,
+    public String createOrder(String userId, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward,
                             List<String> images, String timeLimit) {
         ErrandTypeVO typeVO = ErrandTypeVO.from(type);
@@ -78,7 +78,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public Long createDraft(String userId, String type, String description, String pickupLocation,
+    public String createDraft(String userId, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward,
                             List<String> images, String timeLimit) {
         // 草稿为私有停靠内容：字段可缺省、不做初筛（提交时才做），落 DRAFT 且不注册支付超时
@@ -89,7 +89,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public void updateDraft(Long orderId, String userId, String type, String description, String pickupLocation,
+    public void updateDraft(String orderId, String userId, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward, List<String> images, String timeLimit) {
         ErrandOrderEntity orderEntity = getOwnedDraft(orderId, userId);
         orderEntity.applyDraftContent(toTypeOrNull(type), description, pickupLocation, deliveryLocation,
@@ -98,7 +98,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public ErrandOrderEntity getOwnedDraft(Long orderId, String userId) {
+    public ErrandOrderEntity getOwnedDraft(String orderId, String userId) {
         ErrandOrderEntity orderEntity = errandRepository.findById(orderId);
         if (orderEntity == null || orderEntity.getStatus() == ErrandStatusVO.DELETED) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "草稿不存在");
@@ -113,7 +113,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public void submitDraft(Long orderId, String userId) {
+    public void submitDraft(String orderId, String userId) {
         // 必填完整性 + 信用分门槛 + 同步初筛由 case 层前置；此处只做状态守卫与迁移
         getOwnedDraft(orderId, userId);
         // 状态迁移与 15 分钟支付超时注册同属一个仓储原子用例（提交即起支付钟）
@@ -121,7 +121,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public void deleteDraft(Long orderId, String userId) {
+    public void deleteDraft(String orderId, String userId) {
         ErrandOrderEntity orderEntity = errandRepository.findById(orderId);
         if (orderEntity == null || orderEntity.getStatus() == ErrandStatusVO.DELETED) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "草稿不存在");
@@ -138,7 +138,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public void reviewApproveOrder(Long orderId, String operatorId) {
+    public void reviewApproveOrder(String orderId, String operatorId) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
         if (orderEntity.getStatus() == ErrandStatusVO.PUBLISHED) {
             return; // 幂等：已通过发布
@@ -152,7 +152,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public ErrandReviewResult reviewRejectOrder(Long orderId, String operatorId, String reason) {
+    public ErrandReviewResult reviewRejectOrder(String orderId, String operatorId, String reason) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
         ErrandReviewResult refundDemand = new ErrandReviewResult(orderEntity.getPublisherId(), orderEntity.getTotalReward());
         if (orderEntity.getStatus() == ErrandStatusVO.REJECTED) {
@@ -168,7 +168,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public ErrandPayResult payOrder(Long orderId, String userId) {
+    public ErrandPayResult payOrder(String orderId, String userId) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
         if (!orderEntity.isOwner(userId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只能支付自己发布的订单");
@@ -230,8 +230,8 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (hasMore) {
             rows = rows.subList(0, pageSize);
         }
-        List<Long> orderIds = rows.stream().map(ErrandFeedIndexItemVO::getOrderId).toList();
-        Map<Long, ErrandOrderEntity> byId = errandRepository.listByIds(orderIds).stream()
+        List<String> orderIds = rows.stream().map(ErrandFeedIndexItemVO::getOrderId).toList();
+        Map<String, ErrandOrderEntity> byId = errandRepository.listByIds(orderIds).stream()
                 .collect(Collectors.toMap(ErrandOrderEntity::getOrderId, Function.identity(), (a, b) -> a, HashMap::new));
         // 索引行缺订单行（存量异常，重建 job 修）只跳过不补位：游标锚在扫描序上，补位会引入重复
         List<ErrandOrderEntity> orders = new ArrayList<>(orderIds.size());
@@ -267,12 +267,12 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public List<Long> listViewedOrderIds(String userId, List<Long> orderIds) {
+    public List<String> listViewedOrderIds(String userId, List<String> orderIds) {
         return errandRepository.selectViewedOrderIds(userId, orderIds);
     }
 
     @Override
-    public ErrandOrderEntity orderDetail(Long orderId, String currentUserId) {
+    public ErrandOrderEntity orderDetail(String orderId, String currentUserId) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
         // 软删单对外与作者均不可见；草稿与待审单仅作者本人可见（审核员走 moderation 审核队列详情，其他人 404）
         if (orderEntity.getStatus() == ErrandStatusVO.DELETED
@@ -290,7 +290,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public void grabOrder(Long orderId, String userId) {
+    public void grabOrder(String orderId, String userId) {
         // 防占单前置（条件 UPDATE 之前）：冷却期内禁抢全量订单——冷却键是用户维度，天然覆盖「该单」
         requireNotGrabCooledDown(userId);
         ErrandOrderEntity orderEntity = getOrder(orderId);
@@ -309,7 +309,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public void acceptLockedOrder(Long orderId, String userId) {
+    public void acceptLockedOrder(String orderId, String userId) {
         requireLockedTaker(orderId, userId);
         // 不改 lock_seq：离开 LOCKED 后陈旧超时任务天然打不中
         if (!errandRepository.acceptLockedById(orderId, userId)) {
@@ -318,7 +318,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public void abandonLockedOrder(Long orderId, String userId) {
+    public void abandonLockedOrder(String orderId, String userId) {
         requireLockedTaker(orderId, userId);
         // member 取本轮锁单轮次（锁单期 lock_seq 不变，读在放弃之前）：同单重抢是不同轮次、各自计一次
         int lockSeq = errandRepository.lockSeqOf(orderId);
@@ -333,7 +333,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     /** 防占单写点：滑动窗口计一次主动放弃；达阈值置冷却 + 重置窗口 + WARN。任何 Redis 异常只记日志（少计=宽恕） */
-    private void recordGrabAbandon(String userId, Long orderId, int lockSeq) {
+    private void recordGrabAbandon(String userId, String orderId, int lockSeq) {
         try {
             LocalDateTime now = LocalDateTime.now();
             long windowCount = errandGrabAbusePort.recordAbandon(userId, orderId, lockSeq,
@@ -365,7 +365,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     /** 锁单动作共同守卫（确认接单 / 放弃）：订单存在 + 持单人本人 + 仍在 LOCKED */
-    private void requireLockedTaker(Long orderId, String userId) {
+    private void requireLockedTaker(String orderId, String userId) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
         if (!orderEntity.isTaker(userId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只有持单人本人可以操作");
@@ -376,7 +376,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public void pickupOrder(Long orderId, String userId) {
+    public void pickupOrder(String orderId, String userId) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
         if (orderEntity.getStatus() != ErrandStatusVO.CONFIRMED) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "订单不存在或未在已确认状态");
@@ -388,7 +388,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public void deliverOrder(Long orderId, String userId) {
+    public void deliverOrder(String orderId, String userId) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
         if (orderEntity.getStatus() != ErrandStatusVO.PICKED_UP) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "订单不存在或未在已取货状态");
@@ -398,7 +398,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public ErrandConfirmResult confirmOrder(Long orderId, String userId) {
+    public ErrandConfirmResult confirmOrder(String orderId, String userId) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
         checkPublisher(orderEntity, userId);
         // 幂等判定：已完成视为上次确认已提交成功（重试场景），跳过直接返回（同一入账明细，流水 uk 幂等）
@@ -413,7 +413,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public ErrandCancelResult cancelOrder(Long orderId, String userId) {
+    public ErrandCancelResult cancelOrder(String orderId, String userId) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
         if (orderEntity.isOwner(userId)) {
             return cancelByPublisher(orderEntity);
@@ -460,7 +460,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public void disputeOrder(Long orderId, String userId) {
+    public void disputeOrder(String orderId, String userId) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
         if (orderEntity.getStatus() != ErrandStatusVO.CONFIRMED
                 && orderEntity.getStatus() != ErrandStatusVO.PICKED_UP
@@ -475,7 +475,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public ErrandArbitrateResult arbitrateOrder(Long orderId, String operatorId, String result) {
+    public ErrandArbitrateResult arbitrateOrder(String orderId, String operatorId, String result) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
         // 幂等判定：已结案的终态视为本次仲裁已提交成功（重试场景），按终态返回对应结果
         if (orderEntity.getStatus() == ErrandStatusVO.CANCELLED) {
@@ -542,7 +542,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public void handlePayTimeout(Long orderId) {
+    public void handlePayTimeout(String orderId) {
         ErrandOrderEntity orderEntity = errandRepository.findById(orderId);
         if (orderEntity == null || orderEntity.getStatus() != ErrandStatusVO.PENDING_PAYMENT) {
             // 已支付/已取消：幂等忽略
@@ -553,7 +553,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public ErrandLockTimeoutResult handleLockTimeout(Long orderId, int lockSeq) {
+    public ErrandLockTimeoutResult handleLockTimeout(String orderId, int lockSeq) {
         ErrandOrderEntity orderEntity = errandRepository.findById(orderId);
         if (orderEntity == null || orderEntity.getStatus() != ErrandStatusVO.LOCKED) {
             // 已确认 / 已放弃 / 已取消 / 不存在：过期回调，幂等忽略
@@ -572,38 +572,38 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public List<Long> listPayTimeoutOrderIds() {
+    public List<String> listPayTimeoutOrderIds() {
         // 锚在"进入待支付"时刻（update_time）：直接发布=落库时刻，草稿提交=提交时刻——草稿可能先存很久再提交
         LocalDateTime cutoff = LocalDateTime.now().minusMinutes(PAY_TIMEOUT_MINUTES);
         return errandRepository.listPayTimeoutOrderIds(cutoff, SCAN_BATCH_SIZE);
     }
 
     @Override
-    public List<Long> listTimeoutOrderIds() {
+    public List<String> listTimeoutOrderIds() {
         return errandRepository.listTimeoutOrderIds(SCAN_BATCH_SIZE);
     }
 
     @Override
-    public List<Long> listPendingReviewTimeoutOrderIds() {
+    public List<String> listPendingReviewTimeoutOrderIds() {
         // PENDING_REVIEW 由支付条件 UPDATE 翻转而来，updated_at 即进入待审时间
         LocalDateTime cutoff = LocalDateTime.now().minusHours(REVIEW_REMINDER_HOURS);
         return errandRepository.listPendingReviewOrderIds(cutoff, SCAN_BATCH_SIZE);
     }
 
     @Override
-    public List<Long> listAutoCompleteOrderIds() {
+    public List<String> listAutoCompleteOrderIds() {
         // DELIVERED 由送达条件 UPDATE 翻转而来，updated_at 即送达时间（24h 未确认自动完成）
         LocalDateTime cutoff = LocalDateTime.now().minusHours(AUTO_COMPLETE_HOURS);
         return errandRepository.listAutoCompleteOrderIds(cutoff, SCAN_BATCH_SIZE);
     }
 
     @Override
-    public ErrandOrderEntity loadOrder(Long orderId) {
+    public ErrandOrderEntity loadOrder(String orderId) {
         return errandRepository.findById(orderId);
     }
 
     @Override
-    public ErrandTimeoutResult handleOrderTimeout(Long orderId) {
+    public ErrandTimeoutResult handleOrderTimeout(String orderId) {
         ErrandOrderEntity orderEntity = errandRepository.findById(orderId);
         if (orderEntity == null) {
             return null;
@@ -628,7 +628,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public ErrandAutoCompleteResult handleAutoComplete(Long orderId) {
+    public ErrandAutoCompleteResult handleAutoComplete(String orderId) {
         ErrandOrderEntity orderEntity = errandRepository.findById(orderId);
         if (orderEntity == null || orderEntity.getStatus() != ErrandStatusVO.DELIVERED) {
             // 已确认/已仲裁/其他：幂等忽略
@@ -657,7 +657,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         return List.of(new ErrandIncomeVO(orderEntity.getTakerId(), orderEntity.getReward()));
     }
 
-    private ErrandOrderEntity getOrder(Long orderId) {
+    private ErrandOrderEntity getOrder(String orderId) {
         ErrandOrderEntity orderEntity = errandRepository.findById(orderId);
         if (orderEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "订单不存在");

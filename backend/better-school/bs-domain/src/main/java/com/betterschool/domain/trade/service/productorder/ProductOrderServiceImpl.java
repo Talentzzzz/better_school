@@ -32,7 +32,7 @@ public class ProductOrderServiceImpl implements IProductOrderService {
     private final ITradeRepository tradeRepository;
 
     @Override
-    public Long createOrder(String buyerId, Long productId) {
+    public String createOrder(String buyerId, String productId) {
         ProductEntity productEntity = getAvailableProduct(productId);
         if (productEntity.isOwner(buyerId)) {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "不能购买自己发布的商品");
@@ -43,7 +43,7 @@ public class ProductOrderServiceImpl implements IProductOrderService {
     }
 
     @Override
-    public ProductPayResult payOrder(Long orderId, String buyerId) {
+    public ProductPayResult payOrder(String orderId, String buyerId) {
         ProductOrderEntity orderEntity = getOrder(orderId);
         if (!orderEntity.isBuyer(buyerId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只能支付自己的订单");
@@ -61,7 +61,7 @@ public class ProductOrderServiceImpl implements IProductOrderService {
     }
 
     @Override
-    public void markDelivered(Long orderId, String sellerId) {
+    public void markDelivered(String orderId, String sellerId) {
         ProductOrderEntity orderEntity = getOrder(orderId);
         if (!orderEntity.isSeller(sellerId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只有卖家可以标记交付");
@@ -72,7 +72,7 @@ public class ProductOrderServiceImpl implements IProductOrderService {
     }
 
     @Override
-    public ProductConfirmResult confirmReceived(Long orderId, String buyerId) {
+    public ProductConfirmResult confirmReceived(String orderId, String buyerId) {
         ProductOrderEntity orderEntity = getOrder(orderId);
         if (!orderEntity.isBuyer(buyerId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只有买家可以确认收货");
@@ -91,7 +91,7 @@ public class ProductOrderServiceImpl implements IProductOrderService {
     }
 
     @Override
-    public ProductCancelResult cancelOrder(Long orderId, String buyerId) {
+    public ProductCancelResult cancelOrder(String orderId, String buyerId) {
         ProductOrderEntity orderEntity = getOrder(orderId);
         if (!orderEntity.isBuyer(buyerId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只有买家可以取消订单");
@@ -113,7 +113,7 @@ public class ProductOrderServiceImpl implements IProductOrderService {
     }
 
     @Override
-    public ProductOrderEntity orderDetail(Long orderId, String currentUserId) {
+    public ProductOrderEntity orderDetail(String orderId, String currentUserId) {
         ProductOrderEntity orderEntity = getOrder(orderId);
         // 仅交易双方（含卖家/买家）可见
         if (!orderEntity.isBuyer(currentUserId) && !orderEntity.isSeller(currentUserId)) {
@@ -146,7 +146,7 @@ public class ProductOrderServiceImpl implements IProductOrderService {
     }
 
     @Override
-    public void handlePayTimeout(Long orderId) {
+    public void handlePayTimeout(String orderId) {
         ProductOrderEntity orderEntity = tradeRepository.findOrderById(orderId);
         if (orderEntity == null || orderEntity.getStatus() != ProductOrderStatusVO.PENDING_PAYMENT) {
             // 已支付/已取消：幂等忽略
@@ -157,7 +157,7 @@ public class ProductOrderServiceImpl implements IProductOrderService {
         log.info("[ProductPayTimeout] 待支付订单超时取消 orderId={}", orderId);
     }
 
-    private ProductEntity getAvailableProduct(Long productId) {
+    private ProductEntity getAvailableProduct(String productId) {
         ProductEntity productEntity = tradeRepository.findById(productId);
         if (productEntity == null || productEntity.getStatus() != ProductStatusVO.ON_SALE) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在或已售出");
@@ -165,7 +165,7 @@ public class ProductOrderServiceImpl implements IProductOrderService {
         return productEntity;
     }
 
-    private ProductOrderEntity getOrder(Long orderId) {
+    private ProductOrderEntity getOrder(String orderId) {
         ProductOrderEntity orderEntity = tradeRepository.findOrderById(orderId);
         if (orderEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "订单不存在");

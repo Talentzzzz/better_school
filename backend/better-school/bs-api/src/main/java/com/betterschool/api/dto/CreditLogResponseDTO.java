@@ -18,8 +18,8 @@ public class CreditLogResponseDTO {
     /** 变动原因中文描述（未知类型兜底显示原值） */
     private String reasonDesc;
 
-    /** 关联业务 ID（订单/评价等，可空） */
-    private Long refId;
+    /** 关联业务 ID（UUID 字符串：订单/被罚内容等，可空；uuid-biz-id 票 05） */
+    private String refId;
 
     private LocalDateTime createdAt;
 }

@@ -55,7 +55,7 @@ public class ErrandOrderCase {
     private final IUserRepository userRepository;
     private final VirtualThreadFanout fanout;
 
-    public Long createOrder(String userId, String type, String description, String pickupLocation,
+    public String createOrder(String userId, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward,
                             List<String> images, String timeLimit) {
         creditAccountService.ensureOperable(userId);
@@ -69,13 +69,13 @@ public class ErrandOrderCase {
     }
 
     /** 冻结悬赏，由 domain 返回口径 */
-    public void payOrder(Long orderId, String userId) {
+    public void payOrder(String orderId, String userId) {
         ErrandPayResult payResult = errandOrderService.payOrder(orderId, userId);
         walletAccountService.freeze(userId, payResult.getAmount(), orderId);
     }
 
     /** 保存草稿：私有停靠内容——不做同步初筛、不做信用分门槛（提交时才校验），字段可缺省 */
-    public Long createDraft(String userId, String type, String description, String pickupLocation,
+    public String createDraft(String userId, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward, List<String> images, String timeLimit) {
         checkImages(images);
         return errandOrderService.createDraft(userId, type, description, pickupLocation, deliveryLocation,
@@ -83,7 +83,7 @@ public class ErrandOrderCase {
     }
 
     /** 编辑草稿：仅 DRAFT 可编辑，全量覆盖内容字段（作者与状态位不可改、不产生状态迁移） */
-    public void updateDraft(Long orderId, String userId, String type, String description, String pickupLocation,
+    public void updateDraft(String orderId, String userId, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward, List<String> images, String timeLimit) {
         checkImages(images);
         errandOrderService.updateDraft(orderId, userId, type, description, pickupLocation, deliveryLocation,
@@ -94,7 +94,7 @@ public class ErrandOrderCase {
      * 提交草稿：与直接发布同门槛（必填完整性 + 信用分准入门槛），同步初筛命中即失败并停留草稿；
      * 通过后转 PENDING_PAYMENT 且支付超时随状态迁移同事务注册
      */
-    public void submitDraft(Long orderId, String userId) {
+    public void submitDraft(String orderId, String userId) {
         ErrandOrderEntity draft = errandOrderService.getOwnedDraft(orderId, userId);
         creditAccountService.ensureOperable(userId);
         validateDraftComplete(draft);
@@ -105,7 +105,7 @@ public class ErrandOrderCase {
     }
 
     /** 删除草稿：软删 DRAFT → DELETED（仅作者、仅 DRAFT） */
-    public void deleteDraft(Long orderId, String userId) {
+    public void deleteDraft(String orderId, String userId) {
         errandOrderService.deleteDraft(orderId, userId);
     }
 
@@ -119,7 +119,7 @@ public class ErrandOrderCase {
     }
 
     /** 大厅已读灰显（market-feed-uv 票 05）：页内订单批量回查当前用户浏览过的 id，未登录返回空集 */
-    public List<Long> listViewedOrderIds(String userId, List<Long> orderIds) {
+    public List<String> listViewedOrderIds(String userId, List<String> orderIds) {
         return errandOrderService.listViewedOrderIds(userId, orderIds);
     }
 
@@ -132,39 +132,39 @@ public class ErrandOrderCase {
         return errandOrderService.countUserPublishedOrders(userId);
     }
 
-    public ErrandOrderEntity orderDetail(Long orderId, String currentUserId) {
+    public ErrandOrderEntity orderDetail(String orderId, String currentUserId) {
         return errandOrderService.orderDetail(orderId, currentUserId);
     }
 
     /** 被拒订单的拒绝理由（content_review.reason），供详情接口对作者带出 */
-    public String errandRejectReason(Long orderId) {
-        return reviewService.rejectReason(ReviewTargetTypeVO.ERRAND, String.valueOf(orderId));
+    public String errandRejectReason(String orderId) {
+        return reviewService.rejectReason(ReviewTargetTypeVO.ERRAND, orderId);
     }
 
-    public void grabOrder(Long orderId, String userId) {
+    public void grabOrder(String orderId, String userId) {
         creditAccountService.ensureOperable(userId);
         errandOrderService.grabOrder(orderId, userId);
     }
 
     /** 确认接单（锁单→已确认）：抢到手后核对信息再点，仅持单人 */
-    public void acceptLockedOrder(Long orderId, String userId) {
+    public void acceptLockedOrder(String orderId, String userId) {
         errandOrderService.acceptLockedOrder(orderId, userId);
     }
 
     /** 放弃（锁单→已发布）：设计内的正常动作，不扣信用分；主动放弃的滑动计数与冷却由域层写点处理（票 05） */
-    public void abandonLockedOrder(Long orderId, String userId) {
+    public void abandonLockedOrder(String orderId, String userId) {
         errandOrderService.abandonLockedOrder(orderId, userId);
     }
 
-    public void pickupOrder(Long orderId, String userId) {
+    public void pickupOrder(String orderId, String userId) {
         errandOrderService.pickupOrder(orderId, userId);
     }
 
-    public void deliverOrder(Long orderId, String userId) {
+    public void deliverOrder(String orderId, String userId) {
         errandOrderService.deliverOrder(orderId, userId);
     }
 
-    public void confirmOrder(Long orderId, String userId) {
+    public void confirmOrder(String orderId, String userId) {
         ErrandConfirmResult confirmResult = errandOrderService.confirmOrder(orderId, userId);
         walletAccountService.unfreeze(confirmResult.getPublisherId(), confirmResult.getReward(), orderId);
         // 入账：接单方得悬赏（流水 uk 幂等）
@@ -173,7 +173,7 @@ public class ErrandOrderCase {
         }
     }
 
-    public void cancelOrder(Long orderId, String userId) {
+    public void cancelOrder(String orderId, String userId) {
         ErrandCancelResult cancelResult = errandOrderService.cancelOrder(orderId, userId);
         if (cancelResult.isNeedRefund()) {
             walletAccountService.unfreeze(cancelResult.getPublisherId(), cancelResult.getReward(), orderId);
@@ -183,11 +183,11 @@ public class ErrandOrderCase {
         }
     }
 
-    public void disputeOrder(Long orderId, String userId) {
+    public void disputeOrder(String orderId, String userId) {
         errandOrderService.disputeOrder(orderId, userId);
     }
 
-    public void arbitrateOrder(Long orderId, String operatorId, String result) {
+    public void arbitrateOrder(String orderId, String operatorId, String result) {
         ErrandArbitrateResult arbitrateResult = errandOrderService.arbitrateOrder(orderId, operatorId, result);
         walletAccountService.unfreeze(arbitrateResult.getPublisherId(), arbitrateResult.getReward(), orderId);
         // 判接单方 = 一笔完成结算（接单方得悬赏）；判取消不结算
@@ -204,7 +204,7 @@ public class ErrandOrderCase {
         return errandOrderService.countMyOrders(role, status, userId);
     }
 
-    public void handlePayTimeout(Long orderId) {
+    public void handlePayTimeout(String orderId) {
         errandOrderService.handlePayTimeout(orderId);
     }
 
@@ -214,7 +214,7 @@ public class ErrandOrderCase {
      * 通知是尽力而为：释放（轮次守卫条件 UPDATE）才是主效应，通知失败只记日志——回调重投时释放已命中 0 行、
      * 通知也不会重试，故不让通知异常把一次成功的释放报成失败（换取零死信噪音）。
      */
-    public void handleLockTimeout(Long orderId, int lockSeq) {
+    public void handleLockTimeout(String orderId, int lockSeq) {
         ErrandLockTimeoutResult lockTimeoutResult = errandOrderService.handleLockTimeout(orderId, lockSeq);
         if (lockTimeoutResult == null) {
             return; // 幂等：陈旧轮次 / 已确认 / 已放弃 / 已取消，零副作用
@@ -222,7 +222,7 @@ public class ErrandOrderCase {
         try {
             notificationService.sendSystem(lockTimeoutResult.getTakerId(), NotificationScopeVO.MARKET_ERRAND,
                     NotificationTypeVO.ORDER_EVENT, "订单动态",
-                    "您锁定的跑腿订单已超时释放，订单回到待接单，其他同学可重新接单", "ERRAND", String.valueOf(orderId),
+                    "您锁定的跑腿订单已超时释放，订单回到待接单，其他同学可重新接单", "ERRAND", orderId,
                     NotificationTypeVO.ORDER_EVENT.name() + ":ERRAND_LOCK_TIMEOUT:" + orderId + ":" + lockSeq);
         } catch (Exception e) {
             log.warn("[ErrandOrderCase] 锁单超时释放通知发送失败 orderId={} lockSeq={}", orderId, lockSeq, e);
@@ -248,13 +248,13 @@ public class ErrandOrderCase {
      * 通知失败向上抛由 broker 重试（dedup_key 幂等，重试不重复落），
      * 主流程（订单状态/资金）不在本方法内，不受影响
      */
-    public void notifyPaidReview(Long orderId) {
+    public void notifyPaidReview(String orderId) {
         ErrandOrderEntity orderEntity = errandOrderService.loadOrder(orderId);
         if (orderEntity == null) {
             return;
         }
         notificationService.sendSystem(orderEntity.getPublisherId(), NotificationScopeVO.MARKET_ERRAND, NotificationTypeVO.ORDER_EVENT, "订单动态",
-                "您的跑腿订单已支付成功，进入人工审核，审核通过后将对外可见", "ERRAND", String.valueOf(orderId),
+                "您的跑腿订单已支付成功，进入人工审核，审核通过后将对外可见", "ERRAND", orderId,
                 NotificationTypeVO.ORDER_EVENT.name() + ":ERRAND_PAID:" + orderId);
     }
 
@@ -272,11 +272,11 @@ public class ErrandOrderCase {
     }
 
     /** 扇出项 = 一条待审订单（其下逐收件人仍是串行循环，项内自行吞异常） */
-    private void remindReviewers(List<String> reviewerIds, Long orderId) {
+    private void remindReviewers(List<String> reviewerIds, String orderId) {
         for (String reviewerId : reviewerIds) {
             try {
                 notificationService.sendSystem(reviewerId, NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.ORDER_EVENT, "审核提醒",
-                        "跑腿订单 " + orderId + " 已待审超过 24 小时，请及时处理", "ERRAND", String.valueOf(orderId),
+                        "跑腿订单 " + orderId + " 已待审超过 24 小时，请及时处理", "ERRAND", orderId,
                         NotificationTypeVO.ORDER_EVENT.name() + ":REVIEW_TIMEOUT:" + orderId + ":" + reviewerId);
             } catch (Exception e) {
                 log.warn("[ErrandOrderCase] 待审超时提醒发送失败（下轮扫描补发） orderId={} reviewerId={}", orderId, reviewerId, e);
@@ -284,7 +284,7 @@ public class ErrandOrderCase {
         }
     }
 
-    public void handleOrderTimeout(Long orderId) {
+    public void handleOrderTimeout(String orderId) {
         ErrandTimeoutResult timeoutResult = errandOrderService.handleOrderTimeout(orderId);
         if (timeoutResult == null) {
             return;
@@ -295,7 +295,7 @@ public class ErrandOrderCase {
         }
     }
 
-    public void handleAutoComplete(Long orderId) {
+    public void handleAutoComplete(String orderId) {
         ErrandAutoCompleteResult autoCompleteResult = errandOrderService.handleAutoComplete(orderId);
         if (autoCompleteResult == null) {
             return;

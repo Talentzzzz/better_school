@@ -11,7 +11,8 @@ public class CreditDetailPO {
     private String userId;
     private Integer change;
     private String reasonType;
-    private Long refId;
+    /** user_credit_detail.ref_id 是 VARCHAR(36)（uuid-biz-id 票 05） */
+    private String refId;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

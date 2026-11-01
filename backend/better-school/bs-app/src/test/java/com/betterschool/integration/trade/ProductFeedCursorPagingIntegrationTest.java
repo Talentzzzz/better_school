@@ -19,7 +19,6 @@ import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doThrow;
@@ -41,9 +40,6 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
     private static final int PRODUCT_COUNT = 25;
     private static final List<String> SORTS = List.of("time", "time_asc", "hot", "price_asc", "price_desc");
 
-    /** 夹具业务 ID 序列：同一用例内多次直插不撞主键 */
-    private static final AtomicLong SEQ = new AtomicLong();
-
     @Autowired
     private ITradeRepository tradeRepository;
 
@@ -51,10 +47,10 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
     @DisplayName("五档排序游标翻页不重不漏、整序与索引序一致、total 降口径 -1")
     void 五档排序游标翻页不重不漏且total降口径() {
         Session seller = registerAndLogin("13700001401", "闲置游标卖家");
-        List<Long> seeded = seedOnSaleProducts(seller, PRODUCT_COUNT);
+        List<String> seeded = seedOnSaleProducts(seller, PRODUCT_COUNT);
 
         for (String sort : SORTS) {
-            List<Long> expected = indexOrderOf(sort);
+            List<String> expected = indexOrderOf(sort);
             assertThat(expected).as("%s 期望序取自索引表", sort).hasSize(PRODUCT_COUNT);
 
             JsonNode first = fetchPage(sort, null);
@@ -62,11 +58,11 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
             assertThat(first.path("page").asLong()).as("%s：page/pageSize 兼容字段照常回显", sort).isEqualTo(1);
             assertThat(first.path("pageSize").asLong()).isEqualTo(PAGE_SIZE);
 
-            List<Long> walked = new ArrayList<>();
+            List<String> walked = new ArrayList<>();
             int pages = 0;
             JsonNode data = first;
             while (data != null) {
-                List<Long> ids = productIdsOf(data);
+                List<String> ids = productIdsOf(data);
                 assertThat(ids).as("%s：每页不超过 pageSize", sort).size().isLessThanOrEqualTo(PAGE_SIZE);
                 assertThat(new HashSet<>(ids)).as("%s：单页内无重复", sort).hasSameSizeAs(ids);
                 walked.addAll(ids);
@@ -107,11 +103,12 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
         seedOnSaleProducts(seller, 5);
 
         // 手工构造锚在末行上的游标（(feed_time, product_id) 最小，续页扫描必为空——
-        // 正常端点不会对末页发游标，越尾游标只来自陈旧客户端 / 行被删后的锚点）
+        // 正常端点不会对末页发游标，越尾游标只来自陈旧客户端 / 行被删后的锚点）。
+        // uuid-biz-id 票 05 起游标 5 段：product | sort | 排序键 | create_time（time 档留空） | product_id
         Map<String, Object> tail = jdbcTemplate.queryForList(
                 "SELECT product_id, feed_time FROM product_feed_index WHERE state = 'ON_SALE' "
                         + "ORDER BY feed_time ASC, product_id ASC LIMIT 1").get(0);
-        String raw = "product|time|" + ((LocalDateTime) tail.get("feed_time")) + "|" + tail.get("product_id");
+        String raw = "product|time|" + ((LocalDateTime) tail.get("feed_time")) + "||" + tail.get("product_id");
         String cursor = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(raw.getBytes(StandardCharsets.UTF_8));
 
@@ -151,7 +148,7 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
     @DisplayName("索引查询异常时降级 DB 直查：indexPath=false、不发游标、仍出首页数据")
     void 索引查询异常时降级DB直查() {
         Session seller = registerAndLogin("13700001405", "闲置降级卖家");
-        List<Long> seeded = seedOnSaleProducts(seller, PRODUCT_COUNT);
+        List<String> seeded = seedOnSaleProducts(seller, PRODUCT_COUNT);
 
         // 黑盒造不出索引表查询故障：白盒构造一个索引扫描必抛异常的域服务，仓储 mock 只覆盖
         // scanFeedIndex，其余方法委托真实实现（真实仓储 + 真实数据，降级后走同一条旧直查）
@@ -167,7 +164,8 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
         assertThat(page.isIndexPath()).as("降级后 indexPath=false（total 由调用方精确 COUNT）").isFalse();
         assertThat(page.getNextCursor()).as("降级路径不发游标").isNull();
         assertThat(page.getProducts()).as("降级路径仍出满页数据").hasSize(PAGE_SIZE);
-        // 旧直查按 create_time DESC, id DESC：夹具同秒落库，整序 = product_id 降序 → 首页取末段
+        // 旧直查按 create_time DESC, product_id DESC：夹具逐条错开 create_time（uuid-biz-id 票 05 起
+        // 业务 id 是 UUID、无自增时间趋势，「首页 = 最新发出的 PAGE_SIZE 条」靠错开秒数固化）
         assertThat(page.getProducts()).extracting(ProductEntity::getProductId)
                 .containsAll(seeded.subList(PRODUCT_COUNT - PAGE_SIZE, PRODUCT_COUNT));
     }
@@ -176,39 +174,45 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
 
     /**
      * 直插 N 条在售商品 + 对应索引行（读路径测试只关心投影，不重复走发布/审核链）。
-     * 夹具刻意造并列：价格四档循环、热度三档循环、feed_time 五分钟循环，tie-break 由 product_id 收
+     * 夹具刻意造并列：价格四档循环、热度三档循环、feed_time 五分钟循环，tie-break 由 product_id 收；
+     * uuid-biz-id 票 05 起业务 id 直插 UUID 形态（应用侧发号），并逐条错开 create_time——
+     * 热度档同值收敛键（view_count DESC, create_time DESC, product_id DESC）与降级直查都吃它
      */
-    private List<Long> seedOnSaleProducts(Session seller, int count) {
-        List<Long> productIds = new ArrayList<>(count);
+    private List<String> seedOnSaleProducts(Session seller, int count) {
+        List<String> productIds = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
-            long productId = 920_000L + SEQ.incrementAndGet();
+            String productId = java.util.UUID.randomUUID().toString();
             BigDecimal price = BigDecimal.valueOf((i % 4) * 5L + 1).setScale(2);
             String category = i % 2 == 0 ? "BOOKS" : "DIGITAL";
             int viewCount = (i % 3) * 2;
+            // 时间参数 Java 侧算好再绑（ShardingSphere 解析 NOW() - INTERVAL n SECOND 会 bad SQL grammar）：
+            // 第 i 条 = (count - i) 秒前，后插的更新，与原自增 id 升序同向
+            java.sql.Timestamp created = java.sql.Timestamp.valueOf(LocalDateTime.now().minusSeconds(count - i));
             jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
                             + "trade_location, category, state, review_round, create_time, update_time, "
-                            + "expire_at) VALUES (?, ?, ?, '夹具描述', ?, '驿站', ?, 'ON_SALE', 1, NOW(), NOW(), "
+                            + "expire_at) VALUES (?, ?, ?, '夹具描述', ?, '驿站', ?, 'ON_SALE', 1, ?, ?, "
                             + "DATE_ADD(NOW(), INTERVAL 30 DAY))",
-                    productId, seller.userId(), "闲置游标夹具" + i, price, category);
-            jdbcTemplate.update("INSERT INTO product_feed_index (product_id, state, feed_time, price, view_count, "
-                            + "update_time) VALUES (?, 'ON_SALE', ?, ?, ?, NOW())",
-                    productId, LocalDateTime.now().minusMinutes(i % 5), price, viewCount);
+                    productId, seller.userId(), "闲置游标夹具" + i, price, category, created, created);
+            jdbcTemplate.update("INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, "
+                            + "view_count, update_time) VALUES (?, 'ON_SALE', ?, ?, ?, ?, NOW())",
+                    productId, LocalDateTime.now().minusMinutes(i % 5), created.toLocalDateTime(), price, viewCount);
             productIds.add(productId);
         }
         return productIds;
     }
 
     /** 期望序 = 库内索引序（与 mapper 的 ORDER BY 逐字同构） */
-    private List<Long> indexOrderOf(String sort) {
+    private List<String> indexOrderOf(String sort) {
         String orderBy = switch (sort) {
-            case "hot" -> "view_count DESC, product_id DESC";
+            // uuid-biz-id 票 05：热度档三段收敛 = view_count DESC, create_time DESC, product_id DESC
+            case "hot" -> "view_count DESC, create_time DESC, product_id DESC";
             case "time_asc" -> "feed_time ASC, product_id ASC";
             case "price_asc" -> "price ASC, product_id ASC";
             case "price_desc" -> "price DESC, product_id DESC";
             default -> "feed_time DESC, product_id DESC";
         };
         return jdbcTemplate.queryForList(
-                "SELECT product_id FROM product_feed_index WHERE state = 'ON_SALE' ORDER BY " + orderBy, Long.class);
+                "SELECT product_id FROM product_feed_index WHERE state = 'ON_SALE' ORDER BY " + orderBy, String.class);
     }
 
     /** 手工造一条跑腿域游标：只用于跨域复用校验（域标签不符即拒，不依赖真实订单行） */
@@ -226,9 +230,9 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
         return response.path("data");
     }
 
-    private List<Long> productIdsOf(JsonNode data) {
-        List<Long> ids = new ArrayList<>();
-        data.path("list").forEach(node -> ids.add(node.path("productId").asLong()));
+    private List<String> productIdsOf(JsonNode data) {
+        List<String> ids = new ArrayList<>();
+        data.path("list").forEach(node -> ids.add(node.path("productId").asText()));
         return ids;
     }
 }

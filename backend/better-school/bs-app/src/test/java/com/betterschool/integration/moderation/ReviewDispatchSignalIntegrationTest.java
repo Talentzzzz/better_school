@@ -166,8 +166,8 @@ public class ReviewDispatchSignalIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800011009", "作者");
         Session auditor = auditorSession("13800011010", "审核员");
 
-        long orderId1 = createPaidOrder(author);
-        long taskId1 = claimTaskOf(auditor, "ERRAND", String.valueOf(orderId1));
+        String orderId1 = createPaidOrder(author);
+        long taskId1 = claimTaskOf(auditor, "ERRAND", orderId1);
         assertThat(claimCounter()).as("领单成功应计 1 次").isEqualTo(1);
         assertThat(timeoutCounter()).as("未回收时租约超时计数为 0").isZero();
 
@@ -311,7 +311,7 @@ public class ReviewDispatchSignalIntegrationTest extends CommunityApiTestBase {
     // ---------- helpers: 业务夹具 / 可观察状态 ----------
 
     /** 发布并支付跑腿订单（入池点：支付成功同事务开单），返回 orderId */
-    private long createPaidOrder(Session author) {
+    private String createPaidOrder(Session author) {
         Map<String, Object> body = new HashMap<>();
         body.put("type", "EXPRESS_PICKUP");
         body.put("description", "帮忙取个快递");
@@ -321,7 +321,7 @@ public class ReviewDispatchSignalIntegrationTest extends CommunityApiTestBase {
         body.put("timeLimit", "HOURS_2");
         JsonNode createResponse = postJson("/api/errand/orders", body, author);
         assertSuccess(createResponse, "发布跑腿");
-        long orderId = createResponse.path("data").asLong();
+        String orderId = createResponse.path("data").asText();
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付");
         return orderId;
     }

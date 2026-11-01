@@ -20,12 +20,12 @@ public interface ISearchRepository {
     /** 全量重建第一步：清空指定实体索引（类型：post/product/errand/user） */
     void clearIndex(String entityType);
 
-    /** 相关度倒序分页搜索，返回命中 id 列表与总数（近似值）；帖子的业务 id 是 UUID 字符串 */
+    /** 相关度倒序分页搜索，返回命中 id 列表与总数（近似值）；业务 id 统一是 UUID 字符串 */
     SearchPageVO<String> searchPosts(String keyword, int page, int pageSize);
 
-    SearchPageVO<Long> searchProducts(String keyword, int page, int pageSize);
+    SearchPageVO<String> searchProducts(String keyword, int page, int pageSize);
 
-    SearchPageVO<Long> searchErrands(String keyword, int page, int pageSize);
+    SearchPageVO<String> searchErrands(String keyword, int page, int pageSize);
 
     SearchPageVO<String> searchUsers(String keyword, int page, int pageSize);
 
@@ -39,9 +39,9 @@ public interface ISearchRepository {
 
     void deletePostDoc(String postId);
 
-    void deleteProductDoc(Long productId);
+    void deleteProductDoc(String productId);
 
-    void deleteErrandDoc(Long orderId);
+    void deleteErrandDoc(String orderId);
 
     void deleteUserDoc(String userId);
 }

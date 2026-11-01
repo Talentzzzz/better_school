@@ -38,7 +38,7 @@ class TradePublishPendingReviewIntegrationTest extends CommunityApiTestBase {
         JsonNode retry = postJson("/api/trade/products", productBody("考研真题", "去年用过的资料"), seller);
         assertSuccess(retry, "改文案重新提交");
 
-        long productId = retry.path("data").asLong();
+        String productId = retry.path("data").asText();
         assertThat(productStatus(productId)).as("先审后售：提交即待审").isEqualTo("PENDING_REVIEW");
     }
 
@@ -48,7 +48,7 @@ class TradePublishPendingReviewIntegrationTest extends CommunityApiTestBase {
     void 待审商品对外列表与详情不可见_卖家我的发布可见() {
         Session seller = registerAndLogin("13800003005", "卖家3");
         Session other = registerAndLogin("13800003006", "路人");
-        long productId = createProduct(seller, "九成新台灯");
+        String productId = createProduct(seller, "九成新台灯");
 
         JsonNode publicList = getJson("/api/trade/products", other);
         assertSuccess(publicList, "对外商品列表");
@@ -78,13 +78,13 @@ class TradePublishPendingReviewIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 工具 ----------
 
-    /** 直插夹具的商品业务 ID 取号带：远高于应用自增 id，避开 uk_product_id */
-    private long fixtureSeq;
+    /** 直插夹具的商品业务 ID（uuid-biz-id 票 05 起 UUID 形态，应用侧发号） */
+    
 
-    private long createProduct(Session seller, String title) {
+    private String createProduct(Session seller, String title) {
         JsonNode response = postJson("/api/trade/products", productBody(title, "九成新"), seller);
         assertSuccess(response, "发布商品");
-        return response.path("data").asLong();
+        return response.path("data").asText();
     }
 
     private Map<String, Object> productBody(String title, String description) {
@@ -98,24 +98,24 @@ class TradePublishPendingReviewIntegrationTest extends CommunityApiTestBase {
     }
 
     /**
-     * 直插存量商品行：product_id NOT NULL 且无默认值（应用侧才走 insert 0 + 回写 id），夹具显式给业务 ID 并返回它。
+     * 直插存量商品行：product_id NOT NULL 且无默认值（应用侧发号（uuid-biz-id 票 05）），夹具显式给业务 ID 并返回它。
      * 存量 ON_SALE 行必须同时有 feed 索引行——推荐页读路径走 product_feed_index（market-feed-uv 票 04），
      * 真实存量由票 01 回填脚本造索引行，这里不补就等于造了一条「线上不可能存在」的漂移数据
      */
-    private long insertProductRow(String title, String state) {
-        long productId = 900_000L + fixtureSeq++;
+    private String insertProductRow(String title, String state) {
+        String productId = java.util.UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
                         + "trade_location, category, state, create_time, update_time, expire_at) "
                         + "VALUES (?, 999, ?, '存量数据', 10.00, '驿站', 'BOOKS', ?, NOW(), NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY))",
                 productId, title, state);
         if ("ON_SALE".equals(state)) {
-            jdbcTemplate.update("INSERT INTO product_feed_index (product_id, state, feed_time, price, view_count, "
-                    + "update_time) VALUES (?, 'ON_SALE', NOW(), 10.00, 0, NOW())", productId);
+            jdbcTemplate.update("INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, "
+                    + "view_count, update_time) VALUES (?, 'ON_SALE', NOW(), NOW(), 10.00, 0, NOW())", productId);
         }
         return productId;
     }
 
-    private String productStatus(long productId) {
+    private String productStatus(String productId) {
         return jdbcTemplate.queryForObject("SELECT state FROM product WHERE product_id = ?", String.class, productId);
     }
 
@@ -124,8 +124,8 @@ class TradePublishPendingReviewIntegrationTest extends CommunityApiTestBase {
         return count == null ? 0 : count;
     }
 
-    private List<Long> productIdsOf(JsonNode response) {
+    private List<String> productIdsOf(JsonNode response) {
         return StreamSupport.stream(response.path("data").path("list").spliterator(), false)
-                .map(node -> node.path("productId").asLong()).toList();
+                .map(node -> node.path("productId").asText()).toList();
     }
 }

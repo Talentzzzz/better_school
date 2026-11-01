@@ -11,10 +11,11 @@ import java.util.List;
 @Data
 public class ProductOrderEntity {
 
-    private Long orderId;
+    /** 订单业务 ID（UUID 字符串，uuid-biz-id 票 05） */
+    private String orderId;
     private String buyerId;
     private String sellerId;
-    private Long productId;
+    private String productId;
     private BigDecimal price;
     /** 商品信息全部为下单时快照（此后不可变）：展示不回 JOIN product（商品行可被编辑/软删，订单详情必须稳定） */
     private String productTitle;

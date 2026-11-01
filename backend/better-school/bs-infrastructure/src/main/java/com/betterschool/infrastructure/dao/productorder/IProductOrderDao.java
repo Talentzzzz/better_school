@@ -15,20 +15,17 @@ public interface IProductOrderDao {
 
     int insert(ProductOrderPO orderPO);
 
-    /** 业务 ID 回写：product_order_id = id（同事务，见 sql.md 主键口径） */
-    int bindBizId(@Param("id") Long id);
+    ProductOrderPO selectById(@Param("orderId") String orderId);
 
-    ProductOrderPO selectById(@Param("orderId") Long orderId);
+    int payById(@Param("orderId") String orderId, @Param("buyerId") String buyerId);
 
-    int payById(@Param("orderId") Long orderId, @Param("buyerId") String buyerId);
+    int markDeliveredById(@Param("orderId") String orderId, @Param("sellerId") String sellerId);
 
-    int markDeliveredById(@Param("orderId") Long orderId, @Param("sellerId") String sellerId);
+    int confirmById(@Param("orderId") String orderId, @Param("buyerId") String buyerId);
 
-    int confirmById(@Param("orderId") Long orderId, @Param("buyerId") String buyerId);
+    int cancelById(@Param("orderId") String orderId, @Param("buyerId") String buyerId);
 
-    int cancelById(@Param("orderId") Long orderId, @Param("buyerId") String buyerId);
-
-    int cancelPendingPayment(@Param("orderId") Long orderId);
+    int cancelPendingPayment(@Param("orderId") String orderId);
 
     List<ProductOrderPO> selectMineByBuyer(@Param("userId") String userId, @Param("offset") int offset,
                                            @Param("limit") int limit);

@@ -68,18 +68,18 @@ public class WalletRepository implements IWalletRepository {
     }
 
     @Override
-    public void freeze(String userId, BigDecimal amount, Long orderId) {
+    public void freeze(String userId, BigDecimal amount, String orderId) {
         freeze(userId, amount, orderId, WalletDetailTypeVO.FROZEN);
     }
 
     @Override
-    public void freeze(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type) {
+    public void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type) {
         freeze(userId, amount, orderId, type, 0);
     }
 
     /** 流水先行 + 余额条件 UPDATE 一个原子用例（余额不足时流水随之回滚） */
     @Override
-    public void freeze(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type, int bizRound) {
+    public void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type, int bizRound) {
         transactionTemplate.execute(status -> {
             // 流水先行：uk_order_type 冲突（已冻结过）→ 幂等跳过，不动余额
             if (insertDetail(userId, type, amount, orderId, bizRound) == 0) {
@@ -94,18 +94,18 @@ public class WalletRepository implements IWalletRepository {
     }
 
     @Override
-    public void unfreeze(String userId, BigDecimal amount, Long orderId) {
+    public void unfreeze(String userId, BigDecimal amount, String orderId) {
         unfreeze(userId, amount, orderId, WalletDetailTypeVO.UNFROZEN);
     }
 
     @Override
-    public void unfreeze(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type) {
+    public void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type) {
         unfreeze(userId, amount, orderId, type, 0);
     }
 
     /** 流水先行 + 解冻回退一个原子用例 */
     @Override
-    public void unfreeze(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type, int bizRound) {
+    public void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type, int bizRound) {
         transactionTemplate.execute(status -> {
             if (insertDetail(userId, type, amount, orderId, bizRound) == 0) {
                 return null;
@@ -116,13 +116,13 @@ public class WalletRepository implements IWalletRepository {
     }
 
     @Override
-    public void income(String userId, BigDecimal amount, Long orderId) {
+    public void income(String userId, BigDecimal amount, String orderId) {
         income(userId, amount, orderId, WalletDetailTypeVO.INCOME);
     }
 
     /** 流水先行 + 余额入账一个原子用例 */
     @Override
-    public void income(String userId, BigDecimal amount, Long orderId, WalletDetailTypeVO type) {
+    public void income(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type) {
         transactionTemplate.execute(status -> {
             if (insertDetail(userId, type, amount, orderId, 0) == 0) {
                 return null;
@@ -143,7 +143,7 @@ public class WalletRepository implements IWalletRepository {
     }
 
     /** 返回影响行数：0 = 该流水已存在（幂等跳过） */
-    private int insertDetail(String userId, WalletDetailTypeVO type, BigDecimal amount, Long orderId, int bizRound) {
+    private int insertDetail(String userId, WalletDetailTypeVO type, BigDecimal amount, String orderId, int bizRound) {
         WalletDetailPO detailPO = new WalletDetailPO();
         detailPO.setUserId(userId);
         detailPO.setType(type.name());

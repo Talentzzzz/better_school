@@ -155,7 +155,8 @@ public class ReviewCase {
                 }
             }
             case ERRAND -> {
-                errandOrderService.reviewApproveOrder(numericTargetId(targetId), operatorId);
+                // 业务 id 是 UUID 字符串，targetId 直传（uuid-biz-id 票 05）
+                errandOrderService.reviewApproveOrder(targetId, operatorId);
                 reviewService.recordReview(targetType, targetId, detail.getAuthorId(), detail.getReviewRound(), ReviewActionVO.APPROVE,
                         ReviewSourceVO.MANUAL, operatorId, null, null);
                 notificationService.sendToUser(detail.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
@@ -163,7 +164,7 @@ public class ReviewCase {
             }
             case PRODUCT -> {
                 // 商品先审后售无资金环节：通过转 ON_SALE 对外可见（转在售时落搜索同步消息）
-                productService.reviewApproveProduct(numericTargetId(targetId));
+                productService.reviewApproveProduct(targetId);
                 reviewService.recordReview(targetType, targetId, detail.getAuthorId(), detail.getReviewRound(), ReviewActionVO.APPROVE,
                         ReviewSourceVO.MANUAL, operatorId, null, null);
                 notificationService.sendToUser(detail.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
@@ -192,8 +193,8 @@ public class ReviewCase {
                         "您的评论未通过审核：" + reason, "COMMENT", targetId);
             }
             case ERRAND -> {
-                // 先翻转状态（幂等闸门），再解冻退款（流水 uk 防重）
-                long errandOrderId = numericTargetId(targetId);
+                // 先翻转状态（幂等闸门），再解冻退款（流水 uk 防重）；业务 id 是 UUID 字符串直传（uuid-biz-id 票 05）
+                String errandOrderId = targetId;
                 ErrandReviewResult refundDemand = errandOrderService.reviewRejectOrder(errandOrderId, operatorId, reason);
                 walletAccountService.unfreeze(refundDemand.getPublisherId(), refundDemand.getReward(), errandOrderId);
                 reviewService.recordReview(targetType, targetId, detail.getAuthorId(), detail.getReviewRound(), ReviewActionVO.REJECT,
@@ -203,7 +204,7 @@ public class ReviewCase {
             }
             case PRODUCT -> {
                 // 商品拒绝无资金环节，拒绝即 REJECTED（无退款）
-                productService.reviewRejectProduct(numericTargetId(targetId));
+                productService.reviewRejectProduct(targetId);
                 reviewService.recordReview(targetType, targetId, detail.getAuthorId(), detail.getReviewRound(), ReviewActionVO.REJECT,
                         ReviewSourceVO.MANUAL, operatorId, reason, reasonCode);
                 notificationService.sendToUser(detail.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
@@ -254,18 +255,6 @@ public class ReviewCase {
                 notificationService.sendToUser(parent.getUserId(), NotificationScopeVO.INTERACTION_COMMENT, NotificationTypeVO.COMMENT_REPLIED, "互动通知",
                         "你的评论收到了新回复", "COMMENT", comment.getParentId());
             }
-        }
-    }
-
-    /**
-     * 商品 / 跑腿的目标 ID 过渡期仍是数值（trade / errand 域 String 化在 uuid-biz-id 票 05/06）：
-     * 统一按「业务 ID 的字符串形」承载，进这两个域的方法时解析回 long。票据完成后本方法随之删除。
-     */
-    private static long numericTargetId(String targetId) {
-        try {
-            return Long.parseLong(targetId);
-        } catch (NumberFormatException e) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "审核对象 ID 非法");
         }
     }
 

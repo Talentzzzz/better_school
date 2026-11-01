@@ -10,7 +10,8 @@ import java.util.List;
 public class ErrandOrderPO {
 
     private Long id;
-    private Long errandOrderId;
+    /** 跑腿订单业务 ID（UUID 字符串，uuid-biz-id 票 05；物理自增 id 只作内部键，不再同值） */
+    private String errandOrderId;
     private String publisherId;
     private String takerId;
     private String type;

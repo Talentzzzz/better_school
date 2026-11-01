@@ -27,7 +27,7 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
         JsonNode save = postJson("/api/trade/products/draft",
                 Map.of("title", "出售作弊神器"), seller);
         assertSuccess(save, "保存商品草稿");
-        long productId = save.path("data").asLong();
+        String productId = save.path("data").asText();
 
         assertThat(productStatus(productId)).as("草稿状态应为 DRAFT").isEqualTo("DRAFT");
 
@@ -43,7 +43,7 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
 
         JsonNode mine = getJson("/api/trade/products/mine", seller);
         List<JsonNode> mineItems = StreamSupport.stream(mine.path("data").path("list").spliterator(), false)
-                .filter(node -> node.path("productId").asLong() == productId).toList();
+                .filter(node -> node.path("productId").asText().equals(productId)).toList();
         assertThat(mineItems).as("我的发布应含自己的草稿").hasSize(1);
         assertThat(mineItems.get(0).path("status").asText()).isEqualTo("DRAFT");
 
@@ -57,7 +57,7 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
     @Test
     void 商品草稿可编辑全部内容并回显() {
         Session seller = registerAndLogin("13800004003", "卖家2");
-        long productId = saveProductDraft(seller, "旧台灯");
+        String productId = saveProductDraft(seller, "旧台灯");
 
         JsonNode update = putJson("/api/trade/products/" + productId + "/draft", Map.ofEntries(
                 Map.entry("title", "九成新护眼台灯"),
@@ -85,7 +85,7 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
     @Test
     void 草稿可删除_在售商品删除不受影响() {
         Session seller = registerAndLogin("13800004004", "卖家3");
-        long draftId = saveProductDraft(seller, "不要了的草稿");
+        String draftId = saveProductDraft(seller, "不要了的草稿");
 
         JsonNode deleteDraft = deleteJson("/api/trade/products/" + draftId, seller);
         assertSuccess(deleteDraft, "删除草稿");
@@ -94,8 +94,8 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
         assertThat(detail.path("code").asText()).as("已删草稿详情不可见").isEqualTo("404");
 
         // 回归：删除端点放行 DRAFT 后，在售商品的删除能力保持不变
-        // 直插夹具：product_id NOT NULL 且无默认值（应用侧才走 insert 0 + 回写 id），夹具显式给带外业务 ID 并返回它
-        long onSaleId = 900_000L + fixtureSeq++;
+        // 直插夹具（uuid-biz-id 票 05 起业务 id UUID 形态、应用侧发号）：夹具显式给业务 ID 并返回它
+        String onSaleId = java.util.UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
                         + "trade_location, category, state, create_time, update_time, expire_at) "
                         + "VALUES (?, ?, '在售存量商品', '回归用', 10.00, '驿站', 'BOOKS', 'ON_SALE', NOW(), NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY))",
@@ -110,7 +110,7 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
     @Test
     void 商品草稿提交命中初筛停留草稿_改后提交进入待审() {
         Session seller = registerAndLogin("13800004005", "卖家4");
-        long productId = saveProductDraft(seller, "九成新吉他");
+        String productId = saveProductDraft(seller, "九成新吉他");
 
         // 编辑带入违禁词后提交：初筛命中应失败，且草稿原样保留可继续改
         updateProductDraft(seller, productId, "九成新吉他", "可代考复习资料");
@@ -136,7 +136,7 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
     @Test
     void 不完整草稿提交失败提示补全() {
         Session seller = registerAndLogin("13800004006", "卖家5");
-        long productId = saveProductDraft(seller, "只有标题的草稿");
+        String productId = saveProductDraft(seller, "只有标题的草稿");
 
         JsonNode response = postJson("/api/trade/products/" + productId + "/submit", null, seller);
         assertThat(response.path("code").asText()).as("缺价等必填项应拒绝提交：%s", response).isEqualTo("500");
@@ -149,7 +149,7 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
     @Test
     void 商品待审不可编辑_可撤回进草稿箱_重新提交回到待审() {
         Session seller = registerAndLogin("13800004007", "卖家6");
-        long productId = createProduct(seller, "九成新滑板");
+        String productId = createProduct(seller, "九成新滑板");
         assertThat(productStatus(productId)).isEqualTo("PENDING_REVIEW");
 
         JsonNode editPending = putJson("/api/trade/products/" + productId + "/draft",
@@ -171,16 +171,16 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 工具 ----------
 
-    /** 直插夹具的商品业务 ID 取号带：远高于应用自增 id，避开 uk_product_id */
-    private long fixtureSeq;
+    /** 直插夹具的商品业务 ID（uuid-biz-id 票 05 起 UUID 形态，应用侧发号）*/
+    
 
-    private long saveProductDraft(Session seller, String title) {
+    private String saveProductDraft(Session seller, String title) {
         JsonNode save = postJson("/api/trade/products/draft", Map.of("title", title), seller);
         assertSuccess(save, "保存商品草稿");
-        return save.path("data").asLong();
+        return save.path("data").asText();
     }
 
-    private void updateProductDraft(Session seller, long productId, String title, String description) {
+    private void updateProductDraft(Session seller, String productId, String title, String description) {
         JsonNode update = putJson("/api/trade/products/" + productId + "/draft", Map.ofEntries(
                 Map.entry("title", title),
                 Map.entry("description", description),
@@ -190,10 +190,10 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
         assertSuccess(update, "编辑商品草稿");
     }
 
-    private long createProduct(Session seller, String title) {
+    private String createProduct(Session seller, String title) {
         JsonNode response = postJson("/api/trade/products", productBody(title, "九成新"), seller);
         assertSuccess(response, "发布商品");
-        return response.path("data").asLong();
+        return response.path("data").asText();
     }
 
     private Map<String, Object> productBody(String title, String description) {
@@ -206,7 +206,7 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
                 Map.entry("category", "BOOKS"));
     }
 
-    private String productStatus(long productId) {
+    private String productStatus(String productId) {
         return jdbcTemplate.queryForObject("SELECT state FROM product WHERE product_id = ?", String.class, productId);
     }
 
@@ -216,9 +216,9 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
         return count == null ? 0 : count;
     }
 
-    private List<Long> productIdsOf(JsonNode response) {
+    private List<String> productIdsOf(JsonNode response) {
         return StreamSupport.stream(response.path("data").path("list").spliterator(), false)
-                .map(node -> node.path("productId").asLong()).toList();
+                .map(node -> node.path("productId").asText()).toList();
     }
 
 }

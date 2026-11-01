@@ -18,64 +18,61 @@ public interface IProductDao {
 
     int insert(ProductPO productPO);
 
-    /** 业务 ID 回写：product_id = id（同事务，插入后调用） */
-    int bindBizId(@Param("id") Long id);
+    ProductPO selectById(@Param("productId") String productId);
 
-    ProductPO selectById(@Param("productId") Long productId);
-
-    int softDelete(@Param("productId") Long productId);
+    int softDelete(@Param("productId") String productId);
 
     /** 按 id 列表查询（不分状态，搜索同步反查/搜索结果组装用） */
-    List<ProductPO> selectByIds(@Param("ids") List<Long> productIds);
+    List<ProductPO> selectByIds(@Param("ids") List<String> productIds);
 
-    /** 搜索索引全量重建的游标页：id > lastId 按 id 升序取 limit 条 */
-    List<Long> selectIdsAfter(@Param("lastId") Long lastId, @Param("limit") int limit);
+    /** 搜索索引全量重建的游标页：业务 ID 字典序，product_id > lastProductId 升序取 limit 条（uuid-biz-id 票 05） */
+    List<String> selectIdsAfter(@Param("lastProductId") String lastProductId, @Param("limit") int limit);
 
-    int markSold(@Param("productId") Long productId);
+    int markSold(@Param("productId") String productId);
 
-    int relist(@Param("productId") Long productId);
+    int relist(@Param("productId") String productId);
 
     /** 覆盖草稿内容：仅 DRAFT 行生效 */
     int updateDraft(ProductPO productPO);
 
     /** 提交草稿：DRAFT → PENDING_REVIEW */
-    int submitDraft(@Param("productId") Long productId);
+    int submitDraft(@Param("productId") String productId);
 
     /** 撤回待审：PENDING_REVIEW → DRAFT */
-    int withdraw(@Param("productId") Long productId);
+    int withdraw(@Param("productId") String productId);
 
     /** 下架/到期汇入草稿箱：ON_SALE → DRAFT */
-    int takeDown(@Param("productId") Long productId);
+    int takeDown(@Param("productId") String productId);
 
     /** 到期扫描：ON_SALE 且 expire_at 早于 before 的商品 id 列表 */
-    List<Long> selectExpiredOnSaleIds(@Param("before") LocalDateTime before, @Param("limit") int limit);
+    List<String> selectExpiredOnSaleIds(@Param("before") LocalDateTime before, @Param("limit") int limit);
 
     /** 24h 提醒扫描：PENDING_REVIEW 且 review_entered_at 早于 before 的商品 id 列表 */
-    List<Long> selectReviewTimeoutIds(@Param("before") LocalDateTime before, @Param("limit") int limit);
+    List<String> selectReviewTimeoutIds(@Param("before") LocalDateTime before, @Param("limit") int limit);
 
     /** 审核通过：PENDING_REVIEW → ON_SALE */
-    int reviewApproveById(@Param("productId") Long productId);
+    int reviewApproveById(@Param("productId") String productId);
 
     /** 审核拒绝：PENDING_REVIEW → REJECTED */
-    int reviewRejectById(@Param("productId") Long productId);
+    int reviewRejectById(@Param("productId") String productId);
 
     /** 被拒转草稿箱：REJECTED → DRAFT */
-    int rejectToDraft(@Param("productId") Long productId);
+    int rejectToDraft(@Param("productId") String productId);
 
     /** 上架后改内容：ON_SALE → PENDING_REVIEW（轮次 +1，动态覆盖非 null 字段） */
     int editOnSaleContent(ProductPO productPO);
 
     /** 上架后仅改价：价格立即生效，状态不变 */
-    int updateOnSalePrice(@Param("productId") Long productId, @Param("price") BigDecimal price);
+    int updateOnSalePrice(@Param("productId") String productId, @Param("price") BigDecimal price);
 
     /** 下单锁定：ON_SALE → LOCKED（0 行 = 已被交易/已下架） */
-    int lock(@Param("productId") Long productId);
+    int lock(@Param("productId") String productId);
 
     /** 解锁释放（下单取消/支付超时）：LOCKED → ON_SALE */
-    int release(@Param("productId") Long productId);
+    int release(@Param("productId") String productId);
 
     /** 支付完成：LOCKED → SOLD */
-    int lockToSold(@Param("productId") Long productId);
+    int lockToSold(@Param("productId") String productId);
 
     List<ProductPO> selectPage(@Param("category") String category,
                                @Param("minPrice") BigDecimal minPrice,
@@ -95,13 +92,13 @@ public interface IProductDao {
                                                  @Param("cursor") ProductFeedCursorVO cursor,
                                                  @Param("limit") int limit);
 
-    int insertFavorite(@Param("productId") Long productId, @Param("userId") String userId);
+    int insertFavorite(@Param("productId") String productId, @Param("userId") String userId);
 
-    int deleteFavorite(@Param("productId") Long productId, @Param("userId") String userId);
+    int deleteFavorite(@Param("productId") String productId, @Param("userId") String userId);
 
-    int existsFavorite(@Param("productId") Long productId, @Param("userId") String userId);
+    int existsFavorite(@Param("productId") String productId, @Param("userId") String userId);
 
-    long countFavorites(@Param("productId") Long productId);
+    long countFavorites(@Param("productId") String productId);
 
     List<ProductPO> selectFavoritesByUser(@Param("userId") String userId,
                                           @Param("offset") int offset, @Param("limit") int limit);
@@ -122,31 +119,31 @@ public interface IProductDao {
     // 一组一个事务：INSERT IGNORE 明细（影响行数 = 真正新增的 UV 数）→ 全组刷 viewed_at → 加速列 += 新增数
 
     /** 第一步：UV 明细批量写，(user_id, product_id) 主键撞键裁决重复浏览 */
-    int insertProductViewHistory(@Param("productId") Long productId, @Param("userIds") List<String> userIds);
+    int insertProductViewHistory(@Param("productId") String productId, @Param("userIds") List<String> userIds);
 
     /** 第二步：刷新本组全部键的浏览时刻（含刚插入的行）——重复浏览的唯一可见效果 */
-    int touchProductViewedAt(@Param("productId") Long productId, @Param("userIds") List<String> userIds);
+    int touchProductViewedAt(@Param("productId") String productId, @Param("userIds") List<String> userIds);
 
     /** 第三步：加速列 upsert（行懒建 ODKU）；增量 = insertProductViewHistory 的影响行数 */
-    int upsertProductViewCount(@Param("productId") Long productId, @Param("delta") int delta);
+    int upsertProductViewCount(@Param("productId") String productId, @Param("delta") int delta);
 
     /** 当前用户浏览过的商品 id 集合（推荐列表已读灰显批量回显，走 (user_id, product_id) 主键前缀） */
-    List<Long> selectViewedProductIds(@Param("userId") String userId, @Param("productIds") List<Long> productIds);
+    List<String> selectViewedProductIds(@Param("userId") String userId, @Param("productIds") List<String> productIds);
 
     // ── feed 异构索引同事务直写（market-feed-uv 票 03：索引行与 product 行同库，状态流转 / 改价 /
     //    浏览合并事务带写，照帖子 post_feed_index 先例）──
 
     /** 审核通过：行诞生 / 翻回 ON_SALE（INSERT...SELECT 取 price 快照；ODKU 刷新 state/feed_time/price） */
-    int upsertFeedIndexOnApprove(@Param("productId") Long productId);
+    int upsertFeedIndexOnApprove(@Param("productId") String productId);
 
     /** 状态快照同步：镜像 product 的新状态；行不存在（从未通过审）= 0 行静默，不 upsert */
-    int updateFeedIndexState(@Param("productId") Long productId, @Param("state") String state);
+    int updateFeedIndexState(@Param("productId") String productId, @Param("state") String state);
 
     /** 在售改价旁路同步（立即生效不进审核）：纯 UPDATE，价格排序键同事务跟上 */
-    int updateFeedIndexPrice(@Param("productId") Long productId, @Param("price") BigDecimal price);
+    int updateFeedIndexPrice(@Param("productId") String productId, @Param("price") BigDecimal price);
 
     /** 浏览合并事务旁路 ±N：纯 UPDATE 不 upsert；0 行 = 索引行缺失，调用方落 warn 交重建 job */
-    int updateFeedIndexViewCount(@Param("productId") Long productId, @Param("delta") int delta);
+    int updateFeedIndexViewCount(@Param("productId") String productId, @Param("delta") int delta);
 
     // ── feed 索引全量重建（market-feed-uv 票 06：兜底恢复手段，照帖子 IPostDao 同名四条先例）──
     // 四条语句由仓储收进一个事务（执行序：计数校准 → 清空索引 → 重灌投影）：

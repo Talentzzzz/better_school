@@ -15,20 +15,16 @@
         su.nickname AS seller_nickname, su.avatar AS seller_avatar
     </sql>
 
-    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO"
-            useGeneratedKeys="true" keyProperty="id">
+    <!-- uuid-biz-id 票 05：业务 ID 发号在 repository 落库前生成（IIdGenerator.nextId），随行一次写入，
+         删除 bindBizId 自增同值回写 -->
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO">
         INSERT INTO product_order (product_order_id, buyer_id, seller_id, product_id, price,
                                    product_title, product_description, product_images, product_trade_location, product_category,
                                    state, create_time, update_time)
-        VALUES (0, #{buyerId}, #{sellerId}, #{productId}, #{price},
+        VALUES (#{productOrderId}, #{buyerId}, #{sellerId}, #{productId}, #{price},
                 #{productTitle}, #{productDescription}, #{productImages}, #{productTradeLocation}, #{productCategory},
                 #{state}, #{createTime}, #{updateTime})
     </insert>
-
-    <!-- 业务 ID 回写：product_order_id = id（同事务，见 sql.md 主键口径） -->
-    <update id="bindBizId">
-        UPDATE product_order SET product_order_id = id WHERE id = #{id} AND product_order_id = 0
-    </update>
 
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO">
         SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>

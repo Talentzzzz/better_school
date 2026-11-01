@@ -39,7 +39,7 @@ public class CreditAccountServiceImpl implements ICreditAccountService {
     }
 
     @Override
-    public CreditChangeResult applyChange(String userId, CreditReasonTypeVO reasonType, Long refId) {
+    public CreditChangeResult applyChange(String userId, CreditReasonTypeVO reasonType, String refId) {
         if (reasonType.hasDailyCap()) {
             int todaySum = creditRepository.sumTodayChange(userId, reasonType.name(), LocalDate.now());
             if (todaySum + reasonType.getDelta() > reasonType.getDailyCap()) {

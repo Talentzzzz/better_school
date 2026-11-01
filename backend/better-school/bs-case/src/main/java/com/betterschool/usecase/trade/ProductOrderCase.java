@@ -25,21 +25,21 @@ public class ProductOrderCase {
     private final ICreditAccountService creditAccountService;
     private final IWalletAccountService walletAccountService;
 
-    public Long createOrder(String buyerId, Long productId) {
+    public String createOrder(String buyerId, String productId) {
         creditAccountService.ensureOperable(buyerId);
         return productOrderService.createOrder(buyerId, productId);
     }
 
-    public void payOrder(Long orderId, String buyerId) {
+    public void payOrder(String orderId, String buyerId) {
         ProductPayResult payResult = productOrderService.payOrder(orderId, buyerId);
         walletAccountService.freeze(buyerId, payResult.getPrice(), orderId, WalletDetailTypeVO.PRODUCT_FROZEN);
     }
 
-    public void markDelivered(Long orderId, String sellerId) {
+    public void markDelivered(String orderId, String sellerId) {
         productOrderService.markDelivered(orderId, sellerId);
     }
 
-    public void confirmReceived(Long orderId, String buyerId) {
+    public void confirmReceived(String orderId, String buyerId) {
         ProductConfirmResult confirmResult = productOrderService.confirmReceived(orderId, buyerId);
         walletAccountService.unfreeze(confirmResult.getBuyerId(), confirmResult.getPrice(), orderId,
                 WalletDetailTypeVO.PRODUCT_UNFROZEN);
@@ -47,7 +47,7 @@ public class ProductOrderCase {
                 WalletDetailTypeVO.PRODUCT_INCOME);
     }
 
-    public void cancelOrder(Long orderId, String buyerId) {
+    public void cancelOrder(String orderId, String buyerId) {
         ProductCancelResult cancelResult = productOrderService.cancelOrder(orderId, buyerId);
         if (cancelResult.isNeedRefund()) {
             walletAccountService.unfreeze(cancelResult.getBuyerId(), cancelResult.getPrice(), orderId,
@@ -55,7 +55,7 @@ public class ProductOrderCase {
         }
     }
 
-    public ProductOrderEntity orderDetail(Long orderId, String currentUserId) {
+    public ProductOrderEntity orderDetail(String orderId, String currentUserId) {
         return productOrderService.orderDetail(orderId, currentUserId);
     }
 
@@ -67,7 +67,7 @@ public class ProductOrderCase {
         return productOrderService.countMineOrders(role, userId);
     }
 
-    public void handlePayTimeout(Long orderId) {
+    public void handlePayTimeout(String orderId) {
         productOrderService.handlePayTimeout(orderId);
     }
 
