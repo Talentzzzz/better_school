@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "request": {
+    "token": "smoke17-7-physical-1791302857"
+  },
+  "response": {
+    "code": "200",
+    "info": "成功",
+    "data": {
+      "recordId": 8459526029234547276,
+      "prizeType": "PHYSICAL",
+      "prizeId": 8104,
+      "tier": 2,
+      "name": "校园帆布包",
+      "pointsAmount": null
+    }
+  }
+}

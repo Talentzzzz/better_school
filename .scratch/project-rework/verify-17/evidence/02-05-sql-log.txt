@@ -1,0 +1,37 @@
+SELECT role FROM bs_user WHERE phone = '13700017203'
+SELECT role FROM bs_user WHERE phone = '13700017203'
+SELECT state, review_round, review_entered_at, expire_at, price, user_id, title FROM product WHERE product_id = 8
+SELECT state, review_round, review_entered_at, expire_at, price, user_id, title FROM product WHERE product_id = 8
+SELECT target_type, target_id, review_round, action, source, operator_id, reason FROM content_review WHERE target_type = 'PRODUCT' AND target_id = 8
+SELECT state, review_round, review_entered_at, expire_at, price, user_id, title FROM product WHERE product_id = 8
+SELECT COUNT(*) FROM product_order WHERE product_id = 8
+SELECT state, review_round, review_entered_at, expire_at, price, user_id, title FROM product WHERE product_id = 8
+SELECT state, review_round, review_entered_at, expire_at, price, user_id, title FROM product WHERE product_id = 8
+SELECT balance, frozen_amount FROM virtual_wallet WHERE user_id = 4
+SELECT balance, frozen_amount FROM virtual_wallet WHERE user_id = 4
+SELECT type, amount, order_id, biz_round, create_time FROM wallet_detail WHERE user_id = 4 ORDER BY id
+SELECT state, price, buyer_id, seller_id, product_id FROM product_order WHERE product_order_id = 2
+SELECT state, review_round, review_entered_at, expire_at, price, user_id, title FROM product WHERE product_id = 8
+SELECT balance, frozen_amount FROM virtual_wallet WHERE user_id = 4
+SELECT balance, frozen_amount FROM virtual_wallet WHERE user_id = 4
+SELECT state, price FROM product_order WHERE product_order_id = 2
+SELECT type, amount, order_id, biz_round, create_time FROM wallet_detail WHERE user_id = 4 AND order_id = 2 ORDER BY id
+SELECT event_type, from_state, to_state, actor_role FROM product_order_event WHERE order_id = 2 ORDER BY id
+SELECT balance, frozen_amount FROM virtual_wallet WHERE user_id = 4
+SELECT state, price FROM product_order WHERE product_order_id = 2
+SELECT COUNT(*) FROM wallet_detail WHERE user_id = 4 AND order_id = 2 AND type = 'PRODUCT_FROZEN'
+SELECT event_type, from_state, to_state FROM product_order_event WHERE order_id = 2 ORDER BY id
+SELECT balance, frozen_amount FROM virtual_wallet WHERE user_id = 3
+SELECT balance, frozen_amount FROM virtual_wallet WHERE user_id = 4
+SELECT balance, frozen_amount FROM virtual_wallet WHERE user_id = 3
+SELECT state FROM product_order WHERE product_order_id = 2
+SELECT type, amount, order_id, biz_round, create_time FROM wallet_detail WHERE user_id = 4 AND order_id = 2 ORDER BY id
+SELECT type, amount, order_id, biz_round, create_time FROM wallet_detail WHERE user_id = 3 AND order_id = 2 ORDER BY id
+SELECT event_type, from_state, to_state, actor_role FROM product_order_event WHERE order_id = 2 ORDER BY id
+SELECT state, review_round, review_entered_at, expire_at, price, user_id, title FROM product WHERE product_id = 8
+SELECT COUNT(*) FROM wallet_detail WHERE user_id = 4 AND order_id = 2 AND type = 'PRODUCT_UNFROZEN'
+SELECT COUNT(*) FROM wallet_detail WHERE user_id = 3 AND order_id = 2 AND type = 'PRODUCT_INCOME'
+SELECT balance, frozen_amount FROM virtual_wallet WHERE user_id = 3
+SELECT balance, frozen_amount FROM virtual_wallet WHERE user_id = 3
+SELECT COUNT(*) FROM wallet_detail WHERE user_id = 3 AND order_id = 2 AND type = 'PRODUCT_INCOME'
+SELECT COUNT(*) FROM wallet_detail WHERE user_id = 3 AND order_id = 2 AND type = 'PRODUCT_INCOME'

@@ -1,0 +1,14 @@
+{
+  "http_status": 200,
+  "post_id": 13,
+  "request": {
+    "content": "这个可以赌博换钱 SMOKE17CLEAN R100700071168"
+  },
+  "response": {
+    "code": "500",
+    "info": "内容包含违规词汇，请修改后重试",
+    "data": null
+  },
+  "hit_word": "赌博",
+  "run_id": "R100700071168"
+}

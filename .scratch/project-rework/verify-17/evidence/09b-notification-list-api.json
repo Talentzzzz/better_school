@@ -1,0 +1,9 @@
+{
+  "http_status": 200,
+  "path": "/api/notifications?scope=BOTTOM_SYSTEM",
+  "response": {
+    "code": "999",
+    "info": "系统繁忙，请稍后重试",
+    "data": null
+  }
+}

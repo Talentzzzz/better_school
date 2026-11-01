@@ -1,0 +1,143 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: better-school
+  # 虚拟线程开关（spec §2，票 05/12）：Web handler 从 Tomcat 平台线程池（默认 200 上限）换到 VT，
+  # 翻的理由 = 消平台线程上限 + 与手写扇出口径统一——实测吞吐收益 ≈ 0（票 04），不是性能优化。
+  # 两条硬约束：不许再配 server.tomcat.threads.max（翻开关后静默失效，JMX 读 -1）；
+  # 不许混用 Tomcat 原生 useVirtualThreads（与 Boot customizer 两条路只生效一条）。
+  # 翻开关后并发上限 = 连接池（见下方 hikari），Web 层不加任何信号量（spec §2.3）。
+  threads:
+    virtual:
+      enabled: true
+  # 配置中心：jwt.secret / jwt.expire-days 与营销 app 共用这一份 dataId（本地那两行已删）。
+  # 不加 optional: —— 共享配置缺了就启动失败，比静默跑丢配置好；代价是「本机没起 Nacos 单体起不来」，
+  # 该代价已由「单体同时是 Dubbo Provider」付掉（见 marketing spec「Nacos」节）。
+  config:
+    import: nacos:better-school-shared.yml?group=DEFAULT_GROUP&refreshEnabled=true
+  cloud:
+    nacos:
+      server-addr: 127.0.0.1:8848
+  servlet:
+    multipart:
+      max-file-size: 6MB    # 业务上限 5MB（Constants.UPLOAD_IMAGE_MAX_BYTES），容器上限略放宽以返回业务提示
+      max-request-size: 10MB
+  jackson:
+    # 旧客户端可能携带已移除的字段（如匿名接口时代的 anonymous），未知字段静默忽略，由集成测试固化
+    deserialization:
+      fail-on-unknown-properties: false
+  autoconfigure:
+    # JWT 无状态认证不依赖 UserDetailsService，排除默认用户生成（消 generated password 日志）
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  # 主 datasource 现在坐在 ShardingSphere 驱动上（超时中心内嵌化票 02）：真实库地址、内层连接池
+  # 与分片规则都在 sharding.yaml（库地址进不了 Spring ${} 那层，所以这里只有驱动壳配置）。
+  # 外层 Hikari 池 10 仍是真并发上限；内层池见 sharding.yaml（要 ≥ 外层）。
+  datasource:
+    driver-class-name: org.apache.shardingsphere.driver.ShardingSphereDriver
+    url: jdbc:shardingsphere:classpath:sharding.yaml
+    # 这对凭据由驱动忽略（YAML 里的才是真的），留空会触发 Hikari 的空凭据告警
+    username: root
+    password: bs123456
+    # Hikari 显式化（spec §2.3，票 12）：翻 VT 开关后连接池是唯一真并发上限，connection-timeout
+    # 决定慢失败时延——过去跑 Boot 默认（池 10、timeout 30s），现在两行都写明。池 10 不为 VT 而调。
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 3000
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+      password: bs123456   # compose redis 容器 requirepass bs123456
+  elasticsearch:
+    uris: http://localhost:9200   # compose bs-es 容器（需先执行 WSL2 vm.max_map_count 调整）
+
+rocketmq:
+  name-server: localhost:9876   # 联调时改真实地址
+  producer:
+    group: better-school-producer
+
+# 同步边（Dubbo）：单体作为 Provider 暴露 bs-api 的 IUserQueryService，
+# 营销 app 作为 Consumer（tri 协议，两 app 同机跑故端口错开）。jwt.* 见 better-school-shared.yml
+dubbo:
+  application:
+    name: better-school
+    # 3.3 默认 STRICT：未进 allowlist 的 DTO 首次调用直接被拒，本地联调先放宽为「只拦危险类」
+    serialize-check-status: WARN
+  registry:
+    address: nacos://127.0.0.1:8848
+  protocol:
+    name: tri
+    port: 50051
+    # Provider 池显式写 virtual（spec §2.2，票 07/12）：3.3.5 起翻 spring.threads.virtual.enabled
+    # 会隐式连带此值，这里显式写不吃默认——自文档 + 抗将来只改一边。与 Tomcat 翻开关同构：
+    # 消平台线程上限（threads=200 成死参数，不许写 threads/queues），DB 侧由连接池兜。
+    threadpool: virtual
+  # 没有这一行 @DubboService 不会被打扫到（starter 只在配了 base-packages 时才注册
+  # ServiceAnnotationPostProcessor），表现是应用正常启动但服务一条都没导出、consumer 解析不到
+  scan:
+    base-packages: com.betterschool
+
+minio:
+  endpoint: http://localhost:9000   # compose bs-minio S3 API
+  access-key: bsadmin
+  secret-key: bs123456
+  bucket: bs-files
+  public-url: http://localhost:9000 # 图片访问前缀（浏览器直连，默认同 endpoint）
+
+# 审核派单可观测与积压告警（票 11，spec §9）：两条告警都只 WARN、不做自动扩容/自动派给离线者，
+# 由 reviewDispatchObservation job（每分钟）评估。
+review:
+  backlog-warn-threshold: 50      # 队列深度积压告警阈值（工单池 PENDING 总条数；沿用 backlog-warn-threshold 命名先例）
+  oldest-wait-warn-minutes: 30    # 最老待审等待时长告警阈值（分钟；entered_at 起算，回收不改、持续累加）
+
+# 内嵌超时中心（票 04）：扫描并行度与重试退避口径（与原独立中心同值，域服务按 @Value 默认值兜底）
+timeout:
+  scan:
+    batch-size: 200      # 单批上限（「循环拉批到空」的最小步长；一个批 = 一批回调 + 每桶一条结算 SQL）
+    # 同时扫描的槽位数 = 池宽度 = **真并发上限**（认领的表数与它解耦，绝不一表一线程）。
+    # 单体 Hikari 池 10 是全应用共享（用户请求同池），抬它等于抬「扫描 + 请求」的连接占用峰值：
+    # 票 04 实测 4 时扫描期 active ≤ 4，仍给业务留 6 条余量——要抬之前先看 arch doc §6 的实测口径。
+    parallelism: 4
+  retry:
+    base-seconds: 30     # 退避底数：首次失败后 30s，之后指数翻倍（60/120/…）
+    max-seconds: 3600    # 单次退避封顶 1h（底数翻过封顶就按封顶走）
+    max-times: 16        # 重试上限：第 16 次失败置 FAILED 死信，等管理面人工处理
+
+xxl:
+  job:
+    admin:
+      addresses: http://localhost:9090/xxl-job-admin   # 调度中心（compose 映射 9090:8080；容器内由环境变量覆盖）
+    access-token: default_token
+    executor:
+      appname: better-school-executor
+      port: 9999
+      log-path: ./logs/xxl-job
+      log-retention-days: 30
+
+# 计数合并器（spec §2.4：一套参数，全部未经扫参）：窗口 / 批 / 分片 / 线程都是模型推导，
+# 上线后只按 MergeMetrics 的 flushed ÷ batches（合并比）、timedOut、rejectedFull 调，调参不改代码结构。
+# flush-threads 的硬上限是「连接池 - 2」，由 bs-app/config/CountMergeConfig 启动时校验并把两个数打进日志。
+merge:
+  count:
+    shard-count: 256        # 2 的幂；只买「批纯度」（一批只碰一行），并行度由 flush-threads 定
+    window-ms: 5            # 合并窗口：分片首个请求排定 5ms 后 flush，攒满可提前触发
+    max-batch: 200          # 200 行 ≈ 8ms 落库；再大 wait-timeout-ms 就吃紧
+    wait-timeout-ms: 100    # 必须 > window-ms：5ms 窗口 + 8ms 落库 + 抖动
+    shard-capacity: 5000    # 只当「降级触发点 + 内存上界」，满了就拒，不扩容
+    flush-threads: 4        # 必须 <= 连接池上限 - 2（池 10 ⇒ 上限 8）
+    drain-timeout-ms: 5000  # 停机排空（停收 → 排空 → 关池）的等待上限
+
+mybatis:
+  mapper-locations: classpath:/mybatis/mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+logging:
+  level:
+    com.betterschool: debug
+    # mapper SQL 日志走 slf4j 后在此关掉（MyBatis 日志名 = mapper 接口包名）
+    com.betterschool.infrastructure.dao: warn

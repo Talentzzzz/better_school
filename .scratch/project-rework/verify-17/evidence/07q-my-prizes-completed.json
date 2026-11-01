@@ -1,0 +1,125 @@
+{
+  "ok": true,
+  "data": {
+    "page": 1,
+    "pageSize": 10,
+    "total": 5,
+    "list": [
+      {
+        "id": 8459526029234547276,
+        "prizeId": 8104,
+        "tier": 2,
+        "name": "校园帆布包",
+        "prizeType": "PHYSICAL",
+        "status": "COMPLETED",
+        "createdAt": "2026-10-07T00:07:38",
+        "claimedAt": null
+      },
+      {
+        "id": 7706668465549841551,
+        "prizeId": 8103,
+        "tier": 3,
+        "name": "60 积分",
+        "prizeType": "VIRTUAL",
+        "status": "COMPLETED",
+        "createdAt": "2026-10-07T00:07:26",
+        "claimedAt": "2026-10-07T00:07:26"
+      },
+      {
+        "id": 3466763471525415333,
+        "prizeId": 8104,
+        "tier": 2,
+        "name": "校园帆布包",
+        "prizeType": "PHYSICAL",
+        "status": "COMPLETED",
+        "createdAt": "2026-10-07T00:03:00",
+        "claimedAt": null
+      },
+      {
+        "id": 8791969890823905274,
+        "prizeId": 8103,
+        "tier": 3,
+        "name": "60 积分",
+        "prizeType": "VIRTUAL",
+        "status": "COMPLETED",
+        "createdAt": "2026-10-07T00:02:47",
+        "claimedAt": "2026-10-07T00:02:47"
+      },
+      {
+        "id": 382936272616996903,
+        "prizeId": 8103,
+        "tier": 3,
+        "name": "60 积分",
+        "prizeType": "VIRTUAL",
+        "status": "COMPLETED",
+        "createdAt": "2026-10-07T00:02:05",
+        "claimedAt": "2026-10-07T00:02:19"
+      }
+    ]
+  },
+  "last_response": {
+    "attempt": 1,
+    "http_status": 200,
+    "response": {
+      "code": "200",
+      "info": "成功",
+      "data": {
+        "page": 1,
+        "pageSize": 10,
+        "total": 5,
+        "list": [
+          {
+            "id": 8459526029234547276,
+            "prizeId": 8104,
+            "tier": 2,
+            "name": "校园帆布包",
+            "prizeType": "PHYSICAL",
+            "status": "COMPLETED",
+            "createdAt": "2026-10-07T00:07:38",
+            "claimedAt": null
+          },
+          {
+            "id": 7706668465549841551,
+            "prizeId": 8103,
+            "tier": 3,
+            "name": "60 积分",
+            "prizeType": "VIRTUAL",
+            "status": "COMPLETED",
+            "createdAt": "2026-10-07T00:07:26",
+            "claimedAt": "2026-10-07T00:07:26"
+          },
+          {
+            "id": 3466763471525415333,
+            "prizeId": 8104,
+            "tier": 2,
+            "name": "校园帆布包",
+            "prizeType": "PHYSICAL",
+            "status": "COMPLETED",
+            "createdAt": "2026-10-07T00:03:00",
+            "claimedAt": null
+          },
+          {
+            "id": 8791969890823905274,
+            "prizeId": 8103,
+            "tier": 3,
+            "name": "60 积分",
+            "prizeType": "VIRTUAL",
+            "status": "COMPLETED",
+            "createdAt": "2026-10-07T00:02:47",
+            "claimedAt": "2026-10-07T00:02:47"
+          },
+          {
+            "id": 382936272616996903,
+            "prizeId": 8103,
+            "tier": 3,
+            "name": "60 积分",
+            "prizeType": "VIRTUAL",
+            "status": "COMPLETED",
+            "createdAt": "2026-10-07T00:02:05",
+            "claimedAt": "2026-10-07T00:02:19"
+          }
+        ]
+      }
+    }
+  }
+}

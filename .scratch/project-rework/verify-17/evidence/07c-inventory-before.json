@@ -1,0 +1,12 @@
+{
+  "virtual_inventory": {
+    "inv_id": 8111,
+    "issued_qty": 0
+  },
+  "physical_marketing_quota": {
+    "inv_id": 8112,
+    "waiting_qty": "0",
+    "issued_qty": "0",
+    "surplus_qty": "10"
+  }
+}

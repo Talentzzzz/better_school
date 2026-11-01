@@ -1,0 +1,634 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.errand.IErrandDao">
+
+    <sql id="baseColumns">
+        e.id, e.errand_order_id, e.publisher_id, e.taker_id, e.type, e.description, e.pickup_location, e.delivery_location,
+        e.reward, e.time_limit_hours, e.images, e.deadline, e.state, e.taker_canceled,
+        e.create_time, e.update_time
+    </sql>
+
+    <sql id="userJoinColumns">
+        pu.nickname AS publisher_nickname, pu.avatar AS publisher_avatar,
+        tu.nickname AS taker_nickname, tu.avatar AS taker_avatar
+    </sql>
+
+    <sql id="userJoins">
+        LEFT JOIN bs_user pu ON e.publisher_id = pu.user_id
+        LEFT JOIN bs_user tu ON e.taker_id = tu.user_id
+    </sql>
+
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO errand_order (errand_order_id, publisher_id, taker_id, type, description, pickup_location, delivery_location,
+                                  reward, time_limit_hours, images, deadline, state,
+                                  create_time, update_time)
+        VALUES (0, #{publisherId}, #{takerId}, #{type}, #{description}, #{pickupLocation}, #{deliveryLocation},
+                #{reward}, #{timeLimitHours}, #{images}, #{deadline}, #{state},
+                #{createTime}, #{updateTime})
+    </insert>
+
+    <!-- 业务 ID 回写：业务标识与物理自增同值（应用同事务写回，见 sql.md 主键口径） -->
+    <update id="bindBizId">
+        UPDATE errand_order SET errand_order_id = id WHERE id = #{id} AND errand_order_id = 0
+    </update>
+
+    <select id="selectById" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
+        FROM errand_order e
+        <include refid="userJoins"/>
+        WHERE e.errand_order_id = #{orderId}
+    </select>
+
+    <!-- 按 id 列表查询：不分状态（搜索同步按 state 判定 upsert/删除，搜索命中组装按公开状态过滤） -->
+    <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
+        FROM errand_order e
+        <include refid="userJoins"/>
+        WHERE e.errand_order_id IN
+        <foreach collection="ids" item="orderId" open="(" separator="," close=")">#{orderId}</foreach>
+    </select>
+
+    <select id="selectIdsAfter" resultType="long">
+        SELECT errand_order_id FROM errand_order
+        WHERE id &gt; #{lastId}
+        ORDER BY id
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectPage" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+        <!-- 浏览 UV 计数窄表：列表要展示浏览量（market-feed-uv 票 04 两路口径对齐），热度排序也用它，
+             故无条件 JOIN 一次（主键等值，命中即回表 1 行） -->
+        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>,
+               IFNULL(evc.view_count, 0) AS view_count
+        FROM errand_order e
+        <include refid="userJoins"/>
+        LEFT JOIN errand_view_count evc ON evc.errand_order_id = e.errand_order_id
+        <where>
+            <!-- 公开列表口径：草稿（私有）与软删单一律不出现，显式传 status 也不放行 -->
+            AND e.state NOT IN ('DRAFT', 'DELETED')
+            <if test="type != null">
+                AND e.type = #{type}
+            </if>
+            <if test="state != null">
+                AND e.state = #{state}
+            </if>
+        </where>
+        ORDER BY
+        <choose>
+            <!-- 五档排序（market-feed-uv 票 04）与索引路径语义同构：热度 = 浏览 UV 数、tie-break 同向。
+                 已知口径差：时间键这里取主表 create_time，索引取 feed_time（进入大厅的时刻）——降级本就
+                 发生在「索引不可用」时，拿不到 feed_time；tie-break 的 id 与 errand_order_id 在本库恒等
+                 （sql.md 主键口径：业务标识与物理自增同值），实际同一列 -->
+            <when test="sort == 'hot'">IFNULL(evc.view_count, 0) DESC, e.id DESC</when>
+            <when test="sort == 'price_asc'">e.reward ASC, e.id ASC</when>
+            <when test="sort == 'price_desc'">e.reward DESC, e.id DESC</when>
+            <when test="sort == 'time_asc'">e.create_time ASC, e.id ASC</when>
+            <otherwise>e.create_time DESC, e.id DESC</otherwise>
+        </choose>
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <!-- 跑腿大厅索引序扫描（market-feed-uv 票 04）：state 过滤（可见 = PUBLISHED）+ (排序键, errand_order_id)
+         索引序 range scan。五档排序共用一条语句——热度 (state, view_count, errand_order_id)、最新/最早
+         (state, feed_time, errand_order_id) 正向/反向扫描、价格升降 (state, price, errand_order_id)；
+         续页谓词与排序方向同构（降序 &lt;、升序 &gt;）才能走 range scan。排序键与热度快照随行带出 -->
+    <select id="selectFeedIndex" resultType="com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO">
+        <!-- 业务键列名按 VO 口径别名：errand_order_id 直落会映射成 errandOrderId（下划线转驼峰），不在 VO 字段上 -->
+        SELECT errand_order_id AS order_id, feed_time, price, view_count
+        FROM errand_feed_index
+        WHERE state = 'PUBLISHED'
+        <if test="cursor != null and !cursor.isFirstPage()">
+            <choose>
+                <when test="sort == 'hot'">
+                    AND (view_count &lt; #{cursor.viewCount}
+                        OR (view_count = #{cursor.viewCount} AND errand_order_id &lt; #{cursor.orderId}))
+                </when>
+                <when test="sort == 'time_asc'">
+                    AND (feed_time &gt; #{cursor.feedTime}
+                        OR (feed_time = #{cursor.feedTime} AND errand_order_id &gt; #{cursor.orderId}))
+                </when>
+                <when test="sort == 'price_asc'">
+                    AND (price &gt; #{cursor.price}
+                        OR (price = #{cursor.price} AND errand_order_id &gt; #{cursor.orderId}))
+                </when>
+                <when test="sort == 'price_desc'">
+                    AND (price &lt; #{cursor.price}
+                        OR (price = #{cursor.price} AND errand_order_id &lt; #{cursor.orderId}))
+                </when>
+                <otherwise>
+                    AND (feed_time &lt; #{cursor.feedTime}
+                        OR (feed_time = #{cursor.feedTime} AND errand_order_id &lt; #{cursor.orderId}))
+                </otherwise>
+            </choose>
+        </if>
+        ORDER BY
+        <choose>
+            <when test="sort == 'hot'">view_count DESC, errand_order_id DESC</when>
+            <when test="sort == 'time_asc'">feed_time ASC, errand_order_id ASC</when>
+            <when test="sort == 'price_asc'">price ASC, errand_order_id ASC</when>
+            <when test="sort == 'price_desc'">price DESC, errand_order_id DESC</when>
+            <otherwise>feed_time DESC, errand_order_id DESC</otherwise>
+        </choose>
+        LIMIT #{limit}
+    </select>
+
+    <select id="count" resultType="long">
+        SELECT COUNT(1)
+        FROM errand_order e
+        <where>
+            AND e.state NOT IN ('DRAFT', 'DELETED')
+            <if test="type != null">
+                AND e.type = #{type}
+            </if>
+            <if test="state != null">
+                AND e.state = #{state}
+            </if>
+        </where>
+    </select>
+
+    <!-- 支付确认（先付后审）：PENDING_PAYMENT → PENDING_REVIEW（已付款待审），审核通过转 PUBLISHED -->
+    <update id="payById">
+        UPDATE errand_order
+        SET state      = 'PENDING_REVIEW',
+            deadline   = #{deadline},
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND state = 'PENDING_PAYMENT'
+    </update>
+
+    <!-- 抢单（抢 ≠ 开工）：PUBLISHED → LOCKED，写 taker_id + lock_seq+1；状态 + 无人持有 + 时限三重校验先到先得 -->
+    <update id="grab">
+        UPDATE errand_order
+        SET taker_id   = #{takerId},
+            state      = 'LOCKED',
+            lock_seq   = lock_seq + 1,
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND state = 'PUBLISHED'
+          AND taker_id IS NULL
+          AND deadline &gt; NOW()
+    </update>
+
+    <!-- 抢单后的当前轮次：同事务内读（UPDATE 已持有该行排他锁，读到的是本次 +1 后的值） -->
+    <select id="selectLockSeqById" resultType="int">
+        SELECT lock_seq
+        FROM errand_order
+        WHERE errand_order_id = #{orderId}
+    </select>
+
+    <!-- 确认接单：LOCKED → CONFIRMED（仅持单人）；不改 lock_seq（离开 LOCKED 后陈旧回调天然打不中） -->
+    <update id="acceptLockedById">
+        UPDATE errand_order
+        SET state      = 'CONFIRMED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND taker_id = #{takerId}
+          AND state = 'LOCKED'
+    </update>
+
+    <!-- 放弃（设计内的正常动作）：LOCKED → PUBLISHED（仅持单人），清 taker_id；
+         不动 taker_canceled（不占「接单取消」幂等位）、不改 lock_seq（轮次留给陈旧回调守卫） -->
+    <update id="abandonLockedById">
+        UPDATE errand_order
+        SET taker_id   = NULL,
+            state      = 'PUBLISHED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND taker_id = #{takerId}
+          AND state = 'LOCKED'
+    </update>
+
+    <!-- 锁单超时释放（SYSTEM，超时中心回调）：LOCKED → PUBLISHED 清 taker_id；
+         lock_seq 是**轮次守卫**——已放弃并重抢到新轮次时同为 LOCKED，只有轮次能挡住陈旧任务 -->
+    <update id="releaseLockedByTimeout">
+        UPDATE errand_order
+        SET taker_id    = NULL,
+            state       = 'PUBLISHED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND state = 'LOCKED'
+          AND lock_seq = #{lockSeq}
+    </update>
+
+    <update id="pickupById">
+        UPDATE errand_order
+        SET state      = 'PICKED_UP',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND taker_id = #{takerId}
+          AND state = 'CONFIRMED'
+    </update>
+
+    <update id="deliverById">
+        UPDATE errand_order
+        SET state      = 'DELIVERED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND taker_id = #{takerId}
+          AND state = 'PICKED_UP'
+    </update>
+
+    <update id="confirmById">
+        UPDATE errand_order
+        SET state      = 'COMPLETED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND publisher_id = #{publisherId}
+          AND state = 'DELIVERED'
+    </update>
+
+    <!-- 发布方取消（限取货前，锁单期可取消）：PENDING_PAYMENT/PENDING_REVIEW/PUBLISHED/LOCKED/CONFIRMED → CANCELLED -->
+    <update id="cancelByPublisher">
+        UPDATE errand_order
+        SET state      = 'CANCELLED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND publisher_id = #{publisherId}
+          AND state IN ('PENDING_PAYMENT', 'PENDING_REVIEW', 'PUBLISHED', 'LOCKED', 'CONFIRMED')
+    </update>
+
+    <!-- 接单方取消：taker_canceled 幂等位防重试重复取消（置 1 后重试影响 0 行） -->
+    <update id="cancelByTaker">
+        UPDATE errand_order
+        SET taker_id        = NULL,
+            state           = 'PUBLISHED',
+            taker_canceled  = 1,
+            update_time     = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND taker_id = #{takerId}
+          AND state = 'CONFIRMED'
+          AND taker_canceled = 0
+    </update>
+
+    <update id="disputeById">
+        UPDATE errand_order
+        SET state      = 'DISPUTED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND state IN ('CONFIRMED', 'PICKED_UP', 'DELIVERED')
+    </update>
+
+    <update id="arbitrateCancelById">
+        UPDATE errand_order
+        SET state      = 'CANCELLED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND state = 'DISPUTED'
+    </update>
+
+    <update id="arbitrateCompleteById">
+        UPDATE errand_order
+        SET state      = 'COMPLETED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND state = 'DISPUTED'
+    </update>
+
+    <update id="markTimeout">
+        UPDATE errand_order
+        SET state      = 'CANCELLED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND state IN ('PUBLISHED', 'LOCKED', 'CONFIRMED', 'PICKED_UP')
+          AND deadline &lt;= NOW()
+    </update>
+
+    <update id="cancelPendingPayment">
+        UPDATE errand_order
+        SET state      = 'CANCELLED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND state = 'PENDING_PAYMENT'
+    </update>
+
+    <!-- 草稿全量编辑：仅 DRAFT 行生效（作者守卫自证）；作者与状态位不在 SET 列内（编辑不产生状态迁移），字段可为 NULL -->
+    <update id="updateDraft" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+        UPDATE errand_order
+        SET type              = #{type},
+            description       = #{description},
+            pickup_location   = #{pickupLocation},
+            delivery_location = #{deliveryLocation},
+            reward            = #{reward},
+            time_limit_hours  = #{timeLimitHours},
+            images            = #{images},
+            update_time       = NOW()
+        WHERE errand_order_id = #{errandOrderId}
+          AND publisher_id = #{publisherId}
+          AND state = 'DRAFT'
+    </update>
+
+    <!-- 提交草稿：DRAFT → PENDING_PAYMENT（仅作者）；"15 分钟未支付"超时注册由仓储同事务写 outbox -->
+    <update id="submitDraft">
+        UPDATE errand_order
+        SET state      = 'PENDING_PAYMENT',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND publisher_id = #{publisherId}
+          AND state = 'DRAFT'
+    </update>
+
+    <!-- 删除草稿：软删 DRAFT → DELETED（仅作者；全站删除统一软删口径，本期 DELETED 仅从 DRAFT 可达） -->
+    <update id="softDelete">
+        UPDATE errand_order
+        SET state      = 'DELETED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND publisher_id = #{publisherId}
+          AND state = 'DRAFT'
+    </update>
+
+    <!-- XXL-Job 兜底扫描：待支付超时（15min）与订单超时（deadline 已过）订单 id 列表。
+         待支付锚在 update_time（= 进入待支付时刻：直接发布=落库时刻，草稿提交=提交时刻）——
+         不能用 create_time：草稿可能在创建很久之后才提交，那样会被扫描立刻误判超时 -->
+    <select id="selectPayTimeoutOrderIds" resultType="long">
+        SELECT errand_order_id
+        FROM errand_order
+        WHERE state = 'PENDING_PAYMENT'
+          AND update_time &lt;= #{before}
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectTimeoutOrderIds" resultType="long">
+        SELECT errand_order_id
+        FROM errand_order
+        WHERE state IN ('PUBLISHED', 'LOCKED', 'CONFIRMED', 'PICKED_UP')
+          AND deadline &lt;= NOW()
+        LIMIT #{limit}
+    </select>
+
+    <!-- 待审超时提醒扫描：PENDING_REVIEW 由支付条件 UPDATE 翻转而来，update_time 即进入待审时间 -->
+    <select id="selectPendingReviewTimeoutOrderIds" resultType="long">
+        SELECT errand_order_id
+        FROM errand_order
+        WHERE state = 'PENDING_REVIEW'
+          AND update_time &lt;= #{before}
+        LIMIT #{limit}
+    </select>
+
+    <!-- 送达超时自动完成扫描：DELIVERED 由送达条件 UPDATE 翻转而来，update_time 即送达时间 -->
+    <select id="selectAutoCompleteOrderIds" resultType="long">
+        SELECT errand_order_id
+        FROM errand_order
+        WHERE state = 'DELIVERED'
+          AND update_time &lt;= #{before}
+        LIMIT #{limit}
+    </select>
+
+    <!-- 审核通过：PENDING_REVIEW → PUBLISHED（条件 UPDATE，0 行时 service 层终态判定幂等） -->
+    <update id="reviewApproveById">
+        UPDATE errand_order
+        SET state      = 'PUBLISHED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND state = 'PENDING_REVIEW'
+    </update>
+
+    <!-- 审核驳回：PENDING_REVIEW → REJECTED（终态，打回不可见；冻结金额由 case 层解冻退款，流水 uk 幂等） -->
+    <update id="reviewRejectById">
+        UPDATE errand_order
+        SET state      = 'REJECTED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND state = 'PENDING_REVIEW'
+    </update>
+
+    <update id="autoCompleteById">
+        UPDATE errand_order
+        SET state      = 'COMPLETED',
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND state = 'DELIVERED'
+    </update>
+
+    <select id="selectMyPublished" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
+        FROM errand_order e
+        <include refid="userJoins"/>
+        WHERE e.publisher_id = #{userId}
+          AND e.state != 'DELETED'
+        <if test="state != null">
+            AND e.state = #{state}
+        </if>
+        ORDER BY e.create_time DESC, e.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countMyPublished" resultType="long">
+        SELECT COUNT(1)
+        FROM errand_order
+        WHERE publisher_id = #{userId}
+          AND state != 'DELETED'
+        <if test="state != null">
+            AND state = #{state}
+        </if>
+    </select>
+
+    <!-- 某用户发布的进行中跑腿单（作者主页「跑腿」tab，访客口径）：只列发布、不含接单；
+         待支付/待审/终态/争议一律不外露（锁单中可见，展示「锁单中」） -->
+    <select id="selectPublicPageByPublisher" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
+        FROM errand_order e
+        <include refid="userJoins"/>
+        WHERE e.publisher_id = #{userId}
+          AND e.state IN ('PUBLISHED', 'LOCKED', 'CONFIRMED')
+        ORDER BY e.create_time DESC, e.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countPublicByPublisher" resultType="long">
+        SELECT COUNT(1)
+        FROM errand_order
+        WHERE publisher_id = #{userId}
+          AND state IN ('PUBLISHED', 'LOCKED', 'CONFIRMED')
+    </select>
+
+    <!-- 我接的：按 taker_id -->
+    <select id="selectMyTaken" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
+        FROM errand_order e
+        <include refid="userJoins"/>
+        WHERE e.taker_id = #{userId}
+          AND e.state != 'DELETED'
+        <if test="state != null">
+            AND e.state = #{state}
+        </if>
+        ORDER BY e.create_time DESC, e.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countMyTaken" resultType="long">
+        SELECT COUNT(1)
+        FROM errand_order
+        WHERE taker_id = #{userId}
+          AND state != 'DELETED'
+        <if test="state != null">
+            AND state = #{state}
+        </if>
+    </select>
+
+    <!-- 订单状态流转事件（只插入，纠纷溯源事实源）：随条件 UPDATE 成功在同一事务写入 -->
+    <insert id="insertOrderEvent" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderEventPO">
+        INSERT INTO errand_order_event (order_id, event_type, from_state, to_state, actor_id, actor_role,
+                                        reason_type, reason, images, create_time, update_time)
+        VALUES (#{orderId}, #{eventType}, #{fromState}, #{toState}, #{actorId}, #{actorRole},
+                #{reasonType}, #{reason}, #{images}, #{createTime}, #{updateTime})
+    </insert>
+
+    <!-- 防占单降级回落（票 05）：窗口内主动放弃次数（事实源查询；走 idx_actor_type_time） -->
+    <select id="countAbandonsSince" resultType="int">
+        SELECT COUNT(1)
+        FROM errand_order_event
+        WHERE actor_id = #{actorId}
+          AND event_type = 'LOCK_ABANDONED'
+          AND create_time &gt;= #{since}
+    </select>
+
+    <!-- 防占单降级回落（票 05）：窗口内最近一次主动放弃时刻（估算冷却到期用，无则 NULL） -->
+    <select id="selectLatestAbandonTimeSince" resultType="java.time.LocalDateTime">
+        SELECT MAX(create_time)
+        FROM errand_order_event
+        WHERE actor_id = #{actorId}
+          AND event_type = 'LOCK_ABANDONED'
+          AND create_time &gt;= #{since}
+    </select>
+
+    <!-- ── 跑腿浏览 UV 三步（market-feed-uv 票 02，照帖子 insertViewHistory / touchViewedAt / upsertViewCount 先例）── -->
+
+    <!-- 第一步：UV 明细批量写（合并器一组一个事务的第一步）：同订单 N 个用户一条语句。
+         INSERT IGNORE 的裁决与帖子同理：(user_id, errand_order_id) 主键撞了就不插，
+         影响行数 = 本组真正新增的 UV 数，加速列只按它增量（重复浏览不重复计） -->
+    <insert id="insertOrderViewHistory">
+        INSERT IGNORE INTO errand_view_history (user_id, errand_order_id, viewed_at)
+        VALUES
+        <foreach collection="userIds" item="userId" separator=",">
+            (#{userId}, #{orderId}, NOW())
+        </foreach>
+    </insert>
+
+    <!-- 第二步：刷新本组全部键的浏览时刻（含刚插入的行）——重复浏览的唯一可见效果就是 viewed_at 变新 -->
+    <update id="touchOrderViewedAt">
+        UPDATE errand_view_history
+        SET viewed_at = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND user_id IN
+        <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
+    </update>
+
+    <!-- 第三步：加速列 upsert（行懒建，与 post_view_count 同款 ODKU）；增量 = insertOrderViewHistory
+         的影响行数，不是 ODKU 的 affected rows——同秒重复刷 viewed_at 会把 ODKU 的 affected rows 打乱 -->
+    <update id="upsertOrderViewCount">
+        INSERT INTO errand_view_count (errand_order_id, view_count, create_time, update_time)
+        VALUES (#{orderId}, #{delta}, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            view_count  = view_count + #{delta},
+            update_time = NOW()
+    </update>
+
+    <!-- 详情读路径接线（market-feed-uv 票 02）：订单当前的浏览 UV 数（加速列；行不存在 = 从未被登录用户浏览过，按 0 收） -->
+    <select id="selectViewCount" resultType="int">
+        SELECT view_count
+        FROM errand_view_count
+        WHERE errand_order_id = #{orderId}
+    </select>
+
+    <!-- 已读灰显批量回显（market-feed-uv 票 05，照帖子 selectViewedPostIds）：明细表主键
+         (user_id, errand_order_id) 前缀先钉人、再按页内 id 集合 IN，一页一次查询，不做 N+1 -->
+    <select id="selectViewedOrderIds" resultType="long">
+        SELECT errand_order_id
+        FROM errand_view_history
+        WHERE user_id = #{userId}
+          AND errand_order_id IN
+        <foreach collection="orderIds" item="orderId" open="(" separator="," close=")">#{orderId}</foreach>
+    </select>
+
+    <!-- ── feed 异构索引同事务直写（market-feed-uv 票 03：行常驻 + state 快照——审核通过行诞生，
+         此后 13 态流转点旁带快照同步，行永不删除，读路径按 state 挑可见；照帖子 post_feed_index 先例）── -->
+
+    <!-- 审核通过：行诞生（唯一诞生点，彼时悬赏必已支付冻结满足 price 非空）。INSERT...SELECT 从
+         errand_order 行取 reward 快照；feed_time = 进入大厅时刻，行诞生落第一次——跑腿无重提再过审
+         （REJECTED 终态），ODKU 属防御分支（双审并发重放）只翻 state，不刷 feed_time、不碰 price -->
+    <update id="upsertFeedIndexOnApprove">
+        INSERT INTO errand_feed_index (errand_order_id, state, feed_time, price, view_count, update_time)
+        SELECT e.errand_order_id, 'PUBLISHED', NOW(), e.reward, 0, NOW()
+        FROM errand_order e
+        WHERE e.errand_order_id = #{orderId}
+        ON DUPLICATE KEY UPDATE
+            state       = 'PUBLISHED',
+            update_time = NOW()
+    </update>
+
+    <!-- 状态快照同步：镜像 errand_order 的新状态（大厅可见 = PUBLISHED；LOCKED/CONFIRMED 等中间态
+         行常驻但不可见）。行不存在的常态 = 审核通过前的取消/驳回，0 行静默，不 upsert -->
+    <update id="updateFeedIndexState">
+        UPDATE errand_feed_index
+        SET state       = #{state},
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+    </update>
+
+    <!-- 浏览合并事务旁路 ±N：纯 UPDATE 不 upsert；命中 0 行 = 索引行缺失（过审前被发布方浏览、
+         或存量异常），调用方落 warn 交重建 job（票 06），不在写路径凭空补行 -->
+    <update id="updateFeedIndexViewCount">
+        UPDATE errand_feed_index
+        SET view_count  = view_count + #{delta},
+            update_time = NOW()
+        WHERE errand_order_id = #{orderId}
+    </update>
+
+    <!-- ── feed 索引全量重建（market-feed-uv 票 06：兜底恢复手段，照帖子 IPostDao 的 rebuildFeedIndex 样板手动触发）── -->
+
+    <!-- 重建第一步：清空索引表。用 DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉与重灌语句的原子性 -->
+    <delete id="clearFeedIndex">
+        DELETE FROM errand_feed_index
+    </delete>
+
+    <!-- 重灌：一单一行 1:1 投影。行集 = PUBLISHED 订单 ∪ 有过审批通过的订单（行常驻口径：通过事务才诞生行、
+         之后 13 态流转只翻快照、行永不删除；审核通过前的草稿/待支付/待审/驳回订单不凭空进索引）。
+         feed_time 取审核记录里最近一次 APPROVE 时刻（与票 01 回填脚本同口径），查不到审批流水的存量老单取
+         create_time 兜底；price = reward；view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步
+         同时把「过审前被浏览、旁路命中 0 行」漏计的那部分追平 -->
+    <insert id="rebuildFeedIndexProjection">
+        INSERT INTO errand_feed_index (errand_order_id, state, feed_time, price, view_count, update_time)
+        SELECT e.errand_order_id,
+               e.state,
+               COALESCE((SELECT MAX(cr.create_time)
+                           FROM content_review cr
+                          WHERE cr.target_type = 'ERRAND'
+                            AND cr.target_id = e.errand_order_id
+                            AND cr.action = 'APPROVE'),
+                        e.create_time),
+               e.reward,
+               COALESCE(evc.view_count, 0),
+               NOW()
+          FROM errand_order e
+          LEFT JOIN errand_view_count evc ON evc.errand_order_id = e.errand_order_id
+         WHERE e.state = 'PUBLISHED'
+            OR EXISTS (SELECT 1
+                         FROM content_review cr2
+                        WHERE cr2.target_type = 'ERRAND'
+                          AND cr2.target_id = e.errand_order_id
+                          AND cr2.action = 'APPROVE')
+    </insert>
+
+    <!-- 浏览 UV 加速列校准第一步：清掉没有明细行的孤儿计数行（懒建行口径：无浏览不建行） -->
+    <delete id="deleteViewCountsMissingHistory">
+        DELETE FROM errand_view_count
+         WHERE NOT EXISTS (SELECT 1
+                             FROM errand_view_history h
+                            WHERE h.errand_order_id = errand_view_count.errand_order_id)
+    </delete>
+
+    <!-- 重灌：errand_view_count 重投影 = errand_view_history 行数（ODKU：缺行补建、漂移值刷新、
+         已对齐的行落回同值，幂等不动点） -->
+    <insert id="recalibrateViewCounts">
+        INSERT INTO errand_view_count (errand_order_id, view_count, create_time, update_time)
+        SELECT h.errand_order_id, COUNT(*), NOW(), NOW()
+          FROM errand_view_history h
+         GROUP BY h.errand_order_id
+        ON DUPLICATE KEY UPDATE
+            view_count  = VALUES(view_count),
+            update_time = NOW()
+    </insert>
+
+</mapper>

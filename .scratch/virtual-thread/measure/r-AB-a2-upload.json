@@ -1,0 +1,29 @@
+{
+  "tag": "rz-off-upload",
+  "concurrency": 256,
+  "duration_sec": 27.03,
+  "total_requests": 3182,
+  "rps": 117.7,
+  "error_rate": 0.0,
+  "ops": {
+    "image_upload": {
+      "count": 3182,
+      "rps": 117.7,
+      "ok": 3182,
+      "err": 0,
+      "p50": 2163.99,
+      "p90": 2228.54,
+      "p99": 2303.21,
+      "max": 2394.08,
+      "mean": 2092.34,
+      "err_statuses": {},
+      "err_types": {}
+    }
+  },
+  "overall": {
+    "p50": 2163.99,
+    "p90": 2228.54,
+    "p99": 2303.21,
+    "max": 2394.08
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "http_status": 200,
+  "request": {
+    "title": "冒烟干净帖",
+    "content": "正常帖子内容，等待人工审核 SMOKE17CLEAN R100700071168",
+    "category": "DAILY"
+  },
+  "response": {
+    "code": "200",
+    "info": "成功",
+    "data": 13
+  }
+}

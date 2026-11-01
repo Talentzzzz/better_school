@@ -1,0 +1,39 @@
+{
+  "post": [
+    {
+      "post_id": "13",
+      "state": "NORMAL",
+      "review_round": "1",
+      "update_time": "2026-10-07 00:07:13"
+    }
+  ],
+  "content_review": [
+    {
+      "target_type": "POST",
+      "target_id": "13",
+      "review_round": "1",
+      "action": "APPROVE",
+      "source": "MANUAL",
+      "operator_id": "11",
+      "reason": "NULL",
+      "create_time": "2026-10-07 00:07:14"
+    }
+  ],
+  "notification": [
+    {
+      "user_id": "1",
+      "scope": "BOTTOM_SYSTEM",
+      "type": "AUDIT_RESULT",
+      "title": "审核结果",
+      "content": "您的帖子《冒烟干净帖正常帖子内容，等待人工审核 S…》已通过审核，现已公开",
+      "ref_type": "POST",
+      "ref_id": "13",
+      "create_time": "2026-10-07 00:07:14"
+    }
+  ],
+  "feed_contains": true,
+  "guest_detail": {
+    "http_status": 200,
+    "code": "200"
+  }
+}

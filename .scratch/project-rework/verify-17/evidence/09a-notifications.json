@@ -1,0 +1,144 @@
+{
+  "user_id": 9,
+  "other_user_id": 10,
+  "drawn": [
+    {
+      "notification_id": "21",
+      "user_id": "9",
+      "scope": "BOTTOM_SYSTEM",
+      "seq": "3",
+      "type": "LOTTERY_WON",
+      "title": "抽奖中奖",
+      "content": "恭喜您在抽奖中抽中 60 积分，已发放至您的积分账户",
+      "ref_type": "MARKETING",
+      "ref_id": "382936272616996903",
+      "dedup_key": "MARKETING:DRAWN:382936272616996903"
+    },
+    {
+      "notification_id": "26",
+      "user_id": "9",
+      "scope": "BOTTOM_SYSTEM",
+      "seq": "5",
+      "type": "LOTTERY_WON",
+      "title": "抽奖中奖",
+      "content": "恭喜您在抽奖中抽中 60 积分，已发放至您的积分账户",
+      "ref_type": "MARKETING",
+      "ref_id": "8791969890823905274",
+      "dedup_key": "MARKETING:DRAWN:8791969890823905274"
+    },
+    {
+      "notification_id": "28",
+      "user_id": "9",
+      "scope": "BOTTOM_SYSTEM",
+      "seq": "7",
+      "type": "LOTTERY_WON",
+      "title": "抽奖中奖",
+      "content": "恭喜您在抽奖中抽中实物奖品，可在活动页「我的奖品」中查看",
+      "ref_type": "MARKETING",
+      "ref_id": "3466763471525415333",
+      "dedup_key": "MARKETING:DRAWN:3466763471525415333"
+    },
+    {
+      "notification_id": "50",
+      "user_id": "9",
+      "scope": "BOTTOM_SYSTEM",
+      "seq": "9",
+      "type": "LOTTERY_WON",
+      "title": "抽奖中奖",
+      "content": "恭喜您在抽奖中抽中 60 积分，已发放至您的积分账户",
+      "ref_type": "MARKETING",
+      "ref_id": "7706668465549841551",
+      "dedup_key": "MARKETING:DRAWN:7706668465549841551"
+    },
+    {
+      "notification_id": "52",
+      "user_id": "9",
+      "scope": "BOTTOM_SYSTEM",
+      "seq": "11",
+      "type": "LOTTERY_WON",
+      "title": "抽奖中奖",
+      "content": "恭喜您在抽奖中抽中实物奖品，可在活动页「我的奖品」中查看",
+      "ref_type": "MARKETING",
+      "ref_id": "8459526029234547276",
+      "dedup_key": "MARKETING:DRAWN:8459526029234547276"
+    }
+  ],
+  "points_changed": [
+    {
+      "notification_id": "16",
+      "user_id": "9",
+      "scope": "BOTTOM_SYSTEM",
+      "seq": "1",
+      "type": "POINTS_CHANGED",
+      "title": "积分变动",
+      "content": "兑换抽奖次数：积分 -100，当前余额 700",
+      "ref_type": "MARKETING",
+      "ref_id": "7242188354564242131",
+      "dedup_key": "MARKETING:POINTS:REDEEM_DRAW_COUNT:7242188354564242131"
+    },
+    {
+      "notification_id": "18",
+      "user_id": "9",
+      "scope": "BOTTOM_SYSTEM",
+      "seq": "2",
+      "type": "POINTS_CHANGED",
+      "title": "积分变动",
+      "content": "抽奖中奖：积分 +60，当前余额 760",
+      "ref_type": "MARKETING",
+      "ref_id": "382936272616996903",
+      "dedup_key": "MARKETING:POINTS:LOTTERY_WIN:382936272616996903"
+    },
+    {
+      "notification_id": "25",
+      "user_id": "9",
+      "scope": "BOTTOM_SYSTEM",
+      "seq": "4",
+      "type": "POINTS_CHANGED",
+      "title": "积分变动",
+      "content": "兑换抽奖次数：积分 -100，当前余额 240",
+      "ref_type": "MARKETING",
+      "ref_id": "3287117190382118996",
+      "dedup_key": "MARKETING:POINTS:REDEEM_DRAW_COUNT:3287117190382118996"
+    },
+    {
+      "notification_id": "27",
+      "user_id": "9",
+      "scope": "BOTTOM_SYSTEM",
+      "seq": "6",
+      "type": "POINTS_CHANGED",
+      "title": "积分变动",
+      "content": "抽奖中奖：积分 +60，当前余额 300",
+      "ref_type": "MARKETING",
+      "ref_id": "8791969890823905274",
+      "dedup_key": "MARKETING:POINTS:LOTTERY_WIN:8791969890823905274"
+    },
+    {
+      "notification_id": "40",
+      "user_id": "9",
+      "scope": "BOTTOM_SYSTEM",
+      "seq": "8",
+      "type": "POINTS_CHANGED",
+      "title": "积分变动",
+      "content": "兑换抽奖次数：积分 -100，当前余额 240",
+      "ref_type": "MARKETING",
+      "ref_id": "2180698415304986002",
+      "dedup_key": "MARKETING:POINTS:REDEEM_DRAW_COUNT:2180698415304986002"
+    },
+    {
+      "notification_id": "51",
+      "user_id": "9",
+      "scope": "BOTTOM_SYSTEM",
+      "seq": "10",
+      "type": "POINTS_CHANGED",
+      "title": "积分变动",
+      "content": "抽奖中奖：积分 +60，当前余额 300",
+      "ref_type": "MARKETING",
+      "ref_id": "7706668465549841551",
+      "dedup_key": "MARKETING:POINTS:LOTTERY_WIN:7706668465549841551"
+    }
+  ],
+  "other_user_drawn": [],
+  "other_user_points": [],
+  "virtual_record_id": 7706668465549841551,
+  "physical_record_id": 8459526029234547276
+}

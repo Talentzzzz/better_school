@@ -1,0 +1,16 @@
+pinning 事件总数: 144318
+时长 ms: p50=1.500 p90=28.400 p99=40.200 max=389.00 总时长=1019.8 s
+
+按「第一个非 JDK 内部帧」聚合（前 20）:
+site                                                                                                    count    total_s     max_ms
+com.mysql.cj.protocol.ReadAheadInputStream.fill(int) line: 107                                         144274    1019.72     389.00
+sun.nio.ch.NioSocketImpl.timedRead(FileDescriptor, byte[], int, int, long) line: 280                       43       0.08       2.63
+java.util.concurrent.locks.AbstractQueuedSynchronizer.acquire(AbstractQueuedSynchronizer$Node, int,         1       0.00       0.82
+
+按线程名前缀（前 12）:
+  tomcat-handler                           68648
+  mq-consume-bs-comment-review-group       66702
+  mq-consume-bs-errand-paid-group          5110
+  mq-consume-bs-post-count-group           1951
+  timeout-register-immediate               1022
+  mq-consume-bs-product-count-group        885

@@ -1,0 +1,44 @@
+{
+  "takedown_response": null,
+  "db_product_row": [
+    "DRAFT",
+    "1",
+    "2026-10-07 00:01:31",
+    "2026-11-06 00:01:31",
+    "19.90",
+    "3",
+    "九成新民谣吉他"
+  ],
+  "anon_list_ids": [
+    1
+  ],
+  "buyer_list_ids": [
+    1
+  ],
+  "seller_mine_ids": [
+    8,
+    7,
+    6,
+    5,
+    4,
+    3,
+    2,
+    1
+  ],
+  "detail_by_other": [
+    200,
+    {
+      "code": "404",
+      "info": "商品不存在或已删除",
+      "data": null
+    }
+  ],
+  "create_order_after_down": [
+    200,
+    {
+      "code": "404",
+      "info": "商品不存在或已售出",
+      "data": null
+    }
+  ]
+}

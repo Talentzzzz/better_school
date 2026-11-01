@@ -1,0 +1,15 @@
+{
+  "targetType": "POST",
+  "targetId": 13,
+  "detail": {
+    "targetType": "POST",
+    "targetId": 13,
+    "authorId": 1,
+    "authorNickname": "冒烟作者",
+    "content": "冒烟干净帖正常帖子内容，等待人工审核 SMOKE17CLEAN R100700071168",
+    "reward": null,
+    "images": [],
+    "status": null,
+    "createdAt": "2026-10-07T00:07:13"
+  }
+}

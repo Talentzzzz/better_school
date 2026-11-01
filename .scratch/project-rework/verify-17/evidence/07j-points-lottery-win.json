@@ -1,0 +1,27 @@
+{
+  "points_buckets": [
+    {
+      "bucket_id": "834770166999446400",
+      "amount": "40",
+      "remain": "0",
+      "reason_type": "REBATE",
+      "ref_id": "74101"
+    },
+    {
+      "bucket_id": "587595061573754112",
+      "amount": "300",
+      "remain": "240",
+      "reason_type": "REBATE",
+      "ref_id": "74102"
+    },
+    {
+      "bucket_id": "233258858268016640",
+      "amount": "60",
+      "remain": "60",
+      "reason_type": "LOTTERY_WIN",
+      "ref_id": "7706668465549841551"
+    }
+  ],
+  "record_id": 7706668465549841551,
+  "expect": "新增一行 LOTTERY_WIN amount=60 ref_id=recordId"
+}

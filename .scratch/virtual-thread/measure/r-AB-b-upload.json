@@ -1,0 +1,29 @@
+{
+  "tag": "AB-b-upload",
+  "concurrency": 256,
+  "duration_sec": 27.7,
+  "total_requests": 2536,
+  "rps": 91.6,
+  "error_rate": 0.0,
+  "ops": {
+    "image_upload": {
+      "count": 2536,
+      "rps": 91.6,
+      "ok": 2536,
+      "err": 0,
+      "p50": 2785.33,
+      "p90": 2876.3,
+      "p99": 2936.79,
+      "max": 3075.4,
+      "mean": 2661.08,
+      "err_statuses": {},
+      "err_types": {}
+    }
+  },
+  "overall": {
+    "p50": 2785.33,
+    "p90": 2876.3,
+    "p99": 2936.79,
+    "max": 3075.4
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "http_status": 200,
+  "response": {
+    "code": 200,
+    "data": null,
+    "msg": "Success",
+    "success": true
+  }
+}

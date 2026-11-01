@@ -1,0 +1,84 @@
+package com.betterschool.integration.job;
+
+import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.FakeSearchRepository;
+import com.betterschool.trigger.job.SearchIndexRebuildJob;
+import com.fasterxml.jackson.databind.JsonNode;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * 搜索索引全量重建（spec §4.3 C，票 15）：四类索引都从「取全部 id」改成「游标拉批到空批 + 批内扇出」，
+ * 本测试盯住三件事——重建能跑到头（游标真的在推进）、只有公开状态的实体进索引（过滤没丢）、
+ * 每类的全部合格行都回填了（扇出结果在主线程汇总没漏）。
+ *
+ * <p>ES 侧用 {@link FakeSearchRepository} 替身（测试栈刻意不连 ES），断言的是重建算法而非 ES 语义。
+ */
+@DisplayName("搜索索引全量重建：游标拉批到空批 + 批内扇出 + 状态过滤")
+class SearchIndexRebuildJobIntegrationTest extends CommunityApiTestBase {
+
+    @Autowired
+    private SearchIndexRebuildJob searchIndexRebuildJob;
+
+    @Test
+    void 重建回填四类索引且只收公开状态的行() {
+        Session author = registerAndLogin("13900001301", "重建作者");
+        Session other = registerAndLogin("13900001302", "重建路人");
+        // 每类都摆「该进索引」与「不该进索引」各一行，过滤是否正确才有断言力
+        String visiblePostId = publishPost(author, "重建可见帖");
+        publishPendingPost(author, "重建待审帖");
+        long onSaleProductId = insertProduct(author.userId(), "ON_SALE");
+        insertProduct(author.userId(), "SOLD");
+        long publishedErrandId = insertErrand(other.userId(), "PUBLISHED");
+        insertErrand(other.userId(), "CANCELLED");
+
+        FakeSearchRepository.reset();
+        searchIndexRebuildJob.rebuild(null);
+
+        assertThat(FakeSearchRepository.clearedIndexes())
+                .as("四类索引各清一次，顺序固定").containsExactly("post", "product", "errand", "user");
+        assertThat(FakeSearchRepository.postIds())
+                .as("只有 NORMAL 帖子进索引，待审帖不进").containsExactly(visiblePostId);
+        assertThat(FakeSearchRepository.productIds())
+                .as("只有 ON_SALE 商品进索引，已售不进").containsExactly(onSaleProductId);
+        assertThat(FakeSearchRepository.errandIds())
+                .as("只有公开态跑腿单进索引，已取消不进").containsExactly(publishedErrandId);
+        assertThat(FakeSearchRepository.userIds())
+                .as("全部 NORMAL 用户进索引").containsExactlyInAnyOrder(author.userId(), other.userId());
+    }
+
+    /**
+     * 直插一行商品，返回业务 id。业务列 NOT NULL 无默认值：先插 0 再绑到物理 id
+     * （应用侧 {@code bindBizId} 的同口径复刻），使游标列（id）与返回的业务 id 同值。
+     */
+    private long insertProduct(String userId, String state) {
+        // category 必须给：索引文档要 category.name()（线上由发布用例保证非空，这里摆真数据）
+        jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, category, state, "
+                + "create_time, update_time) VALUES (0, ?, '重建商品', 'BOOKS', ?, NOW(), NOW())", userId, state);
+        jdbcTemplate.update("UPDATE product SET product_id = id WHERE product_id = 0");
+        return jdbcTemplate.queryForObject("SELECT MAX(id) FROM product", Long.class);
+    }
+
+    /** 直插一行跑腿单，返回业务 id（口径同上） */
+    private long insertErrand(String userId, String state) {
+        jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
+                        + "pickup_location, delivery_location, reward, time_limit_hours, state, create_time, update_time) "
+                        + "VALUES (0, ?, 'BUY', '重建单', '宿舍楼', '食堂', 5.00, 2, ?, NOW(), NOW())",
+                userId, state);
+        jdbcTemplate.update("UPDATE errand_order SET errand_order_id = id WHERE errand_order_id = 0");
+        return jdbcTemplate.queryForObject("SELECT MAX(id) FROM errand_order", Long.class);
+    }
+
+    /** 直接发帖（先审后发：落库即待审），返回 postId */
+    private String publishPendingPost(Session author, String title) {
+        JsonNode response = postJson("/api/community/posts",
+                Map.of("title", title, "content", "正文内容，重建用例"), author);
+        assertSuccess(response, "发帖");
+        return response.path("data").asText();
+    }
+}

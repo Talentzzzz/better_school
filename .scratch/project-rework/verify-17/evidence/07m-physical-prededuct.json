@@ -1,0 +1,21 @@
+{
+  "quota_detail": [
+    {
+      "id": "2",
+      "inv_id": "8112",
+      "bucket_id": "0",
+      "quantity": "1",
+      "state": "0"
+    }
+  ],
+  "quota_before": {
+    "waiting_qty": 0,
+    "issued_qty": 0,
+    "surplus_qty": 10
+  },
+  "quota_now": {
+    "waiting_qty": "1",
+    "issued_qty": "0"
+  },
+  "expect": "state=0 quantity=1（合并未跑）/ 等价：已翻进 waiting_qty"
+}

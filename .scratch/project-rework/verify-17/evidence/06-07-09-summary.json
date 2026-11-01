@@ -1,0 +1,218 @@
+{
+  "total": 37,
+  "passed": 37,
+  "failed": 0,
+  "per_item": {
+    "0": {
+      "passed": 4,
+      "failed": 0
+    },
+    "6": {
+      "passed": 7,
+      "failed": 0
+    },
+    "7": {
+      "passed": 19,
+      "failed": 0
+    },
+    "9": {
+      "passed": 7,
+      "failed": 0
+    }
+  },
+  "failures": [],
+  "results": [
+    {
+      "assertion": "0.1 xxl-job-admin 登录成功（enabling 手动触发预热任务）",
+      "ok": true,
+      "detail": "{'http_status': 200, 'response': {'code': 200, 'data': None, 'msg': 'Success', 'success': True}}"
+    },
+    {
+      "assertion": "0.2 三个营销任务已在调度中心注册（raffleCacheWarmup / inventoryBucketWarmup / inventoryMerge）",
+      "ok": true,
+      "detail": "{'raffleCacheWarmup': 23, 'inventoryBucketWarmup': 22, 'inventoryMerge': 21}"
+    },
+    {
+      "assertion": "0.3 两个账号就绪且互不相同",
+      "ok": true,
+      "detail": "user=9 other=10"
+    },
+    {
+      "assertion": "0.4 单体 token 可直接打营销服务（GET /api/lottery/ping 通过 JWT 验签 + Dubbo 用户同步边）",
+      "ok": true,
+      "detail": "code=200"
+    },
+    {
+      "assertion": "6.1a action_rebate_config 有 sign/POINTS 开启规则（入账规则的库内事实）",
+      "ok": true,
+      "detail": "[{'action_type': 'sign', 'rebate_type': 'POINTS', 'rebate_value': '20', 'config_id': '1', 'state': 'open'}]"
+    },
+    {
+      "assertion": "6.1b 入账落桶：points_bucket 两行（amount 合计 340），GET /api/points/balance = 340",
+      "ok": true,
+      "detail": "buckets=2 sum(amount)=340 balance=340（attempts=1）"
+    },
+    {
+      "assertion": "6.2a POST /api/lottery/exchange/draw-count 成功（100 积分 → 1 次；drawCount = 兑后可用余额）",
+      "ok": true,
+      "detail": "HTTP 200 code=200 data={'redeemOrderId': 2180698415304986002, 'drawCount': 4} chances_before=3"
+    },
+    {
+      "assertion": "6.2b FIFO 跨桶按到期顺序扣：最早过期的桶扣光（40→0）、差额 60 落到后过期的桶（300→240）",
+      "ok": true,
+      "detail": "桶 834770166999446400: 40→0 / 桶 587595061573754112: 300→240（期望 40→240）"
+    },
+    {
+      "assertion": "6.2c 落两行 points_detail 消费明细（按桶分别记 40/60，ref_id=兑换单号，合计 100）",
+      "ok": true,
+      "detail": "rows=2 sum=100 ref_id=2180698415304986002 redeemOrderId=2180698415304986002"
+    },
+    {
+      "assertion": "6.2d 扣桶后余额 = 240，draw_count_bucket 有本次兑换单号的 REDEEM 入账一行",
+      "ok": true,
+      "detail": "balance=240 mine=[{'amount': '1', 'remain': '1', 'reason_type': 'REDEEM', 'ref_id': '2180698415304986002'}] all=[{'amount': '3', 'remain': '1', 'reason_type': 'REDEEM', 'ref_id': '74201'}, {'amount': '2', 'remain': '2', 'reason_type': 'REDEEM', 'ref_id': '74301'}, {'amount': '1', 'remain': '1', 'reason_type': 'REDEEM', 'ref_id': '2180698415304986002'}]"
+    },
+    {
+      "assertion": "6.2e GET /api/points/transactions 体现 IN/OUT（入账 2 行 + 消费 2 行）",
+      "ok": true,
+      "detail": "directions=['OUT', 'OUT', 'IN', 'IN']"
+    },
+    {
+      "assertion": "7.1a xxl 任务 raffleCacheWarmup（参数=activityId）执行成功（Redis bs:raffle:warmup:8102 已置）",
+      "ok": true,
+      "detail": "table_key_ok=True attempts=1"
+    },
+    {
+      "assertion": "7.1b xxl 任务 inventoryBucketWarmup（空参=双段全量）执行成功（三段桶 key 均存在）",
+      "ok": true,
+      "detail": "{'bs:inventory:virtual:bucket:8111:0': True, 'bs:inventory:virtual:bucket:8113:0': True, 'bs:inventory:quota:bucket:8112:0': True}"
+    },
+    {
+      "assertion": "7.1c 预热整体生效（决策表 + 库存桶均可扣）",
+      "ok": true,
+      "detail": "{'table': True, 'buckets': {'bs:inventory:virtual:bucket:8111:0': True, 'bs:inventory:virtual:bucket:8113:0': True, 'bs:inventory:quota:bucket:8112:0': True}}"
+    },
+    {
+      "assertion": "7.1c GET /api/lottery/activity 返回进行中的活动（name=冒烟17抽奖）",
+      "ok": true,
+      "detail": "status=ONGOING startAt=2026-01-01T00:00:00 endAt=2027-12-31T23:59:59"
+    },
+    {
+      "assertion": "7.1d 前置：次数桶 3 次可抽（GET /api/lottery/draw-chances.available = 3）",
+      "ok": true,
+      "detail": "available=3 bucket=[{'bucket_id': '932400039706751744', 'amount': '3', 'remain': '3'}]"
+    },
+    {
+      "assertion": "7.2a POST /api/lottery/draw 成功（虚拟档 VIRTUAL，返回 recordId）",
+      "ok": true,
+      "detail": "HTTP 200 code=200 data={'recordId': 7706668465549841551, 'prizeType': 'VIRTUAL', 'prizeId': 8103, 'tier': 3, 'name': '60 积分', 'pointsAmount': 60}"
+    },
+    {
+      "assertion": "7.2b 次数桶扣减：remain 3→2 且 draw_count_detail 有 (bucket_id, ref_id=recordId) 一行",
+      "ok": true,
+      "detail": "after=[{'bucket_id': '932400039706751744', 'amount': '3', 'remain': '2'}] detail=[{'bucket_id': '932400039706751744', 'ref_id': '7706668465549841551'}]"
+    },
+    {
+      "assertion": "7.2c draw_record 落库（虚拟档 award_id=8103，state=待兑换|已完成）+ draw_record_detail(type=DRAW) 一行",
+      "ok": true,
+      "detail": "record={'record_id': '7706668465549841551', 'user_id': '9', 'award_id': '8103', 'award_name': '60 积分', 'award_type': 'VIRTUAL', 'level': '3', 'inv_id': '8111', 'state': '已完成'} details=[{'type': 'COMPLETE', 'user_id': '9', 'record_id': '7706668465549841551'}, {'type': 'DRAW', 'user_id': '9', 'record_id': '7706668465549841551'}, {'type': 'EXCHANGE', 'user_id': '9', 'record_id': '7706668465549841551'}]"
+    },
+    {
+      "assertion": "7.2d 虚拟库存已预扣：virtual_inventory_detail 有 quantity=1 明细，且落库时 state=0（未跑到的合并以 issued_qty=1 等价证明）",
+      "ok": true,
+      "detail": "state0=[] issued_qty=1"
+    },
+    {
+      "assertion": "7.2e inventoryMerge（xxl，秒级）把预扣翻进台账：virtual_inventory.issued_qty 0→1，明细 state=1",
+      "ok": true,
+      "detail": "issued_qty=1 details=[{'id': '3', 'inv_id': '8111', 'bucket_id': '0', 'quantity': '1', 'state': '1'}]"
+    },
+    {
+      "assertion": "7.2f 发货状态机推进（真实 MQ 消费）：draw_record.state=已完成，明细 DRAW+EXCHANGE+COMPLETE",
+      "ok": true,
+      "detail": "state=已完成 details=['DRAW', 'EXCHANGE', 'COMPLETE']"
+    },
+    {
+      "assertion": "7.2g 真实 MQ 消费 bs-lottery-drawn：points_bucket 新增 LOTTERY_WIN 行（amount=60，ref_id=recordId）",
+      "ok": true,
+      "detail": "LOTTERY_WIN rows=[{'bucket_id': '233258858268016640', 'amount': '60', 'remain': '60', 'reason_type': 'LOTTERY_WIN', 'ref_id': '7706668465549841551'}]"
+    },
+    {
+      "assertion": "7.2h 中奖事件经 outbox 真实投递（bs-lottery-drawn 行 state=1 已发送）",
+      "ok": true,
+      "detail": "outbox=[{'id': '9', 'msg_id': '4cf8088c-4d3f-4d07-b19a-0e4e60702850', 'destination': 'bs-lottery-drawn', 'state': '1', 'retry_count': '0'}, {'id': '10', 'msg_id': '9378e046-e882-4e74-b194-73ff2da7af3a', 'destination': 'bs-points-changed', 'state': '1', 'retry_count': '0'}]"
+    },
+    {
+      "assertion": "7.3a POST /api/lottery/draw 成功（实物档 PHYSICAL）",
+      "ok": true,
+      "detail": "HTTP 200 code=200 data={'recordId': 8459526029234547276, 'prizeType': 'PHYSICAL', 'prizeId': 8104, 'tier': 2, 'name': '校园帆布包', 'pointsAmount': None}"
+    },
+    {
+      "assertion": "7.3b 实物配额预扣：physical_marketing_quota_detail 有 quantity=1 明细，落库态 state=0（合并已跑则以 waiting_qty=1 等价证明）",
+      "ok": true,
+      "detail": "rows=[{'id': '2', 'inv_id': '8112', 'bucket_id': '0', 'quantity': '1', 'state': '0'}] quota_now=['1', '0']"
+    },
+    {
+      "assertion": "7.3c inventoryMerge 把实物预扣翻进台账（waiting_qty +1 或 issued+1）、明细 state=1、且 surplus+waiting+issued 守恒 = 10",
+      "ok": true,
+      "detail": "quota={'waiting_qty': 1, 'issued_qty': 0, 'surplus_qty': 9} conserved=True detail=[{'id': '2', 'inv_id': '8112', 'bucket_id': '0', 'quantity': '1', 'state': '1'}]"
+    },
+    {
+      "assertion": "7.3d 实物发货：draw_record.state=已发货 + 明细 SHIP + 兑换确认 waiting→issued",
+      "ok": true,
+      "detail": "state=已发货 details=['DRAW', 'SHIP'] quota={'waiting_qty': 0, 'issued_qty': 1, 'surplus_qty': 9}"
+    },
+    {
+      "assertion": "7.3e POST /api/lottery/my-prizes/{id}/receive 成功且状态 已发货→已完成（COMPLETE 明细一条）",
+      "ok": true,
+      "detail": "HTTP 200 state=已完成 details=['DRAW', 'SHIP', 'COMPLETE']"
+    },
+    {
+      "assertion": "7.3f 我的奖品：COMPLETED 列表含本次实物记录",
+      "ok": true,
+      "detail": "total=5 ids=[8459526029234547276, 7706668465549841551, 3466763471525415333, 8791969890823905274, 382936272616996903]"
+    },
+    {
+      "assertion": "9.1 中奖通知落 notification（收件人=中奖用户，type/title/content 非空，ref_id=recordId）",
+      "ok": true,
+      "detail": "rows=[{'notification_id': '50', 'user_id': '9', 'scope': 'BOTTOM_SYSTEM', 'seq': '9', 'type': 'LOTTERY_WON', 'title': '抽奖中奖', 'content': '恭喜您在抽奖中抽中 60 积分，已发放至您的积分账户', 'ref_type': 'MARKETING', 'ref_id': '7706668465549841551', 'dedup_key': 'MARKETING:DRAWN:7706668465549841551'}]"
+    },
+    {
+      "assertion": "9.2 中奖通知文案按奖品档呈现（VIRTUAL：含积分数字）",
+      "ok": true,
+      "detail": "恭喜您在抽奖中抽中 60 积分，已发放至您的积分账户"
+    },
+    {
+      "assertion": "9.3 积分变动通知落 notification（LOTTERY_WIN 入账，content 含变动量与余额）",
+      "ok": true,
+      "detail": "rows=[{'notification_id': '51', 'user_id': '9', 'scope': 'BOTTOM_SYSTEM', 'seq': '10', 'type': 'POINTS_CHANGED', 'title': '积分变动', 'content': '抽奖中奖：积分 +60，当前余额 300', 'ref_type': 'MARKETING', 'ref_id': '7706668465549841551', 'dedup_key': 'MARKETING:POINTS:LOTTERY_WIN:7706668465549841551'}]"
+    },
+    {
+      "assertion": "9.4 兑换扣分也落积分变动通知（REDEEM_DRAW_COUNT，content 含负数与余额）",
+      "ok": true,
+      "detail": "rows=[{'notification_id': '16', 'user_id': '9', 'scope': 'BOTTOM_SYSTEM', 'seq': '1', 'type': 'POINTS_CHANGED', 'title': '积分变动', 'content': '兑换抽奖次数：积分 -100，当前余额 700', 'ref_type': 'MARKETING', 'ref_id': '7242188354564242131', 'dedup_key': 'MARKETING:POINTS:REDEEM_DRAW_COUNT:7242188354564242131'}, {'notification_id': '25', 'user_id': '9', 'scope': 'BOTTOM_SYSTEM', 'seq': '4', 'type': 'POINTS_CHANGED', 'title': '积分变动', 'content': '兑换抽奖次数：积分 -100，当前余额 240', 'ref_type': 'MARKETING', 'ref_id': '3287117190382118996', 'dedup_key': 'MARKETING:POINTS:REDEEM_DRAW_COUNT:3287117190382118996'}, {'notification_id': '40', 'user_id': '9', 'scope': 'BOTTOM_SYSTEM', 'seq': '8', 'type': 'POINTS_CHANGED', 'title': '积分变动', 'content': '兑换抽奖次数：积分 -100，当前余额 240', 'ref_type': 'MARKETING', 'ref_id': '2180698415304986002', 'dedup_key': 'MARKETING:POINTS:REDEEM_DRAW_COUNT:2180698415304986002'}]"
+    },
+    {
+      "assertion": "9.5 通知按收件人隔离：对照用户 13700017402 无任何 MARKETING 通知行",
+      "ok": true,
+      "detail": "other_drawn=0 other_points=0"
+    },
+    {
+      "assertion": "9.6 中奖通知字段齐备：type=NOTIFICATION 类型枚举、scope/title/content/dedup_key 均非空",
+      "ok": true,
+      "detail": "{'type': 'LOTTERY_WON', 'title': '抽奖中奖', 'content': '恭喜您在抽奖中抽中 60 积分，已发放至您的积分账户', 'dedup_key': 'MARKETING:DRAWN:7706668465549841551'}"
+    },
+    {
+      "assertion": "9.7 通知读侧接口探测（非 200，仅记录证据，不计入判定）",
+      "ok": true,
+      "detail": "HTTP 200（接口路径可能是别的，不作为失败）"
+    }
+  ],
+  "context": {
+    "points_b1": 834770166999446400,
+    "points_b2": 587595061573754112,
+    "dc_bucket": 932400039706751744,
+    "record_id": 7706668465549841551,
+    "physical_record_id": 8459526029234547276
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "decide_response": null,
+  "db_product_row": [
+    "ON_SALE",
+    "1",
+    "2026-10-07 00:01:31",
+    "2026-11-06 00:01:31",
+    "19.90",
+    "3",
+    "九成新民谣吉他"
+  ],
+  "content_review_rows": [
+    [
+      "PRODUCT",
+      "8",
+      "1",
+      "APPROVE",
+      "MANUAL",
+      "5",
+      "NULL"
+    ]
+  ],
+  "anon_list_ids": [
+    8,
+    1
+  ],
+  "buyer_list_ids": [
+    8,
+    1
+  ]
+}

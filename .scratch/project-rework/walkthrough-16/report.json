@@ -1,0 +1,899 @@
+{
+  "staticLinkCheck": {
+    "routeCount": 31,
+    "refsChecked": 114,
+    "dead": []
+  },
+  "records": [
+    {
+      "viewport": "mobile",
+      "id": "01-home",
+      "label": "首页",
+      "path": "/home",
+      "landedPath": "/home",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-01-home.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "首页发现流渲染（帖卡 + 分类 chips）",
+          "pass": true
+        }
+      ],
+      "pageLinks": [
+        "/post/1",
+        "/home",
+        "/market",
+        "/publish",
+        "/messages",
+        "/profile"
+      ],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "发现 最热 最新 日常 失物招领 求助互助 在图书馆三楼捡到一张饭卡，请联系我 失物招领：图书馆捡到一张饭卡 张 张同学 2 已经到底啦 首页 市集 消息 1 我"
+    },
+    {
+      "viewport": "mobile",
+      "id": "02-market-errand",
+      "label": "市集·跑腿",
+      "path": "/market",
+      "landedPath": "/market",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-02-market-errand.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "市集顶部只剩两个 tab",
+          "pass": true
+        },
+        {
+          "name": "跑腿卡片渲染（悬赏 ¥20）",
+          "pass": true
+        }
+      ],
+      "pageLinks": [
+        "/errand/1",
+        "/errand/2",
+        "/home",
+        "/market",
+        "/publish",
+        "/messages",
+        "/profile"
+      ],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "跑腿 闲置 我的订单 收藏 2 消息 活动 全部 代取快递 代买 代送 其他 代取快递 ¥20 帮取菜鸟驿站两个快递，送到 6 号楼楼下 菜鸟驿站 → 6 号楼楼下 张 张同学 1天前 代取快递 ¥20 帮取菜鸟驿站两个快递，送到 6 号楼楼下 菜鸟驿站 → 6 号楼楼下 张 张同学 1天前 已经到底啦 首页 市集 消息 1 我"
+    },
+    {
+      "viewport": "mobile",
+      "id": "03-market-idle",
+      "label": "市集·闲置",
+      "path": "/market",
+      "landedPath": "/market",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-03-market-idle.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "闲置卡片渲染（商品标题）",
+          "pass": true
+        },
+        {
+          "name": "商品卡片不再出现成色标签",
+          "pass": true
+        }
+      ],
+      "pageLinks": [
+        "/product/1",
+        "/home",
+        "/market",
+        "/publish",
+        "/messages",
+        "/profile"
+      ],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "跑腿 闲置 我的订单 收藏 2 消息 活动 全部 数码 图书 日用 运动 票券 其他 最新 价格↓ 价格↑ 图书 考研数学全套资料 ¥ 45 张 张同学 3人想要 已经到底啦 首页 市集 消息 1 我"
+    },
+    {
+      "viewport": "mobile",
+      "id": "04-publish-index",
+      "label": "发布索引",
+      "path": "/publish",
+      "landedPath": "/publish",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-04-publish-index.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "发布索引只剩 3 个入口",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "发布 📝 发帖子 校园墙：失物招领、求助互助、日常分享 › 🛍️ 卖闲置 发布二手商品，快速出手 › 🚀 发跑腿 悬赏找人帮取快递、代买、代送 ›"
+    },
+    {
+      "viewport": "mobile",
+      "id": "05-messages",
+      "label": "消息",
+      "path": "/messages",
+      "landedPath": "/messages",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-05-messages.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "私信行渲染（对家昵称）",
+          "pass": true
+        },
+        {
+          "name": "系统消息行渲染",
+          "pass": true
+        },
+        {
+          "name": "私信行不再有群标签",
+          "pass": true
+        }
+      ],
+      "pageLinks": [
+        "/home",
+        "/market",
+        "/publish",
+        "/messages",
+        "/profile"
+      ],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "消息 赞 评论 系统消息 审核通知、平台公告、信用分变动 1天前 私信 张 张同学 1天前 好的，马上到 1 李 李同学 1天前 可以便宜点吗 共 1 条未读消息 首页 市集 消息 1 我"
+    },
+    {
+      "viewport": "mobile",
+      "id": "06-market-messages",
+      "label": "消息·市集分区",
+      "path": "/market/messages",
+      "landedPath": "/market/messages",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-06-market-messages.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "市集消息只剩跑腿/闲置两栏",
+          "pass": true
+        },
+        {
+          "name": "跑腿系统消息行渲染",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "市集消息 跑腿 闲置 系统消息 有同学接下了你的跑腿单 1天前 1 跑手消息 张 跑手 张同学 1天前 好的，马上到 1"
+    },
+    {
+      "viewport": "mobile",
+      "id": "07-notifications",
+      "label": "系统通知",
+      "path": "/notifications?tab=system",
+      "landedPath": "/notifications?tab=system",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-07-notifications.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "系统通知分段渲染通知行",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "系统通知 全部已读 订单 订单动态 有同学接下了你的跑腿单 1天前"
+    },
+    {
+      "viewport": "mobile",
+      "id": "08-my-orders",
+      "label": "我的·订单",
+      "path": "/me/orders",
+      "landedPath": "/me/orders",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-08-my-orders.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "订单页只剩跑腿/闲置两 tab",
+          "pass": true
+        },
+        {
+          "name": "跑腿订单行按单人悬赏渲染",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "我的订单 跑腿 闲置 我发布的 我接的 全部 已完成 已取消 待接单 ¥20 帮取菜鸟驿站两个快递，送到 6 号楼楼下 — 等待接单 1天前 已完成 ¥20 帮取菜鸟驿站两个快递，送到 6 号楼楼下 李 接单者 李同学 1天前 已经到底啦"
+    },
+    {
+      "viewport": "mobile",
+      "id": "09-errand-publish",
+      "label": "跑腿发布",
+      "path": "/publish/errand",
+      "landedPath": "/publish/errand",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-09-errand-publish.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "跑腿发布无「需要人数」区块",
+          "pass": true
+        },
+        {
+          "name": "悬赏输入区在位",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "发布跑腿 跑腿类型 代取快递 代买 代送 其他 任务描述 配图（最多 6 张） ＋ 选择图片 取货点 送达点 悬赏（校园币） ¥ 支付后冻结托管，完成后自动打给接单者；最低 10 限制时长 2 小时 4 小时 12 小时 24 小时 发布并去支付"
+    },
+    {
+      "viewport": "mobile",
+      "id": "10-errand-detail",
+      "label": "跑腿详情（待接单）",
+      "path": "/errand/1",
+      "landedPath": "/errand/1",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-10-errand-detail.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "详情显示悬赏金额",
+          "pass": true
+        },
+        {
+          "name": "详情无人数行",
+          "pass": true
+        },
+        {
+          "name": "详情无评价区块",
+          "pass": true
+        },
+        {
+          "name": "详情无协作群入口",
+          "pass": true
+        },
+        {
+          "name": "待接单操作区只有抢单",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "跑腿详情 待接单 悬赏金额 ¥20 类型 代取快递 要求 截止 11小时前 任务描述 帮取菜鸟驿站两个快递，送到 6 号楼楼下 取 菜鸟驿站 ↓ 送 6 号楼楼下 张 张同学 发布者 发布于 1天前 联系 立即抢单 ¥20"
+    },
+    {
+      "viewport": "mobile",
+      "id": "11-errand-detail-done",
+      "label": "跑腿详情（已完成）",
+      "path": "/errand/2",
+      "landedPath": "/errand/2",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-11-errand-detail-done.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "完成态不再出现评价入口",
+          "pass": true
+        },
+        {
+          "name": "完成态保留订单已完成提示",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "跑腿详情 已完成 悬赏金额 ¥20 类型 代取快递 要求 截止 11小时前 任务描述 帮取菜鸟驿站两个快递，送到 6 号楼楼下 取 菜鸟驿站 ↓ 送 6 号楼楼下 张 张同学 发布者 发布于 1天前 联系 李 李同学 接单者 悬赏将支付给接单者 联系 订单已完成"
+    },
+    {
+      "viewport": "mobile",
+      "id": "12-product-publish",
+      "label": "商品发布",
+      "path": "/publish/product",
+      "landedPath": "/publish/product",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-12-product-publish.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "商品发布无成色 chips",
+          "pass": true
+        },
+        {
+          "name": "分类 chips 仍在位",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "发布闲置 标题 描述 分类 数码 图书 日用 运动 票券 其他 价格（元） ¥ 交易地点 图片（可选，粘贴图片链接） ＋ 选择图片 发布"
+    },
+    {
+      "viewport": "mobile",
+      "id": "13-product-detail",
+      "label": "商品详情",
+      "path": "/product/1",
+      "landedPath": "/product/1",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-13-product-detail.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "商品详情标签行只剩分类/浏览",
+          "pass": true
+        },
+        {
+          "name": "详情不再渲染成色标签",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "商品详情 图书 ¥ 45 3人想要 考研数学全套资料 图书 浏览 12 宝贝描述 有少量笔记，无划线 面交地点：图书馆一楼 张 张同学 发布于 1天前 在售 收藏 ♡ 立即购买 联系卖家"
+    },
+    {
+      "viewport": "mobile",
+      "id": "14-profile",
+      "label": "我的",
+      "path": "/profile",
+      "landedPath": "/profile",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-14-profile.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "「我的」主 tab 只剩笔记/赞过/评论/闲置/跑腿",
+          "pass": true
+        },
+        {
+          "name": "资料区与钱包/信用分区块在位",
+          "pass": true
+        }
+      ],
+      "pageLinks": [
+        "/home",
+        "/market",
+        "/publish",
+        "/messages",
+        "/profile"
+      ],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "设置 我 我 账号 13800000000 0 获赞 钱包 查看余额 信用分 当前 90 · 优良 笔记 赞过 评论 闲置 跑腿 草稿箱 › 文 失物招领：图书馆捡到一张饭卡 ❤ 2 浏览 5 1天前 退出登录 首页 市集 消息 1 我"
+    },
+    {
+      "viewport": "mobile",
+      "id": "removed/publish/want",
+      "label": "已删路由 /publish/want",
+      "path": "/publish/want",
+      "landedPath": "/home",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-zz-removed-_publish_want.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "已删路由兜回 /home 且非空页",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": []
+    },
+    {
+      "viewport": "mobile",
+      "id": "removed/want/1",
+      "label": "已删路由 /want/1",
+      "path": "/want/1",
+      "landedPath": "/home",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-zz-removed-_want_1.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "已删路由兜回 /home 且非空页",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": []
+    },
+    {
+      "viewport": "mobile",
+      "id": "removed/chat/11/members",
+      "label": "已删路由 /chat/11/members",
+      "path": "/chat/11/members",
+      "landedPath": "/home",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/mobile-zz-removed-_chat_11_members.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "已删路由兜回 /home 且非空页",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": []
+    },
+    {
+      "viewport": "desktop",
+      "id": "01-home",
+      "label": "首页",
+      "path": "/home",
+      "landedPath": "/home",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-01-home.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "首页发现流渲染（帖卡 + 分类 chips）",
+          "pass": true
+        }
+      ],
+      "pageLinks": [
+        "/post/1",
+        "/home",
+        "/market",
+        "/publish",
+        "/messages",
+        "/profile"
+      ],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "发现 最热 最新 日常 失物招领 求助互助 在图书馆三楼捡到一张饭卡，请联系我 失物招领：图书馆捡到一张饭卡 张 张同学 2 已经到底啦 首页 市集 消息 1 我"
+    },
+    {
+      "viewport": "desktop",
+      "id": "02-market-errand",
+      "label": "市集·跑腿",
+      "path": "/market",
+      "landedPath": "/market",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-02-market-errand.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "市集顶部只剩两个 tab",
+          "pass": true
+        },
+        {
+          "name": "跑腿卡片渲染（悬赏 ¥20）",
+          "pass": true
+        }
+      ],
+      "pageLinks": [
+        "/errand/1",
+        "/errand/2",
+        "/home",
+        "/market",
+        "/publish",
+        "/messages",
+        "/profile"
+      ],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "跑腿 闲置 我的订单 收藏 2 消息 活动 全部 代取快递 代买 代送 其他 代取快递 ¥20 帮取菜鸟驿站两个快递，送到 6 号楼楼下 菜鸟驿站 → 6 号楼楼下 张 张同学 1天前 代取快递 ¥20 帮取菜鸟驿站两个快递，送到 6 号楼楼下 菜鸟驿站 → 6 号楼楼下 张 张同学 1天前 已经到底啦 首页 市集 消息 1 我"
+    },
+    {
+      "viewport": "desktop",
+      "id": "03-market-idle",
+      "label": "市集·闲置",
+      "path": "/market",
+      "landedPath": "/market",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-03-market-idle.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "闲置卡片渲染（商品标题）",
+          "pass": true
+        },
+        {
+          "name": "商品卡片不再出现成色标签",
+          "pass": true
+        }
+      ],
+      "pageLinks": [
+        "/product/1",
+        "/home",
+        "/market",
+        "/publish",
+        "/messages",
+        "/profile"
+      ],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "跑腿 闲置 我的订单 收藏 2 消息 活动 全部 数码 图书 日用 运动 票券 其他 最新 价格↓ 价格↑ 图书 考研数学全套资料 ¥ 45 张 张同学 3人想要 已经到底啦 首页 市集 消息 1 我"
+    },
+    {
+      "viewport": "desktop",
+      "id": "04-publish-index",
+      "label": "发布索引",
+      "path": "/publish",
+      "landedPath": "/publish",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-04-publish-index.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "发布索引只剩 3 个入口",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "发布 📝 发帖子 校园墙：失物招领、求助互助、日常分享 › 🛍️ 卖闲置 发布二手商品，快速出手 › 🚀 发跑腿 悬赏找人帮取快递、代买、代送 ›"
+    },
+    {
+      "viewport": "desktop",
+      "id": "05-messages",
+      "label": "消息",
+      "path": "/messages",
+      "landedPath": "/messages",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-05-messages.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "私信行渲染（对家昵称）",
+          "pass": true
+        },
+        {
+          "name": "系统消息行渲染",
+          "pass": true
+        },
+        {
+          "name": "私信行不再有群标签",
+          "pass": true
+        }
+      ],
+      "pageLinks": [
+        "/home",
+        "/market",
+        "/publish",
+        "/messages",
+        "/profile"
+      ],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "消息 赞 评论 系统消息 审核通知、平台公告、信用分变动 1天前 私信 张 张同学 1天前 好的，马上到 1 李 李同学 1天前 可以便宜点吗 共 1 条未读消息 首页 市集 消息 1 我"
+    },
+    {
+      "viewport": "desktop",
+      "id": "06-market-messages",
+      "label": "消息·市集分区",
+      "path": "/market/messages",
+      "landedPath": "/market/messages",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-06-market-messages.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "市集消息只剩跑腿/闲置两栏",
+          "pass": true
+        },
+        {
+          "name": "跑腿系统消息行渲染",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "市集消息 跑腿 闲置 系统消息 有同学接下了你的跑腿单 1天前 1 跑手消息 张 跑手 张同学 1天前 好的，马上到 1"
+    },
+    {
+      "viewport": "desktop",
+      "id": "07-notifications",
+      "label": "系统通知",
+      "path": "/notifications?tab=system",
+      "landedPath": "/notifications?tab=system",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-07-notifications.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "系统通知分段渲染通知行",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "系统通知 全部已读 订单 订单动态 有同学接下了你的跑腿单 1天前"
+    },
+    {
+      "viewport": "desktop",
+      "id": "08-my-orders",
+      "label": "我的·订单",
+      "path": "/me/orders",
+      "landedPath": "/me/orders",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-08-my-orders.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "订单页只剩跑腿/闲置两 tab",
+          "pass": true
+        },
+        {
+          "name": "跑腿订单行按单人悬赏渲染",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "我的订单 跑腿 闲置 我发布的 我接的 全部 已完成 已取消 待接单 ¥20 帮取菜鸟驿站两个快递，送到 6 号楼楼下 — 等待接单 1天前 已完成 ¥20 帮取菜鸟驿站两个快递，送到 6 号楼楼下 李 接单者 李同学 1天前 已经到底啦"
+    },
+    {
+      "viewport": "desktop",
+      "id": "09-errand-publish",
+      "label": "跑腿发布",
+      "path": "/publish/errand",
+      "landedPath": "/publish/errand",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-09-errand-publish.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "跑腿发布无「需要人数」区块",
+          "pass": true
+        },
+        {
+          "name": "悬赏输入区在位",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "发布跑腿 跑腿类型 代取快递 代买 代送 其他 任务描述 配图（最多 6 张） ＋ 选择图片 取货点 送达点 悬赏（校园币） ¥ 支付后冻结托管，完成后自动打给接单者；最低 10 限制时长 2 小时 4 小时 12 小时 24 小时 发布并去支付"
+    },
+    {
+      "viewport": "desktop",
+      "id": "10-errand-detail",
+      "label": "跑腿详情（待接单）",
+      "path": "/errand/1",
+      "landedPath": "/errand/1",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-10-errand-detail.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "详情显示悬赏金额",
+          "pass": true
+        },
+        {
+          "name": "详情无人数行",
+          "pass": true
+        },
+        {
+          "name": "详情无评价区块",
+          "pass": true
+        },
+        {
+          "name": "详情无协作群入口",
+          "pass": true
+        },
+        {
+          "name": "待接单操作区只有抢单",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "跑腿详情 待接单 悬赏金额 ¥20 类型 代取快递 要求 截止 11小时前 任务描述 帮取菜鸟驿站两个快递，送到 6 号楼楼下 取 菜鸟驿站 ↓ 送 6 号楼楼下 张 张同学 发布者 发布于 1天前 联系 立即抢单 ¥20"
+    },
+    {
+      "viewport": "desktop",
+      "id": "11-errand-detail-done",
+      "label": "跑腿详情（已完成）",
+      "path": "/errand/2",
+      "landedPath": "/errand/2",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-11-errand-detail-done.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "完成态不再出现评价入口",
+          "pass": true
+        },
+        {
+          "name": "完成态保留订单已完成提示",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "跑腿详情 已完成 悬赏金额 ¥20 类型 代取快递 要求 截止 11小时前 任务描述 帮取菜鸟驿站两个快递，送到 6 号楼楼下 取 菜鸟驿站 ↓ 送 6 号楼楼下 张 张同学 发布者 发布于 1天前 联系 李 李同学 接单者 悬赏将支付给接单者 联系 订单已完成"
+    },
+    {
+      "viewport": "desktop",
+      "id": "12-product-publish",
+      "label": "商品发布",
+      "path": "/publish/product",
+      "landedPath": "/publish/product",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-12-product-publish.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "商品发布无成色 chips",
+          "pass": true
+        },
+        {
+          "name": "分类 chips 仍在位",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "发布闲置 标题 描述 分类 数码 图书 日用 运动 票券 其他 价格（元） ¥ 交易地点 图片（可选，粘贴图片链接） ＋ 选择图片 发布"
+    },
+    {
+      "viewport": "desktop",
+      "id": "13-product-detail",
+      "label": "商品详情",
+      "path": "/product/1",
+      "landedPath": "/product/1",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-13-product-detail.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "商品详情标签行只剩分类/浏览",
+          "pass": true
+        },
+        {
+          "name": "详情不再渲染成色标签",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "商品详情 图书 ¥ 45 3人想要 考研数学全套资料 图书 浏览 12 宝贝描述 有少量笔记，无划线 面交地点：图书馆一楼 张 张同学 发布于 1天前 在售 收藏 ♡ 立即购买 联系卖家"
+    },
+    {
+      "viewport": "desktop",
+      "id": "14-profile",
+      "label": "我的",
+      "path": "/profile",
+      "landedPath": "/profile",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-14-profile.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "「我的」主 tab 只剩笔记/赞过/评论/闲置/跑腿",
+          "pass": true
+        },
+        {
+          "name": "资料区与钱包/信用分区块在位",
+          "pass": true
+        }
+      ],
+      "pageLinks": [
+        "/home",
+        "/market",
+        "/publish",
+        "/messages",
+        "/profile"
+      ],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "stepError": null,
+      "textSample": "设置 我 我 账号 13800000000 0 获赞 钱包 查看余额 信用分 当前 90 · 优良 笔记 赞过 评论 闲置 跑腿 草稿箱 › 文 失物招领：图书馆捡到一张饭卡 ❤ 2 浏览 5 1天前 退出登录 首页 市集 消息 1 我"
+    },
+    {
+      "viewport": "desktop",
+      "id": "removed/publish/want",
+      "label": "已删路由 /publish/want",
+      "path": "/publish/want",
+      "landedPath": "/home",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-zz-removed-_publish_want.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "已删路由兜回 /home 且非空页",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": []
+    },
+    {
+      "viewport": "desktop",
+      "id": "removed/want/1",
+      "label": "已删路由 /want/1",
+      "path": "/want/1",
+      "landedPath": "/home",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-zz-removed-_want_1.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "已删路由兜回 /home 且非空页",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": []
+    },
+    {
+      "viewport": "desktop",
+      "id": "removed/chat/11/members",
+      "label": "已删路由 /chat/11/members",
+      "path": "/chat/11/members",
+      "landedPath": "/home",
+      "shot": ".scratch/project-rework/walkthrough-16/shots/desktop-zz-removed-_chat_11_members.png",
+      "forbiddenHits": [],
+      "assertions": [
+        {
+          "name": "已删路由兜回 /home 且非空页",
+          "pass": true
+        }
+      ],
+      "pageLinks": [],
+      "pageDeadLinks": [],
+      "consoleErrors": [],
+      "pageErrors": []
+    }
+  ]
+}

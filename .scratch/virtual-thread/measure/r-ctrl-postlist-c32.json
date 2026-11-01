@@ -1,0 +1,29 @@
+{
+  "tag": "ctrl-postlist-c32",
+  "concurrency": 32,
+  "duration_sec": 20.24,
+  "total_requests": 3847,
+  "rps": 190.1,
+  "error_rate": 0.0,
+  "ops": {
+    "post_list": {
+      "count": 3847,
+      "rps": 190.1,
+      "ok": 3847,
+      "err": 0,
+      "p50": 146.81,
+      "p90": 240.57,
+      "p99": 355.94,
+      "max": 482.85,
+      "mean": 167.16,
+      "err_statuses": {},
+      "err_types": {}
+    }
+  },
+  "overall": {
+    "p50": 146.81,
+    "p90": 240.57,
+    "p99": 355.94,
+    "max": 482.85
+  }
+}

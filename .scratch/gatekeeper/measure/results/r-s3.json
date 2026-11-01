@@ -1,0 +1,29 @@
+{
+ "name": "s3-coldstart",
+ "R": 1000,
+ "N": 200,
+ "T": 5.0,
+ "ttl": 10.0,
+ "burstSeconds": 1.0,
+ "duration_s": 30,
+ "dt": 0.001,
+ "total_admitted": 21553.0,
+ "long_run_rate": 718.4333333333333,
+ "max_100ms_rate": 5940.0,
+ "window_worst_rates": {
+  "1.0": 1338.0,
+  "5.0": 970.6,
+  "10.0": 919.5,
+  "30.0": 718.4333333333333
+ },
+ "max_1s_rate": 1338.0,
+ "max_sum_share": 1000.0000000000001,
+ "max_sum_share_over_R": 1.0000000000000002,
+ "max_sum_tokens": 633.7251930035827,
+ "alloc_count": 1200,
+ "scan_cost": 221100,
+ "burst_admit_100ms_after_t20": 525.0,
+ "burst_bound_window": 1100.0,
+ "max_tokens_at_burst": 599.1212189571477,
+ "instant_burst_bound": 1000.0
+}

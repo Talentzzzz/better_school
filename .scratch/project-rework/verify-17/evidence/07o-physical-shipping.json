@@ -1,0 +1,36 @@
+{
+  "draw_record": {
+    "record_id": "8459526029234547276",
+    "user_id": "9",
+    "award_id": "8104",
+    "award_name": "校园帆布包",
+    "award_type": "PHYSICAL",
+    "level": "2",
+    "inv_id": "8112",
+    "state": "已发货"
+  },
+  "detail_types": [
+    "DRAW",
+    "SHIP"
+  ],
+  "quota_after_confirm": {
+    "waiting_qty": 0,
+    "issued_qty": 1,
+    "surplus_qty": 9
+  },
+  "quota_before": {
+    "waiting_qty": 0,
+    "issued_qty": 0,
+    "surplus_qty": 10
+  },
+  "physical_inventory_surplus_before": 10,
+  "physical_inventory_surplus_after": 9,
+  "physical_inventory_detail": [
+    {
+      "id": "2",
+      "inv_id": "8112",
+      "quantity": "-1",
+      "type": "OUT"
+    }
+  ]
+}

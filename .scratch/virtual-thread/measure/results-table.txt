@@ -1,0 +1,51 @@
+ticket 04 - monolith better-school, same host, 30s per level, closed-loop mixed load
+
+== A/B matrix: {VT off,on} x {Hikari 10,64} ==
+arm                  c=32                           c=128                          c=256                         
+A VT off pool10        179.1 rps / p50   138ms / err  0.65%   256.0 rps / p50   419ms / err  1.32%   247.2 rps / p50   830ms / err  1.31%
+B VT on  pool10         93.4 rps / p50   262ms / err  0.79%   142.6 rps / p50   727ms / err  1.22%   260.6 rps / p50   777ms / err  1.37%
+C VT off pool64        452.2 rps / p50    47ms / err  4.84%   488.5 rps / p50   208ms / err  5.76%   515.8 rps / p50   421ms / err  6.21%
+D VT on  pool64        412.5 rps / p50    51ms / err  4.84%   481.0 rps / p50   213ms / err  5.63%   502.7 rps / p50   406ms / err  5.67%
+
+== pool / thread accounting (JMX probe, 200ms sampling) ==
+probe                               act_max act_mean    full_%    aw_max   cpu_max
+A-vtoff-p10-c128.csv                     10      9.9       97%       185     0.151
+A-vtoff-p10-c256.csv                     10     10.0       97%       280     0.105
+A-vtoff-p10-c32.csv                      10      8.3       82%       101     0.154
+AB-a.csv                                 10     10.0      100%       243     0.215
+AB-b.csv                                 10     10.0       99%       339     0.259
+AB-c.csv                                 10      8.4       83%       276     0.222
+AB-d.csv                                 10      8.0       79%       335     0.258
+B-vton-p10-c128.csv                      10      9.6       94%       179     0.111
+B-vton-p10-c256.csv                      10      9.9       97%       336     0.138
+B-vton-p10-c32.csv                       10      8.3       83%        51     0.105
+C-vtoff-p64-c128.csv                     64     59.5       78%       141     0.162
+C-vtoff-p64-c256.csv                     64     59.5       76%       231     0.157
+C-vtoff-p64-c32.csv                      64     59.4       75%        23     0.297
+D-vton-p64-c128.csv                      64     59.3       74%       136     0.161
+D-vton-p64-c256.csv                      64     59.4       69%       281     0.154
+D-vton-p64-c32.csv                       64     59.5       75%        25     0.240
+PS-off-p256.csv                         142     99.1       53%       163     0.307
+PS-on-p256.csv                          106     52.1        0%         0     0.273
+(full_% = share of samples with active == max; aw = ThreadsAwaitingConnection)
+
+== c=256, single-op: image_upload (MinIO, does not hold a DB connection) ==
+  AB-a2-upload     VT off   rps=  117.7  p50=   2164ms  err=0.00%
+  AB-c-upload      VT off   rps=   95.1  p50=   2766ms  err=0.00%
+  AB-b-upload      VT on    rps=   91.6  p50=   2785ms  err=0.00%
+  AB-d-upload      VT on    rps=   94.5  p50=   2786ms  err=0.00%
+
+== c=256 mixed, interleaved (ABAB) ==
+  NOTE: AB-a was DISCARDED - 34.8% error_rate, all client-side ClientConnectorError,
+        and probe-AB-a.csv only got 95 rows (expected ~390). Do not cite it.
+  AB-a-mixed       VT off (DISCARDED) rps=  130.5  p50=   1849ms  p99=    3789ms  err=34.77%
+  AB-c-mixed       VT off             rps=  291.3  p50=    769ms  p99=    2333ms  err=1.45%
+  AB-b-mixed       VT on              rps=  252.6  p50=    803ms  p99=    3205ms  err=1.34%
+  AB-d-mixed       VT on              rps=  309.8  p50=    694ms  p99=    2483ms  err=1.70%
+
+== pool=256, c=256 mixed (the one pair where the VT arm never waited for a connection) ==
+  PS-off-p256      VT off   rps=  575.7  p50=    368ms  p99=    1357ms  err=8.37%
+  PS-on-p256       VT on    rps=  434.5  p50=    349ms  p99=    6461ms  err=6.95%
+
+== single-op control: post_list only, c=32 (data-growth confound) ==
+  posts ~17k rows: rps=190.1  p50=147ms  (early run at ~500 rows: 1756 rps / 17.7ms, raw file not kept)

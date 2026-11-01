@@ -1,0 +1,23 @@
+{
+  "http_status": 200,
+  "post_id": 13,
+  "request": {
+    "content": "干净评论内容 SMOKE17CLEAN R100700071168"
+  },
+  "response": {
+    "code": "200",
+    "info": "成功",
+    "data": {
+      "commentId": 4,
+      "postId": 13,
+      "userId": 2,
+      "nickname": "冒烟路人",
+      "content": "干净评论内容 SMOKE17CLEAN R100700071168",
+      "likeCount": null,
+      "replyCount": 0,
+      "liked": false,
+      "rejectReason": null,
+      "createdAt": "2026-10-07T00:07:17.5182692"
+    }
+  }
+}

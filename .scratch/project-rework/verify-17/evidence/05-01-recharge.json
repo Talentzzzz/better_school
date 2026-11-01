@@ -1,0 +1,30 @@
+{
+  "amount": "119.90",
+  "response": null,
+  "wallet_before": {
+    "balance": "1119.90",
+    "frozen_amount": "0.00",
+    "available": "1119.90"
+  },
+  "wallet_after": {
+    "balance": "1239.80",
+    "frozen_amount": "0.00",
+    "available": "1239.80"
+  },
+  "recharge_detail_rows": [
+    {
+      "type": "RECHARGE",
+      "amount": "119.90",
+      "order_id": "NULL",
+      "biz_round": "0",
+      "create_time": "2026-10-07 00:01:21"
+    },
+    {
+      "type": "RECHARGE",
+      "amount": "119.90",
+      "order_id": "NULL",
+      "biz_round": "0",
+      "create_time": "2026-10-07 00:01:33"
+    }
+  ]
+}

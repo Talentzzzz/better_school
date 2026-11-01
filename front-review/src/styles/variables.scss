@@ -1,0 +1,42 @@
+// 审核中台原型 · SCSS 变量（深色控制台）。品牌红沿用 front/ 主色，保证同源观感。
+// 本文件被 vite.config.ts 注入到每个 SFC 编译单元（as *），故此处仅放变量、不放规则。
+
+// 品牌 / 强调
+$brand: #ff2442;
+$brand-dark: #e0203b;
+$brand-soft: rgba(255, 36, 66, 0.14);
+
+// 背景层级
+$bg: #0d1017;
+$bg-1: #141922;
+$bg-2: #1a2029;
+$bg-3: #202733;
+$line: #262e3a;
+$line-soft: #1e2530;
+
+// 文字层级
+$text-1: #e8ebf0;
+$text-2: #9aa5b4;
+$text-3: #6b7684;
+$text-4: #4a5361;
+
+// 语义色
+$green: #2ec27e;
+$green-soft: rgba(46, 194, 126, 0.14);
+$amber: #f5a623;
+$amber-soft: rgba(245, 166, 35, 0.16);
+$red: #ff5c6c;
+$red-soft: rgba(255, 92, 108, 0.14);
+$blue: #4c8dff;
+$blue-soft: rgba(76, 141, 255, 0.14);
+$purple: #a06bff;
+$purple-soft: rgba(160, 107, 255, 0.14);
+$teal: #22b8cf;
+$teal-soft: rgba(34, 184, 207, 0.14);
+
+// 圆角 / 阴影
+$radius-card: 14px;
+$radius: 10px;
+$radius-sm: 8px;
+$radius-full: 999px;
+$shadow: 0 10px 30px rgba(0, 0, 0, 0.38);

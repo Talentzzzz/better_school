@@ -1,0 +1,17 @@
+{
+  "attempts": [
+    {
+      "attempt": 1,
+      "http_status": 200,
+      "response": {
+        "code": "200",
+        "info": "成功",
+        "data": {
+          "balance": 340
+        }
+      },
+      "path": "/api/points/balance"
+    }
+  ],
+  "balance": 340
+}

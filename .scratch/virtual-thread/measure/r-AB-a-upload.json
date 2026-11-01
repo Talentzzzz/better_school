@@ -1,0 +1,33 @@
+{
+  "tag": "AB-a-upload",
+  "concurrency": 256,
+  "duration_sec": 25.59,
+  "total_requests": 2816,
+  "rps": 110.1,
+  "error_rate": 1.0,
+  "ops": {
+    "image_upload": {
+      "count": 2816,
+      "rps": 110.1,
+      "ok": 0,
+      "err": 2816,
+      "p50": 2301.2,
+      "p90": 2332.15,
+      "p99": 2418.41,
+      "max": 2432.67,
+      "mean": 2307.37,
+      "err_statuses": {
+        "0": 2816
+      },
+      "err_types": {
+        "ClientConnectorError": 2816
+      }
+    }
+  },
+  "overall": {
+    "p50": 2301.2,
+    "p90": 2332.15,
+    "p99": 2418.41,
+    "max": 2432.67
+  }
+}

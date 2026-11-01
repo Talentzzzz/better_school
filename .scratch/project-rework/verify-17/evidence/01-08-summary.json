@@ -1,0 +1,318 @@
+{
+  "total": 62,
+  "passed": 62,
+  "failed": 0,
+  "failures": [],
+  "results": [
+    {
+      "assertion": "0.1 三个账号就绪（author/commenter/admin，admin 角色已提权）",
+      "ok": true,
+      "detail": "author=1 commenter=2 admin=11"
+    },
+    {
+      "assertion": "0.2 admin 账号库中 role=ADMIN",
+      "ok": true,
+      "detail": "role=ADMIN"
+    },
+    {
+      "assertion": "1.0 敏感词库已灌种子（enabled=1）",
+      "ok": true,
+      "detail": "库中 8 条：['代考', '代课', '作弊', '赌博', '枪手', '办证', '刷单', '跑分']"
+    },
+    {
+      "assertion": "1.1a 正文命中敏感词：发帖被同步初筛拒绝（非成功码）",
+      "ok": true,
+      "detail": "HTTP 200 code=500"
+    },
+    {
+      "assertion": "1.1b 拒绝提示引导修改（'内容包含违规词汇，请修改后重试'）",
+      "ok": true,
+      "detail": "内容包含违规词汇，请修改后重试"
+    },
+    {
+      "assertion": "1.1c 命中敏感词的帖子不落库（本次运行标记 0 行）",
+      "ok": true,
+      "detail": "查到 0 行"
+    },
+    {
+      "assertion": "1.2 标题命中敏感词同样被拒且不落库",
+      "ok": true,
+      "detail": "HTTP 200 code=500，本次运行标记落库 0 行"
+    },
+    {
+      "assertion": "1.3 干净帖发布成功",
+      "ok": true,
+      "detail": "postId=13"
+    },
+    {
+      "assertion": "1.4 干净帖落库即 state=PENDING_REVIEW",
+      "ok": true,
+      "detail": "state=PENDING_REVIEW"
+    },
+    {
+      "assertion": "1.5 content_review 尚无裁决行（待审=只挂队列，裁决行在项 8 落）",
+      "ok": true,
+      "detail": "0 行"
+    },
+    {
+      "assertion": "1.6a 待审帖不出现在公共 feed（访客）",
+      "ok": true,
+      "detail": "feed 共 5 条"
+    },
+    {
+      "assertion": "1.6b 待审帖不出现在旁人 feed",
+      "ok": true,
+      "detail": "旁人 feed 共 5 条"
+    },
+    {
+      "assertion": "1.6c 旁人看待审帖详情被拒（code=404）",
+      "ok": true,
+      "detail": "code=404"
+    },
+    {
+      "assertion": "1.6d 访客看待审帖详情被拒（code=404）",
+      "ok": true,
+      "detail": "code=404"
+    },
+    {
+      "assertion": "1.7 作者在自己的「我的」列表可见待审帖",
+      "ok": true,
+      "detail": "mine 共 10 条"
+    },
+    {
+      "assertion": "8.1a ADMIN 可拉审核队列（POST）",
+      "ok": true,
+      "detail": "total=7"
+    },
+    {
+      "assertion": "8.1b 队列含待通过与待驳回两条目标",
+      "ok": true,
+      "detail": "队列 [2, 4, 6, 9, 12, 13, 14]"
+    },
+    {
+      "assertion": "8.1c 队列详情带出 authorId 与正文字段",
+      "ok": true,
+      "detail": "authorId=1"
+    },
+    {
+      "assertion": "8.2 API 通过返回成功",
+      "ok": true,
+      "detail": "HTTP 200 code=200"
+    },
+    {
+      "assertion": "8.3a 通过后目标状态转 NORMAL",
+      "ok": true,
+      "detail": "state=NORMAL"
+    },
+    {
+      "assertion": "8.3b 通过后出现在公共 feed（访客可见）",
+      "ok": true,
+      "detail": "feed 共 6 条"
+    },
+    {
+      "assertion": "8.3c 通过后访客可打开详情",
+      "ok": true,
+      "detail": "code=200"
+    },
+    {
+      "assertion": "8.4a content_review 落 APPROVE 裁决行（恰 1 行）",
+      "ok": true,
+      "detail": "1 行"
+    },
+    {
+      "assertion": "8.4b 裁决行 source=MANUAL 且 operator_id=ADMIN 本人",
+      "ok": true,
+      "detail": "{'action': 'APPROVE', 'source': 'MANUAL', 'operator_id': '11', 'review_round': '1'}"
+    },
+    {
+      "assertion": "8.5a 作者收到 AUDIT_RESULT 通知行",
+      "ok": true,
+      "detail": "1 行"
+    },
+    {
+      "assertion": "8.5b 通过通知内容含'通过审核'",
+      "ok": true,
+      "detail": "[['AUDIT_RESULT', '您的帖子《冒烟干净帖正常帖子内容，等待人工审核 S…》已通过审核，现已公开']]"
+    },
+    {
+      "assertion": "8.6 已通过目标移出审核队列",
+      "ok": true,
+      "detail": "队列 [2, 4, 6, 9, 12, 14]"
+    },
+    {
+      "assertion": "8.7 API 驳回返回成功",
+      "ok": true,
+      "detail": "HTTP 200 code=200"
+    },
+    {
+      "assertion": "8.8a 驳回后目标状态转 REJECTED",
+      "ok": true,
+      "detail": "state=REJECTED"
+    },
+    {
+      "assertion": "8.8b 被拒帖不出现在公共 feed",
+      "ok": true,
+      "detail": "feed 共 6 条"
+    },
+    {
+      "assertion": "8.8c 旁人打开被拒帖被拒（code=404）",
+      "ok": true,
+      "detail": "code=404"
+    },
+    {
+      "assertion": "8.8d 作者可见被拒帖且带出拒绝理由",
+      "ok": true,
+      "detail": "其他：标题与内容不符"
+    },
+    {
+      "assertion": "8.9a content_review 落 REJECT 裁决行（恰 1 行）",
+      "ok": true,
+      "detail": "1 行"
+    },
+    {
+      "assertion": "8.9b 裁决行 reason=枚举文案：补充说明，reason_code 落库，operator_id=ADMIN",
+      "ok": true,
+      "detail": "{'action': 'REJECT', 'source': 'MANUAL', 'operator_id': '11', 'reason': '其他：标题与内容不符', 'reason_code': 'OTHER'}"
+    },
+    {
+      "assertion": "8.10a 作者收到 AUDIT_RESULT 通知行",
+      "ok": true,
+      "detail": "1 行"
+    },
+    {
+      "assertion": "8.10b 驳回通知内容含拒绝理由",
+      "ok": true,
+      "detail": "[['AUDIT_RESULT', '您的帖子《冒烟驳回帖待驳回的帖子内容，等待人工审核…》未通过审核：其他：标题与内容不符']]"
+    },
+    {
+      "assertion": "8.11 已驳回目标移出审核队列",
+      "ok": true,
+      "detail": "队列 [2, 4, 6, 9, 12]"
+    },
+    {
+      "assertion": "8.12a 缺 reasonCode 的驳回被 400 拦下",
+      "ok": true,
+      "detail": "code=400"
+    },
+    {
+      "assertion": "8.12b 缺理由裁决未生效（仍 PENDING_REVIEW）",
+      "ok": true,
+      "detail": "state=PENDING_REVIEW"
+    },
+    {
+      "assertion": "1.C0 前置：目标帖已 NORMAL（评论接口对非 NORMAL 帖 404）",
+      "ok": true,
+      "detail": "state=NORMAL"
+    },
+    {
+      "assertion": "1.8a 评论命中敏感词：被同步初筛拒绝（非成功码）",
+      "ok": true,
+      "detail": "HTTP 200 code=500"
+    },
+    {
+      "assertion": "1.8b 拒绝提示引导修改（'内容包含违规词汇，请修改后重试'）",
+      "ok": true,
+      "detail": "内容包含违规词汇，请修改后重试"
+    },
+    {
+      "assertion": "1.8c 命中敏感词的评论不落库（本次运行标记 0 行且该帖评论数不变）",
+      "ok": true,
+      "detail": "before=0 after=0 marker=0"
+    },
+    {
+      "assertion": "1.9 干净评论发布成功",
+      "ok": true,
+      "detail": "commentId=4"
+    },
+    {
+      "assertion": "1.9b 第二条干净评论发布成功（项 8 驳回目标）",
+      "ok": true,
+      "detail": "commentId=5"
+    },
+    {
+      "assertion": "1.10 干净评论落库即 state=PENDING_REVIEW",
+      "ok": true,
+      "detail": "state=PENDING_REVIEW"
+    },
+    {
+      "assertion": "1.11a 评论作者本人可见自己的待审评论",
+      "ok": true,
+      "detail": "作者视角 [4, 5]"
+    },
+    {
+      "assertion": "1.11b 旁人看不到待审评论（total=0 且列表空）",
+      "ok": true,
+      "detail": "旁人 total=0 ids=[]"
+    },
+    {
+      "assertion": "1.11c 访客看不到待审评论（total=0）",
+      "ok": true,
+      "detail": "访客 total=0"
+    },
+    {
+      "assertion": "8.C1a ADMIN 可拉评论审核队列",
+      "ok": true,
+      "detail": "total=3"
+    },
+    {
+      "assertion": "8.C1b 队列含待通过与待驳回两条评论",
+      "ok": true,
+      "detail": "队列 [1, 4, 5]"
+    },
+    {
+      "assertion": "8.C2a 评论缺 reasonCode 的驳回被 400 拦下",
+      "ok": true,
+      "detail": "code=400"
+    },
+    {
+      "assertion": "8.C2b 缺理由裁决未生效（仍 PENDING_REVIEW）",
+      "ok": true,
+      "detail": "state=PENDING_REVIEW"
+    },
+    {
+      "assertion": "8.C3 API 驳回评论成功",
+      "ok": true,
+      "detail": "HTTP 200 code=200"
+    },
+    {
+      "assertion": "8.C4a 驳回后评论状态转 REJECTED",
+      "ok": true,
+      "detail": "state=REJECTED"
+    },
+    {
+      "assertion": "8.C4b content_review 落 REJECT 裁决行（MANUAL / ADMIN / 带理由）",
+      "ok": true,
+      "detail": "{'action': 'REJECT', 'source': 'MANUAL', 'operator_id': '11', 'reason': '其他：含不友善内容', 'reason_code': 'OTHER'}"
+    },
+    {
+      "assertion": "8.C4c 评论作者收到含理由的通知行",
+      "ok": true,
+      "detail": "[['您的评论未通过审核：其他：含不友善内容']]"
+    },
+    {
+      "assertion": "8.C5 API 通过评论成功",
+      "ok": true,
+      "detail": "HTTP 200 code=200"
+    },
+    {
+      "assertion": "8.C6a 通过后评论状态转 NORMAL",
+      "ok": true,
+      "detail": "state=NORMAL"
+    },
+    {
+      "assertion": "8.C6b 通过后评论对外可见（访客 total=1）",
+      "ok": true,
+      "detail": "访客 total=1"
+    },
+    {
+      "assertion": "8.C6c content_review 落 APPROVE 裁决行（MANUAL / ADMIN）",
+      "ok": true,
+      "detail": "{'action': 'APPROVE', 'source': 'MANUAL', 'operator_id': '11'}"
+    },
+    {
+      "assertion": "8.C7 两条评论都已移出审核队列",
+      "ok": true,
+      "detail": "队列 [1]"
+    }
+  ]
+}

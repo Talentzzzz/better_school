@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- backend/ 下只剩两个 Maven 工程：单体 better-school（超时中心已内嵌在此）、营销 marketing
+         （本工程，points + raffle 两业务域 + drawcount/config/inventory 三个支撑域）。两者是兄弟目录、
+         各自独立的 project：没有 reactor 关系，跨 project 取契约只能经本地仓库（com.betterschool:bs-api）。
+         本工程内部七个 marketing-* 模块同属一个 reactor，模块间契约走 dependencyManagement 的
+         ${project.version}（票 07 起抽奖侧原跨 project 引的 com.betterschool:marketing-api 已收敛为同 reactor 模块）。
+         parent 直接挂 Boot 官方 parent（票 06：由 marketing-asset 聚合器改名而来） -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.5</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.betterschool</groupId>
+    <artifactId>marketing</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>marketing</name>
+
+    <modules>
+        <module>marketing-types</module>
+        <module>marketing-api</module>
+        <module>marketing-domain</module>
+        <module>marketing-case</module>
+        <module>marketing-infrastructure</module>
+        <module>marketing-trigger</module>
+        <module>marketing-app</module>
+    </modules>
+
+    <properties>
+        <java.version>21</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- 单体契约：只读的 IUserQueryService，经本地仓库（com.betterschool:bs-api）消费 -->
+        <bs-api.version>1.0.0-SNAPSHOT</bs-api.version>
+        <dubbo.version>3.3.6</dubbo.version>
+        <spring.cloud.version>2023.0.3</spring.cloud.version>
+        <spring.cloud.alibaba.version>2023.0.3.4</spring.cloud.alibaba.version>
+        <jjwt.version>0.12.6</jjwt.version>
+        <xxljob.version>3.0.0</xxljob.version>
+        <!-- MyBatis / RocketMQ / Redisson 与单体同版本（版本矩阵出处见 .scratch/marketing/research-cloud-stack.md） -->
+        <mybatis.version>3.0.3</mybatis.version>
+        <rocketmq.version>2.3.6</rocketmq.version>
+        <redisson.version>3.52.0</redisson.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring.cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.cloud</groupId>
+                <artifactId>spring-cloud-alibaba-dependencies</artifactId>
+                <version>${spring.cloud.alibaba.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- 本 project 自己的模块 -->
+            <dependency>
+                <groupId>com.betterschool</groupId>
+                <artifactId>marketing-types</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.betterschool</groupId>
+                <artifactId>marketing-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.betterschool</groupId>
+                <artifactId>marketing-domain</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.betterschool</groupId>
+                <artifactId>marketing-case</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.betterschool</groupId>
+                <artifactId>marketing-infrastructure</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.betterschool</groupId>
+                <artifactId>marketing-trigger</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- 单体契约模块（跨 project，从本地仓库取） -->
+            <dependency>
+                <groupId>com.betterschool</groupId>
+                <artifactId>bs-api</artifactId>
+                <version>${bs-api.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.dubbo</groupId>
+                <artifactId>dubbo-spring-boot-starter</artifactId>
+                <version>${dubbo.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.dubbo</groupId>
+                <artifactId>dubbo-nacos-spring-boot-starter</artifactId>
+                <version>${dubbo.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mybatis.spring.boot</groupId>
+                <artifactId>mybatis-spring-boot-starter</artifactId>
+                <version>${mybatis.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.rocketmq</groupId>
+                <artifactId>rocketmq-spring-boot-starter</artifactId>
+                <version>${rocketmq.version}</version>
+                <exclusions>
+                    <!-- rocketmq-acl 传递 commons-beanutils → commons-logging，与 spring-jcl 冲突 -->
+                    <exclusion>
+                        <groupId>commons-logging</groupId>
+                        <artifactId>commons-logging</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-api</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-impl</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-jackson</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.xuxueli</groupId>
+                <artifactId>xxl-job-core</artifactId>
+                <version>${xxljob.version}</version>
+            </dependency>
+            <!-- Redis 桶 / 概率表（票 11 的抽奖决策表预热、票 12 的库存桶 Lua 预扣与合并；
+                 旧 infrastructure.lottery 的 PrizeBucketPort 已随票 13 删除） -->
+            <dependency>
+                <groupId>org.redisson</groupId>
+                <artifactId>redisson-spring-boot-starter</artifactId>
+                <version>${redisson.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>

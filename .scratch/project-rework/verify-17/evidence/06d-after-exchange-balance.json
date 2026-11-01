@@ -1,0 +1,34 @@
+{
+  "points_balance": 240,
+  "draw_count_buckets": [
+    {
+      "amount": "3",
+      "remain": "1",
+      "reason_type": "REDEEM",
+      "ref_id": "74201"
+    },
+    {
+      "amount": "2",
+      "remain": "2",
+      "reason_type": "REDEEM",
+      "ref_id": "74301"
+    },
+    {
+      "amount": "1",
+      "remain": "1",
+      "reason_type": "REDEEM",
+      "ref_id": "2180698415304986002"
+    }
+  ],
+  "last_response": {
+    "attempt": 1,
+    "http_status": 200,
+    "response": {
+      "code": "200",
+      "info": "成功",
+      "data": {
+        "balance": 240
+      }
+    }
+  }
+}

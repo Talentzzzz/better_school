@@ -1,0 +1,38 @@
+# Java / Maven
+backend/*/target/
+# 营销三服务是 backend/ 下的独立 project，模块多一层（backend/<svc>/<svc>-xxx/target/）
+backend/*/*/target/
+backend/target/
+
+# 运行时数据卷（compose 挂载，含 MySQL/Redis/ES 数据）
+backend/docker/data/
+
+# 日志（营销服务从各自目录启动时 xxl 执行器会写 ./logs/）
+backend/logs/
+backend/*/logs/
+*.log
+
+# 前端
+front/node_modules/
+front/dist/
+front/*.tsbuildinfo
+front-review/node_modules/
+front-review/dist/
+front-review/*.tsbuildinfo
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 浏览器 e2e 本地依赖
+.scratch/**/node_modules/
+
+# Playwright MCP 会话产物
+.playwright-mcp/
+
+__pycache__/
+*.py[cod]
+
+# 抽奖参考项目（未入库：含独立 .git，effort 收口后保留在磁盘）
+rafflex-backend/

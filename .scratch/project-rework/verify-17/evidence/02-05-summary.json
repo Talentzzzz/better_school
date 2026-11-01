@@ -1,0 +1,265 @@
+{
+  "run_id": "20261007-000130",
+  "checks": [
+    {
+      "check": "登录三方拿到 token/userId 且管理员 token 带 ADMIN 角色",
+      "ok": true,
+      "detail": "seller=3 buyer=4 admin=5 adminProbe=200"
+    },
+    {
+      "check": "发布返回 productId 且落库",
+      "ok": true,
+      "detail": "productId=8"
+    },
+    {
+      "check": "发布后 state=PENDING_REVIEW（先审后售）",
+      "ok": true,
+      "detail": "state=PENDING_REVIEW"
+    },
+    {
+      "check": "发布后 review_round=1",
+      "ok": true,
+      "detail": "review_round=1"
+    },
+    {
+      "check": "发布后 review_entered_at 非空（进入待审时刻）",
+      "ok": true,
+      "detail": "review_entered_at=2026-10-07 00:01:31"
+    },
+    {
+      "check": "待审期间公开列表不可见",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "待审商品进入 ADMIN 审核队列",
+      "ok": true,
+      "detail": "product_id=8 queueIds=[2, 3, 4, 5, 6, 8]"
+    },
+    {
+      "check": "裁决通过后 state=ON_SALE",
+      "ok": true,
+      "detail": "state=ON_SALE"
+    },
+    {
+      "check": "content_review 落 MANUAL/APPROVE 行且 operator 为管理员",
+      "ok": true,
+      "detail": "rows=[['PRODUCT', '8', '1', 'APPROVE', 'MANUAL', '5', 'NULL']]"
+    },
+    {
+      "check": "上架后公开列表可见（匿名）",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "上架后公开列表可见（买家登录态）",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "裁决后移出审核队列",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "在售商品他人可看详情（code=200）",
+      "ok": true,
+      "detail": "HTTP=200 code=200"
+    },
+    {
+      "check": "下架后 state=DRAFT（汇入草稿箱）",
+      "ok": true,
+      "detail": "state=DRAFT"
+    },
+    {
+      "check": "下架后公开列表不可见（匿名）",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "下架后公开列表不可见（买家登录态）",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "下架后他人看详情 404",
+      "ok": true,
+      "detail": "HTTP=200 code=404"
+    },
+    {
+      "check": "下架后卖家自己的「我的发布」仍可见（草稿箱）",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "下架后不可下单（业务码 404 商品不存在或已售出）",
+      "ok": true,
+      "detail": "HTTP=200 code=404 info=商品不存在或已售出"
+    },
+    {
+      "check": "下架未产生任何商品订单",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "重提回 PENDING_REVIEW 且 review_round+1",
+      "ok": true,
+      "detail": "state=PENDING_REVIEW round=2"
+    },
+    {
+      "check": "再次通过后回到 ON_SALE 且公开可见",
+      "ok": true,
+      "detail": "state=ON_SALE"
+    },
+    {
+      "check": "充值后余额增加恰好等于充值额",
+      "ok": true,
+      "detail": "1119.90 → 1239.80"
+    },
+    {
+      "check": "充值落 wallet_detail type=RECHARGE 且 amount 正确",
+      "ok": true,
+      "detail": "rows=[{'type': 'RECHARGE', 'amount': '119.90', 'order_id': 'NULL', 'biz_round': '0', 'create_time': '2026-10-07 00:01:21'}, {'type': 'RECHARGE', 'amount': '119.90', 'order_id': 'NULL', 'biz_round': '0', 'create_time': '2026-10-07 00:01:33'}]"
+    },
+    {
+      "check": "下单成功且订单 state=PENDING_PAYMENT、price 快照正确",
+      "ok": true,
+      "detail": "state=PENDING_PAYMENT price=19.90"
+    },
+    {
+      "check": "下单后商品 state=LOCKED（交易中）",
+      "ok": true,
+      "detail": "state=LOCKED"
+    },
+    {
+      "check": "支付后可用余额（balance-frozen）减少恰好等于成交价",
+      "ok": true,
+      "detail": "1239.80 → 1219.90（成交价 19.90）"
+    },
+    {
+      "check": "支付后订单 state=PAID",
+      "ok": true,
+      "detail": "state=PAID"
+    },
+    {
+      "check": "wallet_detail 有 PRODUCT_FROZEN 行且 order_id/amount 正确",
+      "ok": true,
+      "detail": "rows=[{'type': 'PRODUCT_FROZEN', 'amount': '19.90', 'order_id': '2', 'biz_round': '0', 'create_time': '2026-10-07 00:01:35'}]"
+    },
+    {
+      "check": "支付落 product_order_event PAID（PENDING_PAYMENT→PAID/BUYER）",
+      "ok": true,
+      "detail": "events=['CREATED', 'PAID']"
+    },
+    {
+      "check": "重复支付返回成功（幂等，非报错）",
+      "ok": true,
+      "detail": "HTTP=200 code=200"
+    },
+    {
+      "check": "重复支付不二次扣减：可用余额不变",
+      "ok": true,
+      "detail": "1219.90 → 1219.90"
+    },
+    {
+      "check": "重复支付不新增流水：PRODUCT_FROZEN 仍只有 1 行",
+      "ok": true,
+      "detail": "count=1"
+    },
+    {
+      "check": "重复支付不新增事件：PAID 事件仍只有一条",
+      "ok": true,
+      "detail": "events=['CREATED', 'PAID']"
+    },
+    {
+      "check": "重复支付后订单仍为 PAID",
+      "ok": true,
+      "detail": "state=PAID"
+    },
+    {
+      "check": "卖家钱包无冻结（买家冻结额恰好等于成交价）",
+      "ok": true,
+      "detail": "frozen=19.90"
+    },
+    {
+      "check": "确认后订单 state=COMPLETED",
+      "ok": true,
+      "detail": "state=COMPLETED"
+    },
+    {
+      "check": "买家解冻：frozen_amount 归零、balance 不变",
+      "ok": true,
+      "detail": "frozen=0.00 balance=1239.80"
+    },
+    {
+      "check": "买家落 PRODUCT_UNFROZEN 行恰一行",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "卖家落 PRODUCT_INCOME 行且 order_id/amount 正确",
+      "ok": true,
+      "detail": "seller_details=[{'type': 'PRODUCT_INCOME', 'amount': '19.90', 'order_id': '2', 'biz_round': '0', 'create_time': '2026-10-07 00:01:36'}]"
+    },
+    {
+      "check": "卖家余额增加恰好等于成交价",
+      "ok": true,
+      "detail": "1019.90 → 1039.80"
+    },
+    {
+      "check": "商品随成交转 SOLD 且退出公开列表",
+      "ok": true,
+      "detail": "state=SOLD"
+    },
+    {
+      "check": "状态机事件序 CREATED→PAID→DELIVERED→COMPLETED",
+      "ok": true,
+      "detail": "events=['CREATED', 'PAID', 'DELIVERED', 'COMPLETED']"
+    },
+    {
+      "check": "重复确认收货返回成功（幂等）",
+      "ok": true,
+      "detail": "HTTP=200 code=200"
+    },
+    {
+      "check": "重复确认不重复入账：卖家余额不变且 PRODUCT_INCOME 仍 1 行",
+      "ok": true,
+      "detail": "1039.80 → 1039.80"
+    }
+  ],
+  "product": {
+    "product_id": 8,
+    "state_trace": [
+      "PENDING_REVIEW",
+      "ON_SALE",
+      "DRAFT",
+      "PENDING_REVIEW",
+      "ON_SALE"
+    ]
+  },
+  "wallet": {
+    "order_id": 2,
+    "recharge_amount": "119.90",
+    "product_price": "19.90",
+    "buyer_wallet_before_pay": {
+      "balance": "1239.80",
+      "frozen_amount": "0.00",
+      "available": "1239.80"
+    },
+    "buyer_wallet_after_pay": {
+      "balance": "1239.80",
+      "frozen_amount": "19.90",
+      "available": "1219.90"
+    },
+    "buyer_wallet_after_second_pay": {
+      "balance": "1239.80",
+      "frozen_amount": "19.90",
+      "available": "1219.90"
+    },
+    "buyer_wallet_after_confirm": {
+      "balance": "1239.80",
+      "frozen_amount": "0.00",
+      "available": "1239.80"
+    }
+  }
+}

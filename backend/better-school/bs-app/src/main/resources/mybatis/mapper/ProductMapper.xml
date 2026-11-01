@@ -1,0 +1,543 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.product.IProductDao">
+
+    <!-- 读路径换源（market-feed-uv 票 02）：viewCount 从主表列换到计数表 product_view_count
+         （UV 加速列，真源 product_view_history）；主表旧 PV 列已随票 06 删列。未浏览过的商品
+         计数行不存在，IFNULL 归 0。所有带本片段的查询必须带 pvc 的 LEFT JOIN -->
+    <sql id="baseColumns">
+        p.id, p.product_id, p.user_id, p.title, p.description, p.images, p.price, p.trade_location,
+        p.category, p.state, p.review_round, p.review_entered_at,
+        IFNULL(pvc.view_count, 0) AS view_count, p.create_time, p.update_time, p.expire_at
+    </sql>
+
+    <!-- 计数表 JOIN：主键等值，各列表/详情查询共用 -->
+    <sql id="viewCountJoin">
+        LEFT JOIN product_view_count pvc ON pvc.product_id = p.product_id
+    </sql>
+
+    <!-- 主表不再有浏览列（market-feed-uv 票 06 删列）：浏览 UV 只落 product_view_history + product_view_count -->
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.product.po.ProductPO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO product (product_id, user_id, title, description, images, price, trade_location,
+                             category, state, review_round, review_entered_at,
+                             create_time, update_time, expire_at)
+        VALUES (0, #{userId}, #{title}, #{description}, #{images}, #{price}, #{tradeLocation},
+                #{category}, #{state}, #{reviewRound}, #{reviewEnteredAt},
+                #{createTime}, #{updateTime}, #{expireAt})
+    </insert>
+
+    <!-- 业务 ID 回写：product_id = id（同事务，见 sql.md 主键口径） -->
+    <update id="bindBizId">
+        UPDATE product SET product_id = id WHERE id = #{id} AND product_id = 0
+    </update>
+
+    <select id="selectById" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+        SELECT <include refid="baseColumns"/>,
+               u.nickname AS seller_nickname, u.avatar AS seller_avatar
+        FROM product p
+        <include refid="viewCountJoin"/>
+        LEFT JOIN bs_user u ON p.user_id = u.user_id
+        WHERE p.product_id = #{productId}
+          AND p.state != 'DELETED'
+    </select>
+
+    <!-- 按 id 列表查询：不分状态（搜索同步按 state 判定 upsert/删除，搜索命中组装按 ON_SALE 过滤） -->
+    <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+        SELECT <include refid="baseColumns"/>,
+               u.nickname AS seller_nickname, u.avatar AS seller_avatar
+        FROM product p
+        <include refid="viewCountJoin"/>
+        LEFT JOIN bs_user u ON p.user_id = u.user_id
+        WHERE p.product_id IN
+        <foreach collection="ids" item="productId" open="(" separator="," close=")">#{productId}</foreach>
+    </select>
+
+    <select id="selectIdsAfter" resultType="long">
+        SELECT product_id FROM product
+        WHERE id &gt; #{lastId}
+        ORDER BY id
+        LIMIT #{limit}
+    </select>
+
+    <update id="softDelete">
+        UPDATE product
+        SET state = 'DELETED',
+            update_time = NOW()
+        WHERE product_id = #{productId}
+          AND state != 'DELETED'
+    </update>
+
+    <update id="markSold">
+        UPDATE product
+        SET state = 'SOLD',
+            update_time = NOW()
+        WHERE product_id = #{productId}
+          AND state = 'ON_SALE'
+    </update>
+
+    <update id="relist">
+        UPDATE product
+        SET state = 'PENDING_REVIEW',
+            review_round = review_round + 1,
+            review_entered_at = NOW(),
+            expire_at = DATE_ADD(NOW(), INTERVAL 30 DAY),
+            update_time = NOW()
+        WHERE product_id = #{productId}
+          AND state = 'SOLD'
+    </update>
+
+    <!-- 草稿全量编辑：仅 DRAFT 行生效（待审/在售等状态不可通过此语句改内容） -->
+    <update id="updateDraft" parameterType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+        UPDATE product
+        SET title          = #{title},
+            description    = #{description},
+            images         = #{images},
+            price          = #{price},
+            trade_location = #{tradeLocation},
+            category       = #{category},
+            update_time    = NOW()
+        WHERE product_id = #{productId}
+          AND state = 'DRAFT'
+    </update>
+
+    <update id="submitDraft">
+        UPDATE product
+        SET state                = 'PENDING_REVIEW',
+            review_round         = review_round + 1,
+            review_entered_at    = NOW(),
+            expire_at            = DATE_ADD(NOW(), INTERVAL 30 DAY),
+            update_time          = NOW()
+        WHERE product_id = #{productId}
+          AND state = 'DRAFT'
+    </update>
+
+    <update id="withdraw">
+        UPDATE product
+        SET state = 'DRAFT',
+            update_time = NOW()
+        WHERE product_id = #{productId}
+          AND state = 'PENDING_REVIEW'
+    </update>
+
+    <!-- 下架/到期汇入草稿箱：ON_SALE → DRAFT（对外可见期结束，搜索同步消息由调用方同事务落） -->
+    <update id="takeDown">
+        UPDATE product
+        SET state = 'DRAFT',
+            update_time = NOW()
+        WHERE product_id = #{productId}
+          AND state = 'ON_SALE'
+    </update>
+
+    <!-- 到期扫描：在售且 expire_at 已到（满 30 天），XXL-Job 后置汇入草稿箱 -->
+    <select id="selectExpiredOnSaleIds" resultType="long">
+        SELECT product_id
+        FROM product
+        WHERE state = 'ON_SALE'
+          AND expire_at IS NOT NULL
+          AND expire_at &lt;= #{before}
+        LIMIT #{limit}
+    </select>
+
+    <!-- 24h 待审超时提醒扫描：进入待审（review_entered_at）早于 before 的待审商品 -->
+    <select id="selectReviewTimeoutIds" resultType="long">
+        SELECT product_id
+        FROM product
+        WHERE state = 'PENDING_REVIEW'
+          AND review_entered_at IS NOT NULL
+          AND review_entered_at &lt;= #{before}
+        LIMIT #{limit}
+    </select>
+
+    <!-- 审核通过：PENDING_REVIEW → ON_SALE（对外可见，条件 UPDATE 幂等闸门） -->
+    <update id="reviewApproveById">
+        UPDATE product
+        SET state = 'ON_SALE',
+            update_time = NOW()
+        WHERE product_id = #{productId}
+          AND state = 'PENDING_REVIEW'
+    </update>
+
+    <!-- 审核拒绝：PENDING_REVIEW → REJECTED（无资金环节） -->
+    <update id="reviewRejectById">
+        UPDATE product
+        SET state = 'REJECTED',
+            update_time = NOW()
+        WHERE product_id = #{productId}
+          AND state = 'PENDING_REVIEW'
+    </update>
+
+    <!-- 被拒转草稿箱（自救路径）：REJECTED → DRAFT，修改后重新提交走 submitDraft（重提产生第二轮审核） -->
+    <update id="rejectToDraft">
+        UPDATE product
+        SET state = 'DRAFT',
+            update_time = NOW()
+        WHERE product_id = #{productId}
+          AND state = 'REJECTED'
+    </update>
+
+    <!-- 上架后改内容：ON_SALE → PENDING_REVIEW（期间他人不可见、卖家本人可见），重提产生第二轮审核；
+         动态覆盖非 null 字段（title/description/images 任一即视为改内容）。price 非审核对象、不属重审范围，
+         混合提交时随行更新（重审期间商品不可见，恢复可见后即生效；重审被拒不回滚新价） -->
+    <update id="editOnSaleContent" parameterType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+        UPDATE product
+        <set>
+            state = 'PENDING_REVIEW',
+            review_round = review_round + 1,
+            review_entered_at = NOW(),
+            expire_at = DATE_ADD(NOW(), INTERVAL 30 DAY),
+            update_time = NOW(),
+            <if test="title != null">title = #{title},</if>
+            <if test="description != null">description = #{description},</if>
+            <if test="images != null">images = #{images},</if>
+            <if test="price != null">price = #{price},</if>
+        </set>
+        WHERE product_id = #{productId}
+          AND state = 'ON_SALE'
+    </update>
+
+    <!-- 上架后仅改价：立即生效（状态不变、不进审核、无通知） -->
+    <update id="updateOnSalePrice">
+        UPDATE product
+        SET price = #{price},
+            update_time = NOW()
+        WHERE product_id = #{productId}
+          AND state = 'ON_SALE'
+    </update>
+
+    <update id="lock">
+        UPDATE product
+        SET state = 'LOCKED',
+            update_time = NOW()
+        WHERE product_id = #{productId}
+          AND state = 'ON_SALE'
+    </update>
+
+    <update id="release">
+        UPDATE product
+        SET state = 'ON_SALE',
+            update_time = NOW()
+        WHERE product_id = #{productId}
+          AND state = 'LOCKED'
+    </update>
+
+    <update id="lockToSold">
+        UPDATE product
+        SET state = 'SOLD',
+            update_time = NOW()
+        WHERE product_id = #{productId}
+          AND state = 'LOCKED'
+    </update>
+
+    <select id="selectPage" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+        SELECT <include refid="baseColumns"/>,
+               u.nickname AS seller_nickname, u.avatar AS seller_avatar
+        FROM product p
+        <include refid="viewCountJoin"/>
+        LEFT JOIN bs_user u ON p.user_id = u.user_id
+        WHERE p.state = 'ON_SALE'
+        <if test="category != null">
+            AND p.category = #{category}
+        </if>
+        <if test="minPrice != null">
+            AND p.price &gt;= #{minPrice}
+        </if>
+        <if test="maxPrice != null">
+            AND p.price &lt;= #{maxPrice}
+        </if>
+        ORDER BY
+        <choose>
+            <!-- 五档排序（market-feed-uv 票 04）与索引路径语义同构：热度 = 浏览 UV 数、tie-break 同向。
+                 已知口径差：时间键这里取主表 create_time，索引取 feed_time（进入当前可见轮的通过时刻）——
+                 降级本就发生在「索引不可用」时，拿不到 feed_time，只能取主表最近似的时刻；
+                 tie-break 的 id 与 product_id 在本库恒等（sql.md 主键口径：业务 ID 与物理自增同值），实际同一列 -->
+            <when test="sort == 'hot'">IFNULL(pvc.view_count, 0) DESC, p.id DESC</when>
+            <when test="sort == 'price_asc'">p.price ASC, p.id ASC</when>
+            <when test="sort == 'price_desc'">p.price DESC, p.id DESC</when>
+            <when test="sort == 'time_asc'">p.create_time ASC, p.id ASC</when>
+            <otherwise>p.create_time DESC, p.id DESC</otherwise>
+        </choose>
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <!-- 闲置推荐页索引序扫描（market-feed-uv 票 04）：state 过滤 + (排序键, product_id) 索引序 range scan。
+         五档排序共用一条语句——热度 (state, view_count, product_id)、最新/最早 (state, feed_time, product_id)
+         正向/反向扫描、价格升降 (state, price, product_id)；续页谓词与排序方向同构（降序 &lt;、升序 &gt;），
+         配合 ORDER BY 的列序方向才能走 range scan 而不是全表 filesort。排序键随行带出，供编下一页游标 -->
+    <select id="selectFeedIndex" resultType="com.betterschool.domain.trade.model.valobj.ProductFeedIndexItemVO">
+        SELECT product_id, feed_time, price, view_count
+        FROM product_feed_index
+        WHERE state = 'ON_SALE'
+        <if test="cursor != null and !cursor.isFirstPage()">
+            <choose>
+                <when test="sort == 'hot'">
+                    AND (view_count &lt; #{cursor.viewCount}
+                        OR (view_count = #{cursor.viewCount} AND product_id &lt; #{cursor.productId}))
+                </when>
+                <when test="sort == 'time_asc'">
+                    AND (feed_time &gt; #{cursor.feedTime}
+                        OR (feed_time = #{cursor.feedTime} AND product_id &gt; #{cursor.productId}))
+                </when>
+                <when test="sort == 'price_asc'">
+                    AND (price &gt; #{cursor.price}
+                        OR (price = #{cursor.price} AND product_id &gt; #{cursor.productId}))
+                </when>
+                <when test="sort == 'price_desc'">
+                    AND (price &lt; #{cursor.price}
+                        OR (price = #{cursor.price} AND product_id &lt; #{cursor.productId}))
+                </when>
+                <otherwise>
+                    AND (feed_time &lt; #{cursor.feedTime}
+                        OR (feed_time = #{cursor.feedTime} AND product_id &lt; #{cursor.productId}))
+                </otherwise>
+            </choose>
+        </if>
+        ORDER BY
+        <choose>
+            <when test="sort == 'hot'">view_count DESC, product_id DESC</when>
+            <when test="sort == 'time_asc'">feed_time ASC, product_id ASC</when>
+            <when test="sort == 'price_asc'">price ASC, product_id ASC</when>
+            <when test="sort == 'price_desc'">price DESC, product_id DESC</when>
+            <otherwise>feed_time DESC, product_id DESC</otherwise>
+        </choose>
+        LIMIT #{limit}
+    </select>
+
+    <select id="count" resultType="long">
+        SELECT COUNT(1)
+        FROM product
+        WHERE state = 'ON_SALE'
+        <if test="category != null">
+            AND category = #{category}
+        </if>
+        <if test="minPrice != null">
+            AND price &gt;= #{minPrice}
+        </if>
+        <if test="maxPrice != null">
+            AND price &lt;= #{maxPrice}
+        </if>
+    </select>
+
+    <!-- 我发布的商品（卖家视角）：含待审/草稿/被拒等自己的全部状态，排除软删，按发布时间倒序 -->
+    <select id="selectPageBySeller" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+        SELECT <include refid="baseColumns"/>,
+               u.nickname AS seller_nickname, u.avatar AS seller_avatar
+        FROM product p
+        <include refid="viewCountJoin"/>
+        LEFT JOIN bs_user u ON p.user_id = u.user_id
+        WHERE p.user_id = #{userId}
+          AND p.state != 'DELETED'
+        ORDER BY p.create_time DESC, p.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countBySeller" resultType="long">
+        SELECT COUNT(1)
+        FROM product
+        WHERE user_id = #{userId}
+          AND state != 'DELETED'
+    </select>
+
+    <!-- 某用户在售商品（作者主页「闲置」tab，访客口径）：仅 ON_SALE，草稿/待审/被拒/锁定/已售一律不外露 -->
+    <select id="selectOnSalePageByUser" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+        SELECT <include refid="baseColumns"/>,
+               u.nickname AS seller_nickname, u.avatar AS seller_avatar
+        FROM product p
+        <include refid="viewCountJoin"/>
+        LEFT JOIN bs_user u ON p.user_id = u.user_id
+        WHERE p.user_id = #{userId}
+          AND p.state = 'ON_SALE'
+        ORDER BY p.create_time DESC, p.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countOnSaleByUser" resultType="long">
+        SELECT COUNT(1)
+        FROM product
+        WHERE user_id = #{userId}
+          AND state = 'ON_SALE'
+    </select>
+
+    <insert id="insertFavorite">
+        INSERT IGNORE INTO product_favorite (product_id, user_id, create_time, update_time)
+        VALUES (#{productId}, #{userId}, NOW(), NOW())
+    </insert>
+
+    <delete id="deleteFavorite">
+        DELETE FROM product_favorite
+        WHERE product_id = #{productId}
+          AND user_id = #{userId}
+    </delete>
+
+    <select id="existsFavorite" resultType="int">
+        SELECT COUNT(1)
+        FROM product_favorite
+        WHERE product_id = #{productId}
+          AND user_id = #{userId}
+    </select>
+
+    <select id="countFavorites" resultType="long">
+        SELECT COUNT(1)
+        FROM product_favorite
+        WHERE product_id = #{productId}
+    </select>
+
+    <select id="selectFavoritesByUser" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+        SELECT <include refid="baseColumns"/>,
+               u.nickname AS seller_nickname, u.avatar AS seller_avatar
+        FROM product_favorite f
+        INNER JOIN product p ON f.product_id = p.product_id
+        <include refid="viewCountJoin"/>
+        LEFT JOIN bs_user u ON p.user_id = u.user_id
+        WHERE f.user_id = #{userId}
+          AND p.state != 'DELETED'
+        ORDER BY f.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <!-- ── 商品浏览 UV 三步（market-feed-uv 票 02，照帖子 insertViewHistory / touchViewedAt / upsertViewCount 先例）── -->
+
+    <!-- 第一步：UV 明细批量写（合并器一组一个事务的第一步）：同商品 N 个用户一条语句。
+         INSERT IGNORE 的裁决与帖子同理：(user_id, product_id) 主键撞了就不插，
+         影响行数 = 本组真正新增的 UV 数，加速列只按它增量（重复浏览不重复计） -->
+    <insert id="insertProductViewHistory">
+        INSERT IGNORE INTO product_view_history (user_id, product_id, viewed_at)
+        VALUES
+        <foreach collection="userIds" item="userId" separator=",">
+            (#{userId}, #{productId}, NOW())
+        </foreach>
+    </insert>
+
+    <!-- 第二步：刷新本组全部键的浏览时刻（含刚插入的行）——重复浏览的唯一可见效果就是 viewed_at 变新 -->
+    <update id="touchProductViewedAt">
+        UPDATE product_view_history
+        SET viewed_at = NOW()
+        WHERE product_id = #{productId}
+          AND user_id IN
+        <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
+    </update>
+
+    <!-- 第三步：加速列 upsert（行懒建，与 post_view_count 同款 ODKU）；增量 = insertProductViewHistory
+         的影响行数，不是 ODKU 的 affected rows——同秒重复刷 viewed_at 会把 ODKU 的 affected rows 打乱 -->
+    <update id="upsertProductViewCount">
+        INSERT INTO product_view_count (product_id, view_count, create_time, update_time)
+        VALUES (#{productId}, #{delta}, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            view_count  = view_count + #{delta},
+            update_time = NOW()
+    </update>
+
+    <!-- 已读灰显批量回显（market-feed-uv 票 05，照帖子 selectViewedPostIds）：明细表主键 (user_id, product_id)
+         前缀先钉人、再按页内 id 集合 IN，一页一次查询，不做 N+1 -->
+    <select id="selectViewedProductIds" resultType="long">
+        SELECT product_id
+        FROM product_view_history
+        WHERE user_id = #{userId}
+          AND product_id IN
+        <foreach collection="productIds" item="productId" open="(" separator="," close=")">#{productId}</foreach>
+    </select>
+
+    <!-- ── feed 异构索引同事务直写（market-feed-uv 票 03：索引行与 product 行同库，
+         状态流转 / 改价 / 浏览合并事务带写，照帖子 post_feed_index 先例）── -->
+
+    <!-- 审核通过：行诞生 / 翻回 ON_SALE。INSERT...SELECT 从 product 行取 price 快照（approve 彼时的价格）；
+         feed_time = 本次通过时刻——行诞生落第一次，重提再通过（relist / 在售改内容回审 / 下架后重提）
+         经 ODKU 刷新为「进入当前对外可见轮」的时刻（schema 注释口径，与票 01 回填、票 06 重建的
+         MAX(APPROVE) 一致；帖子先例不刷新是因其 ODKU 不可达，商品的重提是正常路径）。
+         ODKU 不碰 view_count（浏览合并事务旁路独占维护） -->
+    <update id="upsertFeedIndexOnApprove">
+        INSERT INTO product_feed_index (product_id, state, feed_time, price, view_count, update_time)
+        SELECT p.product_id, 'ON_SALE', NOW(), p.price, 0, NOW()
+        FROM product p
+        WHERE p.product_id = #{productId}
+        ON DUPLICATE KEY UPDATE
+            state       = 'ON_SALE',
+            feed_time   = NOW(),
+            price       = VALUES(price),
+            update_time = NOW()
+    </update>
+
+    <!-- 状态快照同步：镜像 product 的新状态（LOCKED / SOLD / PENDING_REVIEW / DRAFT / REJECTED / DELETED，
+         feed 只查 ON_SALE）。行不存在（从未通过审）= 0 行静默，不 upsert——未通过过的商品不该凭空进索引 -->
+    <update id="updateFeedIndexState">
+        UPDATE product_feed_index
+        SET state       = #{state},
+            update_time = NOW()
+        WHERE product_id = #{productId}
+    </update>
+
+    <!-- 在售改价旁路同步（立即生效不进审核）：纯 UPDATE（ON_SALE 行必存在——行诞生于通过事务）。
+         非在售态的价格变更（草稿编辑、改内容回审混提新价）不在此同步：期间行不可见，
+         恢复可见由 approve 语句的 price 快照兜住，不产生漂移窗口 -->
+    <update id="updateFeedIndexPrice">
+        UPDATE product_feed_index
+        SET price       = #{price},
+            update_time = NOW()
+        WHERE product_id = #{productId}
+    </update>
+
+    <!-- 浏览合并事务旁路 ±N：纯 UPDATE 不 upsert；命中 0 行 = 索引行缺失（未过审商品被本人浏览、
+         或存量异常），调用方落 warn 交重建 job（票 06），不在写路径凭空补行 -->
+    <update id="updateFeedIndexViewCount">
+        UPDATE product_feed_index
+        SET view_count  = view_count + #{delta},
+            update_time = NOW()
+        WHERE product_id = #{productId}
+    </update>
+
+    <!-- ── feed 索引全量重建（market-feed-uv 票 06：兜底恢复手段，照帖子 IPostDao 的 rebuildFeedIndex 样板手动触发）── -->
+
+    <!-- 重建第一步：清空索引表。用 DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉与重灌语句的原子性 -->
+    <delete id="clearFeedIndex">
+        DELETE FROM product_feed_index
+    </delete>
+
+    <!-- 重灌：一商品一行 1:1 投影。行集 = ON_SALE 商品 ∪ 有过审批通过的商品（运行期语义：通过事务才诞生行、
+         之后 state 跟随流转、行不消失；从未通过审的待审/驳回/草稿商品不凭空进索引）。feed_time 取审核记录
+         里最近一次 APPROVE 时刻（与票 01 回填脚本同口径），查不到审批流水的存量老商品取 create_time 兜底；
+         view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步同时把「过审前被浏览、旁路命中 0 行」
+         漏计的那部分追平（运行期旁路只在本行存在后累加），也与热度排序键的读口径一致 -->
+    <insert id="rebuildFeedIndexProjection">
+        INSERT INTO product_feed_index (product_id, state, feed_time, price, view_count, update_time)
+        SELECT p.product_id,
+               p.state,
+               COALESCE((SELECT MAX(cr.create_time)
+                           FROM content_review cr
+                          WHERE cr.target_type = 'PRODUCT'
+                            AND cr.target_id = p.product_id
+                            AND cr.action = 'APPROVE'),
+                        p.create_time),
+               p.price,
+               COALESCE(pvc.view_count, 0),
+               NOW()
+          FROM product p
+          LEFT JOIN product_view_count pvc ON pvc.product_id = p.product_id
+         WHERE p.state = 'ON_SALE'
+            OR EXISTS (SELECT 1
+                         FROM content_review cr2
+                        WHERE cr2.target_type = 'PRODUCT'
+                          AND cr2.target_id = p.product_id
+                          AND cr2.action = 'APPROVE')
+    </insert>
+
+    <!-- 浏览 UV 加速列校准第一步：清掉没有明细行的孤儿计数行（懒建行口径：无浏览不建行） -->
+    <delete id="deleteViewCountsMissingHistory">
+        DELETE FROM product_view_count
+         WHERE NOT EXISTS (SELECT 1
+                             FROM product_view_history h
+                            WHERE h.product_id = product_view_count.product_id)
+    </delete>
+
+    <!-- 重灌：product_view_count 重投影 = product_view_history 行数（ODKU：缺行补建、漂移值刷新、
+         已对齐的行落回同值，幂等不动点） -->
+    <insert id="recalibrateViewCounts">
+        INSERT INTO product_view_count (product_id, view_count, create_time, update_time)
+        SELECT h.product_id, COUNT(*), NOW(), NOW()
+          FROM product_view_history h
+         GROUP BY h.product_id
+        ON DUPLICATE KEY UPDATE
+            view_count  = VALUES(view_count),
+            update_time = NOW()
+    </insert>
+
+</mapper>

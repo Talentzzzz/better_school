@@ -1,0 +1,17 @@
+{
+  "quota_after_merge": {
+    "waiting_qty": 1,
+    "issued_qty": 0,
+    "surplus_qty": 9
+  },
+  "quota_detail": [
+    {
+      "id": "2",
+      "inv_id": "8112",
+      "bucket_id": "0",
+      "quantity": "1",
+      "state": "1"
+    }
+  ],
+  "expect": "waiting_qty 0→1（或被确认消费后的等价态 issued+1）"
+}

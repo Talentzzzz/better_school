@@ -1,0 +1,39 @@
+{
+  "targetType": "COMMENT",
+  "total": 3,
+  "items": [
+    {
+      "targetType": "COMMENT",
+      "targetId": 1,
+      "authorId": 2,
+      "authorNickname": "冒烟路人",
+      "content": "干净评论内容 SMOKE17CLEAN R1007000217259",
+      "reward": null,
+      "images": [],
+      "status": "PENDING_REVIEW",
+      "createdAt": "2026-10-07T00:02:24"
+    },
+    {
+      "targetType": "COMMENT",
+      "targetId": 4,
+      "authorId": 2,
+      "authorNickname": "冒烟路人",
+      "content": "干净评论内容 SMOKE17CLEAN R100700071168",
+      "reward": null,
+      "images": [],
+      "status": "PENDING_REVIEW",
+      "createdAt": "2026-10-07T00:07:18"
+    },
+    {
+      "targetType": "COMMENT",
+      "targetId": 5,
+      "authorId": 2,
+      "authorNickname": "冒烟路人",
+      "content": "干净评论内容二，待驳回 SMOKE17CLEAN R100700071168",
+      "reward": null,
+      "images": [],
+      "status": "PENDING_REVIEW",
+      "createdAt": "2026-10-07T00:07:18"
+    }
+  ]
+}

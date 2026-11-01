@@ -1,0 +1,543 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.moderation.IModerationDao">
+
+    <!-- 审核动作记录：uk_target_action_round(target_type,target_id,action,review_round) 冲突 = 该轮已记录过
+         （INSERT IGNORE 幂等，审计只插一次；review_round 取业务表当前的审核轮次（= 第 N 次进入待审），
+         重放裁决同轮次撞 uk 自然幂等跳过；author_id 冗余作者列，spec §5.1） -->
+    <insert id="insertIgnoreReview" parameterType="com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT IGNORE INTO content_review (target_type, target_id, author_id, review_round, action, source, operator_id, reason, reason_code, create_time, update_time)
+        VALUES (#{targetType}, #{targetId}, #{authorId}, #{reviewRound}, #{action}, #{source}, #{operatorId}, #{reason}, #{reasonCode}, #{createTime}, #{updateTime})
+    </insert>
+
+    <!-- 审核工单入池：uk_target_round(target_type,target_id,review_round) 冲突 = 同轮已开单
+         （INSERT IGNORE 幂等，0 行不报错；工单态恒 PENDING，claim/租约列走默认值） -->
+    <insert id="insertIgnoreTask" parameterType="com.betterschool.infrastructure.dao.moderation.po.ReviewTaskPO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT IGNORE INTO review_task
+            (target_type, target_id, review_round, author_id, source, claim_state, entered_at, create_time, update_time)
+        VALUES (#{targetType}, #{targetId}, #{reviewRound}, #{authorId}, #{source}, 'PENDING',
+                #{enteredAt}, #{createTime}, #{updateTime})
+    </insert>
+
+    <!-- 入池前清旧轮遗留：同内容 review_round 不同的在途工单停 DONE（同轮重提=新轮次=新工单行，旧工单不留在池） -->
+    <update id="closeStaleRoundTasks">
+        UPDATE review_task
+        SET claim_state = 'DONE', decided_at = NOW(), update_time = NOW()
+        WHERE target_type = #{targetType}
+          AND target_id = #{targetId}
+          AND review_round &lt;&gt; #{reviewRound}
+          AND claim_state IN ('PENDING', 'CLAIMED')
+    </update>
+
+    <!-- 出池关单：该目标全部在途工单停 DONE（裁决完成/内容退出待审；幂等，0 行无害） -->
+    <update id="closeOpenTasks">
+        UPDATE review_task
+        SET claim_state = 'DONE', decided_at = NOW(), update_time = NOW()
+        WHERE target_type = #{targetType}
+          AND target_id = #{targetId}
+          AND claim_state IN ('PENDING', 'CLAIMED')
+    </update>
+
+    <!-- 领单候选（spec §5.3 ①）：池内最早待审工单（FIFO），类型只作过滤器不做优先级插队；
+         id ASC 定 entered_at 同刻的稳定次序。单类型走 idx_queue_type，跨类型走 idx_queue -->
+    <select id="selectClaimCandidateId" resultType="java.lang.Long">
+        SELECT id
+        FROM review_task
+        WHERE claim_state = 'PENDING'
+        <if test="targetType != null">
+            AND target_type = #{targetType}
+        </if>
+        ORDER BY entered_at ASC, id ASC
+        LIMIT 1
+    </select>
+
+    <!-- 领单抢占（spec §5.3 ②）：条件 UPDATE 命中 PK，影响行数 1 者赢，并发下仅一人成功
+         （败者的 UPDATE 在行锁上等提交后重判 claim_state，0 行落空）。
+         租约 5min 从领单时刻起算；entered_at 不动（回收不改，等待时长继续累加） -->
+    <update id="claimById">
+        UPDATE review_task
+        SET claim_by = #{claimBy}, claim_state = 'CLAIMED', claim_seq = claim_seq + 1,
+            lease_expire_at = DATE_ADD(NOW(), INTERVAL #{leaseMinutes} MINUTE), update_time = NOW()
+        WHERE id = #{taskId}
+          AND claim_state = 'PENDING'
+    </update>
+
+    <!-- 领单后同事务读回领单轮次（复合 bizId {taskId}:{claimSeq} 的另一半） -->
+    <select id="selectClaimSeqById" resultType="int">
+        SELECT claim_seq
+        FROM review_task
+        WHERE id = #{taskId}
+    </select>
+
+    <!-- 三条回收路径（惰性兜底/超时回调/主动放回）共用的放回 SET 块：口径统一「清持单人/租约、recycle_count+1、
+         达 3 次置 escalated」（spec §5.2 回收阈值 3，与 ReviewTaskPoolStore.ESCALATE_RECYCLE_THRESHOLD 同源）。
+         escalated 用 recycle_count + 1 显式判定且写在 +1 之前，不依赖 MySQL SET 的求值顺序 -->
+    <sql id="recycleSet">
+        SET claim_state = 'PENDING', claim_by = NULL, lease_expire_at = NULL,
+            escalated = IF(recycle_count + 1 &gt;= 3, 1, escalated),
+            recycle_count = recycle_count + 1,
+            update_time = NOW()
+    </sql>
+
+    <!-- 惰性兜底（spec §5.3 claim 前顺带一行，几乎免费）：租约已过期仍处 CLAIMED 的行放回池，
+         防超时中心回调延迟/丢失把工单卡死。回收口径与回调一致（走 recycleSet） -->
+    <update id="recycleExpiredLeases">
+        UPDATE review_task
+        <include refid="recycleSet"/>
+        WHERE claim_state = 'CLAIMED'
+          AND lease_expire_at &lt; NOW()
+    </update>
+
+    <!-- 回调回收（spec §5.3 轮次守卫）：claim_seq 守卫使陈旧轮次回调命中 0 行＝幂等成功零副作用
+         （已裁决 DONE/已放回/已按新轮次重领都打不中） -->
+    <update id="recycleByRound">
+        UPDATE review_task
+        <include refid="recycleSet"/>
+        WHERE id = #{taskId}
+          AND claim_state = 'CLAIMED'
+          AND claim_seq = #{claimSeq}
+    </update>
+
+    <!-- 主动放回（spec §5.2 状态机「回收」边之一）：持有人守卫——非持有人/已裁决/已回收打不中。
+         放回与租约超时同口径计 recycle_count（状态机图：两条回 PENDING 边都 +1） -->
+    <update id="releaseByClaimer">
+        UPDATE review_task
+        <include refid="recycleSet"/>
+        WHERE id = #{taskId}
+          AND claim_state = 'CLAIMED'
+          AND claim_by = #{claimBy}
+    </update>
+
+    <!-- 池内已置需人工干预标记的在池工单数（惰性兜底批量回收后告警用） -->
+    <select id="countEscalatedPending" resultType="int">
+        SELECT COUNT(1)
+        FROM review_task
+        WHERE escalated = 1
+          AND claim_state = 'PENDING'
+    </select>
+
+    <!-- 举报单：uk_reporter_target(reporter_id,target_type,target_id) 冲突 = 重复举报（INSERT IGNORE 幂等） -->
+    <insert id="insertIgnoreReport" parameterType="com.betterschool.infrastructure.dao.moderation.po.ContentReportPO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT IGNORE INTO content_report (target_type, target_id, author_id, reporter_id, reason, content_snapshot, status, create_time, update_time)
+        VALUES (#{targetType}, #{targetId}, #{authorId}, #{reporterId}, #{reason}, #{contentSnapshot}, 'PENDING', #{createTime}, #{updateTime})
+    </insert>
+
+    <!-- 核实：PENDING → PROCESSED（条件 UPDATE，影响行数 1 = 本次刚核实） -->
+    <update id="processById">
+        UPDATE content_report
+        SET status = 'PROCESSED', handler_id = #{handlerId}, handled_at = NOW(), update_time = NOW()
+        WHERE id = #{reportId}
+          AND status = 'PENDING'
+    </update>
+
+    <!-- 忽略：PENDING → IGNORED -->
+    <update id="ignoreById">
+        UPDATE content_report
+        SET status = 'IGNORED', handler_id = #{handlerId}, handled_at = NOW(), update_time = NOW()
+        WHERE id = #{reportId}
+          AND status = 'PENDING'
+    </update>
+
+    <select id="selectReportById" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReportPO">
+        SELECT id, target_type, target_id, author_id, reporter_id, reason, content_snapshot,
+               status, handler_id, handled_at, create_time, update_time
+        FROM content_report
+        WHERE id = #{reportId}
+    </select>
+
+    <!-- 一内容一罚判定：同 target 举报单是否已有 REPORT_CONFIRMED 流水（直查 user_credit_detail） -->
+    <select id="existsProcessedCreditLog" resultType="int">
+        SELECT COUNT(1)
+        FROM user_credit_detail
+        WHERE user_id = #{authorId}
+          AND reason_type = 'REPORT_CONFIRMED'
+          AND ref_id IN (SELECT id
+                         FROM content_report
+                         WHERE target_type = #{targetType}
+                           AND target_id = #{targetId})
+    </select>
+
+    <!-- 审核队列：读 review_task（工单态 PENDING + 类型过滤 + entered_at 先到先审，spec §5.1 队列口径切换）。
+         素材仍联业务表实时直取（工单只存定位与派单态）；status 返回业务表 state（与原接口口径兼容）。
+         targetType 为空 = 跨类型取候选（UNION ALL 后按 entered_at 全局 FIFO）。
+         索引：单类型走 idx_queue_type(claim_state,target_type,entered_at)，跨类型走 idx_queue(claim_state,entered_at) -->
+    <sql id="queuePost">
+        SELECT 'POST' AS target_type, rt.id AS task_id, rt.target_id, rt.review_round,
+               rt.author_id, u.nickname AS author_nickname,
+               CONCAT(COALESCE(p.title, ''), p.content) AS content,
+               NULL AS reward, p.images, p.state AS status, p.create_time,
+               rt.entered_at
+        FROM review_task rt
+        JOIN post p ON p.post_id = rt.target_id
+        LEFT JOIN bs_user u ON u.user_id = rt.author_id
+        WHERE rt.claim_state = 'PENDING'
+          AND rt.target_type = 'POST'
+          AND p.state = 'PENDING_REVIEW'
+    </sql>
+    <sql id="queueComment">
+        SELECT 'COMMENT' AS target_type, rt.id AS task_id, rt.target_id, rt.review_round,
+               rt.author_id, u.nickname AS author_nickname,
+               c.content AS content, NULL AS reward, NULL AS images, c.state AS status, c.create_time,
+               rt.entered_at
+        FROM review_task rt
+        JOIN post_comment c ON c.comment_id = rt.target_id
+        LEFT JOIN bs_user u ON u.user_id = rt.author_id
+        WHERE rt.claim_state = 'PENDING'
+          AND rt.target_type = 'COMMENT'
+          AND c.state = 'PENDING_REVIEW'
+    </sql>
+    <sql id="queueProduct">
+        SELECT 'PRODUCT' AS target_type, rt.id AS task_id, rt.target_id, rt.review_round,
+               rt.author_id, u.nickname AS author_nickname,
+               CONCAT(COALESCE(p.title, ''), p.description) AS content,
+               p.price AS reward, p.images, p.state AS status, p.create_time,
+               rt.entered_at
+        FROM review_task rt
+        JOIN product p ON p.product_id = rt.target_id
+        LEFT JOIN bs_user u ON u.user_id = rt.author_id
+        WHERE rt.claim_state = 'PENDING'
+          AND rt.target_type = 'PRODUCT'
+          AND p.state = 'PENDING_REVIEW'
+    </sql>
+    <sql id="queueErrand">
+        SELECT 'ERRAND' AS target_type, rt.id AS task_id, rt.target_id, rt.review_round,
+               rt.author_id, u.nickname AS author_nickname,
+               e.description AS content, e.reward, e.images, e.state AS status, e.create_time,
+               rt.entered_at
+        FROM review_task rt
+        JOIN errand_order e ON e.errand_order_id = rt.target_id
+        LEFT JOIN bs_user u ON u.user_id = rt.author_id
+        WHERE rt.claim_state = 'PENDING'
+          AND rt.target_type = 'ERRAND'
+          AND e.state = 'PENDING_REVIEW'
+    </sql>
+
+    <select id="selectReviewQueue" resultType="com.betterschool.infrastructure.dao.moderation.po.ReviewQueueItemPO">
+        <choose>
+            <when test="targetType == 'POST'">
+                <include refid="queuePost"/>
+                ORDER BY entered_at ASC, task_id ASC
+            </when>
+            <when test="targetType == 'COMMENT'">
+                <include refid="queueComment"/>
+                ORDER BY entered_at ASC, task_id ASC
+            </when>
+            <when test="targetType == 'PRODUCT'">
+                <include refid="queueProduct"/>
+                ORDER BY entered_at ASC, task_id ASC
+            </when>
+            <when test="targetType == 'ERRAND'">
+                <include refid="queueErrand"/>
+                ORDER BY entered_at ASC, task_id ASC
+            </when>
+            <otherwise>
+                SELECT * FROM (
+                    <include refid="queuePost"/>
+                    UNION ALL
+                    <include refid="queueComment"/>
+                    UNION ALL
+                    <include refid="queueProduct"/>
+                    UNION ALL
+                    <include refid="queueErrand"/>
+                ) t
+                ORDER BY t.entered_at ASC, t.task_id ASC
+            </otherwise>
+        </choose>
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countReviewQueue" resultType="long">
+        SELECT COUNT(1)
+        FROM review_task
+        WHERE claim_state = 'PENDING'
+        <if test="targetType != null">
+            AND target_type = #{targetType}
+        </if>
+    </select>
+
+    <!-- 各类型积压计数（驱动审核端计数条与派单信号的积压数） -->
+    <select id="countBacklogByType" resultType="map">
+        SELECT target_type AS targetType, COUNT(1) AS cnt
+        FROM review_task
+        WHERE claim_state = 'PENDING'
+        GROUP BY target_type
+    </select>
+
+    <!-- 待审等待统计（票 11 可观测：队列深度总量 / 平均等待秒 / 最老等待秒；池空 AVG/MAX 为 NULL 落 0） -->
+    <select id="selectPendingWaitStats" resultType="map">
+        SELECT COUNT(1) AS pendingCnt,
+               COALESCE(AVG(TIMESTAMPDIFF(SECOND, entered_at, NOW())), 0) AS avgWaitSeconds,
+               COALESCE(MAX(TIMESTAMPDIFF(SECOND, entered_at, NOW())), 0) AS oldestWaitSeconds
+        FROM review_task
+        WHERE claim_state = 'PENDING'
+    </select>
+
+    <select id="selectReviewDetail" resultType="com.betterschool.infrastructure.dao.moderation.po.ReviewQueueItemPO">
+        <choose>
+            <when test="targetType == 'POST'">
+                SELECT 'POST' AS target_type, p.post_id AS target_id,
+                       p.review_round AS review_round,
+                       p.user_id AS author_id,
+                       u.nickname AS author_nickname,
+                       CONCAT(COALESCE(p.title, ''), p.content) AS content,
+                       NULL AS reward, p.images, p.state, p.create_time
+                FROM post p
+                LEFT JOIN bs_user u ON p.user_id = u.user_id
+                WHERE p.post_id = #{targetId}
+            </when>
+            <when test="targetType == 'COMMENT'">
+                SELECT 'COMMENT' AS target_type, c.comment_id AS target_id, 1 AS review_round, c.user_id AS author_id,
+                       u.nickname AS author_nickname,
+                       c.content AS content, NULL AS reward, c.state AS status, c.create_time
+                FROM post_comment c
+                LEFT JOIN bs_user u ON c.user_id = u.user_id
+                WHERE c.comment_id = #{targetId}
+            </when>
+            <when test="targetType == 'PRODUCT'">
+                SELECT 'PRODUCT' AS target_type, p.product_id AS target_id,
+                       p.review_round AS review_round,
+                       p.user_id AS author_id,
+                       u.nickname AS author_nickname,
+                       CONCAT(COALESCE(p.title, ''), p.description) AS content,
+                       p.price AS reward, p.images, p.state AS status, p.create_time
+                FROM product p
+                LEFT JOIN bs_user u ON p.user_id = u.user_id
+                WHERE p.product_id = #{targetId}
+            </when>
+            <otherwise>
+                SELECT 'ERRAND' AS target_type, e.errand_order_id AS target_id, 1 AS review_round, e.publisher_id AS author_id,
+                       u.nickname AS author_nickname,
+                       e.description AS content, e.reward, e.images, e.state AS status, e.create_time
+                FROM errand_order e
+                LEFT JOIN bs_user u ON e.publisher_id = u.user_id
+                WHERE e.errand_order_id = #{targetId}
+            </otherwise>
+        </choose>
+    </select>
+
+    <!-- 工单按 id 定位（详情聚合入口） -->
+    <select id="selectTaskById" resultType="com.betterschool.infrastructure.dao.moderation.po.ReviewTaskPO">
+        SELECT id, target_type, target_id, review_round, author_id, source, claim_state, claim_by, claim_seq,
+               lease_expire_at, recycle_count, escalated, entered_at, decided_at, create_time, update_time
+        FROM review_task
+        WHERE id = #{taskId}
+    </select>
+
+    <!-- 反查审核员持有的在途工单（spec §5.2 遗留入口收口）：claim_by=我 且 claim_state='CLAIMED'。
+         uk_target_round 保证同轮一行，正常至多一张在途；id DESC 取最新轮兜底 -->
+    <select id="selectHeldTaskByTarget" resultType="com.betterschool.infrastructure.dao.moderation.po.ReviewTaskPO">
+        SELECT id, target_type, target_id, review_round, author_id, source, claim_state, claim_by, claim_seq,
+               lease_expire_at, recycle_count, escalated, entered_at, decided_at, create_time, update_time
+        FROM review_task
+        WHERE target_type = #{targetType}
+          AND target_id = #{targetId}
+          AND claim_state = 'CLAIMED'
+          AND claim_by = #{claimBy}
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <!-- 持有人守卫关单（spec §5.2 裁决收口 ③）：与裁决（业务行切换 + 审核记录）同事务。
+         双守卫 id + claim_by：租约已回收（回收路径清 claim_by）、非持有人、重放（工单已 DONE）均命中 0 行；
+         关单保留 claim_by（持有快照），重放凭「已 DONE」由用例层分流为幂等成功 -->
+    <update id="closeByHolder">
+        UPDATE review_task
+        SET claim_state = 'DONE', decided_at = NOW(), update_time = NOW()
+        WHERE id = #{taskId}
+          AND claim_state = 'CLAIMED'
+          AND claim_by = #{claimBy}
+    </update>
+
+    <!-- 工单详情内容素材：按类型分支直查（spec §5.1 多类型统一，延续 selectReviewDetail 形态；
+         通用列 = 内容/配图/作者昵称头像/业务行状态，类型专属 = 跑腿悬赏(reward)/评论的所属帖子标题与父评论文本。
+         不筛业务行状态——DONE 工单也要能看；纯只读，不改变任何业务行状态与可见性（工单不承载可见性） -->
+    <sql id="detailPost">
+        SELECT 'POST' AS target_type, p.post_id AS target_id,
+               p.user_id AS author_id, u.nickname AS author_nickname, u.avatar AS author_avatar,
+               CONCAT(COALESCE(p.title, ''), p.content) AS content,
+               p.images, NULL AS reward, p.state AS status,
+               NULL AS context_post_id, NULL AS context_post_title,
+               NULL AS context_parent_id, NULL AS context_parent_content
+        FROM post p
+        LEFT JOIN bs_user u ON p.user_id = u.user_id
+        WHERE p.post_id = #{targetId}
+    </sql>
+    <sql id="detailComment">
+        SELECT 'COMMENT' AS target_type, c.comment_id AS target_id,
+               c.user_id AS author_id, u.nickname AS author_nickname, u.avatar AS author_avatar,
+               c.content AS content, c.images, NULL AS reward, c.state AS status,
+               c.post_id AS context_post_id, p.title AS context_post_title,
+               <!-- parent_id='0' 表示根评论，无父上下文（CASE 无 ELSE 落 NULL）。
+                    uuid-biz-id 票 03：parent_id 已是 VARCHAR，数值比较 &gt; 0 会把 UUID 隐式转数退化为 0（随首字符概率性漏判），必须用字符串不等 -->
+               CASE WHEN c.parent_id &lt;&gt; '0' THEN c.parent_id END AS context_parent_id,
+               pc.content AS context_parent_content
+        FROM post_comment c
+        LEFT JOIN bs_user u ON c.user_id = u.user_id
+        LEFT JOIN post p ON p.post_id = c.post_id
+        LEFT JOIN post_comment pc ON pc.comment_id = c.parent_id
+        WHERE c.comment_id = #{targetId}
+    </sql>
+    <sql id="detailProduct">
+        SELECT 'PRODUCT' AS target_type, p.product_id AS target_id,
+               p.user_id AS author_id, u.nickname AS author_nickname, u.avatar AS author_avatar,
+               CONCAT(COALESCE(p.title, ''), p.description) AS content,
+               p.images, p.price AS reward, p.state AS status,
+               NULL AS context_post_id, NULL AS context_post_title,
+               NULL AS context_parent_id, NULL AS context_parent_content
+        FROM product p
+        LEFT JOIN bs_user u ON p.user_id = u.user_id
+        WHERE p.product_id = #{targetId}
+    </sql>
+    <sql id="detailErrand">
+        SELECT 'ERRAND' AS target_type, e.errand_order_id AS target_id,
+               e.publisher_id AS author_id, u.nickname AS author_nickname, u.avatar AS author_avatar,
+               e.description AS content, e.images, e.reward, e.state AS status,
+               NULL AS context_post_id, NULL AS context_post_title,
+               NULL AS context_parent_id, NULL AS context_parent_content
+        FROM errand_order e
+        LEFT JOIN bs_user u ON e.publisher_id = u.user_id
+        WHERE e.errand_order_id = #{targetId}
+    </sql>
+
+    <select id="selectTaskTargetDetail" resultType="com.betterschool.infrastructure.dao.moderation.po.ReviewTaskTargetPO">
+        <choose>
+            <when test="targetType == 'POST'">
+                <include refid="detailPost"/>
+            </when>
+            <when test="targetType == 'COMMENT'">
+                <include refid="detailComment"/>
+            </when>
+            <when test="targetType == 'PRODUCT'">
+                <include refid="detailProduct"/>
+            </when>
+            <otherwise>
+                <include refid="detailErrand"/>
+            </otherwise>
+        </choose>
+    </select>
+
+    <!-- 同一内容历轮裁决：重提前后各轮各自的结论与拒绝理由（review_round 升序；
+         轮次受业务表 review_round 有界（uk_target_action_round 同轮至多一行），不加 LIMIT -->
+    <select id="selectReviewsByTarget" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO">
+        SELECT id, target_type, target_id, author_id, review_round, action, source, operator_id,
+               reason, reason_code, create_time, update_time
+        FROM content_review
+        WHERE target_type = #{targetType}
+          AND target_id = #{targetId}
+        ORDER BY review_round ASC, id ASC
+    </select>
+
+    <!-- 同一作者历史裁决：author_id 冗余列使按作者聚合单表可查、免 join 工单表（spec §5.1） -->
+    <select id="selectReviewsByAuthor" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO">
+        SELECT id, target_type, target_id, author_id, review_round, action, source, operator_id,
+               reason, reason_code, create_time, update_time
+        FROM content_review
+        WHERE author_id = #{authorId}
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 拒绝理由：同一目标可多轮被拒（轮次幂等键），按最新一次展示 -->
+    <select id="selectRejectReason" resultType="string">
+        SELECT reason
+        FROM content_review
+        WHERE target_type = #{targetType}
+          AND target_id = #{targetId}
+          AND action = 'REJECT'
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <!-- 批量拒绝理由：每个 target 取最新一轮 REJECT 行（列表页免 N+1） -->
+    <select id="selectRejectReasons" resultType="map">
+        SELECT cr.target_id AS targetId, cr.reason
+        FROM content_review cr
+        JOIN (
+            SELECT target_id, MAX(id) AS max_id
+            FROM content_review
+            WHERE target_type = #{targetType}
+              AND action = 'REJECT'
+              AND target_id IN
+              <foreach collection="targetIds" item="id" open="(" separator="," close=")">
+                  #{id}
+              </foreach>
+            GROUP BY target_id
+        ) latest ON latest.max_id = cr.id
+    </select>
+
+    <!-- 举报列表（可按状态过滤） -->
+    <select id="selectReports" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReportPO">
+        SELECT r.id, r.target_type, r.target_id, r.author_id, r.reporter_id, r.reason,
+               r.content_snapshot, r.status, r.handler_id, r.handled_at, r.create_time, r.update_time,
+               ru.nickname AS reporter_nickname, au.nickname AS author_nickname
+        FROM content_report r
+        LEFT JOIN bs_user ru ON r.reporter_id = ru.user_id
+        LEFT JOIN bs_user au ON r.author_id = au.user_id
+        <where>
+            <if test="status != null">
+                r.status = #{status}
+            </if>
+        </where>
+        ORDER BY r.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countReports" resultType="long">
+        SELECT COUNT(1)
+        FROM content_report
+        <where>
+            <if test="status != null">
+                status = #{status}
+            </if>
+        </where>
+    </select>
+
+    <!-- 指派/回收审核员：条件 UPDATE bs_user.role（已是目标角色不生效，幂等） -->
+    <update id="updateUserRole">
+        UPDATE bs_user
+        SET role = #{role},
+            update_time = NOW()
+        WHERE user_id = #{userId}
+          AND role &lt;&gt; #{role}
+    </update>
+
+    <select id="existsUser" resultType="int">
+        SELECT COUNT(1)
+        FROM bs_user
+        WHERE user_id = #{userId}
+    </select>
+
+    <!-- 敏感词：uk_word 冲突 = 已存在（INSERT IGNORE 幂等） -->
+    <insert id="insertIgnoreWord" parameterType="com.betterschool.infrastructure.dao.moderation.po.SensitiveWordPO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT IGNORE INTO sensitive_word (word, enabled, create_time, update_time)
+        VALUES (#{word}, #{enabled}, #{createTime}, #{updateTime})
+    </insert>
+
+    <delete id="deleteWord">
+        DELETE FROM sensitive_word
+        WHERE id = #{wordId}
+    </delete>
+
+    <select id="selectEnabledWords" resultType="string">
+        SELECT word
+        FROM sensitive_word
+        WHERE enabled = 1
+    </select>
+
+    <select id="selectWords" resultType="com.betterschool.infrastructure.dao.moderation.po.SensitiveWordPO">
+        SELECT id, word, enabled, create_time, update_time
+        FROM sensitive_word
+        ORDER BY id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countWords" resultType="long">
+        SELECT COUNT(1)
+        FROM sensitive_word
+    </select>
+
+</mapper>

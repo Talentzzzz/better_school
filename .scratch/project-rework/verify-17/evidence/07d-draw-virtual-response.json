@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "request": {
+    "token": "smoke17-7-virtual-1791302845"
+  },
+  "response": {
+    "code": "200",
+    "info": "成功",
+    "data": {
+      "recordId": 7706668465549841551,
+      "prizeType": "VIRTUAL",
+      "prizeId": 8103,
+      "tier": 3,
+      "name": "60 积分",
+      "pointsAmount": 60
+    }
+  }
+}

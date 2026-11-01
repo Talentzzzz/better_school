@@ -1,0 +1,14 @@
+{
+  "state0_rows": [],
+  "all_rows": [
+    {
+      "id": "3",
+      "inv_id": "8111",
+      "bucket_id": "0",
+      "quantity": "1",
+      "state": "1"
+    }
+  ],
+  "issued_qty_now": 1,
+  "expect": "state=0 quantity=1（合并未跑）/ 等价证据：已合并且 issued_qty=1"
+}

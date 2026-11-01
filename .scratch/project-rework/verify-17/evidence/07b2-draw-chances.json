@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "data": {
+    "available": 3,
+    "todayDrawn": 3
+  },
+  "last_response": {
+    "attempt": 1,
+    "http_status": 200,
+    "response": {
+      "code": "200",
+      "info": "成功",
+      "data": {
+        "available": 3,
+        "todayDrawn": 3
+      }
+    }
+  },
+  "bucket": [
+    {
+      "bucket_id": "932400039706751744",
+      "amount": "3",
+      "remain": "3"
+    }
+  ]
+}

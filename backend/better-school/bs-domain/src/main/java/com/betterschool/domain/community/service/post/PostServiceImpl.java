@@ -1,0 +1,378 @@
+package com.betterschool.domain.community.service.post;
+
+import com.betterschool.domain.community.adapter.port.IUserQueryPort;
+import com.betterschool.domain.community.adapter.repository.ICommunityRepository;
+import com.betterschool.domain.community.model.entity.PostEntity;
+import com.betterschool.domain.community.model.valobj.CommunityUserVO;
+import com.betterschool.domain.community.model.valobj.FeedCursorVO;
+import com.betterschool.domain.community.model.valobj.FeedIndexItemVO;
+import com.betterschool.domain.community.model.valobj.FeedPageVO;
+import com.betterschool.domain.community.model.valobj.LikeStateVO;
+import com.betterschool.domain.community.model.valobj.PostReviewTimeoutVO;
+import com.betterschool.domain.community.model.valobj.PostStatusVO;
+import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.exception.BusinessException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class PostServiceImpl implements ICommunityPostService {
+
+    private static final int MAX_PAGE_SIZE = 50;
+    private static final int SCAN_BATCH_SIZE = 100;
+    private static final int REVIEW_REMINDER_HOURS = 24;
+
+    private final ICommunityRepository communityRepository;
+    private final IUserQueryPort userQueryPort;
+
+    @Override
+    public String publishPost(String userId, String title, String content, List<String> images,
+                              String cover) {
+        // 信用分门槛与同步初筛由 case 层前置校验；先审后发：落库即待审，审核通过时才落搜索同步消息
+        PostEntity postEntity = PostEntity.create(userId, title, content, images, cover);
+        communityRepository.save(postEntity);
+        return postEntity.getPostId();
+    }
+
+    @Override
+    public String savePostDraft(String userId, String title, String content, List<String> images,
+                                String cover) {
+        // 草稿为私有停靠内容：不做初筛、不做信用分门槛（提交时才校验），字段可缺省
+        PostEntity postEntity = PostEntity.createDraft(userId, title, content, images, cover);
+        communityRepository.save(postEntity);
+        return postEntity.getPostId();
+    }
+
+    @Override
+    public void updatePostDraft(String userId, String postId, String title, String content,
+                                List<String> images, String cover) {
+        PostEntity postEntity = getOwnedPostDraft(userId, postId);
+        postEntity.applyDraftContent(title, content, images, cover);
+        communityRepository.updateDraft(postEntity);
+    }
+
+    @Override
+    public PostEntity getOwnedPostDraft(String userId, String postId) {
+        PostEntity postEntity = communityRepository.findPostById(postId);
+        if (postEntity == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND, "草稿不存在");
+        }
+        if (!postEntity.isOwner(userId)) {
+            throw new BusinessException(ResponseCode.FORBIDDEN, "只能操作自己发布的帖子");
+        }
+        if (postEntity.getStatus() != PostStatusVO.DRAFT) {
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅草稿可编辑，待审中的帖子可先撤回再修改");
+        }
+        return postEntity;
+    }
+
+    @Override
+    public void submitPostDraft(String userId, String postId) {
+        // 完整性校验与同步初筛由 case 层前置
+        getOwnedPostDraft(userId, postId);
+        if (!communityRepository.submitDraft(postId)) {
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "草稿状态已变化，请刷新后重试");
+        }
+    }
+
+    @Override
+    public void withdrawPost(String userId, String postId) {
+        PostEntity postEntity = communityRepository.findPostById(postId);
+        if (postEntity == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
+        }
+        if (!postEntity.isOwner(userId)) {
+            throw new BusinessException(ResponseCode.FORBIDDEN, "只能操作自己发布的帖子");
+        }
+        if (postEntity.getStatus() != PostStatusVO.PENDING_REVIEW) {
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅待审中的帖子可撤回");
+        }
+        if (!communityRepository.withdraw(postId)) {
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "帖子状态已变化，请刷新后重试");
+        }
+    }
+
+    @Override
+    public void moveRejectedPostToDraft(String userId, String postId) {
+        PostEntity postEntity = communityRepository.findPostById(postId);
+        if (postEntity == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
+        }
+        if (!postEntity.isOwner(userId)) {
+            throw new BusinessException(ResponseCode.FORBIDDEN, "只能操作自己发布的帖子");
+        }
+        if (postEntity.getStatus() != PostStatusVO.REJECTED) {
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅被拒绝的帖子可转入草稿箱");
+        }
+        if (!communityRepository.rejectToDraft(postId)) {
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "帖子状态已变化，请刷新后重试");
+        }
+    }
+
+    @Override
+    public FeedPageVO listPosts(String sort, String cursor, int page, int pageSize) {
+        String sortType = "hot".equals(sort) ? "hot" : "time";
+        FeedCursorVO cursorVO = cursor == null
+                ? FeedCursorVO.firstPage(sortType)
+                : FeedCursorVO.decode(cursor, sortType);
+        try {
+            return pageByFeedIndex(sortType, cursorVO, page, pageSize);
+        } catch (BusinessException e) {
+            throw e; // 游标非法是调用方错误，不是降级信号
+        } catch (Exception e) {
+            log.warn("feed 索引查询失败，降级 DB 直查：sort={}", sortType, e);
+        }
+        return legacyPage(sortType, page, pageSize);
+    }
+
+    /**
+     * 索引路径：post_feed_index 按 (排序键, post_id) 索引序扫描出 id（多探一行探下页），
+     * 再 {@code listByIds} 批量回查组装、按扫描序重排。下一页游标 = 本页最后一行的排序键锚点，
+     * 只在确认有下一页（探到多一行）时发放；扫描为空 = 游标已越过末尾，返回空页（不发游标）
+     */
+    private FeedPageVO pageByFeedIndex(String sortType, FeedCursorVO cursorVO, int page, int pageSize) {
+        List<FeedIndexItemVO> rows = communityRepository.scanFeedIndex(sortType, cursorVO, pageSize + 1);
+        if (rows.isEmpty()) {
+            return new FeedPageVO(List.of(), null, true);
+        }
+        boolean hasMore = rows.size() > pageSize;
+        if (hasMore) {
+            rows = rows.subList(0, pageSize);
+        }
+        List<String> postIds = rows.stream().map(FeedIndexItemVO::getPostId).toList();
+        Map<String, PostEntity> byId = communityRepository.listByIds(postIds).stream()
+                .collect(Collectors.toMap(PostEntity::getPostId, Function.identity(), (a, b) -> a, HashMap::new));
+        // 索引行缺 post 行（存量异常，重建 job 修）只跳过不补位：游标锚在扫描序上，补位会引入重复
+        List<PostEntity> posts = postIds.stream()
+                .filter(byId::containsKey)
+                .map(byId::get)
+                .toList();
+        String nextCursor = hasMore
+                ? FeedCursorVO.anchorOf(sortType, rows.get(rows.size() - 1)).encode()
+                : null;
+        return new FeedPageVO(posts, nextCursor, true);
+    }
+
+    /** 旧直查路径（降级）：offset 分页，精确 COUNT 由调用方按需另取 */
+    private FeedPageVO legacyPage(String sortType, int page, int pageSize) {
+        int offset = (page - 1) * pageSize;
+        return new FeedPageVO(communityRepository.pageList(sortType, offset, pageSize), null, false);
+    }
+
+    @Override
+    public List<PostEntity> listMyPosts(String userId, int page, int pageSize) {
+        int offset = (page - 1) * pageSize;
+        return communityRepository.pagePostsByUser(userId, offset, pageSize);
+    }
+
+    @Override
+    public long countPosts() {
+        return communityRepository.count();
+    }
+
+    @Override
+    public long countMyPosts(String userId) {
+        return communityRepository.countPostsByUser(userId);
+    }
+
+    @Override
+    public List<PostEntity> listLikedPosts(String userId, int page, int pageSize) {
+        return communityRepository.pageLikedByUser(userId, (page - 1) * pageSize, pageSize);
+    }
+
+    @Override
+    public long countLikedPosts(String userId) {
+        return communityRepository.countLikedByUser(userId);
+    }
+
+    @Override
+    public List<PostEntity> listCommentedPosts(String userId, int page, int pageSize) {
+        return communityRepository.pageCommentedByUser(userId, (page - 1) * pageSize, pageSize);
+    }
+
+    @Override
+    public long countCommentedPosts(String userId) {
+        return communityRepository.countCommentedByUser(userId);
+    }
+
+    @Override
+    public List<PostEntity> listUserPosts(String userId, int page, int pageSize) {
+        return communityRepository.pageNormalByUser(userId, (page - 1) * pageSize, pageSize);
+    }
+
+    @Override
+    public long countUserPosts(String userId) {
+        return communityRepository.countNormalByUser(userId);
+    }
+
+    @Override
+    public List<PostEntity> listUserLikedPosts(String userId, String viewerId, int page, int pageSize) {
+        if (!isLikedVisibleTo(userId, viewerId)) {
+            return List.of();
+        }
+        return communityRepository.pagePublicLikedByUser(userId, (page - 1) * pageSize, pageSize);
+    }
+
+    @Override
+    public long countUserLikedPosts(String userId, String viewerId) {
+        return isLikedVisibleTo(userId, viewerId) ? communityRepository.countPublicLikedByUser(userId) : 0;
+    }
+
+    @Override
+    public PostEntity postDetail(String postId, String currentUserId) {
+        PostEntity postEntity = getVisiblePost(postId, currentUserId);
+        // 浏览计数（UV 口径）：fire-and-forget，入队即返回（窗口过后一组一个事务落明细表 + 加速列）。
+        // 允许丢、不影响本次请求结果，详情页读到的仍是库里的当前值；
+        // 匿名访问（未登录）落不了明细行，按 UV 口径不计入
+        communityRepository.recordPostView(postId, currentUserId);
+        if (currentUserId != null) {
+            postEntity.setLiked(communityRepository.isPostLiked(postId, currentUserId));
+        }
+        return postEntity;
+    }
+
+    @Override
+    public PostEntity getPost(String postId) {
+        return communityRepository.findPostById(postId);
+    }
+
+    @Override
+    public void deletePost(String postId, String currentUserId) {
+        PostEntity postEntity = getVisiblePost(postId, currentUserId);
+        if (!postEntity.isOwner(currentUserId)) {
+            throw new BusinessException(ResponseCode.FORBIDDEN, "只能删除自己发布的帖子");
+        }
+        communityRepository.deleteWithSearchSync(postId);
+    }
+
+    @Override
+    public void approvePost(String postId) {
+        // 条件 UPDATE 先行，0 行时终态判定（并发双审/重试）
+        if (!communityRepository.approveWithSearchSync(postId)) {
+            PostEntity current = communityRepository.findPostById(postId);
+            if (current == null || current.getStatus() == PostStatusVO.DELETED) {
+                throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
+            }
+            if (current.getStatus() == PostStatusVO.NORMAL) {
+                return; // 幂等：已通过
+            }
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "帖子已被驳回或审核状态已变化");
+        }
+    }
+
+    @Override
+    public void rejectPost(String postId) {
+        if (!communityRepository.rejectWithSearchSync(postId)) {
+            PostEntity current = communityRepository.findPostById(postId);
+            if (current == null || current.getStatus() == PostStatusVO.DELETED) {
+                throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
+            }
+            if (current.getStatus() == PostStatusVO.REJECTED) {
+                return; // 幂等：已驳回
+            }
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "帖子已通过或审核状态已变化，无法驳回");
+        }
+    }
+
+    @Override
+    public void forceDeletePost(String postId) {
+        PostEntity postEntity = communityRepository.findPostById(postId);
+        if (postEntity == null) {
+            return; // 幂等：已下架或不存在
+        }
+        communityRepository.forceDeleteWithSearchSync(postId);
+    }
+
+    @Override
+    public List<PostReviewTimeoutVO> listReviewTimeoutPosts() {
+        LocalDateTime cutoff = LocalDateTime.now().minusHours(REVIEW_REMINDER_HOURS);
+        return communityRepository.listReviewTimeoutPosts(cutoff, SCAN_BATCH_SIZE);
+    }
+
+    @Override
+    public void rebuildFeedIndex() {
+        communityRepository.rebuildFeedIndex();
+    }
+
+    @Override
+    public List<PostEntity> listViewHistory(String userId, int page, int pageSize) {
+        return communityRepository.pageViewHistoryByUser(userId, (page - 1) * pageSize, pageSize);
+    }
+
+    @Override
+    public long countViewHistory(String userId) {
+        return communityRepository.countViewHistoryByUser(userId);
+    }
+
+    @Override
+    public void likePost(String postId, String userId) {
+        getNormalPost(postId);
+        // 合并写：窗口合并成一组一事务（唯一键裁决重复 + 计数同事务推进），返回时计数已精确
+        LikeStateVO state = communityRepository.likePostWithMergedCount(postId, userId);
+        if (state == LikeStateVO.DUPLICATE) {
+            // 重复赞是业务结果不是异常：唯一键裁决出来的「已经赞过」，对外语义与改造前一致
+            throw new BusinessException(ResponseCode.PARAM_ERROR, "请勿重复点赞");
+        }
+    }
+
+    @Override
+    public void unlikePost(String postId, String userId) {
+        getNormalPost(postId);
+        if (communityRepository.unlikePostWithMergedCount(postId, userId) == LikeStateVO.NOT_FOUND) {
+            throw new BusinessException(ResponseCode.PARAM_ERROR, "尚未点赞");
+        }
+    }
+
+    @Override
+    public List<String> listLikedPostIds(String userId, List<String> postIds) {
+        return communityRepository.selectLikedPostIds(userId, postIds);
+    }
+
+    @Override
+    public List<String> listViewedPostIds(String userId, List<String> postIds) {
+        return communityRepository.selectViewedPostIds(userId, postIds);
+    }
+
+    private PostEntity getNormalPost(String postId) {
+        PostEntity postEntity = communityRepository.findPostById(postId);
+        if (postEntity == null || postEntity.getStatus() != PostStatusVO.NORMAL) {
+            throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
+        }
+        return postEntity;
+    }
+
+    /** 可见性：NORMAL 全员可见；PENDING_REVIEW/REJECTED 仅作者本人可见（待审/驳回帖不公开） */
+    private PostEntity getVisiblePost(String postId, String currentUserId) {
+        PostEntity postEntity = communityRepository.findPostById(postId);
+        if (postEntity == null) {
+            throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
+        }
+        if (postEntity.getStatus() == PostStatusVO.NORMAL || postEntity.isOwner(currentUserId)) {
+            return postEntity;
+        }
+        throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
+    }
+
+    /**
+     * 隐私开关「公开我的赞过」对他视是否可见：开关关闭且 viewer ≠ owner 时为 false；
+     * viewer = owner（本人看自己）恒 true；profile 读不到（用户不存在）按可见处理（列表本就为空）。
+     * 开关原始值由 user 只读 port 取回，判据留在本域
+     */
+    private boolean isLikedVisibleTo(String ownerId, String viewerId) {
+        if (viewerId != null && viewerId.equals(ownerId)) {
+            return true;
+        }
+        CommunityUserVO owner = userQueryPort.findById(ownerId);
+        return owner == null || !Boolean.FALSE.equals(owner.getShowLiked());
+    }
+}

@@ -1,0 +1,45 @@
+# better-school 分片配置（测试库 better_school_test）——与 main 的 sharding.yaml 同内容，
+# 只有 jdbcUrl 与 databaseName 指测试侧（13306 是同一个 MySQL 容器的测试侧 host 端口，见 docker-compose.yml）。
+# 为什么是两份文件：5.5.x 的库地址写在这种 YAML 里，Spring 的 ${} 占位符到不了驱动解析的那一层。
+# !SINGLE 的必要性、hint 两维路由与「库 × 表」两维表达的硬约束：见 main 的 sharding.yaml 头注释（票 01/02）。
+dataSources:
+  ds0:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://localhost:13306/better_school_test?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: bs123456
+    maximumPoolSize: 20
+    minimumIdle: 2   # 测试侧压低空闲连接（与 dev 的 4 不同是刻意的：测试不常驻，空闲是纯占用）
+    connectionTimeout: 3000
+
+databaseName: better_school_test
+
+rules:
+  - !SINGLE
+    tables:
+      - "*.*.*"
+  - !SHARDING
+    tables:
+      timeout_task:
+        actualDataNodes: ds0.timeout_task_00,ds0.timeout_task_01,ds0.timeout_task_02,ds0.timeout_task_03,ds0.timeout_task_04,ds0.timeout_task_05,ds0.timeout_task_06,ds0.timeout_task_07,ds0.timeout_task_08,ds0.timeout_task_09,ds0.timeout_task_10,ds0.timeout_task_11,ds0.timeout_task_12,ds0.timeout_task_13,ds0.timeout_task_14,ds0.timeout_task_15
+        databaseStrategy:
+          hint:
+            shardingAlgorithmName: timeout-task-db-hint
+        tableStrategy:
+          hint:
+            shardingAlgorithmName: timeout-task-table-hint
+    shardingAlgorithms:
+      timeout-task-db-hint:
+        type: CLASS_BASED
+        props:
+          strategy: HINT
+          algorithmClassName: com.betterschool.infrastructure.sharding.TimeoutTaskDbHintShardingAlgorithm
+      timeout-task-table-hint:
+        type: CLASS_BASED
+        props:
+          strategy: HINT
+          algorithmClassName: com.betterschool.infrastructure.sharding.TimeoutTaskTableHintShardingAlgorithm
+
+props:
+  sql-show: false

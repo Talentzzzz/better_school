@@ -1,0 +1,282 @@
+bs_user	id	bigint	NO		PRI	auto_increment
+bs_user	user_id	bigint	NO		UNI	
+bs_user	phone	varchar(20)	NO		UNI	
+bs_user	nickname	varchar(50)	NO			
+bs_user	avatar	varchar(255)	YES			
+bs_user	signature	varchar(60)	YES			
+bs_user	gender	varchar(10)	YES			
+bs_user	show_liked	tinyint(1)	NO	1		
+bs_user	show_comments	tinyint(1)	NO	1		
+bs_user	role	varchar(20)	NO	USER		
+bs_user	state	varchar(20)	NO	NORMAL		
+bs_user	credit_score	int	NO	100		
+bs_user	last_login_at	datetime	YES			
+bs_user	create_time	datetime	NO			
+bs_user	update_time	datetime	NO			
+content_report	id	bigint	NO		PRI	auto_increment
+content_report	target_type	varchar(20)	NO		MUL	
+content_report	target_id	bigint	NO			
+content_report	author_id	bigint	NO			
+content_report	reporter_id	bigint	NO		MUL	
+content_report	reason	varchar(200)	NO			
+content_report	content_snapshot	varchar(1000)	YES			
+content_report	status	varchar(20)	NO	PENDING	MUL	
+content_report	handler_id	bigint	YES			
+content_report	handled_at	datetime	YES			
+content_report	create_time	datetime	NO			
+content_report	update_time	datetime	NO			
+content_review	id	bigint	NO		PRI	auto_increment
+content_review	target_type	varchar(20)	NO		MUL	
+content_review	target_id	bigint	NO			
+content_review	review_round	int	NO	1		
+content_review	action	varchar(20)	NO			
+content_review	source	varchar(20)	NO	MANUAL		
+content_review	operator_id	bigint	NO			
+content_review	reason	varchar(200)	YES			
+content_review	reason_code	varchar(50)	YES			
+content_review	create_time	datetime	NO		MUL	
+content_review	update_time	datetime	NO			
+errand_order	id	bigint	NO		PRI	auto_increment
+errand_order	errand_order_id	bigint	NO		UNI	
+errand_order	publisher_id	bigint	NO		MUL	
+errand_order	taker_id	bigint	YES		MUL	
+errand_order	type	varchar(20)	NO			
+errand_order	description	varchar(200)	NO			
+errand_order	pickup_location	varchar(100)	NO			
+errand_order	delivery_location	varchar(100)	NO			
+errand_order	reward	decimal(10,2)	NO			
+errand_order	time_limit_hours	int	NO			
+errand_order	images	varchar(1000)	YES			
+errand_order	deadline	datetime	YES			
+errand_order	state	varchar(20)	NO	PENDING_PAYMENT	MUL	
+errand_order	taker_canceled	tinyint(1)	NO	0		
+errand_order	version	bigint	NO	0		
+errand_order	create_time	datetime	NO			
+errand_order	update_time	datetime	NO			
+errand_order_event	id	bigint	NO		PRI	auto_increment
+errand_order_event	order_id	bigint	NO		MUL	
+errand_order_event	event_type	varchar(30)	NO			
+errand_order_event	from_state	varchar(20)	YES			
+errand_order_event	to_state	varchar(20)	NO			
+errand_order_event	actor_id	bigint	YES			
+errand_order_event	actor_role	varchar(20)	NO			
+errand_order_event	reason_type	varchar(50)	YES			
+errand_order_event	reason	varchar(200)	YES			
+errand_order_event	images	varchar(1000)	YES			
+errand_order_event	create_time	datetime	NO			
+errand_order_event	update_time	datetime	NO			
+message	id	bigint	NO		PRI	auto_increment
+message	msg_id	bigint	NO		UNI	
+message	room_id	bigint	NO		MUL	
+message	seq	bigint	NO			
+message	from_user_id	bigint	NO			
+message	msg_type	varchar(20)	NO	TEXT		
+message	content	varchar(1024)	YES			
+message	client_msg_id	varchar(36)	YES			
+message	ref_type	varchar(20)	YES			
+message	ref_id	bigint	YES			
+message	state	varchar(20)	NO	NORMAL		
+message	recalled_at	datetime	YES			
+message	recalled_by	varchar(20)	YES			
+message	create_time	datetime	NO			
+message	update_time	datetime	NO			
+notification	id	bigint	NO		PRI	auto_increment
+notification	notification_id	bigint	NO		UNI	
+notification	user_id	bigint	NO		MUL	
+notification	scope	varchar(20)	NO			
+notification	seq	bigint	NO			
+notification	sender_id	bigint	YES			
+notification	type	varchar(20)	NO			
+notification	title	varchar(100)	NO			
+notification	content	varchar(500)	NO			
+notification	ref_type	varchar(20)	YES			
+notification	ref_id	bigint	YES			
+notification	broadcast_msg_id	varchar(64)	YES		MUL	
+notification	dedup_key	varchar(100)	YES		UNI	
+notification	create_time	datetime	NO			
+notification	update_time	datetime	NO			
+notification_read	id	bigint	NO		PRI	auto_increment
+notification_read	user_id	bigint	NO		MUL	
+notification_read	scope	varchar(20)	NO			
+notification_read	last_read_seq	bigint	NO	0		
+notification_read	create_time	datetime	NO			
+notification_read	update_time	datetime	NO			
+notification_seq	id	bigint	NO		PRI	auto_increment
+notification_seq	user_id	bigint	NO		MUL	
+notification_seq	scope	varchar(20)	NO			
+notification_seq	seq	bigint	NO	0		
+notification_seq	create_time	datetime	NO			
+notification_seq	update_time	datetime	NO			
+outbox_message	id	bigint	NO		PRI	auto_increment
+outbox_message	msg_id	varchar(64)	NO		UNI	
+outbox_message	destination	varchar(64)	NO			
+outbox_message	payload	text	NO			
+outbox_message	state	tinyint	NO	0	MUL	
+outbox_message	retry_count	int	NO	0		
+outbox_message	create_time	datetime	NO			
+outbox_message	update_time	datetime	NO			
+post	id	bigint	NO		PRI	auto_increment
+post	post_id	bigint	NO		UNI	
+post	user_id	bigint	NO		MUL	
+post	category	varchar(20)	YES		MUL	
+post	title	varchar(100)	YES			
+post	content	text	YES			
+post	images	varchar(1000)	YES			
+post	cover	varchar(500)	YES			
+post	state	varchar(20)	NO	PENDING_REVIEW		
+post	review_round	int	NO	1		
+post	review_entered_at	datetime	YES			
+post	view_count	int	NO	0		
+post	expire_at	datetime	YES			
+post	create_time	datetime	NO			
+post	update_time	datetime	NO			
+post_comment	id	bigint	NO		PRI	auto_increment
+post_comment	comment_id	bigint	NO		UNI	
+post_comment	post_id	bigint	NO		MUL	
+post_comment	user_id	bigint	NO		MUL	
+post_comment	content	varchar(500)	YES			
+post_comment	images	varchar(1000)	YES			
+post_comment	state	varchar(20)	NO	NORMAL		
+post_comment	root_id	bigint	NO	0	MUL	
+post_comment	parent_id	bigint	NO	0		
+post_comment	like_count	int	NO	0		
+post_comment	reply_count	int	NO	0		
+post_comment	create_time	datetime	NO			
+post_comment	update_time	datetime	NO			
+post_comment_count	id	bigint	NO		PRI	auto_increment
+post_comment_count	post_id	bigint	NO		UNI	
+post_comment_count	comment_count	int	NO	0		
+post_comment_count	create_time	datetime	NO			
+post_comment_count	update_time	datetime	NO			
+post_comment_like	id	bigint	NO		PRI	auto_increment
+post_comment_like	comment_id	bigint	NO		MUL	
+post_comment_like	user_id	bigint	NO		MUL	
+post_comment_like	create_time	datetime	NO			
+post_comment_like	update_time	datetime	NO			
+post_like	id	bigint	NO		PRI	auto_increment
+post_like	post_id	bigint	NO		MUL	
+post_like	user_id	bigint	NO		MUL	
+post_like	create_time	datetime	NO			
+post_like	update_time	datetime	NO			
+post_like_count	id	bigint	NO		PRI	auto_increment
+post_like_count	post_id	bigint	NO		UNI	
+post_like_count	like_count	int	NO	0		
+post_like_count	create_time	datetime	NO			
+post_like_count	update_time	datetime	NO			
+product	id	bigint	NO		PRI	auto_increment
+product	product_id	bigint	NO		UNI	
+product	user_id	bigint	NO		MUL	
+product	title	varchar(30)	YES			
+product	description	varchar(500)	YES			
+product	images	varchar(1000)	YES			
+product	price	decimal(10,2)	YES			
+product	trade_location	varchar(100)	YES			
+product	category	varchar(20)	YES		MUL	
+product	state	varchar(20)	NO	PENDING_REVIEW		
+product	review_round	int	NO	0		
+product	review_entered_at	datetime	YES			
+product	view_count	int	NO	0		
+product	expire_at	datetime	YES			
+product	create_time	datetime	NO			
+product	update_time	datetime	NO			
+product_favorite	id	bigint	NO		PRI	auto_increment
+product_favorite	user_id	bigint	NO		MUL	
+product_favorite	product_id	bigint	NO		MUL	
+product_favorite	create_time	datetime	NO			
+product_favorite	update_time	datetime	NO			
+product_order	id	bigint	NO		PRI	auto_increment
+product_order	product_order_id	bigint	NO		UNI	
+product_order	buyer_id	bigint	NO		MUL	
+product_order	seller_id	bigint	NO		MUL	
+product_order	product_id	bigint	NO		MUL	
+product_order	price	decimal(10,2)	NO			
+product_order	product_title	varchar(30)	YES			
+product_order	product_description	varchar(500)	YES			
+product_order	product_images	varchar(1000)	YES			
+product_order	product_trade_location	varchar(100)	YES			
+product_order	product_category	varchar(20)	YES			
+product_order	state	varchar(20)	NO	PENDING_PAYMENT	MUL	
+product_order	create_time	datetime	NO			
+product_order	update_time	datetime	NO			
+product_order_event	id	bigint	NO		PRI	auto_increment
+product_order_event	order_id	bigint	NO		MUL	
+product_order_event	event_type	varchar(30)	NO			
+product_order_event	from_state	varchar(20)	YES			
+product_order_event	to_state	varchar(20)	NO			
+product_order_event	actor_id	bigint	YES			
+product_order_event	actor_role	varchar(20)	NO			
+product_order_event	reason_type	varchar(50)	YES			
+product_order_event	reason	varchar(200)	YES			
+product_order_event	images	varchar(1000)	YES			
+product_order_event	create_time	datetime	NO			
+product_order_event	update_time	datetime	NO			
+room	id	bigint	NO		PRI	auto_increment
+room	room_id	bigint	NO		UNI	
+room	user_min	bigint	NO		MUL	
+room	user_max	bigint	NO			
+room	source	varchar(20)	YES			
+room	initiator_id	bigint	YES			
+room	last_seq	bigint	NO	0		
+room	last_msg_type	varchar(20)	YES			
+room	last_msg_preview	varchar(200)	YES			
+room	last_msg_at	datetime	YES			
+room	state	varchar(20)	NO	ACTIVE		
+room	create_time	datetime	NO			
+room	update_time	datetime	NO			
+room_member	id	bigint	NO		PRI	auto_increment
+room_member	room_id	bigint	NO		MUL	
+room_member	user_id	bigint	NO		MUL	
+room_member	last_read_seq	bigint	NO	0		
+room_member	hidden_at	datetime	YES			
+room_member	create_time	datetime	NO			
+room_member	update_time	datetime	NO			
+sensitive_word	id	bigint	NO		PRI	auto_increment
+sensitive_word	word	varchar(50)	NO		UNI	
+sensitive_word	enabled	tinyint(1)	NO	1		
+sensitive_word	create_time	datetime	NO			
+sensitive_word	update_time	datetime	NO			
+timeline	id	bigint	NO		PRI	auto_increment
+timeline	user_id	bigint	NO		MUL	
+timeline	room_id	bigint	NO			
+timeline	seq	bigint	NO			
+timeline	msg_id	bigint	NO			
+timeline	delivery_seq	bigint	NO			
+timeline	create_time	datetime	NO			
+timeline	update_time	datetime	NO			
+timeout_register_outbox	id	bigint	NO		PRI	auto_increment
+timeout_register_outbox	type	varchar(64)	NO		MUL	
+timeout_register_outbox	callback_group	varchar(64)	NO			
+timeout_register_outbox	biz_id	varchar(64)	NO			
+timeout_register_outbox	action_time	datetime	NO			
+timeout_register_outbox	state	varchar(16)	NO	PENDING	MUL	
+timeout_register_outbox	retry_count	int	NO	0		
+timeout_register_outbox	create_time	datetime	NO			
+timeout_register_outbox	update_time	datetime	NO			
+user_credit_detail	id	bigint	NO		PRI	auto_increment
+user_credit_detail	user_id	bigint	NO		MUL	
+user_credit_detail	change	int	NO			
+user_credit_detail	reason_type	varchar(30)	NO			
+user_credit_detail	ref_id	bigint	YES			
+user_credit_detail	create_time	datetime	NO			
+user_credit_detail	update_time	datetime	NO			
+user_seq	id	bigint	NO		PRI	auto_increment
+user_seq	user_id	bigint	NO		UNI	
+user_seq	seq	bigint	NO	0		
+user_seq	create_time	datetime	NO			
+user_seq	update_time	datetime	NO			
+virtual_wallet	id	bigint	NO		PRI	auto_increment
+virtual_wallet	wallet_id	bigint	NO		UNI	
+virtual_wallet	user_id	bigint	NO		UNI	
+virtual_wallet	balance	decimal(10,2)	NO	0.00		
+virtual_wallet	frozen_amount	decimal(10,2)	NO	0.00		
+virtual_wallet	create_time	datetime	NO			
+virtual_wallet	update_time	datetime	NO			
+wallet_detail	id	bigint	NO		PRI	auto_increment
+wallet_detail	wallet_id	bigint	NO			
+wallet_detail	user_id	bigint	NO		MUL	
+wallet_detail	type	varchar(20)	NO			
+wallet_detail	amount	decimal(10,2)	NO			
+wallet_detail	order_id	bigint	YES		MUL	
+wallet_detail	biz_round	int	NO	0		
+wallet_detail	create_time	datetime	NO			
+wallet_detail	update_time	datetime	NO			

@@ -1,0 +1,25 @@
+{
+  "passed": true,
+  "closureSeconds": 2.4,
+  "centerTasks": {
+    "ERRAND_PAY_TIMEOUT|34": "SUCCESS",
+    "WANT_TO_BUY_PAY_TIMEOUT|8": "SUCCESS",
+    "PRODUCT_ORDER_PAY_TIMEOUT|8": "SUCCESS"
+  },
+  "business": {
+    "product_order": "CANCELLED",
+    "product": "ON_SALE",
+    "errand_order": "CANCELLED",
+    "want_to_buy": "CANCELLED",
+    "searchSyncMessages": {
+      "beforeClose": 2,
+      "afterClose": 3
+    }
+  },
+  "ids": {
+    "productId": 16,
+    "productOrderId": 8,
+    "errandOrderId": 34,
+    "wantId": 8
+  }
+}

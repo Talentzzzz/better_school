@@ -1,0 +1,6 @@
+rules:
+  - id: orders
+    match:
+      matchType: prefix
+      pattern: api:/orders/
+    rate: 100.0

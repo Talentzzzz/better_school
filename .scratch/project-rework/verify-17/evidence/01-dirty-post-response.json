@@ -1,0 +1,14 @@
+{
+  "http_status": 200,
+  "request": {
+    "title": "求助帖",
+    "content": "有偿代考，私聊 SMOKE17CLEAN R100700071168",
+    "category": "DAILY"
+  },
+  "response": {
+    "code": "500",
+    "info": "内容包含违规词汇，请修改后重试",
+    "data": null
+  },
+  "hit_word": "代考"
+}

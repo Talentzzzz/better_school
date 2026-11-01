@@ -1,0 +1,20 @@
+{
+  "guest_feed_contains": false,
+  "other_user_feed_contains": false,
+  "other_detail": {
+    "http_status": 200,
+    "response": {
+      "code": "404",
+      "info": "帖子不存在",
+      "data": null
+    }
+  },
+  "guest_detail": {
+    "http_status": 200,
+    "response": {
+      "code": "404",
+      "info": "帖子不存在",
+      "data": null
+    }
+  }
+}

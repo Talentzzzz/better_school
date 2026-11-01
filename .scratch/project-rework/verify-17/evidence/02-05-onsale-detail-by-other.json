@@ -1,0 +1,25 @@
+[
+  200,
+  {
+    "code": "200",
+    "info": "成功",
+    "data": {
+      "productId": 8,
+      "userId": 3,
+      "sellerNickname": "冒烟17卖家",
+      "sellerAvatar": null,
+      "title": "九成新民谣吉他",
+      "description": "自用闲置一年，成色好无磕碰",
+      "images": [],
+      "price": 19.9,
+      "tradeLocation": "图书馆门口",
+      "category": "BOOKS",
+      "status": "ON_SALE",
+      "rejectReason": null,
+      "viewCount": 0,
+      "favoriteCount": 0,
+      "favorited": false,
+      "createdAt": "2026-10-07T00:01:31"
+    }
+  }
+]

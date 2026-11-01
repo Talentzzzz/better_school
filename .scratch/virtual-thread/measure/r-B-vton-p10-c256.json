@@ -1,0 +1,148 @@
+{
+  "tag": "B-vton-p10-c256",
+  "concurrency": 256,
+  "duration_sec": 32.25,
+  "total_requests": 8406,
+  "rps": 260.6,
+  "error_rate": 0.01368,
+  "ops": {
+    "comment_add": {
+      "count": 984,
+      "rps": 30.5,
+      "ok": 984,
+      "err": 0,
+      "p50": 703.7,
+      "p90": 1362.92,
+      "p99": 2243.6,
+      "max": 4406.21,
+      "mean": 788.3,
+      "err_statuses": {},
+      "err_types": {}
+    },
+    "post_list": {
+      "count": 999,
+      "rps": 31.0,
+      "ok": 999,
+      "err": 0,
+      "p50": 794.37,
+      "p90": 1393.12,
+      "p99": 2048.63,
+      "max": 3873.84,
+      "mean": 878.78,
+      "err_statuses": {},
+      "err_types": {}
+    },
+    "comment_list": {
+      "count": 923,
+      "rps": 28.6,
+      "ok": 923,
+      "err": 0,
+      "p50": 825.48,
+      "p90": 1536.89,
+      "p99": 2229.72,
+      "max": 3324.53,
+      "mean": 921.07,
+      "err_statuses": {},
+      "err_types": {}
+    },
+    "product_list": {
+      "count": 683,
+      "rps": 21.2,
+      "ok": 683,
+      "err": 0,
+      "p50": 800.39,
+      "p90": 1421.8,
+      "p99": 2244.59,
+      "max": 3252.46,
+      "mean": 894.21,
+      "err_statuses": {},
+      "err_types": {}
+    },
+    "product_detail": {
+      "count": 675,
+      "rps": 20.9,
+      "ok": 675,
+      "err": 0,
+      "p50": 984.72,
+      "p90": 1802.32,
+      "p99": 2705.16,
+      "max": 3879.56,
+      "mean": 1075.42,
+      "err_statuses": {},
+      "err_types": {}
+    },
+    "errand_create_pay": {
+      "count": 823,
+      "rps": 25.5,
+      "ok": 708,
+      "err": 115,
+      "p50": 1944.95,
+      "p90": 3067.86,
+      "p99": 4247.63,
+      "max": 5230.54,
+      "mean": 2019.39,
+      "err_statuses": {},
+      "err_types": {
+        "biz999:系统繁忙，请稍后重试": 115
+      }
+    },
+    "post_detail": {
+      "count": 1515,
+      "rps": 47.0,
+      "ok": 1515,
+      "err": 0,
+      "p50": 373.56,
+      "p90": 836.9,
+      "p99": 1632.28,
+      "max": 2410.53,
+      "mean": 465.31,
+      "err_statuses": {},
+      "err_types": {}
+    },
+    "product_publish": {
+      "count": 478,
+      "rps": 14.8,
+      "ok": 478,
+      "err": 0,
+      "p50": 1090.88,
+      "p90": 1940.54,
+      "p99": 2565.39,
+      "max": 3328.92,
+      "mean": 1211.64,
+      "err_statuses": {},
+      "err_types": {}
+    },
+    "image_upload": {
+      "count": 490,
+      "rps": 15.2,
+      "ok": 490,
+      "err": 0,
+      "p50": 69.08,
+      "p90": 85.9,
+      "p99": 413.84,
+      "max": 456.71,
+      "mean": 79.77,
+      "err_statuses": {},
+      "err_types": {}
+    },
+    "post_publish": {
+      "count": 836,
+      "rps": 25.9,
+      "ok": 836,
+      "err": 0,
+      "p50": 1144.72,
+      "p90": 1959.74,
+      "p99": 2872.31,
+      "max": 3676.64,
+      "mean": 1214.28,
+      "err_statuses": {},
+      "err_types": {}
+    }
+  },
+  "overall": {
+    "p50": 777.41,
+    "p90": 1831.69,
+    "p99": 3116.96,
+    "max": 5230.54
+  }
+}

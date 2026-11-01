@@ -1,0 +1,45 @@
+package com.betterschool.marketing.domain.points.service;
+
+import com.betterschool.marketing.domain.points.model.valobj.PointsDeductResultVO;
+import com.betterschool.marketing.domain.points.model.valobj.PointsTransactionVO;
+import com.betterschool.marketing.types.points.PointsReasonType;
+
+import java.util.List;
+
+/**
+ * 积分账户服务（桶模型，sql.md 积分段）：入账 / 消费 / 余额 / 流水 / 过期。
+ * <p>
+ * 没有余额列——余额是未过期桶 remain 之和；消费按 FIFO 扣各桶 remain，凑不够则整事务回滚。
+ * 每个方法自己域内事务原子，跨域组合由调用方（单体 MQ 消费 / 抽奖服务的 Dubbo 调用）顺序编排。
+ */
+public interface IPointsAccountService {
+
+    /**
+     * 抽奖中奖入账（消费 {@code bs-lottery-drawn}）：幂等键 = {@code (userId, LOTTERY_WIN, recordId)}，
+     * MQ 重投不会重复加分、也不会重复发事件。
+     */
+    void addForLotteryWin(String userId, Long recordId, int pointsAmount);
+
+    /**
+     * 行为返利入账（签到 / 支付等，规则见 {@code action_rebate_config} 的 POINTS 行）：
+     * 规则未配或已关闭 → 返回 false 什么都不做；命中则落一行 REBATE 桶并发变动事件，
+     * 幂等键 = {@code (userId, REBATE, refId)}（refId = 调用方的发放幂等键）。
+     */
+    boolean creditForRebate(String actionType, String userId, Long refId);
+
+    /**
+     * 兑换扣分（Dubbo 同步边，幂等键 = 兑换单 id）：FIFO 跨桶扣减，凑不够返回「积分不足」而不扣任何一行。
+     * 业务失败以结果对象返回，不抛异常——异常跨 Dubbo 会把「积分不足」这个语义抹平。
+     */
+    PointsDeductResultVO deduct(String userId, int amount, PointsReasonType reasonType, Long refId);
+
+    /** 我的积分余额 */
+    int getBalance(String userId);
+
+    List<PointsTransactionVO> listTransactions(String userId, int page, int pageSize);
+
+    long countTransactions(String userId);
+
+    /** 懒过期落账清理（xxl-job 调度）：只置零、不删行、不发事件 */
+    int expireBuckets();
+}

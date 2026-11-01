@@ -1,0 +1,64 @@
+# 营销服务（points + lottery 两域）集成测试 profile：测试环境地址的唯一事实来源。
+# 连的是 scripts/test-env.sh up 备好的常驻栈（MySQL 里的 bs_marketing_test 库 + redis 逻辑库 1），
+# 测试进程不建任何容器；环境没起时测试直接连接失败——先备环境再启动是约定的一部分。
+# Nacos 地址（spring.cloud.nacos.server-addr）与 dubbo.protocol.port 不在这里：
+# 它们必须早于 config data 阶段（application.yml 的 spring.config.import 要立刻用），
+# 由测试基类（PointsApiTestBase / LotteryApiTestBase）以 System.setProperty 注入；
+# jwt.secret 因此来自 Nacos 的共享 dataId。
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:13306/bs_marketing_test?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: bs123456
+
+  # redis 逻辑库 1（单体开发用 0、测试用 1，靠库号隔离）；桶 key 前缀是 bs:lottery:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 1
+      password: bs123456
+      timeout: 1000ms
+      connect-timeout: 1000ms
+
+# 测试侧 namesrv 只有 namesrv 没有 broker（compose 无 bs-rocketmq-broker-test）：
+# 发送必然失败并被 OutboxMessageSender 兜住，这正是「outbox 落库 + 扫描兜底」的可观察形态。
+# 超时压短，免得每条写入都白等一个默认 3s 的发送超时。
+rocketmq:
+  name-server: localhost:19876
+  producer:
+    send-message-timeout: 1000
+
+# 降级冷却压到 300ms：用例要验「冷却内不反复试 redis、冷却过后回到 redis 路径」，
+# 真等 10s 会让整个测试类超时。生产值见 application.yml。
+lottery:
+  bucket:
+    degrade-cooldown-millis: 300
+
+# outbox 重发超时压到 2s：用例要验「只重发超时的行」，真等默认 60s 不可行。生产值见 application.yml。
+outbox:
+  scan:
+    timeout-seconds: 2
+
+dubbo:
+  registry:
+    address: nacos://127.0.0.1:18848
+
+xxl:
+  job:
+    executor:
+      port: 9990   # 与 IDE 里开发服务的 9998 错开，两边可同时运行
+
+logging:
+  level:
+    com.betterschool.marketing: info
+    com.betterschool.marketing.infrastructure.points.dao: warn
+    com.betterschool.marketing.infrastructure.drawcount.dao: warn
+    com.betterschool.marketing.infrastructure.config.dao: warn
+    com.betterschool.marketing.infrastructure.raffle.dao: warn
+    com.betterschool.marketing.infrastructure.inventory.dao: warn
+    com.betterschool.marketing.infrastructure.common.dao: warn
+    # 中间件不可达的后台重试日志降噪
+    org.apache.rocketmq: off
+    com.xxl.job: off

@@ -1,0 +1,21 @@
+{
+  "response": [
+    200,
+    {
+      "code": "200",
+      "info": "成功",
+      "data": null
+    }
+  ],
+  "seller_before": {
+    "balance": "1039.80",
+    "frozen_amount": "0.00",
+    "available": "1039.80"
+  },
+  "seller_after": {
+    "balance": "1039.80",
+    "frozen_amount": "0.00",
+    "available": "1039.80"
+  },
+  "PRODUCT_INCOME_count": 1
+}

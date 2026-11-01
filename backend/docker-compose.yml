@@ -1,0 +1,272 @@
+# better-school 中间件编排：Nacos / MySQL / Redis / RocketMQ(namesrv+broker+dashboard) / xxl-job-admin / Elasticsearch
+#          另有测试栈专用的 Nacos 与 RocketMQ namesrv 两个容器（见头注释 5）
+# 后端应用本地 IDE 运行，连接宿主机映射端口（localhost）
+# 使用：docker compose up -d
+# 注意：
+#   0. ES 依赖宿主机内核参数 vm.max_map_count>=262144：
+#      Windows(WSL2) 执行一次：wsl -d docker-desktop sysctl -w vm.max_map_count=262144
+#      Linux：sudo sysctl -w vm.max_map_count=262144
+#   1. MySQL 只负责启动，不自动初始化库表（用户拍板）——容器起来后手动执行（必须带 --default-character-set=utf8mb4，
+#      否则容器内 mysql CLI 默认 latin1，中文种子数据会乱码入库）。
+#      推荐：scripts/dev-stack.ps1 up —— 起容器 + 等就绪 + 建好两个开发库 + xxl 注册 + 两服务健康检查
+#      （PowerShell 入口；本机 bash/WSL 是坏的，scripts/test-env.sh / run-app.sh 跑不了）。
+#      test-env.sh 是等价的手工步骤参考：起容器 + 等就绪 + 建好 better_school / better_school_test 两个库（幂等，可重复跑）。
+#      等效手工命令：init-dev.sql / init-test.sql 只建库并 USE，schema.sql 是唯一 DDL 主体；
+#      USE 是连接级的，所以两段必须按序拼给同一个 mysql 连接（单喂 schema.sql 会报 No database selected）：
+#      cat better-school/sql/init-dev.sql  better-school/sql/schema.sql | docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4
+#      cat better-school/sql/init-test.sql better-school/sql/schema.sql | docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4
+#      营销一个库（points / raffle / inventory / drawcount 同库 bs_marketing，票 13 起 schema.sql 是唯一 DDL，
+#      schema-legacy.sql 已随旧 lottery 十张表一起删除）：
+#      { cat marketing/sql/init-dev.sql; cat marketing/sql/schema.sql; } | docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4
+#      （init-dev.sql 自带 USE bs_marketing；测试侧换 init-test.sql。DDL 全 IF NOT EXISTS，重复拼接幂等）
+#      xxl-job 库非幂等，只需建一次（应用启动前）：
+#      docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4 < sql/xxl-job.sql
+#      docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4 < better-school/sql/xxl-job-tasks.sql
+#      （两份 sql/xxl-job-tasks.sql 各自幂等；better-school / marketing 同法）
+#   2. 若本地 3306/6379/9876 已有服务在跑，改下面 ports 映射并同步改应用配置
+#   3. 密码统一 bs123456（MySQL root / Redis requirepass / 数据源）
+#   4. Nacos 起来后须建共享配置 dataId=better-school-shared.yml / group=DEFAULT_GROUP，
+#      内容为 jwt.secret + jwt.expire-days。两个 app（单体 + 营销）都严格导入这一份，
+#      没建则两个 app 全部起不来。控制台 http://localhost:8848/nacos（2.5.4 未开鉴权，直接进）
+#   5. 测试栈与开发栈同一份 compose：MySQL / Redis / MinIO 由两边共用（隔离靠各自的多租户机制——
+#      库名 better_school 与 better_school_test、营销域 bs_marketing 及 bs_marketing_test、
+#      Redis 逻辑库 0 与 1、桶 bs-files 与 bs-files-it），
+#      Nacos 与 RocketMQ namesrv 各多一个测试专用容器（bs-nacos-test / bs-rocketmq-namesrv-test）；
+#      测试栈只有 namesrv、没有配套 broker（测试不投递消息，发送失败由 OutboxMessageSender 兜住），
+#      开发栈的 broker 照常起、连的是开发 namesrv。
+#      测试侧 host 端口整体 +10000：13306 / 16379 / 19000-19001 / 18848-19848 / 19876，
+#      与开发栈的 3306 / 6379 / 9000-9001 / 8848-9848 / 9876 无交集，两套可同时运行。
+#      测试连接口径的唯一事实来源是 backend/bs-app/src/test/resources/application-test.yml。
+name: better-school
+
+services:
+  nacos:
+    container_name: bs-nacos
+    image: nacos/nacos-server:v2.5.4
+    environment:
+      - MODE=standalone
+      - PREFER_HOST_MODE=hostname
+      # 2.2.1 起这三个引导变量的默认值被官方移除，不补会启动报错；
+      # 不设 NACOS_AUTH_ENABLE ⇒ 2.x 镜像内 nacos.core.auth.enabled 默认 false，客户端裸连即可
+      - NACOS_AUTH_IDENTITY_KEY=serverIdentity
+      - NACOS_AUTH_IDENTITY_VALUE=security
+      - NACOS_AUTH_TOKEN=VGhpc0lzTXlDdXN0b21TZWNyZXRLZXkwMTIzNDU2Nzg=
+    ports:
+      - "8848:8848"   # 主端口 / 控制台
+      - "9848:9848"   # 2.x 客户端 gRPC（客户端按 主端口+1000 连，必须能通）
+    volumes:
+      - ./docker/data/nacos/logs:/home/nacos/logs
+    networks:
+      - app_network
+    healthcheck:
+      # readiness 端点 200 才代表配置中心可用（Nacos 是 Spring Boot 应用，启动比中间件慢）
+      test: ["CMD-SHELL", "curl -sf http://localhost:8848/nacos/v1/console/health/readiness || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+
+  mysql:
+    container_name: bs-mysql
+    image: mysql:9.7
+    environment:
+      MYSQL_ROOT_PASSWORD: bs123456
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"     # 开发（库 better_school）
+      - "13306:3306"    # 测试（库 better_school_test）——共用容器，两套 host 端口
+    volumes:
+      - ./docker/data/mysql:/var/lib/mysql
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pbs123456"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    container_name: bs-redis
+    image: redis:8.8.0
+    command: redis-server --requirepass bs123456
+    ports:
+      - "6379:6379"     # 开发（逻辑库 0）
+      - "16379:6379"    # 测试（逻辑库 1）
+    volumes:
+      - ./docker/data/redis:/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "bs123456", "--no-auth-warning", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.5.0
+    container_name: bs-rocketmq-namesrv
+    environment:
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m"
+    ports:
+      - "9876:9876"
+    volumes:
+      - ./docker/data/rocketmq-namesrv:/home/rocketmq/logs
+    command: sh mqnamesrv
+    networks:
+      - app_network
+    healthcheck:
+      # 镜像 sh 是 dash 不支持 /dev/tcp，用 bash
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/9876"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.5.0
+    container_name: bs-rocketmq-broker
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      JAVA_OPT_EXT: "-Xms1g -Xmx1g"
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+    volumes:
+      - ./docker/rocketmq/broker.conf:/home/rocketmq/rocketmq-5.5.0/conf/broker.conf:ro
+      - ./docker/data/rocketmq-broker:/home/rocketmq/store
+      - ./docker/data/rocketmq-broker-log:/home/rocketmq/logs
+    command: sh mqbroker -c /home/rocketmq/rocketmq-5.5.0/conf/broker.conf
+    extra_hosts:
+      # Linux 下 host.docker.internal 默认不可解析，host-gateway 映射到宿主机（brokerIP1 用它）
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    networks:
+      - app_network
+
+  rocketmq-dashboard:
+    image: apacherocketmq/rocketmq-dashboard:latest
+    container_name: bs-rocketmq-dashboard
+    ports:
+      - "8089:8080"    # 容器内默认端口是 8080；宿主机 8089（票 07 起 8082 已释放，营销只占 8081）
+    environment:
+      JAVA_OPTS: "-Drocketmq.namesrv.addr=rocketmq-namesrv:9876"
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    networks:
+      - app_network
+
+  xxl-job-admin:
+    image: xuxueli/xxl-job-admin:3.3.2
+    container_name: bs-xxl-job-admin
+    ports:
+      - "9090:8080"    # 容器内 8080，宿主机 9090（避让应用 8080）
+    environment:
+      PARAMS: >
+        --spring.datasource.url=jdbc:mysql://mysql:3306/xxl_job?useUnicode=true&characterEncoding=UTF-8&autoReconnect=true&serverTimezone=Asia/Shanghai
+        --spring.datasource.username=root
+        --spring.datasource.password=bs123456
+        --xxl.job.accessToken=default_token
+        --xxl.job.login.username=admin
+        --xxl.job.login.password=123456
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - app_network
+
+  minio:
+    container_name: bs-minio
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: bsadmin
+      MINIO_ROOT_PASSWORD: bs123456
+    ports:
+      - "9000:9000"   # S3 API（应用上传 + 浏览器访问图片）；开发桶 bs-files
+      - "9001:9001"   # 管理控制台
+      - "19000:9000"  # 测试桶 bs-files-it（共用容器，两套 host 端口）
+      - "19001:9001"  # 测试用管理控制台
+    volumes:
+      - ./docker/data/minio:/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  es:
+    container_name: bs-es
+    build: ./docker/es
+    environment:
+      - TZ=Asia/Shanghai
+      - discovery.type=single-node
+      - xpack.security.enabled=false   # 本地开发关闭安全，方便直接访问 9200
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - ./docker/data/es:/usr/share/elasticsearch/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s   # 首次容器构建/启动较慢（IK 安装 + 分片恢复）
+
+  # —————————————————————— 测试栈（只多这两个容器，其余共用） ——————————————————————
+  # 独立而非 namespace：Nacos 改三处配置、RocketMQ 要逐个消费者注解指定 namespace，代价远高于再起一个容器。
+  # 测试进程连的是 host 端口 18848 / 19876（见 application-test.yml），与开发栈零交集。
+  # 这两个容器没有 broker 与之配对：测试不投递消息（消费者被当普通 Bean 直接注入调用），
+  # 开发栈的 rocketmq-broker 连的是上面那个开发 namesrv，两边消息不串。
+
+  nacos-test:
+    container_name: bs-nacos-test
+    image: nacos/nacos-server:v2.5.4
+    environment:
+      - MODE=standalone
+      - PREFER_HOST_MODE=hostname
+      # 2.2.1 起这三个引导变量的默认值被官方移除，不补会启动报错
+      - NACOS_AUTH_IDENTITY_KEY=serverIdentity
+      - NACOS_AUTH_IDENTITY_VALUE=security
+      - NACOS_AUTH_TOKEN=VGhpc0lzTXlDdXN0b21TZWNyZXRLZXkwMTIzNDU2Nzg=
+    ports:
+      - "18848:8848"   # 主端口 / 控制台（测试）
+      - "19848:9848"   # 2.x 客户端 gRPC（客户端按 主端口+1000 连，必须能通）
+    volumes:
+      - ./docker/data/nacos-test/logs:/home/nacos/logs
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8848/nacos/v1/console/health/readiness || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+
+  rocketmq-namesrv-test:
+    image: apache/rocketmq:5.5.0
+    container_name: bs-rocketmq-namesrv-test
+    environment:
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m"
+    ports:
+      - "19876:9876"   # 测试 namesrv
+    volumes:
+      - ./docker/data/rocketmq-namesrv-test:/home/rocketmq/logs
+    command: sh mqnamesrv
+    networks:
+      - app_network
+    healthcheck:
+      # 镜像 sh 是 dash 不支持 /dev/tcp，用 bash
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/9876"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+networks:
+  app_network:

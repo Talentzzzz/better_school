@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.5</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.betterschool</groupId>
+    <artifactId>better-school</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>better-school</name>
+
+    <modules>
+        <module>bs-types</module>
+        <module>bs-api</module>
+        <module>bs-domain</module>
+        <module>bs-case</module>
+        <module>bs-infrastructure</module>
+        <module>bs-trigger</module>
+        <module>bs-app</module>
+    </modules>
+
+    <properties>
+        <java.version>21</java.version>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <mybatis.version>3.0.3</mybatis.version>
+        <redisson.version>3.52.0</redisson.version>
+        <rocketmq.version>2.3.6</rocketmq.version>
+        <jjwt.version>0.12.6</jjwt.version>
+        <xxljob.version>3.0.0</xxljob.version>
+        <minio.version>8.5.17</minio.version>
+        <!-- 超时中心内嵌化（票 02）：主 datasource 坐 ShardingSphere 5.5.3 驱动。
+             各 artifact 的用途与「缺了不报错、运行期才炸」的坑见 docs/architecture/timeout.md §2 -->
+        <shardingsphere.version>5.5.3</shardingsphere.version>
+        <!-- 营销三服务的同步边（Dubbo）与配置中心（Nacos 经 SCA）。
+             版本矩阵与两条「必须冒烟验证」的出处见 .scratch/marketing/research-cloud-stack.md -->
+        <dubbo.version>3.3.6</dubbo.version>
+        <spring.cloud.version>2023.0.3</spring.cloud.version>
+        <spring.cloud.alibaba.version>2023.0.3.4</spring.cloud.alibaba.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- 覆盖 Spring Boot 3.3.5 管的 commons-lang3 3.14.0：ShardingSphere 5.5.3 用了
+                 3.18.0 才有的 org.apache.commons.lang3.Strings，缺它就是运行期 NoClassDefFoundError -->
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-lang3</artifactId>
+                <version>3.18.0</version>
+            </dependency>
+            <!-- ShardingSphere 5.5.3 全家桶（票 02）：shardingsphere-jdbc 是驱动壳，
+                 其余是 5.5.x 起必须显式引的特性 artifact（!SHARDING tag / classpath: URL 加载器 /
+                 Hikari 池元数据 / Standalone 模式 / 权限 SPI / MySQL 方言解析器），缺哪个都是
+                 启动或首条 SQL 才炸、报错还不提示（见 docs/architecture/timeout.md §2 的依赖清单） -->
+            <dependency>
+                <groupId>org.apache.shardingsphere</groupId>
+                <artifactId>shardingsphere-jdbc</artifactId>
+                <version>${shardingsphere.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.shardingsphere</groupId>
+                <artifactId>shardingsphere-sharding-api</artifactId>
+                <version>${shardingsphere.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.shardingsphere</groupId>
+                <artifactId>shardingsphere-sharding-core</artifactId>
+                <version>${shardingsphere.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.shardingsphere</groupId>
+                <artifactId>shardingsphere-infra-url-classpath</artifactId>
+                <version>${shardingsphere.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.shardingsphere</groupId>
+                <artifactId>shardingsphere-infra-data-source-pool-hikari</artifactId>
+                <version>${shardingsphere.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.shardingsphere</groupId>
+                <artifactId>shardingsphere-standalone-mode-repository-memory</artifactId>
+                <version>${shardingsphere.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.shardingsphere</groupId>
+                <artifactId>shardingsphere-authority-simple</artifactId>
+                <version>${shardingsphere.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.shardingsphere</groupId>
+                <artifactId>shardingsphere-parser-sql-engine-mysql</artifactId>
+                <version>${shardingsphere.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.shardingsphere</groupId>
+                <artifactId>shardingsphere-parser-sql-engine-sql92</artifactId>
+                <version>${shardingsphere.version}</version>
+            </dependency>
+            <!-- SCA BOM 不管理 Dubbo：org.apache.dubbo:* 在它的 dependencyManagement 里零命中，版本必须自己写 -->
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring.cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.cloud</groupId>
+                <artifactId>spring-cloud-alibaba-dependencies</artifactId>
+                <version>${spring.cloud.alibaba.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.dubbo</groupId>
+                <artifactId>dubbo-spring-boot-starter</artifactId>
+                <version>${dubbo.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.dubbo</groupId>
+                <artifactId>dubbo-nacos-spring-boot-starter</artifactId>
+                <version>${dubbo.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.betterschool</groupId>
+                <artifactId>bs-types</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.betterschool</groupId>
+                <artifactId>bs-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.betterschool</groupId>
+                <artifactId>bs-domain</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.betterschool</groupId>
+                <artifactId>bs-case</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.betterschool</groupId>
+                <artifactId>bs-infrastructure</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.betterschool</groupId>
+                <artifactId>bs-trigger</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mybatis.spring.boot</groupId>
+                <artifactId>mybatis-spring-boot-starter</artifactId>
+                <version>${mybatis.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.redisson</groupId>
+                <artifactId>redisson-spring-boot-starter</artifactId>
+                <version>${redisson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.rocketmq</groupId>
+                <artifactId>rocketmq-spring-boot-starter</artifactId>
+                <version>${rocketmq.version}</version>
+                <exclusions>
+                    <!-- rocketmq-acl 传递 commons-beanutils → commons-logging，与 spring-jcl 冲突 -->
+                    <exclusion>
+                        <groupId>commons-logging</groupId>
+                        <artifactId>commons-logging</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-api</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-impl</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-jackson</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.xuxueli</groupId>
+                <artifactId>xxl-job-core</artifactId>
+                <version>${xxljob.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.minio</groupId>
+                <artifactId>minio</artifactId>
+                <version>${minio.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>

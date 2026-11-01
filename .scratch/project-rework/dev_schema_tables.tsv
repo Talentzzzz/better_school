@@ -1,0 +1,29 @@
+bs_user	用户表
+content_report	举报单表
+content_review	审核动作记录表（只插入）
+errand_order	跑腿订单表
+errand_order_event	跑腿订单状态流转记录（只插入不修改；同订单内 id 递增即状态变更顺序，纠纷溯源事实源）
+message	消息内容表（内容中心，只写一份）
+notification	站内通知表（scope+水位线已读模型，is_read 已退休）
+notification_read	通知已读水位表（每用户每范围一行）
+notification_seq	通知收件序号计数器表（每用户每范围一行）
+outbox_message	本地消息表(outbox)
+post	帖子表
+post_comment	帖子评论表
+post_comment_count	帖子评论计数表（专用窄行，评论同步 +1 不再锁 post 行）
+post_comment_like	评论点赞表
+post_like	帖子点赞关系表
+post_like_count	帖子点赞计数表（专用窄行，不与 post 内容/状态写入抢锁）
+product	二手商品表
+product_favorite	商品收藏表
+product_order	二手商品托管订单表
+product_order_event	商品订单状态流转记录（只插入不修改；同订单内 id 递增即状态变更顺序，纠纷溯源事实源）
+room	会话表（1v1）
+room_member	会话成员状态（每会话恒两行）
+sensitive_word	敏感词库表
+timeline	时间线（写扩散收件箱，只插不改）
+timeout_register_outbox	超时任务注册 outbox（业务库）
+user_credit_detail	信用分流水表
+user_seq	投递序号计数器（每用户一行）
+virtual_wallet	虚拟钱包表
+wallet_detail	钱包流水表

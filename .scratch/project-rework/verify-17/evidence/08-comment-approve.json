@@ -1,0 +1,32 @@
+{
+  "targetType": "COMMENT",
+  "targetId": 4,
+  "post_id": 13,
+  "http_status": 200,
+  "response": {
+    "code": "200",
+    "info": "成功",
+    "data": null
+  },
+  "state_after": "NORMAL",
+  "guest_visible_total": 1,
+  "content_review": [
+    {
+      "target_type": "COMMENT",
+      "target_id": "4",
+      "action": "APPROVE",
+      "source": "MANUAL",
+      "operator_id": "11",
+      "reason": "NULL"
+    }
+  ],
+  "post_owner_notification": [
+    {
+      "user_id": "1",
+      "type": "POST_COMMENTED",
+      "content": "你的帖子收到了新评论",
+      "ref_type": "POST",
+      "ref_id": "13"
+    }
+  ]
+}

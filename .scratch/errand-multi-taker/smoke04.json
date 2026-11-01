@@ -1,0 +1,58 @@
+{
+  "orderId": 22,
+  "roomId": 7,
+  "tokens": {
+    "pub": "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxMDAwMDAwMDA4Iiwicm9sZSI6IkFETUlOIiwiaWF0IjoxNzg5MDU1MDcyLCJleHAiOjE3ODk2NTk4NzJ9.Z852ofrNqrN94IV127W5u_IxYL9fzTU7X1QhzrVFENsx5JbNlxXTrIr7ZBvdWi9FFzDWwVbmQijktX0vLi6xuA",
+    "a": "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxMDAwMDAwMDA5Iiwicm9sZSI6IlVTRVIiLCJpYXQiOjE3ODkwNTUwNjYsImV4cCI6MTc4OTY1OTg2Nn0.qZ6JVxlWT7YQwuKqIJGe53w8AP9Xfmp3_zoETZfzUTwmBS2WN1OyUsovHzya51HzC_Kq9CtaitWrlh3B9QpNkA",
+    "b": "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxMDAwMDAwMDEwIiwicm9sZSI6IlVTRVIiLCJpYXQiOjE3ODkwNTUwNjgsImV4cCI6MTc4OTY1OTg2OH0.eNHR49VUxw12sNAiseHEf4pzfLYnCoKLbPMWJIRaXZeL2s1cKUceJlxit442g1A35ApqUXK8Orxh_if_-clcyQ",
+    "c": "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxMDAwMDAwMDExIiwicm9sZSI6IlVTRVIiLCJpYXQiOjE3ODkwNTUwNzAsImV4cCI6MTc4OTY1OTg3MH0.MpSj4QDnsi4A4qx1kwygKoweHtkg95tpG2GHfQ6SvMGb-6plKjtBsqE2XPnrhxRheWqK5LbwemqlYDFQKnoUtw"
+  },
+  "userIds": {
+    "pub": 1000000008,
+    "a": 1000000009,
+    "b": 1000000010,
+    "c": 1000000011
+  },
+  "userInfo": {
+    "pub": {
+      "userId": 1000000008,
+      "phone": "13900009201",
+      "nickname": "smoke04_pub",
+      "avatar": null,
+      "role": "ADMIN",
+      "status": "NORMAL",
+      "creditScore": 100,
+      "lastLoginAt": null
+    },
+    "a": {
+      "userId": 1000000009,
+      "phone": "13900009202",
+      "nickname": "smoke04_a",
+      "avatar": null,
+      "role": "USER",
+      "status": "NORMAL",
+      "creditScore": 80,
+      "lastLoginAt": null
+    },
+    "b": {
+      "userId": 1000000010,
+      "phone": "13900009203",
+      "nickname": "smoke04_b",
+      "avatar": null,
+      "role": "USER",
+      "status": "NORMAL",
+      "creditScore": 100,
+      "lastLoginAt": null
+    },
+    "c": {
+      "userId": 1000000011,
+      "phone": "13900009204",
+      "nickname": "smoke04_c",
+      "avatar": null,
+      "role": "USER",
+      "status": "NORMAL",
+      "creditScore": 80,
+      "lastLoginAt": null
+    }
+  }
+}

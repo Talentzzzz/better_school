@@ -1,0 +1,29 @@
+{
+  "tag": "t16-ct",
+  "concurrency": 256,
+  "duration_sec": 31.0,
+  "total_requests": 7020,
+  "rps": 226.4,
+  "error_rate": 0.0,
+  "ops": {
+    "post_list": {
+      "count": 7020,
+      "rps": 226.4,
+      "ok": 7020,
+      "err": 0,
+      "p50": 1122.42,
+      "p90": 1629.42,
+      "p99": 2175.33,
+      "max": 2784.69,
+      "mean": 1112.55,
+      "err_statuses": {},
+      "err_types": {}
+    }
+  },
+  "overall": {
+    "p50": 1122.42,
+    "p90": 1629.42,
+    "p99": 2175.33,
+    "max": 2784.69
+  }
+}

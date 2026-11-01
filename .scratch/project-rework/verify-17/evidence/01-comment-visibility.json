@@ -1,0 +1,13 @@
+{
+  "post_id": 13,
+  "comment_id": 4,
+  "comment_author_view_ids": [
+    4,
+    5
+  ],
+  "other_user_view": {
+    "ids": [],
+    "total": 0
+  },
+  "guest_view_total": 0
+}

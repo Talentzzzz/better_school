@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.marketing.infrastructure.inventory.dao.IPhysicalQuotaDao">
+
+    <!-- ============ 台账 ============ -->
+
+    <select id="selectQuota" resultType="com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaPO">
+        SELECT id, inv_id, name, decr, surplus_qty, waiting_qty, issued_qty, state, create_time, update_time
+        FROM physical_marketing_quota
+        WHERE inv_id = #{invId}
+    </select>
+
+    <!-- 预扣「探一次再切」的剩余量来源（spec §4.2）：-1 = 不限量 -->
+    <select id="selectSurplus" resultType="java.lang.Long">
+        SELECT surplus_qty
+        FROM physical_marketing_quota
+        WHERE inv_id = #{invId}
+    </select>
+
+    <!-- ============ 预扣落库（一组一事务，票 06） ============ -->
+
+    <!-- 流水先行：批量 INSERT IGNORE 撞 uk_biz_type 时静默跳过，返回值 = 实际新增行数。
+         幂等裁决完全交给唯一键——这是跨实例、跨重启、跨重放都能成立的唯一做法。
+         新代码不写 state（列默认 0，D9 收口删列）与 bucket_id（桶层已删，列可空保留到 D9）；
+         create_time/update_time 由 DB NOW() 写 -->
+    <insert id="batchInsertIgnoreDeductDetails">
+        INSERT IGNORE INTO physical_marketing_quota_detail (inv_id, quantity, type, biz_type, biz_id,
+                                                            create_time, update_time)
+        VALUES
+        <foreach collection="details" item="d" separator=",">
+            (#{invId}, #{d.quantity}, 1, #{d.bizType}, #{d.bizId}, NOW(), NOW())
+        </foreach>
+    </insert>
+
+    <!-- 仅在批量 INSERT 后发现新增行数 &lt; 批大小时调用：捞回已存在的预扣行（它们的量已经扣过），
+         调用方据此从本次扣减量里剔除。不按 inv_id 过滤：唯一键是全局的 (type, biz_type, biz_id) -->
+    <select id="listExistingDeductDetails"
+            resultType="com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaDetailPO">
+        SELECT biz_type, biz_id, quantity
+        FROM physical_marketing_quota_detail
+        WHERE type = 1 AND biz_type = #{bizType}
+          AND biz_id IN
+        <foreach collection="bizIds" item="bizId" separator="," open="(" close=")">
+            #{bizId}
+        </foreach>
+    </select>
+
+    <!-- 台账扣减（一条 UPDATE）：surplus → waiting，带余量守卫（0 行 = 余量不够，调用方探一次再切）。
+         -1=不限量：不守卫、不动 surplus。surplus 恰好扣空由 open 置 exhausted；
+         state 的 IF 放在 surplus_qty 赋值之前（MySQL SET 从左到右用新值），口径 = 旧值恰好扣空 -->
+    <update id="deductLedger">
+        UPDATE physical_marketing_quota
+        SET state = IF(surplus_qty &gt;= 0 AND surplus_qty = #{quantity} AND state = 'open', 'exhausted', state),
+            waiting_qty = waiting_qty + #{quantity},
+            surplus_qty = IF(surplus_qty &lt; 0, surplus_qty, surplus_qty - #{quantity}),
+            update_time = NOW()
+        WHERE inv_id = #{invId} AND (surplus_qty &lt; 0 OR surplus_qty &gt;= #{quantity})
+    </update>
+
+    <!-- 业务幂等预检（台账非 open 时的重放窗口）：本 inv 上 type + biz_type + biz_id 命中 = 已落过 -->
+    <select id="existsDeductDetail" resultType="boolean">
+        SELECT EXISTS(SELECT 1
+                      FROM physical_marketing_quota_detail
+                      WHERE inv_id = #{invId} AND type = #{type}
+                        AND biz_type = #{bizType} AND biz_id = #{bizId})
+    </select>
+
+    <!-- ============ 兑换确认（同步合并，票 07：逐行 INSERT IGNORE + waiting→issued） ============ -->
+
+    <!-- 逐行 INSERT IGNORE 确认明细（type = 2）：撞 uk_biz_type 静默跳过，返回值 = 是否新增（1/0）。
+         确认批天然小（一份实物出库），逐行插不批插——「哪几行是新增」没有歧义，
+         转移量精确等于新增量（spec §4.5）。新代码不写 state（列默认 0，D9 收口删列）
+         与 bucket_id（桶层已删，列可空保留到 D9）；create_time/update_time 由 DB NOW() 写 -->
+    <insert id="insertIgnoreClaimDetail" parameterType="com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaDetailPO">
+        INSERT IGNORE INTO physical_marketing_quota_detail (inv_id, quantity, type, biz_type, biz_id,
+                                                            create_time, update_time)
+        VALUES (#{invId}, #{quantity}, 2, #{bizType}, #{bizId}, NOW(), NOW())
+    </insert>
+
+    <!-- 确认组落库的台账步：waiting_qty >= qty 守卫下转移；0 行 = 没有足够的悬挂预扣 = 不变量破坏，
+         调用方整组回滚（连确认明细一起）并抛可重试（spec §4.5） -->
+    <update id="transferWaitingToIssued">
+        UPDATE physical_marketing_quota
+        SET waiting_qty = waiting_qty - #{quantity},
+            issued_qty = issued_qty + #{quantity},
+            update_time = NOW()
+        WHERE inv_id = #{invId} AND waiting_qty &gt;= #{quantity}
+    </update>
+
+    <!-- ============ 预热 / 对账 ============ -->
+
+    <select id="selectOpenQuotas" resultType="com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaPO">
+        SELECT id, inv_id, name, decr, surplus_qty, waiting_qty, issued_qty, state, create_time, update_time
+        FROM physical_marketing_quota
+        WHERE state = 'open'
+    </select>
+
+</mapper>

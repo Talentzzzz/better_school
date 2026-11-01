@@ -1,0 +1,122 @@
+{
+  "userA": 6,
+  "userB": 12,
+  "outsider": 7,
+  "roomId": 1,
+  "roomRow": [
+    [
+      "1",
+      "6",
+      "12",
+      "6",
+      "TEXT",
+      "冒烟私信 B→A（1791302513）",
+      "ACTIVE"
+    ]
+  ],
+  "roomMemberRows": [
+    [
+      "6",
+      "0",
+      "NULL"
+    ],
+    [
+      "12",
+      "6",
+      "NULL"
+    ]
+  ],
+  "messageRows": [
+    [
+      "5",
+      "5",
+      "6",
+      "TEXT",
+      "冒烟私信 A→B（1791302513）",
+      "NORMAL",
+      "smoke17-03-1791302513-a"
+    ],
+    [
+      "6",
+      "6",
+      "12",
+      "TEXT",
+      "冒烟私信 B→A（1791302513）",
+      "NORMAL",
+      "smoke17-03-1791302513-b"
+    ]
+  ],
+  "timelineRows": [
+    [
+      "6",
+      "5",
+      "5",
+      "5"
+    ],
+    [
+      "12",
+      "5",
+      "5",
+      "5"
+    ],
+    [
+      "6",
+      "6",
+      "6",
+      "6"
+    ],
+    [
+      "12",
+      "6",
+      "6",
+      "6"
+    ]
+  ],
+  "readState": {
+    "lastSeq": 6,
+    "lastReadSeqBefore": 4,
+    "lastReadSeqAfter": 6,
+    "readApiReturn": 6
+  },
+  "sendResponseA": {
+    "roomId": 1,
+    "messageId": 5,
+    "seq": 5,
+    "fromUserId": 6,
+    "fromNickname": "冒烟跑腿发布者",
+    "fromAvatar": null,
+    "msgType": "TEXT",
+    "status": "NORMAL",
+    "content": "冒烟私信 A→B（1791302513）",
+    "refType": null,
+    "refId": null,
+    "clientMsgId": "smoke17-03-1791302513-a",
+    "deliverySeq": null,
+    "createdAt": "2026-10-07T00:01:53.8792168"
+  },
+  "sendResponseB": {
+    "roomId": 1,
+    "messageId": 6,
+    "seq": 6,
+    "fromUserId": 12,
+    "fromNickname": "冒烟私信对家",
+    "fromAvatar": null,
+    "msgType": "TEXT",
+    "status": "NORMAL",
+    "content": "冒烟私信 B→A（1791302513）",
+    "refType": null,
+    "refId": null,
+    "clientMsgId": "smoke17-03-1791302513-b",
+    "deliverySeq": null,
+    "createdAt": "2026-10-07T00:01:53.9485282"
+  },
+  "historySeqsReturned": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "nonMemberReadCode": "403"
+}

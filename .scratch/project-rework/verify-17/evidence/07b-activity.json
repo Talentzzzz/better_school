@@ -1,0 +1,27 @@
+{
+  "ok": true,
+  "data": {
+    "name": "冒烟17抽奖",
+    "startAt": "2026-01-01T00:00:00",
+    "endAt": "2027-12-31T23:59:59",
+    "status": "ONGOING",
+    "drawCountPrice": 100,
+    "drawCountValidDays": 30
+  },
+  "last_response": {
+    "attempt": 1,
+    "http_status": 200,
+    "response": {
+      "code": "200",
+      "info": "成功",
+      "data": {
+        "name": "冒烟17抽奖",
+        "startAt": "2026-01-01T00:00:00",
+        "endAt": "2027-12-31T23:59:59",
+        "status": "ONGOING",
+        "drawCountPrice": 100,
+        "drawCountValidDays": 30
+      }
+    }
+  }
+}

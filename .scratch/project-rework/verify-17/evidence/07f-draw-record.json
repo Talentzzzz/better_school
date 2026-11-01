@@ -1,0 +1,29 @@
+{
+  "draw_record": {
+    "record_id": "7706668465549841551",
+    "user_id": "9",
+    "award_id": "8103",
+    "award_name": "60 积分",
+    "award_type": "VIRTUAL",
+    "level": "3",
+    "inv_id": "8111",
+    "state": "已完成"
+  },
+  "draw_record_detail": [
+    {
+      "type": "COMPLETE",
+      "user_id": "9",
+      "record_id": "7706668465549841551"
+    },
+    {
+      "type": "DRAW",
+      "user_id": "9",
+      "record_id": "7706668465549841551"
+    },
+    {
+      "type": "EXCHANGE",
+      "user_id": "9",
+      "record_id": "7706668465549841551"
+    }
+  ]
+}

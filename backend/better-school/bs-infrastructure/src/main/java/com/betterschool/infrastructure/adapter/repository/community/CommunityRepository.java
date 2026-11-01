@@ -1,0 +1,979 @@
+package com.betterschool.infrastructure.adapter.repository.community;
+
+import com.betterschool.domain.community.adapter.repository.ICommunityRepository;
+import com.betterschool.domain.community.model.entity.PostCommentEntity;
+import com.betterschool.domain.community.model.entity.PostEntity;
+import com.betterschool.domain.community.model.valobj.CommentReviewMessage;
+import com.betterschool.domain.community.model.valobj.FeedCursorVO;
+import com.betterschool.domain.community.model.valobj.FeedIndexItemVO;
+import com.betterschool.domain.community.model.valobj.LikeStateVO;
+import com.betterschool.domain.community.model.valobj.PostReviewTimeoutVO;
+import com.betterschool.domain.community.model.valobj.PostStatusVO;
+import com.betterschool.domain.search.model.valobj.SearchEntityType;
+import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
+import com.betterschool.infrastructure.adapter.cache.post.PostDetailCache;
+import com.betterschool.infrastructure.adapter.merge.CountAction;
+import com.betterschool.infrastructure.adapter.merge.CountEvent;
+import com.betterschool.infrastructure.adapter.merge.CountMergeWriter;
+import com.betterschool.infrastructure.adapter.merge.ICountFlushHandler;
+import com.betterschool.infrastructure.adapter.merge.LikeState;
+import com.betterschool.infrastructure.adapter.merge.ViewMergeWriter;
+import com.betterschool.infrastructure.adapter.repository.moderation.ReviewTaskPoolStore;
+import com.betterschool.infrastructure.dao.comment.IPostCommentDao;
+import com.betterschool.infrastructure.dao.comment.po.PostCommentLikeCountPO;
+import com.betterschool.infrastructure.dao.comment.po.PostCommentPO;
+import com.betterschool.infrastructure.dao.post.IPostDao;
+import com.betterschool.infrastructure.dao.post.po.PostPO;
+import com.betterschool.infrastructure.outbox.OutboxMessageStore;
+import com.betterschool.domain.moderation.model.valobj.ReviewTargetTypeVO;
+import com.betterschool.types.common.Constants;
+import com.betterschool.types.id.IIdGenerator;
+import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.exception.BusinessException;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * 社区仓储（帖子 + 评论合一）：持有 IPostDao + IPostCommentDao，多写原子用例在实现内用编程式事务（默认 REQUIRED）。
+ * PO / Mapper XML 位置不变；帖子详情缓存仍只依赖 IPostDao（不经本类）。
+ *
+ * <p>本类同时是计数合并器的<b>落库方法</b>（{@link ICountFlushHandler}）：点赞 / 取消赞 / 评论赞 /
+ * 帖子浏览的「一组一个事务」在这里，和域内的其他读改写共用同一套 DAO 与事务模板——事务边界不出仓储
+ * （{@code backend/CLAUDE.md} §1/§3）。商品浏览的落库方法在同层的 {@code TradeRepository}，
+ * 由 {@code CountFlushDispatcher} 按动作分发。
+ */
+@Slf4j
+@Repository
+@RequiredArgsConstructor
+public class CommunityRepository implements ICommunityRepository, ICountFlushHandler {
+
+    private final IPostDao postDao;
+    private final IPostCommentDao commentDao;
+    /** 业务 ID 统一发号入口（uuid-biz-id 票 01）：帖 / 评在 insert 前发号一次写入 */
+    private final IIdGenerator idGenerator;
+    private final ObjectMapper objectMapper;
+    private final OutboxMessageStore outboxMessageStore;
+    private final PostDetailCache postDetailCache;
+    private final ReviewTaskPoolStore reviewTaskPoolStore;
+    private final TransactionTemplate transactionTemplate;
+    /** 点赞类写入的唯一通道（合并器 + 三条降级） */
+    private final CountMergeWriter countMergeWriter;
+    /** 浏览类写入的唯一通道（fire-and-forget，窗口后一条 UPDATE … + N） */
+    private final ViewMergeWriter viewMergeWriter;
+
+    // ---------- 帖子 ----------
+
+    @Override
+    public void save(PostEntity postEntity) {
+        // 业务 ID 应用层发号、insert 前一次写入（物理自增 id 只作内部键，不再同值回写）
+        postEntity.setPostId(idGenerator.nextId());
+        transactionTemplate.execute(status -> {
+            PostPO postPO = toPO(postEntity);
+            postDao.insert(postPO);
+            // 入池点（spec §5.1）：发布落库即待审，工单开单与状态同事务（草稿行 DRAFT 不入池）
+            if (postEntity.getStatus() == PostStatusVO.PENDING_REVIEW) {
+                reviewTaskPoolStore.enter(ReviewTargetTypeVO.POST, postEntity.getPostId(),
+                        postEntity.getReviewRound(), postEntity.getUserId(), postEntity.getReviewEnteredAt());
+            }
+            return null;
+        });
+        postDetailCache.add(postEntity.getPostId());
+    }
+
+    @Override
+    public PostEntity findPostById(String postId) {
+        // 详情缓存：命中直接返回；布隆拦截"一定不存在"；miss 单飞回填（仅 NORMAL 进缓存）。
+        // 读路径拆两段（票 05 / spec §3.3）：内容走缓存，三个计数每次回库拼装——缓存与计数零耦合
+        PostEntity cached = postDetailCache.get(postId);
+        if (cached != null) {
+            return withLiveCounts(postId, cached);
+        }
+        if (!postDetailCache.mightContain(postId)) {
+            return null;
+        }
+        PostEntity loaded = postDetailCache.getOrLoad(postId, () -> toPostEntity(postDao.selectById(postId)));
+        return loaded == null ? null : withLiveCounts(postId, loaded);
+    }
+
+    /**
+     * 详情读拆两段之二（票 05 / acceptance C5）：按主键一次取回三个计数拼上实体。
+     * 缓存里没有计数（进缓存前置空），因此<b>缓存命中路径</b>的 like/comment/view 也恒等于库值——
+     * 点赞 / 评论数同步落库后立刻读详情就是新值。读路径不认识合并器，也不做任何在途增量叠加：
+     * 点赞请求返回时事务已提交，库值本身就是新的，不需要模拟「缓冲里还有几件」。
+     */
+    private PostEntity withLiveCounts(String postId, PostEntity postEntity) {
+        PostPO counts = postDao.selectCountsByPostId(postId);
+        if (counts != null) {
+            postEntity.setLikeCount(counts.getLikeCount());
+            postEntity.setCommentCount(counts.getCommentCount());
+            postEntity.setViewCount(counts.getViewCount());
+        }
+        return postEntity;
+    }
+
+    @Override
+    public void deletePostById(String postId) {
+        transactionTemplate.execute(status -> {
+            postDao.softDelete(postId);
+            // feed 索引行同事务不可见化（feed-index-uv 票 03）：软删/强删共用此口，行不存在时 0 行静默
+            postDao.updateFeedIndexState(postId, PostStatusVO.DELETED.name());
+            return null;
+        });
+        postDetailCache.evict(postId);
+    }
+
+    @Override
+    public void updateDraft(PostEntity postEntity) {
+        postDao.updateDraft(toPO(postEntity));
+    }
+
+    @Override
+    public boolean submitDraft(String postId) {
+        Boolean submitted = transactionTemplate.execute(status -> {
+            boolean updated = postDao.submitDraft(postId) > 0;
+            if (updated) {
+                // 入池点：草稿提交进待审，轮次递增同事务可见；工单开单与状态迁移同事务
+                // （UPDATE 内联轮次 +1 与 entered_at=NOW()，读回本事务内的新值作工单入参）
+                PostPO submittedPost = postDao.selectById(postId);
+                reviewTaskPoolStore.enter(ReviewTargetTypeVO.POST, postId, submittedPost.getReviewRound(),
+                        submittedPost.getUserId(), submittedPost.getReviewEnteredAt());
+            }
+            return updated;
+        });
+        // 草稿从未进过缓存（仅 NORMAL 进缓存），提交后进待审也不可见，无需失效；条件 UPDATE 0 行时上层终态判定
+        return Boolean.TRUE.equals(submitted);
+    }
+
+    @Override
+    public boolean withdraw(String postId) {
+        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
+            boolean withdrawn = postDao.withdraw(postId) > 0;
+            if (withdrawn) {
+                // 退出待审（撤回回草稿箱）：在途工单出池停 DONE，防池中遗留指向非待审行的幽灵工单
+                reviewTaskPoolStore.close(ReviewTargetTypeVO.POST, postId);
+                // 撤回同事务索引行不可见化（feed-index-uv 票 03）：行不存在（从未通过审）时 0 行静默
+                postDao.updateFeedIndexState(postId, PostStatusVO.DRAFT.name());
+            }
+            return withdrawn;
+        }));
+    }
+
+    @Override
+    public boolean rejectToDraft(String postId) {
+        Boolean moved = transactionTemplate.execute(status -> {
+            boolean updated = postDao.rejectToDraft(postId) > 0;
+            if (updated) {
+                // 被拒转草稿同事务索引行不可见化（feed-index-uv 票 03）：行不存在（从未通过审）时 0 行静默
+                postDao.updateFeedIndexState(postId, PostStatusVO.DRAFT.name());
+            }
+            return updated;
+        });
+        return Boolean.TRUE.equals(moved);
+    }
+
+    @Override
+    public boolean approvePostById(String postId) {
+        Boolean approved = transactionTemplate.execute(status -> {
+            boolean updated = postDao.approveById(postId) > 0;
+            if (updated) {
+                // feed 索引行诞生/翻回（feed-index-uv 票 03，同事务）：feed_time 只在 INSERT 侧落
+                postDao.upsertFeedIndexOnApprove(postId);
+            }
+            return updated;
+        });
+        // 审核动作后状态可能变化，缓存只存 NORMAL，无条件失效（条件 UPDATE 0 行时失效无害）
+        postDetailCache.evict(postId);
+        return Boolean.TRUE.equals(approved);
+    }
+
+    @Override
+    public boolean rejectPostById(String postId) {
+        Boolean rejected = transactionTemplate.execute(status -> {
+            boolean updated = postDao.rejectById(postId) > 0;
+            if (updated) {
+                // 驳回同事务索引行不可见化（feed-index-uv 票 03）：行不存在（从未通过审）时 0 行静默
+                postDao.updateFeedIndexState(postId, PostStatusVO.REJECTED.name());
+            }
+            return updated;
+        });
+        // 驳回后帖子不可见，必须删掉可能存在的 NORMAL 缓存（否则用户仍能看到已驳回内容）
+        postDetailCache.evict(postId);
+        return Boolean.TRUE.equals(rejected);
+    }
+
+    @Override
+    public List<PostReviewTimeoutVO> listReviewTimeoutPosts(LocalDateTime before, int limit) {
+        // 部分列直映 VO（post_id + 推导轮次），不走 toPostEntity（state/计数等列为 null）
+        return postDao.selectReviewTimeoutPosts(before, limit);
+    }
+
+    @Override
+    public List<PostEntity> pageList(String sort, int offset, int limit) {
+        return postDao.selectPage(sort, offset, limit).stream().map(this::toPostEntity).toList();
+    }
+
+    @Override
+    public long count() {
+        return postDao.count();
+    }
+
+    @Override
+    public List<FeedIndexItemVO> scanFeedIndex(String sortType, FeedCursorVO cursor, int limit) {
+        return postDao.selectFeedIndex(sortType, cursor, limit);
+    }
+
+    @Override
+    public void rebuildFeedIndex() {
+        transactionTemplate.executeWithoutResult(status -> {
+            int recalibrated = postDao.recalibrateViewCounts();
+            int orphans = postDao.deleteViewCountsMissingHistory();
+            postDao.clearFeedIndex();
+            int rebuilt = postDao.rebuildFeedIndexProjection();
+            log.info("[FeedIndexRebuild] post_feed_index 清空重灌 {} 行；post_view_count 校准 {} 行、清理孤儿 {} 行",
+                    rebuilt, recalibrated, orphans);
+        });
+    }
+
+    @Override
+    public List<PostEntity> pagePostsByUser(String userId, int offset, int limit) {
+        return postDao.selectPageByUser(userId, offset, limit).stream().map(this::toPostEntity).toList();
+    }
+
+    @Override
+    public long countPostsByUser(String userId) {
+        return postDao.countByUser(userId);
+    }
+
+    @Override
+    public List<PostEntity> pageLikedByUser(String userId, int offset, int limit) {
+        return postDao.selectLikedPageByUser(userId, offset, limit).stream().map(this::toPostEntity).toList();
+    }
+
+    @Override
+    public long countLikedByUser(String userId) {
+        return postDao.countLikedByUser(userId);
+    }
+
+    @Override
+    public List<PostEntity> pageCommentedByUser(String userId, int offset, int limit) {
+        return postDao.selectCommentedPageByUser(userId, offset, limit).stream().map(this::toPostEntity).toList();
+    }
+
+    @Override
+    public long countCommentedByUser(String userId) {
+        return postDao.countCommentedByUser(userId);
+    }
+
+    @Override
+    public List<PostEntity> pageNormalByUser(String userId, int offset, int limit) {
+        return postDao.selectNormalPageByUser(userId, offset, limit).stream().map(this::toPostEntity).toList();
+    }
+
+    @Override
+    public long countNormalByUser(String userId) {
+        return postDao.countNormalByUser(userId);
+    }
+
+    @Override
+    public List<PostEntity> pagePublicLikedByUser(String userId, int offset, int limit) {
+        return postDao.selectPublicLikedPageByUser(userId, offset, limit).stream().map(this::toPostEntity).toList();
+    }
+
+    @Override
+    public long countPublicLikedByUser(String userId) {
+        return postDao.countPublicLikedByUser(userId);
+    }
+
+    @Override
+    public List<PostEntity> pageViewHistoryByUser(String userId, int offset, int limit) {
+        return postDao.selectViewHistoryPage(userId, offset, limit).stream().map(this::toPostEntity).toList();
+    }
+
+    @Override
+    public long countViewHistoryByUser(String userId) {
+        return postDao.countViewHistory(userId);
+    }
+
+    @Override
+    public List<String> selectViewedPostIds(String userId, List<String> postIds) {
+        if (userId == null || postIds == null || postIds.isEmpty()) {
+            return List.of();
+        }
+        return postDao.selectViewedPostIds(userId, postIds);
+    }
+
+    @Override
+    public boolean isPostLiked(String postId, String userId) {
+        return postDao.existsLike(postId, userId) > 0;
+    }
+
+    @Override
+    public List<String> selectLikedPostIds(String userId, List<String> postIds) {
+        if (userId == null || postIds == null || postIds.isEmpty()) {
+            return List.of();
+        }
+        return postDao.selectLikedPostIds(userId, postIds);
+    }
+
+    @Override
+    public List<PostEntity> listByIds(List<String> postIds) {
+        return postDao.selectByIds(postIds).stream().map(this::toPostEntity).toList();
+    }
+
+    @Override
+    public List<String> listIdsAfter(String lastId, int limit) {
+        return postDao.selectIdsAfter(lastId, limit);
+    }
+
+    @Override
+    public void saveSearchSyncMessage(String postId) {
+        outboxMessageStore.save(Constants.SEARCH_SYNC_TOPIC,
+                new SearchSyncMessage(SearchEntityType.POST.name().toLowerCase(), String.valueOf(postId)));
+    }
+
+    @Override
+    public void recordPostView(String postId, String userId) {
+        // 浏览计数（UV 口径）：入队即返回，窗口过后一组一个事务——明细表 INSERT IGNORE + viewed_at
+        // 刷新 + 加速列 += 新增数。匿名访问落不了明细行（user_view_history 主键的一半是 user_id），
+        // 按「INSERT 成功才算浏览」的口径不计入；明细行即真相源，失败只记丢弃数（spec §1.2 / §3.2）
+        if (userId == null) {
+            return;
+        }
+        viewMergeWriter.write(CountAction.POST_VIEW, postId, userId);
+    }
+
+    @Override
+    public void deleteWithSearchSync(String postId) {
+        transactionTemplate.execute(status -> {
+            deletePostById(postId);
+            // 软删后贴文不可见，落搜索同步消息（消费方删除 ES 文档）
+            saveSearchSyncMessage(postId);
+            // 待审帖可被作者删除：退出待审同事务出池（非待审行无在途工单，幂等 0 行无害）
+            reviewTaskPoolStore.close(ReviewTargetTypeVO.POST, postId);
+            return null;
+        });
+    }
+
+    @Override
+    public boolean approveWithSearchSync(String postId) {
+        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
+            if (!approvePostById(postId)) {
+                return false;
+            }
+            // 审核通过后贴文公开可搜，落搜索同步消息（与状态变更同事务）
+            saveSearchSyncMessage(postId);
+            return true;
+        }));
+    }
+
+    @Override
+    public boolean rejectWithSearchSync(String postId) {
+        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
+            if (!rejectPostById(postId)) {
+                return false;
+            }
+            // 驳回后贴文不再公开，落搜索同步消息（消费方删除 ES 文档）
+            saveSearchSyncMessage(postId);
+            return true;
+        }));
+    }
+
+    @Override
+    public void forceDeleteWithSearchSync(String postId) {
+        transactionTemplate.execute(status -> {
+            deletePostById(postId);
+            // 软删后贴文不可见，落搜索同步消息（消费方删除 ES 文档）
+            saveSearchSyncMessage(postId);
+            // 管理侧下架可命中待审帖：同事务出池（幂等 0 行无害）
+            reviewTaskPoolStore.close(ReviewTargetTypeVO.POST, postId);
+            return null;
+        });
+    }
+
+    @Override
+    public LikeStateVO likePostWithMergedCount(String postId, String userId) {
+        // 合并写：提交给合并器 → 5ms 窗口 → 一组一事务（INSERT IGNORE 关系行 + 计数 +N）→ 返回时计数已精确。
+        // 缓冲满 / 停机中的同步降级、等超时的可重试翻译都在 CountMergeWriter（降级复用同一个落库方法）
+        return countMergeWriter.write(CountAction.POST_LIKE, postId, userId);
+    }
+
+    @Override
+    public LikeStateVO unlikePostWithMergedCount(String postId, String userId) {
+        return countMergeWriter.write(CountAction.POST_UNLIKE, postId, userId);
+    }
+
+    // ---------- 计数合并器的落库方法：一组一个事务（spec §3.1） ----------
+
+    /**
+     * 合并器唯一认识的出口：把一组「同一动作 × 同一行主键」的件落成
+     * <b>关系行批量写 + 计数一条 UPDATE</b>。
+     *
+     * <p><b>为什么计数按「影响行数」而不是「事件数」加</b>：批里可能混着已经赞过的用户
+     * （前端双击、HTTP 重试、降级路径的并发写）。{@code INSERT IGNORE} 的影响行数恰好是
+     * <b>本组真正插入的行数</b>，按它增量，计数与关系行条数就永远对得上，重复赞天然不重复计——
+     * 不需要 msgId 去重，也不需要事后校准（spec §3.4）。
+     *
+     * <p><b>批内撞键怎么定位到具体请求</b>：影响行数只给总数（比如 200 件只插进 197 行），
+     * 「哪 3 件撞了键」必须自己查：本事务内按这一批的 {@code (行主键, user_id)} 回查，
+     * 命中的那几件回 {@link LikeState#DUPLICATE}，其余照常成功。回查范围严格锁在批内。
+     *
+     * <p><b>浏览</b>与点赞共用这条出口（{@link #viewPosts}）：{@code INSERT IGNORE} 明细行裁决重复 UV，
+     * 影响行数就是增量——同一套「影响行数 = 计数增量」的裁决逻辑，只是裁决键从点赞关系唯一键换成了
+     * {@code (user_id, post_id)} 主键。
+     */
+    @Override
+    public List<LikeState> flushGroup(CountAction action, String shardKey, List<CountEvent> events) {
+        return switch (action) {
+            case POST_LIKE -> transactionTemplate.execute(status -> likePosts(shardKey, events));
+            case POST_UNLIKE -> transactionTemplate.execute(status -> unlikePosts(shardKey, events));
+            case COMMENT_LIKE -> transactionTemplate.execute(status -> likeComments(shardKey, events));
+            case POST_VIEW -> transactionTemplate.execute(status -> viewPosts(shardKey, events));
+            // 商品/跑腿浏览打的是各自的 UV 表，落库方法在 TradeRepository / ErrandRepository；由 CountFlushDispatcher 分流
+            case PRODUCT_VIEW, ERRAND_VIEW -> throw new IllegalArgumentException(
+                    "商品/跑腿浏览的落库方法在 TradeRepository / ErrandRepository，不该由社区仓储处理：" + action);
+        };
+    }
+
+    /**
+     * 一组帖子浏览（UV 口径，{@link #likePosts} 的镜像）：一组一个事务三步——
+     * <ol>
+     *   <li>{@code INSERT IGNORE INTO user_view_history}（影响行数 = 本组<b>真正新增</b>的 UV 数，
+     *       重复浏览撞 {@code (user_id, post_id)} 主键被裁决掉）；</li>
+     *   <li>{@code UPDATE viewed_at}（本组全部键，含刚插入的——对重复浏览是唯一可见效果）；</li>
+     *   <li>{@code post_view_count += 新增数}（加速列恒等于明细行数）。</li>
+     * </ol>
+     *
+     * <p><b>为什么计数按「影响行数」而不是「事件数」加</b>：与点赞同理——前端双击、HTTP 重试、
+     * 降级并发写都会产生重复键，{@code INSERT IGNORE} 的影响行数恰好是本组真正插入的行数，
+     * 加速列与明细行条数就永远对得上（feed-index-uv map 定稿）。不重试、不回补：浏览允许丢，
+     * 丢了下次浏览的 INSERT 会把缺的 UV 补上。
+     *
+     * <p><b>为什么要回一组占位结果</b>：浏览件没有业务结果（没有人在等），但必须回一组与入参等长、
+     * 非 null 的占位值。引擎把「null / 缺位」当作落库方法漏回填，会补 {@code FAILED} 并计入
+     * {@code failed}；那样 {@code flushed} 会漏掉这些件，合并比与「accepted − flushed」两个读数同时失真。
+     */
+    private List<LikeState> viewPosts(String postId, List<CountEvent> events) {
+        List<String> userIds = distinctUserIds(events);
+        int inserted = postDao.insertViewHistory(postId, userIds);
+        postDao.touchViewedAt(postId, userIds);
+        if (inserted > 0) {
+            postDao.upsertViewCount(postId, inserted);
+        }
+        return Collections.nCopies(events.size(), LikeState.APPLIED);
+    }
+
+    /** 一组点赞：关系行批量 INSERT IGNORE → 计数 + 真正插入的行数 */
+    private List<LikeState> likePosts(String postId, List<CountEvent> events) {
+        List<String> userIds = distinctUserIds(events);
+        Set<String> alreadyLiked = new HashSet<>(postDao.selectLikeUserIds(postId, userIds));
+        int inserted = postDao.insertLikes(postId, userIds);
+        if (inserted > 0) {
+            postDao.upsertLikeCount(postId, inserted);
+            // feed 索引 like_count 快照同事务旁路 +N（feed-index-uv 票 03）：热榜排序键与窄表同步推进
+            syncFeedIndexLikeCount(postId, inserted);
+        }
+        // 已经赞过 → DUPLICATE；没赞过 → LIKED；同批重复 → 第一件已写，后面的必然撞键
+        return attribute(events, alreadyLiked, LikeState.DUPLICATE, LikeState.LIKED, LikeState.DUPLICATE);
+    }
+
+    /** 一组取消赞：关系行批量 DELETE → 计数 - 真正删掉的行数（GREATEST 兜住不为负） */
+    private List<LikeState> unlikePosts(String postId, List<CountEvent> events) {
+        List<String> userIds = distinctUserIds(events);
+        Set<String> alreadyLiked = new HashSet<>(postDao.selectLikeUserIds(postId, userIds));
+        int deleted = postDao.deleteLikes(postId, userIds);
+        if (deleted > 0) {
+            postDao.decreaseLikeCount(postId, deleted);
+            // feed 索引 like_count 快照同事务旁路 -N（feed-index-uv 票 03）
+            syncFeedIndexLikeCount(postId, -deleted);
+        }
+        // 原本有赞 → 删掉了 → UNLIKED；本来就没赞 → NOT_FOUND；同批重复 → 第二件起已无行可删
+        return attribute(events, alreadyLiked, LikeState.UNLIKED, LikeState.NOT_FOUND, LikeState.NOT_FOUND);
+    }
+
+    /**
+     * feed 索引 like_count 快照 ±N（{@link #likePosts}/{@link #unlikePosts} 的事务内旁路）：
+     * 纯 UPDATE 不 upsert——能被赞的帖子行必存在（NORMAL 才可赞，通过事务已建行）。
+     * 命中 0 行 = 索引行缺失的存量异常（如回填遗漏），不补行、落日志交重建 job（feed-index-uv 票 07）
+     */
+    private void syncFeedIndexLikeCount(String postId, int delta) {
+        if (postDao.updateFeedIndexLikeCount(postId, delta) == 0) {
+            log.warn("post_feed_index 行缺失，like_count 快照未同步（postId={}, delta={}），交由重建 job 修复", postId, delta);
+        }
+    }
+
+    /** 一组评论点赞：关系行批量 INSERT IGNORE → 窄表 like_count + 真正插入的行数 + 根评论索引旁带 */
+    private List<LikeState> likeComments(String commentId, List<CountEvent> events) {
+        List<String> userIds = distinctUserIds(events);
+        Set<String> alreadyLiked = new HashSet<>(commentDao.selectCommentLikeUserIds(commentId, userIds));
+        int inserted = commentDao.insertCommentLikes(commentId, userIds);
+        if (inserted > 0) {
+            // 评论点赞计数落窄表（票 02）；根评论的热评索引 like_count 快照同事务旁路 +N（票 01）
+            updateLikeCount(commentId, inserted);
+            syncCommentFeedIndexLikeCount(commentId, inserted);
+        }
+        return attribute(events, alreadyLiked, LikeState.DUPLICATE, LikeState.LIKED, LikeState.DUPLICATE);
+    }
+
+    /**
+     * 根评论热评索引 like_count 快照 ±N（{@link #likeComments} / {@link #unlikeCommentWithCount}
+     * 的事务内旁路，票 01）。
+     *
+     * <p><b>先判根/子</b>：子回复不入索引，它的 UPDATE 必然 0 行，绝不能当漂移告警——所以这一层
+     * 必须自己读一次 {@code root_id}，不能靠 UPDATE 的影响行数反推。三种情况分开处理：
+     * <ul>
+     *   <li>评论行不存在（{@code rootId == null}）：点赞前置检查读的就是这一行，走到这里说明有别的漂移，
+     *       留痕但不猜；</li>
+     *   <li>子回复：静默返回，这是正常态；</li>
+     *   <li>根评论：纯 UPDATE 不 upsert（能被赞的根评论索引行必存在：NORMAL 才可赞、通过事务已建行），
+     *       命中 0 行 = 索引行缺失，不补行、落日志交重建 job（与帖子 {@link #syncFeedIndexLikeCount} 同款文案）。</li>
+     * </ul>
+     */
+    private void syncCommentFeedIndexLikeCount(String commentId, int delta) {
+        String rootId = commentDao.selectRootId(commentId);
+        if (rootId == null) {
+            log.warn("评论行不存在，post_comment_feed_index 快照未同步（commentId={}, delta={}）", commentId, delta);
+            return;
+        }
+        if (!PostCommentEntity.NO_REFERENCE.equals(rootId)) {
+            return;
+        }
+        if (commentDao.updateFeedIndexLikeCount(commentId, delta) == 0) {
+            log.warn("post_comment_feed_index 行缺失，like_count 快照未同步（commentId={}, delta={}），交由重建 job 修复",
+                    commentId, delta);
+        }
+    }
+
+    /**
+     * 逐件回填业务结果，顺序与入参一致（{@link ICountFlushHandler} 的约定）。
+     *
+     * <p>三个来源要分开，<b>点赞与取消赞的方向正好相反</b>，所以不能只传一个「被跳过」值：
+     * <ul>
+     *   <li>{@code ifExisting}：批前就存在这一行（点赞 → {@code DUPLICATE}；取消赞 → {@code UNLIKED}）；</li>
+     *   <li>{@code ifAbsent}：批前不存在（点赞 → {@code LIKED}；取消赞 → {@code NOT_FOUND}）；</li>
+     *   <li>{@code ifRepeated}：同一个人在这一批里出现多次——DML 对同一个
+     *       {@code (行主键, user_id)} 只可能改一次，第二件起必然什么都没改。</li>
+     * </ul>
+     *
+     * <p>回查是<b>本事务内</b>的快照，因此与另一个事务并发写同一 {@code (行主键, user_id)} 时
+     * （只可能发生在「缓冲满降级」与「同分片 flush」同时跑的那一刻），逐件的成功/重复判定可能偏向
+     * 「成功」；计数按影响行数走，与关系行条数仍然严格相等。
+     */
+    private static List<LikeState> attribute(List<CountEvent> events, Set<String> existing,
+                                             LikeState ifExisting, LikeState ifAbsent, LikeState ifRepeated) {
+        Set<String> seen = new HashSet<>();
+        List<LikeState> results = new ArrayList<>(events.size());
+        for (CountEvent event : events) {
+            if (!seen.add(event.userId())) {
+                results.add(ifRepeated);
+            } else {
+                results.add(existing.contains(event.userId()) ? ifExisting : ifAbsent);
+            }
+        }
+        return results;
+    }
+
+    /** 去重后的 user_id（保持入队顺序）：同一个人在一批里出现多次时，SQL 只需要一个占位 */
+    private static List<String> distinctUserIds(List<CountEvent> events) {
+        Set<String> userIds = new LinkedHashSet<>(events.size());
+        for (CountEvent event : events) {
+            userIds.add(event.userId());
+        }
+        return new ArrayList<>(userIds);
+    }
+
+    // ---------- 评论 ----------
+
+    @Override
+    public void saveComment(PostCommentEntity commentEntity) {
+        // 业务 ID 应用层发号、insert 前一次写入（物理自增 id 只作内部键，不再同值回写）
+        commentEntity.setCommentId(idGenerator.nextId());
+        commentDao.insert(toCommentPO(commentEntity));
+    }
+
+    /** 评论"发布即提醒"：审核提醒消息与发布事务同写 outbox（须处于发布事务内调用） */
+    @Override
+    public void saveReviewMessage(CommentReviewMessage message) {
+        outboxMessageStore.save(Constants.COMMENT_REVIEW_TOPIC, message);
+    }
+
+    @Override
+    public void saveCommentWithReviewMessage(PostCommentEntity commentEntity) {
+        transactionTemplate.execute(status -> {
+            saveComment(commentEntity);
+            saveReviewMessage(new CommentReviewMessage(commentEntity.getCommentId()));
+            // 入池点（spec §5.1）：评论发布落库即待审；entered_at 取发布时刻（create_time），轮次恒 1
+            if (commentEntity.getStatus() == PostStatusVO.PENDING_REVIEW) {
+                reviewTaskPoolStore.enter(ReviewTargetTypeVO.COMMENT, commentEntity.getCommentId(),
+                        1, commentEntity.getUserId(), commentEntity.getCreatedAt());
+            }
+            return null;
+        });
+    }
+
+    @Override
+    public List<PostCommentEntity> pageRootByPostId(String postId, String viewerId, String sort, int offset, int limit) {
+        if ("hot".equals(sort)) {
+            return pageHotRootsByPostId(postId, offset, limit);
+        }
+        return toCommentEntities(commentDao.selectRootPageByPostId(postId, viewerId, offset, limit));
+    }
+
+    /**
+     * 最热档两级取数（票 01）：先在 {@code post_comment_feed_index} 上按 (like_count DESC, comment_id)
+     * 扫出本页 comment_id 序，再按 id 集回查评论行（保留昵称 / 驳回理由 JOIN），最后按扫描序重排——
+     * 排序键只有索引有，回查语句不排序，两级之间不重排就丢了顺序。
+     *
+     * <p><b>本档不自见</b>：索引行集 = 当前可见根评论（过审 INSERT、软删 DELETE），作者的待审/驳回行
+     * 根本不在索引里，因此不再参与最热排序；默认档（id 序）照旧附带自见行。total 口径不变（仅 NORMAL）。
+     *
+     * <p>索引行还在而评论行已不可见 = 漂移（软删漏删索引行等），跳过不补位——补位要么多查一页、
+     * 要么让页大小漂移，重建 job 才是修复手段（票 03）。
+     *
+     * <p><b>排序键与展示值不同源</b>（票 02）：顺序来自索引快照，展示的 likeCount 仍是
+     * {@code post_comment_like_count} 的真值——两条取数通路分开，索引刷偏只动顺序不动数字。
+     */
+    private List<PostCommentEntity> pageHotRootsByPostId(String postId, int offset, int limit) {
+        List<String> commentIds = commentDao.selectRootFeedCommentIds(postId, offset, limit);
+        if (commentIds.isEmpty()) {
+            return List.of();
+        }
+        Map<String, PostCommentPO> rowsById = new HashMap<>(commentIds.size());
+        for (PostCommentPO row : commentDao.selectNormalRootsByIds(commentIds)) {
+            rowsById.put(row.getCommentId(), row);
+        }
+        List<PostCommentPO> ordered = new ArrayList<>(commentIds.size());
+        for (String commentId : commentIds) {
+            PostCommentPO row = rowsById.get(commentId);
+            if (row != null) {
+                ordered.add(row);
+            }
+        }
+        return toCommentEntities(ordered);
+    }
+
+    @Override
+    public long countVisibleRootsByPostId(String postId) {
+        return commentDao.countVisibleRootsByPostId(postId);
+    }
+
+    @Override
+    public List<PostCommentEntity> pageRepliesByRootId(String rootId, String viewerId, int offset, int limit) {
+        return toCommentEntities(commentDao.selectRepliesByRootId(rootId, viewerId, offset, limit));
+    }
+
+    @Override
+    public long countRepliesForThread(String rootId, String viewerId) {
+        return commentDao.countRepliesForThread(rootId, viewerId);
+    }
+
+    @Override
+    public long countRepliesByRootId(String rootId) {
+        return commentDao.countRepliesByRootId(rootId);
+    }
+
+    @Override
+    public void updateReplyCount(String rootId, int delta) {
+        commentDao.updateReplyCount(rootId, delta);
+    }
+
+    @Override
+    public boolean removeCommentLike(String commentId, String userId) {
+        return commentDao.deleteCommentLike(commentId, userId) > 0;
+    }
+
+    @Override
+    public void updateLikeCount(String commentId, int delta) {
+        // 计数真源是窄表（票 02）：0 行 = 窄表行缺失的漂移，落 warn 交手工对账，不 ODKU 补行
+        if (commentDao.updateLikeCount(commentId, delta) == 0) {
+            log.warn("post_comment_like_count 行缺失，评论 like_count 未变更（commentId={}, delta={}），需手工对账",
+                    commentId, delta);
+        }
+    }
+
+    @Override
+    public List<String> selectLikedCommentIds(String userId, List<String> commentIds) {
+        if (userId == null || commentIds == null || commentIds.isEmpty()) {
+            return List.of();
+        }
+        return commentDao.selectLikedCommentIds(userId, commentIds);
+    }
+
+    @Override
+    public List<PostCommentEntity> pageCommentsByUser(String userId, int offset, int limit) {
+        return toCommentEntities(commentDao.selectPageByUser(userId, offset, limit));
+    }
+
+    @Override
+    public long countCommentsByUser(String userId) {
+        return commentDao.countByUser(userId);
+    }
+
+    @Override
+    public PostCommentEntity findCommentById(String commentId) {
+        PostCommentPO commentPO = commentDao.selectById(commentId);
+        if (commentPO == null) {
+            return null;
+        }
+        // 单行即单元素回查（票 02）：与三条列表同一条通吃，不再为单行留一条「直取主列」的岔路
+        return toCommentEntities(List.of(commentPO)).get(0);
+    }
+
+    @Override
+    public void updatePostCommentCount(String postId, int delta) {
+        // 计数不进详情缓存（票 05）：窄表 +1/-1 落库后下一次读自然取到新值，无需任何缓存失效
+        commentDao.upsertPostCommentCount(postId, delta);
+    }
+
+    @Override
+    public boolean approveCommentById(String commentId) {
+        return commentDao.approveById(commentId) > 0;
+    }
+
+    @Override
+    public boolean rejectCommentById(String commentId) {
+        return commentDao.rejectById(commentId) > 0;
+    }
+
+    @Override
+    public boolean markDeletedFromStatus(String commentId, PostStatusVO fromStatus) {
+        // 统一软删：用户删除与举报下架同轨，状态转 DELETED、行保留
+        return commentDao.markDeletedFromStatus(commentId, fromStatus.name()) > 0;
+    }
+
+    @Override
+    public void approveCommentWithCount(String commentId, String postId, String rootId) {
+        transactionTemplate.execute(status -> {
+            // 影响行数 = 1 才是本次刚通过，评论数 +1（与状态变更同事务，幂等）
+            if (!approveCommentById(commentId)) {
+                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "审核状态已变化，请刷新重试");
+            }
+            updatePostCommentCount(postId, 1);
+            // 计数窄表行诞生（票 02）：根评论与子回复都入表，赞数恒 0。
+            // INSERT IGNORE 只吞重复键（漂移），0 行落 warn 留痕、不覆盖既有计数
+            if (commentDao.insertLikeCountOnApprove(commentId) == 0) {
+                log.warn("post_comment_like_count 行已存在，审核通过未新建计数行（commentId={}），需手工对账", commentId);
+            }
+            if (!PostCommentEntity.NO_REFERENCE.equals(rootId)) {
+                // 楼内子回复审核通过 → 楼根 reply_count +1（与状态变更同事务）；子回复不入热评索引
+                updateReplyCount(rootId, 1);
+            } else {
+                // 根评论通过 → 热评索引行诞生（票 01，赞数恒 0：待审态不可被赞）
+                commentDao.insertFeedIndexOnApprove(commentId, postId);
+            }
+            return null;
+        });
+    }
+
+    @Override
+    public void softDeleteCommentWithCount(String commentId, String postId, String rootId) {
+        transactionTemplate.execute(status -> {
+            if (markDeletedFromStatus(commentId, PostStatusVO.NORMAL)) {
+                if (!PostCommentEntity.NO_REFERENCE.equals(rootId)) {
+                    updatePostCommentCount(postId, -1);
+                    updateReplyCount(rootId, -1);
+                } else {
+                    long visibleReplies = countRepliesByRootId(commentId);
+                    int totalDelta = -(1 + (int) visibleReplies);
+                    updatePostCommentCount(postId, totalDelta);
+                    // 根评论软删 → 热评索引行物理退场（票 01）：行集 = 当前可见根评论，楼消失则排序里也不该有它。
+                    // 评论软删是终态、无恢复路径，所以不需要帖子的「行常驻 + state 镜像」
+                    commentDao.deleteFeedIndex(commentId);
+                }
+            } else {
+                markDeletedFromStatus(commentId, PostStatusVO.PENDING_REVIEW);
+            }
+            // 待审评论可被作者/帖主删除：退出待审同事务出池（其余状态无在途工单，幂等 0 行无害）
+            reviewTaskPoolStore.close(ReviewTargetTypeVO.COMMENT, commentId);
+            return null;
+        });
+    }
+
+    @Override
+    public LikeStateVO likeCommentWithMergedCount(String commentId, String userId) {
+        // 与帖子点赞同一条合并通道，只是 shardKey 取评论主键：一评一条 UPDATE（计数落 post_comment_like_count 窄表，票 02）
+        return countMergeWriter.write(CountAction.COMMENT_LIKE, commentId, userId);
+    }
+
+    @Override
+    public void unlikeCommentWithCount(String commentId, String userId) {
+        transactionTemplate.execute(status -> {
+            if (!removeCommentLike(commentId, userId)) {
+                throw new BusinessException(ResponseCode.PARAM_ERROR, "尚未点赞");
+            }
+            updateLikeCount(commentId, -1);
+            // 根评论索引快照同步 -1（票 01）；子回复在 syncCommentFeedIndexLikeCount 里就地返回
+            syncCommentFeedIndexLikeCount(commentId, -1);
+            return null;
+        });
+    }
+
+    /**
+     * 热评索引全量重建（票 03）：清空 + 重灌收在一个事务里，读者要么看到重建前、要么看到重建后的
+     * 完整索引，不见空窗期。行集 = {@code root_id = '0' AND state = 'NORMAL'} 根评论，赞数从窄表抄入。
+     *
+     * <p><b>只兜索引、不兜窄表</b>：{@code post_comment_like_count} 是计数真值源，重建不校准它——
+     * 重建能修「索引行缺失 / 快照被直改 / 已软删的残行 / 待审凭空进索引」，修不了「窄表自身漂移」。
+     * 窄表缺行的根评论重灌后赞数为 0（与「窄表无行即计数 0」的存量语义一致），而且<b>点赞也补不回来</b>：
+     * 票 02 的点赞只 UPDATE 窄表、命中 0 行仅落 warn、不 ODKU 造行。要真回正得先手工补窄表行再重跑重建，
+     * 别把重建当窄表的对账手段。
+     */
+    @Override
+    public void rebuildCommentFeedIndex() {
+        transactionTemplate.executeWithoutResult(status -> {
+            commentDao.clearFeedIndex();
+            int rebuilt = commentDao.rebuildFeedIndexProjection();
+            log.info("[CommentFeedIndexRebuild] post_comment_feed_index 清空重灌 {} 行", rebuilt);
+        });
+    }
+
+    // ---------- 行转换 ----------
+
+    private PostPO toPO(PostEntity postEntity) {
+        PostPO postPO = new PostPO();
+        postPO.setPostId(postEntity.getPostId());
+        postPO.setUserId(postEntity.getUserId());
+        postPO.setTitle(postEntity.getTitle());
+        postPO.setContent(postEntity.getContent());
+        postPO.setImages(toImagesJson(postEntity.getImages()));
+        postPO.setCover(postEntity.getCover());
+        postPO.setState(postEntity.getStatus().name());
+        postPO.setReviewRound(postEntity.getReviewRound());
+        postPO.setReviewEnteredAt(postEntity.getReviewEnteredAt());
+        // post.view_count 停写（feed-index-uv 票 02）：浏览 UV 的真相源是 user_view_history，加速列 post_view_count
+        postPO.setCreateTime(postEntity.getCreatedAt());
+        postPO.setUpdateTime(postEntity.getCreatedAt());
+        postPO.setExpireAt(postEntity.getExpireAt());
+        return postPO;
+    }
+
+    private PostEntity toPostEntity(PostPO postPO) {
+        if (postPO == null) {
+            return null;
+        }
+        PostEntity postEntity = new PostEntity();
+        postEntity.setPostId(postPO.getPostId());
+        postEntity.setUserId(postPO.getUserId());
+        postEntity.setTitle(postPO.getTitle());
+        postEntity.setContent(postPO.getContent());
+        postEntity.setImages(toImagesList(postPO.getImages()));
+        postEntity.setCover(postPO.getCover());
+        postEntity.setStatus(PostStatusVO.valueOf(postPO.getState()));
+        postEntity.setReviewRound(postPO.getReviewRound() == null ? 0 : postPO.getReviewRound());
+        postEntity.setReviewEnteredAt(postPO.getReviewEnteredAt());
+        // 空安全：详情内容查询（selectById）已不带计数列（票 05，计数每次读单独取），投影列为 null
+        postEntity.setLikeCount(postPO.getLikeCount() == null ? 0 : postPO.getLikeCount());
+        postEntity.setCommentCount(postPO.getCommentCount() == null ? 0 : postPO.getCommentCount());
+        postEntity.setViewCount(postPO.getViewCount() == null ? 0 : postPO.getViewCount());
+        postEntity.setCreatedAt(postPO.getCreateTime());
+        postEntity.setExpireAt(postPO.getExpireAt());
+        postEntity.setAuthorNickname(postPO.getAuthorNickname());
+        postEntity.setAuthorAvatar(postPO.getAuthorAvatar());
+        return postEntity;
+    }
+
+    private String toImagesJson(List<String> images) {
+        try {
+            return objectMapper.writeValueAsString(images);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("帖子图片序列化失败", e);
+        }
+    }
+
+    private List<String> toImagesList(String imagesJson) {
+        if (imagesJson == null || imagesJson.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(imagesJson, objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+        } catch (JsonProcessingException e) {
+            log.warn("帖子图片反序列化失败，按空处理：{}", imagesJson, e);
+            return List.of();
+        }
+    }
+
+    /**
+     * 评论行 → 实体，并把点赞数从计数窄表投影进 {@code PostCommentPO.likeCount}（票 02，spec §4.2/§4.4）。
+     *
+     * <p><b>为什么不在 SQL 里 JOIN</b>：与 feed 形态的 {@code listByIds} 同思路——主查询只拿评论行，
+     * 页内 id 集一次 {@code IN} 回查窄表；三条列表（根列表两档 / 楼内 / 主页 tab）与单行共用这一条通路，
+     * 不为一处写一条 JOIN、另一处写一条子查询。
+     *
+     * <p>{@code likeCount} 填在 PO 上再交给 {@link #toCommentEntity}：PO 是本次查询自己组装的一次性载体，
+     * 链上的搬运（PO → Entity → DTO）因此零改动（spec §4.4 的投影填充口径，同 ProductPO）。
+     *
+     * <p>缺行补 0（存量语义）：窄表行诞生于审核通过，票 02 之前过审的历史评论没有计数行。
+     */
+    private List<PostCommentEntity> toCommentEntities(List<PostCommentPO> commentRows) {
+        if (commentRows.isEmpty()) {
+            return List.of();
+        }
+        Map<String, Long> likeCounts = likeCountsOf(commentRows.stream().map(PostCommentPO::getCommentId).toList());
+        List<PostCommentEntity> commentEntities = new ArrayList<>(commentRows.size());
+        for (PostCommentPO commentRow : commentRows) {
+            commentRow.setLikeCount(likeCounts.getOrDefault(commentRow.getCommentId(), 0L));
+            commentEntities.add(toCommentEntity(commentRow));
+        }
+        return commentEntities;
+    }
+
+    /** 页内评论 id 集 → 窄表赞数（缺行不在返回值里，由调用方按 0 处理） */
+    private Map<String, Long> likeCountsOf(List<String> commentIds) {
+        Map<String, Long> likeCounts = new HashMap<>(commentIds.size());
+        for (PostCommentLikeCountPO countRow : commentDao.selectLikeCountsByIds(commentIds)) {
+            likeCounts.put(countRow.getCommentId(), countRow.getLikeCount());
+        }
+        return likeCounts;
+    }
+
+    private PostCommentPO toCommentPO(PostCommentEntity commentEntity) {
+        PostCommentPO commentPO = new PostCommentPO();
+        commentPO.setCommentId(commentEntity.getCommentId());
+        commentPO.setPostId(commentEntity.getPostId());
+        commentPO.setUserId(commentEntity.getUserId());
+        commentPO.setContent(commentEntity.getContent());
+        commentPO.setState(commentEntity.getStatus().name());
+        commentPO.setRootId(commentEntity.getRootId());
+        commentPO.setParentId(commentEntity.getParentId());
+        commentPO.setCreateTime(commentEntity.getCreatedAt());
+        commentPO.setUpdateTime(commentEntity.getCreatedAt());
+        return commentPO;
+    }
+
+    private PostCommentEntity toCommentEntity(PostCommentPO commentPO) {
+        if (commentPO == null) {
+            return null;
+        }
+        PostCommentEntity commentEntity = new PostCommentEntity();
+        commentEntity.setCommentId(commentPO.getCommentId());
+        commentEntity.setPostId(commentPO.getPostId());
+        commentEntity.setUserId(commentPO.getUserId());
+        commentEntity.setContent(commentPO.getContent());
+        commentEntity.setStatus(PostStatusVO.valueOf(commentPO.getState()));
+        commentEntity.setRootId(commentPO.getRootId());
+        commentEntity.setParentId(commentPO.getParentId());
+        commentEntity.setLikeCount(commentPO.getLikeCount());
+        commentEntity.setReplyCount(commentPO.getReplyCount());
+        commentEntity.setCreatedAt(commentPO.getCreateTime());
+        commentEntity.setAuthorNickname(commentPO.getAuthorNickname());
+        commentEntity.setReplyToUserId(commentPO.getReplyToUserId());
+        commentEntity.setReplyToNickname(commentPO.getReplyToNickname());
+        commentEntity.setRejectReason(commentPO.getRejectReason());
+        commentEntity.setPostTitle(commentPO.getPostTitle());
+        commentEntity.setPostCover(commentPO.getPostCover());
+        return commentEntity;
+    }
+}

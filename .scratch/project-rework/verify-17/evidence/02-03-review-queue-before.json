@@ -1,0 +1,83 @@
+{
+  "targetIds": [
+    2,
+    3,
+    4,
+    5,
+    6,
+    8
+  ],
+  "raw": {
+    "page": 1,
+    "pageSize": 50,
+    "total": 6,
+    "list": [
+      {
+        "targetType": "PRODUCT",
+        "targetId": 2,
+        "authorId": 3,
+        "authorNickname": "冒烟17卖家",
+        "content": "九成新民谣吉他自用闲置一年，成色好无磕碰",
+        "reward": 19.9,
+        "images": [],
+        "status": "PENDING_REVIEW",
+        "createdAt": "2026-10-07T00:00:40"
+      },
+      {
+        "targetType": "PRODUCT",
+        "targetId": 3,
+        "authorId": 3,
+        "authorNickname": "冒烟17卖家",
+        "content": "诊断用商品别买诊断",
+        "reward": 1.0,
+        "images": [],
+        "status": "PENDING_REVIEW",
+        "createdAt": "2026-10-07T00:00:50"
+      },
+      {
+        "targetType": "PRODUCT",
+        "targetId": 4,
+        "authorId": 3,
+        "authorNickname": "冒烟17卖家",
+        "content": "九成新民谣吉他自用闲置一年，成色好无磕碰",
+        "reward": 19.9,
+        "images": [],
+        "status": "PENDING_REVIEW",
+        "createdAt": "2026-10-07T00:00:55"
+      },
+      {
+        "targetType": "PRODUCT",
+        "targetId": 5,
+        "authorId": 3,
+        "authorNickname": "冒烟17卖家",
+        "content": "九成新民谣吉他自用闲置一年，成色好无磕碰",
+        "reward": 19.9,
+        "images": [],
+        "status": "PENDING_REVIEW",
+        "createdAt": "2026-10-07T00:01:02"
+      },
+      {
+        "targetType": "PRODUCT",
+        "targetId": 6,
+        "authorId": 3,
+        "authorNickname": "冒烟17卖家",
+        "content": "九成新民谣吉他自用闲置一年，成色好无磕碰",
+        "reward": 19.9,
+        "images": [],
+        "status": "PENDING_REVIEW",
+        "createdAt": "2026-10-07T00:01:09"
+      },
+      {
+        "targetType": "PRODUCT",
+        "targetId": 8,
+        "authorId": 3,
+        "authorNickname": "冒烟17卖家",
+        "content": "九成新民谣吉他自用闲置一年，成色好无磕碰",
+        "reward": 19.9,
+        "images": [],
+        "status": "PENDING_REVIEW",
+        "createdAt": "2026-10-07T00:01:31"
+      }
+    ]
+  }
+}

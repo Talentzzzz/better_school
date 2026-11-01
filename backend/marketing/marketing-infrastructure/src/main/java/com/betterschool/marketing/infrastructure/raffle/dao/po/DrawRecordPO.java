@@ -1,0 +1,25 @@
+package com.betterschool.marketing.infrastructure.raffle.dao.po;
+
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+/** 抽奖记录行（draw_record；写入方归票 13 主链路，本票只备五层） */
+@Data
+public class DrawRecordPO {
+
+    private Long id;
+    private Long recordId;
+    private String userId;
+    private Long activityId;
+    private Long strategyId;
+    private Long awardId;
+    private String awardName;
+    private String awardDesc;
+    private String awardType;
+    private Integer level;
+    private Long invId;
+    private String state;
+    private LocalDateTime createTime;
+    private LocalDateTime updateTime;
+}

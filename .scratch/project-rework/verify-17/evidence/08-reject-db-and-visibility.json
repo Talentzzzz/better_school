@@ -1,0 +1,44 @@
+{
+  "post": [
+    {
+      "post_id": "14",
+      "state": "REJECTED"
+    }
+  ],
+  "content_review": [
+    {
+      "target_type": "POST",
+      "target_id": "14",
+      "review_round": "1",
+      "action": "REJECT",
+      "source": "MANUAL",
+      "operator_id": "11",
+      "reason": "其他：标题与内容不符",
+      "reason_code": "OTHER",
+      "create_time": "2026-10-07 00:07:15"
+    }
+  ],
+  "notification": [
+    {
+      "user_id": "1",
+      "scope": "BOTTOM_SYSTEM",
+      "type": "AUDIT_RESULT",
+      "title": "审核结果",
+      "content": "您的帖子《冒烟驳回帖待驳回的帖子内容，等待人工审核…》未通过审核：其他：标题与内容不符",
+      "ref_type": "POST",
+      "ref_id": "14",
+      "create_time": "2026-10-07 00:07:15"
+    }
+  ],
+  "feed_contains": false,
+  "author_detail": {
+    "http_status": 200,
+    "code": "200",
+    "rejectReason": "其他：标题与内容不符",
+    "state": null
+  },
+  "other_detail": {
+    "http_status": 200,
+    "code": "404"
+  }
+}

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.credit.ICreditDao">
+
+    <select id="selectStatus" resultType="string">
+        SELECT state
+        FROM bs_user
+        WHERE user_id = #{userId}
+    </select>
+
+    <select id="selectCreditScore" resultType="int">
+        SELECT credit_score
+        FROM bs_user
+        WHERE user_id = #{userId}
+    </select>
+
+    <update id="updateCreditScore">
+        UPDATE bs_user
+        SET credit_score = GREATEST(0, LEAST(100, credit_score + #{delta})),
+            update_time  = NOW()
+        WHERE user_id = #{userId}
+    </update>
+
+    <!-- 流水先行：uk_user_reason_ref(user_id, reason_type, ref_id) 冲突 → INSERT IGNORE 影响 0 行 = 已处理过（幂等跳过） -->
+    <insert id="insertIgnoreCreditDetail" parameterType="com.betterschool.infrastructure.dao.credit.po.CreditDetailPO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT IGNORE INTO user_credit_detail (user_id, `change`, reason_type, ref_id, create_time, update_time)
+        VALUES (#{userId}, #{change}, #{reasonType}, #{refId}, #{createTime}, #{updateTime})
+    </insert>
+
+    <select id="sumTodayChange" resultType="int">
+        SELECT COALESCE(SUM(`change`), 0)
+        FROM user_credit_detail
+        WHERE user_id = #{userId}
+          AND reason_type = #{reasonType}
+          AND create_time &gt;= #{start}
+          AND create_time &lt; #{end}
+    </select>
+
+    <!-- 条件 UPDATE：仅 NORMAL 且分数 <30 时置 BANNED，影响行数 = 本次刚封禁（幂等） -->
+    <update id="banIfLowScore">
+        UPDATE bs_user
+        SET state = 'BANNED',
+            update_time = NOW()
+        WHERE user_id = #{userId}
+          AND state = 'NORMAL'
+          AND credit_score &lt; 30
+    </update>
+
+    <select id="countReasonToday" resultType="long">
+        SELECT COUNT(1)
+        FROM user_credit_detail
+        WHERE user_id = #{userId}
+          AND reason_type = #{reasonType}
+          AND create_time &gt;= #{start}
+          AND create_time &lt; #{end}
+    </select>
+
+    <select id="selectPage" resultType="com.betterschool.infrastructure.dao.credit.po.CreditDetailPO">
+        SELECT id, user_id, `change`, reason_type, ref_id, create_time, update_time
+        FROM user_credit_detail
+        WHERE user_id = #{userId}
+        ORDER BY id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countDetails" resultType="long">
+        SELECT COUNT(1)
+        FROM user_credit_detail
+        WHERE user_id = #{userId}
+    </select>
+
+    <!-- 封禁/解封通用：state 已是目标值则不生效 -->
+    <update id="updateStatus">
+        UPDATE bs_user
+        SET state = #{state},
+            update_time = NOW()
+        WHERE user_id = #{userId}
+          AND state &lt;&gt; #{state}
+    </update>
+
+</mapper>

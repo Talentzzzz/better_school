@@ -1,0 +1,80 @@
+# better-school 分片配置（开发库 better_school）——超时中心内嵌化（.scratch/timeout-inline 票 02）。
+#
+# 5.5.x 的用法是「JDBC 驱动 + YAML」：spring.datasource.url 指向本文件
+# （jdbc:shardingsphere:classpath:sharding.yaml），由 ShardingSphereDriver 解析。
+# 代价是库地址写在 YAML 里、Spring 的 ${} 占位符到不了这一层——所以测试侧另有一份
+# sharding-test.yaml（同内容、jdbcUrl 指 better_school_test），两处都要跟着 schema 改。
+#
+# ── !SINGLE 必须在 !SHARDING 之前，且 tables 只认 "*.*.*" / "*.*" 两个字面量（票 01 实测）──
+# 驱动坐在生产主 datasource 上，29 张业务表没有任何分片规则：不显式声明 !SINGLE 时
+# 逻辑库只暴露 timeout_task 一张表，业务表一律 TableNotFoundException（且启动成功、第一条业务 SQL 才炸，
+# 是静默的）。补上 "*.*.*" 后业务表完全透明（SELECT/INSERT/JOIN/ODKU/INSERT IGNORE/批量 UPDATE/
+# generated keys/FOR UPDATE/SHOW/information_schema 全部照常），且分片物理表会被 SingleTableLoadUtils
+# 自动摘除、不会被误认成单表（票 01 实测）。启动期自检见 config/ShardingSelfCheck。
+#
+# ── 分片策略是 hint 强制路由（沿用原独立超时工程跑通的形态）──
+# **每一次 DAO 调用都由仓储层算好全局槽位 g 塞进 HintManager（库维 + 表维两个 hint 值）**：
+# 写入按 bizId 算（TimeoutTaskShardSlots.slotOf）、扫描按分片 job 认领的槽位（票 04），
+# 两个方向共用 TimeoutTaskShardSlots 的同一个公式——「同 key 永远同表」收敛成单点函数，不可能算岔。
+# 漏塞 hint 的后果是响的：写语句被路由校验当场拒掉（不会静默写错表）；读语句退化成 16 表广播
+# ——结果仍对，但白读 + 表级归属失效。
+#
+# ── 「库 × 表」两维表达（保留的是表达，不是开关）──
+# 槽位 g 是全局展平编号：db = g / 16、table = g % 16。databaseStrategy/tableStrategy 各配一个
+# CLASS_BASED 算法把 g 拆到两维。本期 DB_COUNT = 1（恒落 ds0）且**不得启用 >1**：
+# 超时行落到另一个库 = 与业务写入不再同一条连接 = 「同事务注册」前提立刻失效
+# （硬约束：要启用的前提是业务表也按同一分片键一起分库，见架构文档 docs/architecture/timeout.md §0）。
+#
+# 表名逐张列出而不用 ${0..15} 内联表达式：内联表达式生成的是 timeout_task_0..，
+# 没有两位零填充，与 DDL 的 timeout_task_00..15 对不上。
+dataSources:
+  ds0:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://localhost:3306/better_school?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: bs123456
+    # 内层池 = 直连 MySQL 的并发上限（外层还有一层 Spring 的 Hikari 包住 ShardingSphere，
+    # 见 application.yml 的 hikari.maximum-pool-size: 10）。内层要 ≥ 外层：每个外层
+    # ShardingSphereConnection 干活时都要占一条内层连接。20 = 外层 10 的两倍留出
+    # 扫描并行度（票 04，默认 4）与驱动自身元数据连接的余量。
+    maximumPoolSize: 20
+    minimumIdle: 4
+    connectionTimeout: 3000
+
+# databaseName 与真实 schema 名对齐（不写则恒为 logic_db，排查/工具对不上号——票 01 的可运维性建议）
+databaseName: better_school
+
+rules:
+  # 单表规则：29 张业务表零分片规则，声明为单表后对它们完全透明。
+  # 只认 "*.*.*" / "*.*" 字面量（逐张 "<schema>.<table>" 形式静默无效，票 01 实测）。
+  - !SINGLE
+    tables:
+      - "*.*.*"
+  - !SHARDING
+    tables:
+      # 逻辑表 timeout_task 的 16 张物理分表；槽位（0..15）由 HintManager 显式给出
+      timeout_task:
+        actualDataNodes: ds0.timeout_task_00,ds0.timeout_task_01,ds0.timeout_task_02,ds0.timeout_task_03,ds0.timeout_task_04,ds0.timeout_task_05,ds0.timeout_task_06,ds0.timeout_task_07,ds0.timeout_task_08,ds0.timeout_task_09,ds0.timeout_task_10,ds0.timeout_task_11,ds0.timeout_task_12,ds0.timeout_task_13,ds0.timeout_task_14,ds0.timeout_task_15
+        databaseStrategy:
+          hint:
+            shardingAlgorithmName: timeout-task-db-hint
+        tableStrategy:
+          hint:
+            shardingAlgorithmName: timeout-task-table-hint
+    shardingAlgorithms:
+      # CLASS_BASED：算法类是普通 Java 类（不是 Spring Bean），由 ShardingSphere 反射实例化。
+      # 槽位 → 库/表名都走 bs-infrastructure 的 TimeoutTaskShardSlots，与仓储层算槽位用的是同一个类。
+      timeout-task-db-hint:
+        type: CLASS_BASED
+        props:
+          strategy: HINT
+          algorithmClassName: com.betterschool.infrastructure.sharding.TimeoutTaskDbHintShardingAlgorithm
+      timeout-task-table-hint:
+        type: CLASS_BASED
+        props:
+          strategy: HINT
+          algorithmClassName: com.betterschool.infrastructure.sharding.TimeoutTaskTableHintShardingAlgorithm
+
+props:
+  sql-show: false

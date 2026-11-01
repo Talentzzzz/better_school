@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "request": {
+    "token": "smoke17-6-exchange-1791302834"
+  },
+  "response": {
+    "code": "200",
+    "info": "成功",
+    "data": {
+      "redeemOrderId": 2180698415304986002,
+      "drawCount": 4
+    }
+  },
+  "price": 100
+}

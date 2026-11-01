@@ -1,0 +1,156 @@
+package com.betterschool.domain.chat.service.query;
+
+import com.betterschool.domain.chat.adapter.port.IUserQueryPort;
+import com.betterschool.domain.chat.adapter.repository.IChatRepository;
+import com.betterschool.domain.chat.model.entity.MessageEntity;
+import com.betterschool.domain.chat.model.entity.RoomMemberEntity;
+import com.betterschool.domain.chat.model.valobj.ChatUserVO;
+import com.betterschool.domain.chat.model.valobj.RoomMemberVO;
+import com.betterschool.domain.chat.model.valobj.RoomPeerRoleVO;
+import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
+import com.betterschool.domain.chat.model.valobj.TimelineItemVO;
+import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.exception.BusinessException;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+/**
+ * chat 读路径查询实现：脱敏与分页边界在域内收敛；用户资料经 chat 自有 port（IUserQueryPort）只读他域
+ * ——跨域只读一律走消费方域自有 port（CLAUDE.md §1），不是「例外」。
+ */
+@Service
+@RequiredArgsConstructor
+public class ChatQueryServiceImpl implements IChatQueryService {
+
+    /** 历史分页默认页大小与硬顶（spec §4：默认 50） */
+    public static final int DEFAULT_HISTORY_LIMIT = 50;
+
+    /** 补拉默认页大小与硬顶（spec §2：默认 200 硬顶 500） */
+    public static final int DEFAULT_TIMELINE_LIMIT = 200;
+    public static final int MAX_TIMELINE_LIMIT = 500;
+    public static final int MAX_HISTORY_LIMIT = 500;
+
+    private final IChatRepository chatRepository;
+    private final IUserQueryPort userQueryPort;
+
+    @Override
+    public List<RoomListItemVO> listRooms(String userId, int page, int pageSize) {
+        List<RoomListItemVO> rooms = chatRepository.listRoomItems(userId, (page - 1) * pageSize, pageSize);
+        // 1v1 拼对方资料（page ≤ 100，批量反查一次）；对家 user_id 由列表 SQL 自连 room_member 直出
+        List<String> peerIds = rooms.stream()
+                .map(RoomListItemVO::getPeerUserId)
+                .toList();
+        if (peerIds.isEmpty()) {
+            return rooms;
+        }
+        Map<String, ChatUserVO> users = userQueryPort.listByIds(peerIds).stream()
+                .collect(Collectors.toMap(ChatUserVO::getUserId, Function.identity()));
+        for (RoomListItemVO room : rooms) {
+            String peerId = room.getPeerUserId();
+            ChatUserVO peer = users.get(peerId);
+            room.setPeerNickname(peer == null ? null : peer.getNickname());
+            room.setPeerAvatar(peer == null ? null : peer.getAvatar());
+            room.setPeerRole(peerRoleOf(room, userId));
+        }
+        return rooms;
+    }
+
+    /**
+     * 对家角色（市集消息页的角色小标签；来源为空 = 非市集入口建的会话，不出标签）。
+     * 闲置的入口方向单一，谁点「私信联系」谁是哪一方是定的（商品详情「联系卖家」= 买家发起），
+     * 故按「本人是不是首建发起人」推——同一会话两侧各自看到自己的对家；
+     * 跑腿单两侧都能发起（发布方联系跑手 / 跑手联系发布方），来源列定不了方向，按票面口径对家恒为跑手
+     */
+    private RoomPeerRoleVO peerRoleOf(RoomListItemVO room, String userId) {
+        if (room.getSource() == null) {
+            return null;
+        }
+        boolean amInitiator = userId.equals(room.getInitiatorId());
+        return switch (room.getSource()) {
+            case ERRAND -> RoomPeerRoleVO.TAKER;
+            case PRODUCT -> amInitiator ? RoomPeerRoleVO.SELLER : RoomPeerRoleVO.BUYER;
+        };
+    }
+
+    @Override
+    public long countRooms(String userId) {
+        return chatRepository.countRoomsForUser(userId);
+    }
+
+    @Override
+    public List<MessageEntity> listMessages(String roomId, String userId, Long beforeSeq, Integer limit) {
+        requireMembership(roomId, userId);
+        int effectiveLimit = clamp(limit, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT);
+        List<MessageEntity> messages = new ArrayList<>(
+                chatRepository.listMessagesBefore(roomId, beforeSeq, effectiveLimit));
+        // 游标倒退取页，页内按 seq 升序交付（前端整块前插）
+        Collections.reverse(messages);
+        // 撤回脱敏「已撤回」空壳：content 库内保留取证，读路径一律不出服务端
+        for (MessageEntity message : messages) {
+            if (message.isRecalled()) {
+                message.setContent(null);
+                message.setRefType(null);
+                message.setRefId(null);
+            }
+        }
+        return messages;
+    }
+
+    @Override
+    public List<TimelineItemVO> pullTimeline(String userId, Long afterDeliverySeq, Integer limit) {
+        long cursor = afterDeliverySeq == null ? 0L : afterDeliverySeq;
+        int effectiveLimit = clamp(limit, DEFAULT_TIMELINE_LIMIT, MAX_TIMELINE_LIMIT);
+        List<TimelineItemVO> items = chatRepository.listTimelineAfter(userId, cursor, effectiveLimit);
+        // 下发与读路径同口径：撤回消息脱敏空壳（spec §1），content 库内保留取证不出服务端
+        for (TimelineItemVO item : items) {
+            if (item.getMessage().isRecalled()) {
+                item.getMessage().setContent(null);
+                item.getMessage().setRefType(null);
+                item.getMessage().setRefId(null);
+            }
+        }
+        return items;
+    }
+
+    @Override
+    public List<RoomMemberVO> listMembers(String roomId, String userId) {
+        requireMembership(roomId, userId);
+        List<RoomMemberEntity> members = chatRepository.listRoomMembers(roomId);
+        Map<String, ChatUserVO> users = userQueryPort.listByIds(
+                        members.stream().map(RoomMemberEntity::getUserId).toList()).stream()
+                .collect(Collectors.toMap(ChatUserVO::getUserId, Function.identity()));
+        List<RoomMemberVO> result = new ArrayList<>(members.size());
+        for (RoomMemberEntity member : members) {
+            RoomMemberVO vo = new RoomMemberVO();
+            vo.setUserId(member.getUserId());
+            vo.setLastReadSeq(member.getLastReadSeq());
+            ChatUserVO user = users.get(member.getUserId());
+            vo.setNickname(user == null ? null : user.getNickname());
+            vo.setAvatar(user == null ? null : user.getAvatar());
+            result.add(vo);
+        }
+        return result;
+    }
+
+    // ===== 校验 =====
+
+    private void requireMembership(String roomId, String userId) {
+        if (chatRepository.findRoomMember(roomId, userId) == null) {
+            throw new BusinessException(ResponseCode.FORBIDDEN, "非会话成员");
+        }
+    }
+
+    private int clamp(Integer limit, int defaultValue, int maxValue) {
+        if (limit == null) {
+            return defaultValue;
+        }
+        return Math.max(1, Math.min(limit, maxValue));
+    }
+}

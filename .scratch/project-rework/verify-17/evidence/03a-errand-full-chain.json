@@ -1,0 +1,104 @@
+{
+  "publisherId": 6,
+  "takerId": 7,
+  "adminId": 8,
+  "orderId": 7,
+  "imageUrl": "http://localhost:9000/bs-files/uploads/202610/f1adf0cb-8420-4462-a6ea-75bde76cbf6f.png",
+  "stateTrajectory": [
+    "PENDING_PAYMENT",
+    "PENDING_REVIEW",
+    "PUBLISHED",
+    "TAKEN",
+    "PICKED_UP",
+    "DELIVERED",
+    "COMPLETED"
+  ],
+  "errandOrderRow": [
+    [
+      "7",
+      "6",
+      "7",
+      "COMPLETED",
+      "10.00",
+      "[\"http://localhost:9000/bs-files/uploads/202610/f1adf0cb-8420-4462-a6ea-75bde76cbf6f.png\"]"
+    ]
+  ],
+  "errandOrderEventRows": [
+    [
+      "CREATED",
+      "<NULL>",
+      "PENDING_PAYMENT",
+      "6",
+      "PUBLISHER"
+    ],
+    [
+      "PAID",
+      "PENDING_PAYMENT",
+      "PENDING_REVIEW",
+      "6",
+      "PUBLISHER"
+    ],
+    [
+      "REVIEW_APPROVED",
+      "PENDING_REVIEW",
+      "PUBLISHED",
+      "8",
+      "ADMIN"
+    ],
+    [
+      "TAKEN",
+      "PUBLISHED",
+      "TAKEN",
+      "7",
+      "TAKER"
+    ],
+    [
+      "PICKED_UP",
+      "TAKEN",
+      "PICKED_UP",
+      "7",
+      "TAKER"
+    ],
+    [
+      "DELIVERED",
+      "PICKED_UP",
+      "DELIVERED",
+      "7",
+      "TAKER"
+    ],
+    [
+      "CONFIRMED",
+      "DELIVERED",
+      "COMPLETED",
+      "6",
+      "PUBLISHER"
+    ]
+  ],
+  "registerOutboxRow": [
+    "ERRAND_PAY_TIMEOUT",
+    "SENT",
+    "better-school",
+    "2026-10-07 00:16:42"
+  ],
+  "orderDetailResponse": {
+    "orderId": 7,
+    "publisherId": 6,
+    "publisherNickname": "冒烟跑腿发布者",
+    "publisherAvatar": null,
+    "takerId": 7,
+    "takerNickname": "冒烟跑腿接单者",
+    "takerAvatar": null,
+    "type": "EXPRESS_PICKUP",
+    "description": "帮忙取个快递（票17冒烟-全链路）",
+    "pickupLocation": "菜鸟驿站",
+    "deliveryLocation": "6号楼楼下",
+    "reward": 10.0,
+    "currentTakers": 1,
+    "deadline": "2026-10-07T02:01:42",
+    "status": "COMPLETED",
+    "createdAt": "2026-10-07T00:01:42",
+    "images": [
+      "http://localhost:9000/bs-files/uploads/202610/f1adf0cb-8420-4462-a6ea-75bde76cbf6f.png"
+    ]
+  }
+}

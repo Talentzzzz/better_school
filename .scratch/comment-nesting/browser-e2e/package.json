@@ -1,0 +1,7 @@
+{
+  "name": "comment-nesting-browser-e2e",
+  "private": true,
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  }
+}

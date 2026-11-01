@@ -1,0 +1,10 @@
+{
+  "http_status": 200,
+  "response": {
+    "code": "500",
+    "info": "内容包含违规词汇，请修改后重试",
+    "data": null
+  },
+  "hit_word": "代课",
+  "run_id": "R100700071168"
+}

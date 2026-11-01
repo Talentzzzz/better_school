@@ -1,0 +1,16 @@
+钉住事件总数: 59761
+时长 ms: p50=1.280 p90=6.440 p99=28.600 max=176.00 总时长=182.3 s
+  [0,0.5) ms: 11 (0.0%)
+  [0.5,1) ms: 9797 (16.4%)
+  [1,5) ms: 40044 (67.0%)
+  [5,20) ms: 8831 (14.8%)
+  [20,100) ms: 1057 (1.8%)
+  [100,inf) ms: 21 (0.0%)
+
+按「第一个非 JDK 内部帧」聚合（前 15）:
+site                                                                                               count    total_s     max_ms
+com.mysql.cj.protocol.ReadAheadInputStream.fill(int) line: 107                                     59761     182.32     176.00
+
+按线程名前缀（前 10）:
+  tomcat-handler                 58055
+  timeout-register-immediate     1706

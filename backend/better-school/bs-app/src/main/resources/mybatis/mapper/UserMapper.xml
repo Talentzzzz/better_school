@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.user.IUserDao">
+
+    <sql id="baseColumns">
+        id, user_id, phone, nickname, avatar, signature, gender, show_liked, show_comments,
+        role, state, credit_score, last_login_at, create_time, update_time
+    </sql>
+
+    <select id="selectByPhone" resultType="com.betterschool.infrastructure.dao.user.po.UserPO">
+        SELECT <include refid="baseColumns"/>
+        FROM bs_user
+        WHERE phone = #{phone}
+    </select>
+
+    <select id="selectById" resultType="com.betterschool.infrastructure.dao.user.po.UserPO">
+        SELECT <include refid="baseColumns"/>
+        FROM bs_user
+        WHERE user_id = #{userId}
+    </select>
+
+    <!-- 站内公告广播落库：一次性取全量（不是循环），刻意不设限 -->
+    <select id="selectAllIds" resultType="string">
+        SELECT user_id
+        FROM bs_user
+    </select>
+
+    <!-- user_id 是 UUID：游标按 user_id 字典序推进（user_id 唯一，字典序作游标同样完整覆盖） -->
+    <select id="selectIdsAfter" resultType="string">
+        SELECT user_id
+        FROM bs_user
+        WHERE user_id &gt; #{lastUserId}
+        ORDER BY user_id
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectIdsByRole" resultType="string">
+        SELECT user_id
+        FROM bs_user
+        WHERE role = #{role}
+    </select>
+
+    <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.user.po.UserPO">
+        SELECT <include refid="baseColumns"/>
+        FROM bs_user
+        WHERE user_id IN
+        <foreach collection="ids" item="userId" open="(" separator="," close=")">#{userId}</foreach>
+    </select>
+
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.user.po.UserPO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO bs_user (user_id, phone, nickname, avatar, role, state, credit_score, last_login_at, create_time, update_time)
+        VALUES (#{userId}, #{phone}, #{nickname}, #{avatar}, #{role}, #{state}, #{creditScore}, #{lastLoginAt}, #{createTime}, #{updateTime})
+    </insert>
+
+    <!-- 业务 ID 应用层发号、insert 前一次写入（user_id 列 UUID 字符串） -->
+    <!-- 只更新资料与登录时间：role/state/credit_score 列归 credit 域写，防止登录写覆盖并发封禁/调分 -->
+    <update id="updateById" parameterType="com.betterschool.infrastructure.dao.user.po.UserPO">
+        UPDATE bs_user
+        SET nickname      = #{nickname},
+            avatar        = #{avatar},
+            last_login_at = #{lastLoginAt},
+            update_time   = NOW()
+        WHERE user_id = #{id}
+    </update>
+
+    <!-- 编辑资料：只写资料两列（nickname/avatar 本次不改、role/state/credit_score 归其他域写） -->
+    <update id="updateProfile">
+        UPDATE bs_user
+        SET signature = #{signature},
+            gender    = #{gender},
+            update_time = NOW()
+        WHERE user_id = #{userId}
+    </update>
+
+    <!-- 隐私开关：只写这两列（缺省项由 service 层读当前值补齐后整体覆盖） -->
+    <update id="updatePrivacy">
+        UPDATE bs_user
+        SET show_liked    = #{showLiked},
+            show_comments = #{showComments},
+            update_time   = NOW()
+        WHERE user_id = #{userId}
+    </update>
+
+    <!-- 获赞：该用户 NORMAL 帖点赞计数之和（窄表 post_like_count，不含评论获赞，不含待审/驳回/草稿帖） -->
+    <select id="sumNormalPostLikeCount" resultType="long">
+        SELECT COALESCE(SUM(plc.like_count), 0)
+        FROM post p
+        JOIN post_like_count plc ON plc.post_id = p.post_id
+        WHERE p.user_id = #{userId}
+          AND p.state = 'NORMAL'
+    </select>
+
+</mapper>

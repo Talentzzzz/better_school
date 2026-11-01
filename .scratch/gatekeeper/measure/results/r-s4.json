@@ -1,0 +1,32 @@
+{
+ "name": "s4-failopen",
+ "R": 1000,
+ "N": 200,
+ "T": 5.0,
+ "ttl": 10.0,
+ "burstSeconds": 1.0,
+ "duration_s": 200,
+ "dt": 0.01,
+ "total_admitted": 202657.0,
+ "long_run_rate": 1013.285,
+ "max_100ms_rate": 1240.0,
+ "window_worst_rates": {
+  "1.0": 1109.0,
+  "5.0": 1101.6,
+  "10.0": 1100.9,
+  "30.0": 1099.1,
+  "60.0": 1052.3833333333334,
+  "120.0": 1026.1916666666666
+ },
+ "max_1s_rate": 1109.0,
+ "max_sum_share": 1100.0,
+ "max_sum_share_over_R": 1.1,
+ "max_sum_tokens": 110.15534987105464,
+ "alloc_count": 7585,
+ "scan_cost": 1481186,
+ "rate_pre_100s": 1000.0,
+ "rate_degraded_115_140s": 1100.04,
+ "rate_recovered_150_200s": 999.38,
+ "max_sum_share_degraded": 1100.0,
+ "max_1s_rate_degraded": 1109.0
+}

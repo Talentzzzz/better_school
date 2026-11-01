@@ -1,0 +1,42 @@
+{
+  "targetType": "COMMENT",
+  "targetId": 5,
+  "missing_reason": {
+    "http_status": 200,
+    "response": {
+      "code": "400",
+      "info": "拒绝理由必填且为合法枚举 code",
+      "data": null
+    },
+    "state_after": "PENDING_REVIEW"
+  },
+  "reject": {
+    "http_status": 200,
+    "response": {
+      "code": "200",
+      "info": "成功",
+      "data": null
+    },
+    "state_after": "REJECTED"
+  },
+  "content_review": [
+    {
+      "target_type": "COMMENT",
+      "target_id": "5",
+      "action": "REJECT",
+      "source": "MANUAL",
+      "operator_id": "11",
+      "reason": "其他：含不友善内容",
+      "reason_code": "OTHER"
+    }
+  ],
+  "notification": [
+    {
+      "user_id": "2",
+      "type": "AUDIT_RESULT",
+      "content": "您的评论未通过审核：其他：含不友善内容",
+      "ref_type": "COMMENT",
+      "ref_id": "5"
+    }
+  ]
+}

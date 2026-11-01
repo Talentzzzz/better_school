@@ -1,0 +1,7 @@
+{
+  "name": "project-rework-verify-14",
+  "private": true,
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  }
+}

@@ -1,0 +1,334 @@
+package com.betterschool.usecase.errand;
+
+import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
+import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
+import com.betterschool.domain.notification.service.INotificationService;
+import com.betterschool.domain.credit.model.valobj.CreditReasonTypeVO;
+import com.betterschool.domain.credit.service.ICreditAccountService;
+import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
+import com.betterschool.domain.errand.model.valobj.ErrandArbitrateResult;
+import com.betterschool.domain.errand.model.valobj.ErrandAutoCompleteResult;
+import com.betterschool.domain.errand.model.valobj.ErrandCancelResult;
+import com.betterschool.domain.errand.model.valobj.ErrandConfirmResult;
+import com.betterschool.domain.errand.model.valobj.ErrandFeedPageVO;
+import com.betterschool.domain.errand.model.valobj.ErrandIncomeVO;
+import com.betterschool.domain.errand.model.valobj.ErrandLockTimeoutResult;
+import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
+import com.betterschool.domain.errand.model.valobj.ErrandPayResult;
+import com.betterschool.domain.errand.model.valobj.ErrandTimeoutResult;
+import com.betterschool.domain.errand.service.IErrandOrderService;
+import com.betterschool.domain.moderation.model.valobj.ReviewTargetTypeVO;
+import com.betterschool.domain.moderation.service.IReviewService;
+import com.betterschool.domain.moderation.service.IModerationScreenService;
+import com.betterschool.domain.user.adapter.repository.IUserRepository;
+import com.betterschool.domain.user.model.valobj.UserRoleVO;
+import com.betterschool.domain.wallet.service.IWalletAccountService;
+import com.betterschool.types.common.Constants;
+import com.betterschool.types.concurrent.VirtualThreadFanout;
+import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.exception.BusinessException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.util.List;
+
+/**
+ * 跑腿用例编排：跨域组合顺序调用各域服务（每个域各自事务原子），
+ * 一致性靠"幂等 + 重试"——各域方法内状态机判定/流水唯一键保证重试安全，本层不做事务
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class ErrandOrderCase {
+
+    /** 悬赏下限（与直接发布的 @DecimalMin(10) 同口径，提交草稿时补齐校验） */
+    private static final BigDecimal MIN_REWARD = new BigDecimal("10");
+
+    private final IErrandOrderService errandOrderService;
+    private final ICreditAccountService creditAccountService;
+    private final IWalletAccountService walletAccountService;
+    private final IModerationScreenService moderationScreenService;
+    private final IReviewService reviewService;
+    private final INotificationService notificationService;
+    private final IUserRepository userRepository;
+    private final VirtualThreadFanout fanout;
+
+    public Long createOrder(String userId, String type, String description, String pickupLocation,
+                            String deliveryLocation, BigDecimal reward,
+                            List<String> images, String timeLimit) {
+        creditAccountService.ensureOperable(userId);
+        checkImages(images);
+        // 同步初筛（先付后审）：命中即创建失败、不落库，误伤由用户改文案重发
+        if (moderationScreenService.screen(description)) {
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "内容包含违规词汇，请修改后重试");
+        }
+        return errandOrderService.createOrder(userId, type, description, pickupLocation, deliveryLocation,
+                reward, images, timeLimit);
+    }
+
+    /** 冻结悬赏，由 domain 返回口径 */
+    public void payOrder(Long orderId, String userId) {
+        ErrandPayResult payResult = errandOrderService.payOrder(orderId, userId);
+        walletAccountService.freeze(userId, payResult.getAmount(), orderId);
+    }
+
+    /** 保存草稿：私有停靠内容——不做同步初筛、不做信用分门槛（提交时才校验），字段可缺省 */
+    public Long createDraft(String userId, String type, String description, String pickupLocation,
+                            String deliveryLocation, BigDecimal reward, List<String> images, String timeLimit) {
+        checkImages(images);
+        return errandOrderService.createDraft(userId, type, description, pickupLocation, deliveryLocation,
+                reward, images, timeLimit);
+    }
+
+    /** 编辑草稿：仅 DRAFT 可编辑，全量覆盖内容字段（作者与状态位不可改、不产生状态迁移） */
+    public void updateDraft(Long orderId, String userId, String type, String description, String pickupLocation,
+                            String deliveryLocation, BigDecimal reward, List<String> images, String timeLimit) {
+        checkImages(images);
+        errandOrderService.updateDraft(orderId, userId, type, description, pickupLocation, deliveryLocation,
+                reward, images, timeLimit);
+    }
+
+    /**
+     * 提交草稿：与直接发布同门槛（必填完整性 + 信用分准入门槛），同步初筛命中即失败并停留草稿；
+     * 通过后转 PENDING_PAYMENT 且支付超时随状态迁移同事务注册
+     */
+    public void submitDraft(Long orderId, String userId) {
+        ErrandOrderEntity draft = errandOrderService.getOwnedDraft(orderId, userId);
+        creditAccountService.ensureOperable(userId);
+        validateDraftComplete(draft);
+        if (moderationScreenService.screen(draft.getDescription())) {
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "内容包含违规词汇，请修改后重试");
+        }
+        errandOrderService.submitDraft(orderId, userId);
+    }
+
+    /** 删除草稿：软删 DRAFT → DELETED（仅作者、仅 DRAFT） */
+    public void deleteDraft(Long orderId, String userId) {
+        errandOrderService.deleteDraft(orderId, userId);
+    }
+
+    /** 大厅列表（market-feed-uv 票 04）：索引路径出 cursor / total 降口径，降级与筛选路径走旧直查 */
+    public ErrandFeedPageVO listOrders(String type, String status, String sort, String cursor, int page, int pageSize) {
+        return errandOrderService.listOrders(type, status, sort, cursor, page, pageSize);
+    }
+
+    public long countOrders(String type, String status) {
+        return errandOrderService.countOrders(type, status);
+    }
+
+    /** 大厅已读灰显（market-feed-uv 票 05）：页内订单批量回查当前用户浏览过的 id，未登录返回空集 */
+    public List<Long> listViewedOrderIds(String userId, List<Long> orderIds) {
+        return errandOrderService.listViewedOrderIds(userId, orderIds);
+    }
+
+    /** 作者主页「跑腿」tab：某用户发布的进行中跑腿单（PUBLISHED/LOCKED/CONFIRMED，只列发布不含接单） */
+    public List<ErrandOrderEntity> listUserOrders(String userId, int page, int pageSize) {
+        return errandOrderService.listUserPublishedOrders(userId, page, pageSize);
+    }
+
+    public long countUserOrders(String userId) {
+        return errandOrderService.countUserPublishedOrders(userId);
+    }
+
+    public ErrandOrderEntity orderDetail(Long orderId, String currentUserId) {
+        return errandOrderService.orderDetail(orderId, currentUserId);
+    }
+
+    /** 被拒订单的拒绝理由（content_review.reason），供详情接口对作者带出 */
+    public String errandRejectReason(Long orderId) {
+        return reviewService.rejectReason(ReviewTargetTypeVO.ERRAND, String.valueOf(orderId));
+    }
+
+    public void grabOrder(Long orderId, String userId) {
+        creditAccountService.ensureOperable(userId);
+        errandOrderService.grabOrder(orderId, userId);
+    }
+
+    /** 确认接单（锁单→已确认）：抢到手后核对信息再点，仅持单人 */
+    public void acceptLockedOrder(Long orderId, String userId) {
+        errandOrderService.acceptLockedOrder(orderId, userId);
+    }
+
+    /** 放弃（锁单→已发布）：设计内的正常动作，不扣信用分；主动放弃的滑动计数与冷却由域层写点处理（票 05） */
+    public void abandonLockedOrder(Long orderId, String userId) {
+        errandOrderService.abandonLockedOrder(orderId, userId);
+    }
+
+    public void pickupOrder(Long orderId, String userId) {
+        errandOrderService.pickupOrder(orderId, userId);
+    }
+
+    public void deliverOrder(Long orderId, String userId) {
+        errandOrderService.deliverOrder(orderId, userId);
+    }
+
+    public void confirmOrder(Long orderId, String userId) {
+        ErrandConfirmResult confirmResult = errandOrderService.confirmOrder(orderId, userId);
+        walletAccountService.unfreeze(confirmResult.getPublisherId(), confirmResult.getReward(), orderId);
+        // 入账：接单方得悬赏（流水 uk 幂等）
+        for (ErrandIncomeVO income : confirmResult.getIncomes()) {
+            walletAccountService.income(income.getUserId(), income.getAmount(), orderId);
+        }
+    }
+
+    public void cancelOrder(Long orderId, String userId) {
+        ErrandCancelResult cancelResult = errandOrderService.cancelOrder(orderId, userId);
+        if (cancelResult.isNeedRefund()) {
+            walletAccountService.unfreeze(cancelResult.getPublisherId(), cancelResult.getReward(), orderId);
+        }
+        if (cancelResult.isTakerCanceled()) {
+            creditAccountService.applyChange(cancelResult.getTakerId(), CreditReasonTypeVO.ERRAND_TAKER_CANCEL, orderId);
+        }
+    }
+
+    public void disputeOrder(Long orderId, String userId) {
+        errandOrderService.disputeOrder(orderId, userId);
+    }
+
+    public void arbitrateOrder(Long orderId, String operatorId, String result) {
+        ErrandArbitrateResult arbitrateResult = errandOrderService.arbitrateOrder(orderId, operatorId, result);
+        walletAccountService.unfreeze(arbitrateResult.getPublisherId(), arbitrateResult.getReward(), orderId);
+        // 判接单方 = 一笔完成结算（接单方得悬赏）；判取消不结算
+        for (ErrandIncomeVO income : arbitrateResult.getIncomes()) {
+            walletAccountService.income(income.getUserId(), income.getAmount(), orderId);
+        }
+    }
+
+    public List<ErrandOrderEntity> listMyOrders(String role, String status, String userId, int page, int pageSize) {
+        return errandOrderService.listMyOrders(role, status, userId, page, pageSize);
+    }
+
+    public long countMyOrders(String role, String status, String userId) {
+        return errandOrderService.countMyOrders(role, status, userId);
+    }
+
+    public void handlePayTimeout(Long orderId) {
+        errandOrderService.handlePayTimeout(orderId);
+    }
+
+    /**
+     * 锁单超时释放编排（超时中心回调）：释放回 PUBLISHED 后给**被释放的接单方**发一条结果通知，
+     * dedupKey 带 lockSeq——多轮释放各发各的（同一轮重复回调被唯一键吃掉）。
+     * 通知是尽力而为：释放（轮次守卫条件 UPDATE）才是主效应，通知失败只记日志——回调重投时释放已命中 0 行、
+     * 通知也不会重试，故不让通知异常把一次成功的释放报成失败（换取零死信噪音）。
+     */
+    public void handleLockTimeout(Long orderId, int lockSeq) {
+        ErrandLockTimeoutResult lockTimeoutResult = errandOrderService.handleLockTimeout(orderId, lockSeq);
+        if (lockTimeoutResult == null) {
+            return; // 幂等：陈旧轮次 / 已确认 / 已放弃 / 已取消，零副作用
+        }
+        try {
+            notificationService.sendSystem(lockTimeoutResult.getTakerId(), NotificationScopeVO.MARKET_ERRAND,
+                    NotificationTypeVO.ORDER_EVENT, "订单动态",
+                    "您锁定的跑腿订单已超时释放，订单回到待接单，其他同学可重新接单", "ERRAND", String.valueOf(orderId),
+                    NotificationTypeVO.ORDER_EVENT.name() + ":ERRAND_LOCK_TIMEOUT:" + orderId + ":" + lockSeq);
+        } catch (Exception e) {
+            log.warn("[ErrandOrderCase] 锁单超时释放通知发送失败 orderId={} lockSeq={}", orderId, lockSeq, e);
+        }
+    }
+
+    /**
+     * 超时兜底扫描（XXL-Job 每分钟）：待支付超 15min 取消 + 订单超时取消/退款/扣分
+     * + 送达超 24h 自动完成结算 + 待审超 24h 提醒管理员（每订单每收件人只提醒一次，dedup_key 幂等）。
+     * 幂等：各 handle 条件 UPDATE 0 行返回 null 跳过，重复扫描无害
+     */
+    public void scanTimeouts() {
+        fanout.forEach("errand-pay-timeout-", errandOrderService.listPayTimeoutOrderIds(),
+                errandOrderService::handlePayTimeout);
+        fanout.forEach("errand-timeout-", errandOrderService.listTimeoutOrderIds(), this::handleOrderTimeout);
+        fanout.forEach("errand-auto-complete-", errandOrderService.listAutoCompleteOrderIds(),
+                this::handleAutoComplete);
+        remindReviewTimeouts();
+    }
+
+    /**
+     * 支付成功消费方（bs-errand-paid）编排：给作者发"进入人工审核"通知。
+     * 通知失败向上抛由 broker 重试（dedup_key 幂等，重试不重复落），
+     * 主流程（订单状态/资金）不在本方法内，不受影响
+     */
+    public void notifyPaidReview(Long orderId) {
+        ErrandOrderEntity orderEntity = errandOrderService.loadOrder(orderId);
+        if (orderEntity == null) {
+            return;
+        }
+        notificationService.sendSystem(orderEntity.getPublisherId(), NotificationScopeVO.MARKET_ERRAND, NotificationTypeVO.ORDER_EVENT, "订单动态",
+                "您的跑腿订单已支付成功，进入人工审核，审核通过后将对外可见", "ERRAND", String.valueOf(orderId),
+                NotificationTypeVO.ORDER_EVENT.name() + ":ERRAND_PAID:" + orderId);
+    }
+
+    /**
+     * 待审超 24h 提醒（扫描路径，无 broker 重试兜底）：逐收件人吞异常不影响扫描主流程，
+     * 下轮扫描自动补发（dedup_key 幂等）；不改订单状态，绝不自动裁决
+     */
+    private void remindReviewTimeouts() {
+        List<String> reviewerIds = List.of(
+                userRepository.listUserIdsByRole(UserRoleVO.ADMIN),
+                userRepository.listUserIdsByRole(UserRoleVO.AUDITOR))
+                .stream().flatMap(List::stream).distinct().toList();
+        fanout.forEach("errand-remind-", errandOrderService.listPendingReviewTimeoutOrderIds(),
+                orderId -> remindReviewers(reviewerIds, orderId));
+    }
+
+    /** 扇出项 = 一条待审订单（其下逐收件人仍是串行循环，项内自行吞异常） */
+    private void remindReviewers(List<String> reviewerIds, Long orderId) {
+        for (String reviewerId : reviewerIds) {
+            try {
+                notificationService.sendSystem(reviewerId, NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.ORDER_EVENT, "审核提醒",
+                        "跑腿订单 " + orderId + " 已待审超过 24 小时，请及时处理", "ERRAND", String.valueOf(orderId),
+                        NotificationTypeVO.ORDER_EVENT.name() + ":REVIEW_TIMEOUT:" + orderId + ":" + reviewerId);
+            } catch (Exception e) {
+                log.warn("[ErrandOrderCase] 待审超时提醒发送失败（下轮扫描补发） orderId={} reviewerId={}", orderId, reviewerId, e);
+            }
+        }
+    }
+
+    public void handleOrderTimeout(Long orderId) {
+        ErrandTimeoutResult timeoutResult = errandOrderService.handleOrderTimeout(orderId);
+        if (timeoutResult == null) {
+            return;
+        }
+        walletAccountService.unfreeze(timeoutResult.getPublisherId(), timeoutResult.getReward(), orderId);
+        if (timeoutResult.isCommitted()) {
+            creditAccountService.applyChange(timeoutResult.getTakerId(), CreditReasonTypeVO.ERRAND_TIMEOUT, orderId);
+        }
+    }
+
+    public void handleAutoComplete(Long orderId) {
+        ErrandAutoCompleteResult autoCompleteResult = errandOrderService.handleAutoComplete(orderId);
+        if (autoCompleteResult == null) {
+            return;
+        }
+        walletAccountService.unfreeze(autoCompleteResult.getPublisherId(), autoCompleteResult.getReward(), orderId);
+        // 与发布方确认同一结算口径：接单方得悬赏
+        for (ErrandIncomeVO income : autoCompleteResult.getIncomes()) {
+            walletAccountService.income(income.getUserId(), income.getAmount(), orderId);
+        }
+    }
+
+    /** 配图上限（直接发布与草稿共用同一口径，封顶 6 张） */
+    private void checkImages(List<String> images) {
+        if (images != null && images.size() > Constants.ERRAND_MAX_IMAGES) {
+            throw new BusinessException(ResponseCode.PARAM_ERROR, "配图最多 6 张");
+        }
+    }
+
+    /** 提交门槛：必填 = 直接发布的必填项（类型/描述/取送地点/悬赏≥10/时限） */
+    private void validateDraftComplete(ErrandOrderEntity draft) {
+        if (draft.getType() == null
+                || isBlank(draft.getDescription())
+                || isBlank(draft.getPickupLocation())
+                || isBlank(draft.getDeliveryLocation())
+                || draft.getReward() == null
+                || draft.getReward().compareTo(MIN_REWARD) < 0
+                || draft.getTimeLimitHours() == null) {
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR,
+                    "草稿内容不完整，请补全类型、描述、取送地点、悬赏（不低于 10）与时限后再提交");
+        }
+    }
+
+    private boolean isBlank(String text) {
+        return text == null || text.isBlank();
+    }
+}

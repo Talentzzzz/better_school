@@ -1,0 +1,67 @@
+{
+  "orderId": 8,
+  "mechanism": "xxl timeoutTaskScanJob 自然 10s 周期扫描（中心 → Dubbo 回调单体）",
+  "seam": "回拨中心侧分表行的 action_time / next_fire_time 到 now-2min（不干等 15 分钟真实窗口）",
+  "shardTable": "timeout_task_08",
+  "taskBefore": [
+    "timeout_task_08",
+    "WAITING",
+    "2026-10-07 00:16:44",
+    "2026-10-07 00:16:44",
+    "0",
+    "better-school"
+  ],
+  "taskForced": [
+    "timeout_task_08",
+    "WAITING",
+    "2026-10-06 23:59:47",
+    "2026-10-06 23:59:47",
+    "0",
+    "better-school"
+  ],
+  "taskTerminal": [
+    "SUCCESS",
+    "0",
+    "2026-10-07 00:01:50"
+  ],
+  "registerOutbox": [
+    "SENT",
+    "0",
+    "better-school",
+    "2026-10-07 00:16:44"
+  ],
+  "errandOrderRow": [
+    [
+      "8",
+      "CANCELLED",
+      "2026-10-07 00:01:44",
+      "2026-10-07 00:01:50"
+    ]
+  ],
+  "errandOrderEventRows": [
+    [
+      "CREATED",
+      "<NULL>",
+      "PENDING_PAYMENT",
+      "6",
+      "PUBLISHER"
+    ],
+    [
+      "PAY_TIMEOUT",
+      "PENDING_PAYMENT",
+      "CANCELLED",
+      "<NULL>",
+      "SYSTEM"
+    ]
+  ],
+  "deadLettersFirstPage": {
+    "code": "0000",
+    "info": "成功",
+    "data": {
+      "page": 1,
+      "pageSize": 10,
+      "total": 0,
+      "list": []
+    }
+  }
+}

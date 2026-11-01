@@ -1,0 +1,97 @@
+{
+  "ok": true,
+  "data": {
+    "page": 1,
+    "pageSize": 20,
+    "total": 4,
+    "list": [
+      {
+        "id": 5,
+        "direction": "OUT",
+        "amount": 60,
+        "reasonType": "REDEEM_DRAW_COUNT",
+        "refId": 2180698415304986002,
+        "createdAt": "2026-10-07T00:07:14",
+        "expireAt": null
+      },
+      {
+        "id": 4,
+        "direction": "OUT",
+        "amount": 40,
+        "reasonType": "REDEEM_DRAW_COUNT",
+        "refId": 2180698415304986002,
+        "createdAt": "2026-10-07T00:07:14",
+        "expireAt": null
+      },
+      {
+        "id": 2,
+        "direction": "IN",
+        "amount": 300,
+        "reasonType": "REBATE",
+        "refId": 74102,
+        "createdAt": "2026-10-07T00:00:33",
+        "expireAt": "2026-10-19T00:07:13"
+      },
+      {
+        "id": 1,
+        "direction": "IN",
+        "amount": 40,
+        "reasonType": "REBATE",
+        "refId": 74101,
+        "createdAt": "2026-10-07T00:00:32",
+        "expireAt": "2026-10-09T00:07:13"
+      }
+    ]
+  },
+  "last_response": {
+    "attempt": 1,
+    "http_status": 200,
+    "response": {
+      "code": "200",
+      "info": "成功",
+      "data": {
+        "page": 1,
+        "pageSize": 20,
+        "total": 4,
+        "list": [
+          {
+            "id": 5,
+            "direction": "OUT",
+            "amount": 60,
+            "reasonType": "REDEEM_DRAW_COUNT",
+            "refId": 2180698415304986002,
+            "createdAt": "2026-10-07T00:07:14",
+            "expireAt": null
+          },
+          {
+            "id": 4,
+            "direction": "OUT",
+            "amount": 40,
+            "reasonType": "REDEEM_DRAW_COUNT",
+            "refId": 2180698415304986002,
+            "createdAt": "2026-10-07T00:07:14",
+            "expireAt": null
+          },
+          {
+            "id": 2,
+            "direction": "IN",
+            "amount": 300,
+            "reasonType": "REBATE",
+            "refId": 74102,
+            "createdAt": "2026-10-07T00:00:33",
+            "expireAt": "2026-10-19T00:07:13"
+          },
+          {
+            "id": 1,
+            "direction": "IN",
+            "amount": 40,
+            "reasonType": "REBATE",
+            "refId": 74101,
+            "createdAt": "2026-10-07T00:00:32",
+            "expireAt": "2026-10-09T00:07:13"
+          }
+        ]
+      }
+    }
+  }
+}

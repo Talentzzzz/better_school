@@ -1,0 +1,355 @@
+// 后端统一响应与分页结构
+export interface Response<T = unknown> {
+  code: string
+  info: string
+  data: T
+}
+
+export interface PageResult<T> {
+  page: number
+  pageSize: number
+  /** -1 = 未知（feed 索引路径不再精确 COUNT，续页以 cursor 为准） */
+  total: number
+  list: T[]
+  /** 非 null = 下一页必须带它走 keyset 续页（主页 feed / 市集推荐页）；null = 按 page 续页或已到末页 */
+  cursor?: string | null
+}
+
+// ---------- search ----------
+export interface UserSummary {
+  userId: number
+  nickname: string
+  avatar: string | null
+}
+
+// ---------- auth ----------
+export interface UserInfo {
+  userId: number
+  phone: string
+  nickname: string
+  avatar: string | null
+  role: string
+  status: string
+  creditScore: number
+  lastLoginAt: string | null
+}
+
+export interface UserAuthResponse {
+  token: string
+  userInfo: UserInfo
+}
+
+// ---------- 公开用户资料（作者主页 / 「我的」页资料区） ----------
+
+/** 性别：MALE/FEMALE；null＝不展示 */
+export type Gender = 'MALE' | 'FEMALE'
+
+export interface PublicUserProfile {
+  userId: number
+  nickname: string
+  avatar: string | null
+  /** 个性签名（null＝不展示） */
+  signature: string | null
+  gender: Gender | null
+  /** 获赞：该用户 NORMAL 帖 like_count 之和 */
+  receivedLikeCount: number
+  /** 隐私开关：公开我的赞过（仅他视生效） */
+  showLiked: boolean
+  /** 隐私开关：公开我的评论（仅他视生效） */
+  showComments: boolean
+}
+
+/** 按用户列评论的列表项（作者主页 / 「我的」页「评论」tab） */
+export interface AuthorProfileComment {
+  commentId: number
+  content: string
+  likeCount: number
+  createdAt: string
+  postId: number
+  /** 来源帖标题（可空） */
+  postTitle: string | null
+  /** 来源帖封面（无封面帖为 null） */
+  postCover: string | null
+}
+
+// ---------- community ----------
+
+export interface PostSummary {
+  postId: number
+  title: string
+  cover: string | null
+  userId: number
+  nickname: string
+  avatar: string | null
+  likeCount: number
+  createdAt: string
+  viewCount: number | null
+  /** 仅"我的"接口填充：NORMAL/PENDING_REVIEW/DRAFT/REJECTED */
+  status?: string | null
+  /** 拒绝理由：仅"我的"接口且 REJECTED 行填充 */
+  rejectReason?: string | null
+  /** 当前用户是否已点赞（未登录 null） */
+  liked?: boolean | null
+  /** 当前用户是否浏览过（主页 feed 已读灰显标记；仅 /community/posts 填充，其余列表 null） */
+  viewed?: boolean | null
+  /** 正文："我的"列表与搜索全量（客户端 contains 过滤用）；主页 feed 截断摘要（约前 50 字） */
+  content?: string | null
+}
+
+/** 商品托管订单状态：PENDING_PAYMENT/PAID/DELIVERED/COMPLETED/CANCELLED */
+export type ProductOrderStatus = 'PENDING_PAYMENT' | 'PAID' | 'DELIVERED' | 'COMPLETED' | 'CANCELLED'
+
+export interface ProductOrder {
+  orderId: number
+  productId: number
+  productTitle: string
+  productImage: string | null
+  buyerId: number
+  buyerNickname: string
+  buyerAvatar: string | null
+  sellerId: number
+  sellerNickname: string
+  sellerAvatar: string | null
+  price: number
+  status: ProductOrderStatus
+  createdAt: string
+}
+
+export interface PostDetail {
+  postId: number
+  userId: number
+  nickname: string
+  avatar: string | null
+  title: string
+  content: string
+  images: string[]
+  /** 展示封面（独立封面 ?? 相册第一张，均无 null = 无封面帖） */
+  cover: string | null
+  /** 原始独立封面（未回退相册，可空）：草稿编辑回填用 */
+  independentCover?: string | null
+  status: string
+  /** 拒绝理由：仅作者视角且 REJECTED/DRAFT（被拒转草稿自救期）时后端返回 */
+  rejectReason?: string | null
+  likeCount: number
+  commentCount: number
+  viewCount: number | null
+  liked: boolean
+  createdAt: string
+}
+
+export interface PostComment {
+  commentId: number
+  postId: number
+  userId: number
+  nickname: string
+  content: string
+  /** 评论点赞数（根评论与子回复通用） */
+  likeCount?: number
+  /** 楼内可见子回复数（根评论才有意义） */
+  replyCount?: number
+  /** 当前用户是否已赞（访客 false） */
+  liked?: boolean
+  createdAt: string
+}
+
+/** 楼内子回复（平铺展示）：parentId ≠ 楼根评论 id 时展示"▶ 被回复人昵称"指向标签 */
+export interface CommentReply {
+  commentId: number
+  postId: number
+  parentId: number
+  userId: number
+  nickname: string
+  content: string
+  likeCount?: number
+  /** 当前用户是否已赞（访客 false） */
+  liked?: boolean
+  replyToUserId: number
+  replyToNickname: string
+  createdAt: string
+}
+
+// ---------- trade ----------
+export type TradeCategory =
+  | 'DIGITAL'
+  | 'BOOKS'
+  | 'DAILY'
+  | 'SPORTS'
+  | 'TICKETS'
+  | 'OTHER'
+
+export interface Product {
+  productId: number
+  userId: number
+  sellerNickname: string
+  sellerAvatar: string | null
+  title: string
+  description: string
+  images: string[]
+  price: number
+  tradeLocation: string
+  category: TradeCategory
+  status: string
+  viewCount: number
+  favoriteCount: number
+  favorited: boolean
+  /** 当前用户是否浏览过（仅推荐列表接口填充，其余列表与详情为 null；未登录 false） */
+  viewed?: boolean | null
+  createdAt: string
+}
+
+// ---------- errand ----------
+export type ErrandType = 'EXPRESS_PICKUP' | 'BUY' | 'DELIVER' | 'OTHER'
+export type ErrandTimeLimit = 'HOURS_2' | 'HOURS_4' | 'HOURS_12' | 'HOURS_24' | 'DAYS_7' | 'DAYS_30' | 'DAYS_365'
+export type ErrandStatus =
+  | 'DRAFT'
+  | 'PENDING_REVIEW'
+  | 'PENDING_PAYMENT'
+  | 'PUBLISHED'
+  | 'REJECTED'
+  | 'LOCKED'
+  | 'CONFIRMED'
+  | 'PICKED_UP'
+  | 'DELIVERED'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'DISPUTED'
+  | 'DELETED'
+
+export interface ErrandOrder {
+  orderId: number
+  publisherId: number
+  publisherNickname: string
+  publisherAvatar: string | null
+  takerId: number | null
+  takerNickname: string | null
+  takerAvatar: string | null
+  type: ErrandType
+  description: string
+  pickupLocation: string
+  deliveryLocation: string
+  /** 悬赏（支付时冻结托管，完成后划转给接单者） */
+  reward: number
+  /** 当前接单人数：0/1 */
+  currentTakers: number
+  /** 浏览 UV 数（按用户去重，一人一单只计一次，匿名不计入） */
+  viewCount: number
+  deadline: string
+  status: ErrandStatus
+  createdAt: string
+  images?: string[] | null
+  /** 拒绝理由：仅作者视角且 REJECTED 时后端返回 */
+  rejectReason?: string | null
+  /** 当前用户是否浏览过（仅大厅推荐列表接口填充，其余列表与详情为 null；未登录 false） */
+  viewed?: boolean | null
+}
+
+// ---------- wallet ----------
+export interface WalletBalance {
+  balance: number
+  frozenAmount: number
+}
+
+export type WalletTxnType =
+  | 'RECHARGE'
+  | 'FROZEN'
+  | 'UNFROZEN'
+  | 'INCOME'
+  | 'PRODUCT_FROZEN'
+  | 'PRODUCT_UNFROZEN'
+  | 'PRODUCT_INCOME'
+
+export interface WalletTransaction {
+  id: number
+  type: WalletTxnType
+  amount: number
+  orderId: number | null
+  createdAt: string
+}
+
+// ---------- credit ----------
+export interface CreditInfo {
+  creditScore: number
+  status: 'NORMAL' | 'BANNED'
+}
+
+export interface CreditLog {
+  id: number
+  change: number
+  reasonType: string
+  reasonDesc: string
+  refId: number | null
+  createdAt: string
+}
+
+// ---------- chat ----------
+
+/** 会话来源（市集「私信联系」两入口首建时写入，首来源钉死） */
+export type RoomSource = 'ERRAND' | 'PRODUCT'
+
+/** 对家角色标签（服务端按来源 + 本人是否首建发起人现算） */
+export type RoomPeerRole = 'TAKER' | 'SELLER' | 'BUYER'
+
+export interface ChatRoomSummary {
+  roomId: number
+  peerUserId: number | null
+  peerNickname: string | null
+  peerAvatar: string | null
+  peerRole: RoomPeerRole | null
+  source: RoomSource | null
+  unread: number
+  lastMsgType: string | null
+  lastMsgPreview: string | null
+  lastMsgAt: string | null
+}
+
+export interface ChatRoom {
+  roomId: number
+}
+
+export interface ChatMessage {
+  roomId: number
+  messageId: number
+  seq: number
+  fromUserId: number | null
+  fromNickname: string | null
+  fromAvatar: string | null
+  msgType: 'TEXT' | 'IMAGE' | 'CARD'
+  status: string
+  content: string
+  refType: string | null
+  refId: number | null
+  clientMsgId: string | null
+  deliverySeq: number | null
+  createdAt: string
+}
+
+/** 会话成员水位线（room_member）：1v1 已读回执的水位初值来源 */
+export interface RoomMember {
+  userId: number
+  nickname: string
+  avatar: string | null
+  lastReadSeq: number
+}
+
+export interface RoomMembers {
+  memberCount: number
+  members: RoomMember[]
+}
+
+export type NotificationType =
+  | 'ANNOUNCEMENT'
+  | 'AUDIT_RESULT'
+  | 'REPORT_RESULT'
+  | 'ORDER_EVENT'
+  | 'CREDIT_CHANGE'
+
+export interface Notification {
+  id: number
+  type: NotificationType
+  title: string
+  content: string
+  read: boolean
+  refType: string | null
+  refId: number | null
+  createdAt: string
+}

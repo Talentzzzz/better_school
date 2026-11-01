@@ -1,0 +1,58 @@
+package com.betterschool.domain.timeout.model.entity;
+
+import com.betterschool.domain.timeout.model.valobj.TaskStatusVO;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+
+/**
+ * 超时任务（一行 = 一个「到某时刻触发一次业务动作」的任务）。
+ * <p>
+ * 标识是自然键 {@code (taskType, bizId)}（业务方永不持久化物理 id）；
+ * {@code id} 只是物理主键，无业务含义。复合业务引用（如 {@code {orderId}:{lockSeq}}）编码进 {@code bizId}。
+ * <p>
+ * 列里没有回调路由列：进程内分发后不再需要业务方应用名（原独立中心的路由列已删）。
+ */
+@Data
+public class TimeoutTaskEntity {
+
+    private Long id;
+    private String taskType;
+    private String bizId;
+    /** 理论到期时刻：单轮内不可变（终态复活=重开一轮时刷新），回调时携带，供业务监控精度 */
+    private LocalDateTime actionTime;
+    /** 下次可触发时刻：注册时 = actionTime，失败重试后 = now + 退避 */
+    private LocalDateTime nextFireTime;
+    private TaskStatusVO status;
+    private Integer retryCount;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+
+    /**
+     * 这一行属于哪个全局槽位（0..15），<b>不落库</b>：按键读写时由仓储按 {@code bizId} 算出，
+     * 扫描捞批时由认领的槽位给——结算批量语句塞 hint 用的是批的槽位，不再逐行算。
+     */
+    private Integer shardSlot;
+
+    /**
+     * 注册态的新任务行：WAITING、{@code nextFireTime = actionTime}、{@code retryCount = 0}。
+     * <p>
+     * 时间截到秒：库列是 DATETIME（秒级精度），不截的话 MySQL 存进去会四舍五入、读回来对不上。
+     */
+    public static TimeoutTaskEntity newWaiting(String taskType, String bizId,
+                                               LocalDateTime actionTime, LocalDateTime now) {
+        LocalDateTime fireTime = actionTime.truncatedTo(ChronoUnit.SECONDS);
+        LocalDateTime createdAt = now.truncatedTo(ChronoUnit.SECONDS);
+        TimeoutTaskEntity task = new TimeoutTaskEntity();
+        task.setTaskType(taskType);
+        task.setBizId(bizId);
+        task.setActionTime(fireTime);
+        task.setNextFireTime(fireTime);
+        task.setStatus(TaskStatusVO.WAITING);
+        task.setRetryCount(0);
+        task.setCreatedAt(createdAt);
+        task.setUpdatedAt(createdAt);
+        return task;
+    }
+}

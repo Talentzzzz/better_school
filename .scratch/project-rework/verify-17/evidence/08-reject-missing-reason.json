@@ -1,0 +1,10 @@
+{
+  "targetId": 15,
+  "http_status": 200,
+  "response": {
+    "code": "400",
+    "info": "拒绝理由必填且为合法枚举 code",
+    "data": null
+  },
+  "state_after": "PENDING_REVIEW"
+}

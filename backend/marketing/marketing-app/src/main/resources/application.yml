@@ -1,0 +1,132 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: marketing
+  # 虚拟线程开关（spec §2，票 05/12）：Web handler 从 Tomcat 平台线程池（默认 200 上限）换到 VT，
+  # 翻的理由 = 消平台线程上限 + 口径统一——实测吞吐收益 ≈ 0（票 04），不是性能优化。
+  # 两条硬约束：不许再配 server.tomcat.threads.max（翻开关后静默失效）、
+  # 不许混用 Tomcat 原生 useVirtualThreads。
+  # 票 07 起本服务同时有 @DubboService（兑换边 Provider），provider 池见下面 dubbo.protocol.threadpool。
+  threads:
+    virtual:
+      enabled: true
+  # jwt.secret / jwt.expire-days 来自 Nacos 的共享 dataId（三个服务同一份）。
+  # server-addr 必须留在本地——它是「去哪儿找 Nacos」的引导信息，放进 Nacos 是鸡生蛋
+  config:
+    import: nacos:better-school-shared.yml?group=DEFAULT_GROUP&refreshEnabled=true
+  cloud:
+    nacos:
+      server-addr: 127.0.0.1:8848
+  autoconfigure:
+    # JWT 无状态认证不依赖 UserDetailsService，排除默认用户生成（消 generated password 日志）
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  # 本服务自己的 schema（与单体同 MySQL 实例、不同库）：跨 schema 只存 id，不 join 单体库。
+  # 票 07 起两域（points + lottery）并库为 bs_marketing（库名收敛口径见票 08）
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/bs_marketing?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: bs123456
+    # Hikari 显式化（spec §2.3，票 12）：翻 VT 开关后连接池是唯一真并发上限，connection-timeout
+    # 决定慢失败时延——过去跑 Boot 默认（池 10、timeout 30s），现在两行都写明。池 10 不为 VT 而调。
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 3000
+  # Redis：本服务承载抽奖概率表（票 11 预热，bs:raffle:*）与库存两段桶（票 12 的 Lua 原子预扣，bs:inventory:*）。
+  # 连接超时压到 1s：redis 挂掉时靠这个快速失败（每次抽奖吃满默认超时会拖垮整条链路）。
+  # 这段同时是 redisson-spring-boot-starter 自动装配的数据源（票 07 随抽奖域并入）
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+      password: bs123456   # compose redis 容器 requirepass bs123456
+      timeout: 1000ms
+      connect-timeout: 1000ms
+
+# 事件边：发 bs-lottery-drawn、bs-points-changed，消费 bs-lottery-drawn
+# （票 06 起营销单服务单 producer group，与单体错开）
+rocketmq:
+  name-server: localhost:9876
+  producer:
+    group: marketing-producer
+
+# outbox 兜底重发（票 14）：outboxScan 只捞 state=0 且 update_time 超过该秒数的行——
+# 刚提交的那批由 afterCommit 的首次异步发送负责，扫描只兜底，不抢在前面重复投递
+outbox:
+  scan:
+    timeout-seconds: 60
+
+mybatis:
+  # OutboxMapper 两域同名，XML 必须分域子目录——**必须递归**（mapper/points/*、mapper/lottery/*）
+  mapper-locations: classpath:/mybatis/mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+# redis 奖池降级冷却：连不上后这段时间内直接走 DB 直扣，不再每请求吃一次连接超时
+lottery:
+  bucket:
+    degrade-cooldown-millis: 10000
+
+# 同步边（Dubbo）：Consumer 取单体的 IUserQueryService，Provider 暴露兑换口 IPointsExchangeService；
+# tri 协议端口三个服务错开
+dubbo:
+  application:
+    name: marketing
+    # 3.3 默认 STRICT：未进 allowlist 的 DTO 首次调用直接被拒，本地联调先放宽为「只拦危险类」
+    serialize-check-status: WARN
+  registry:
+    address: nacos://127.0.0.1:8848
+  protocol:
+    name: tri
+    port: 50052
+    # Provider 池显式写 virtual（spec §2.2，票 07/12）：3.3.5 起翻 spring.threads.virtual.enabled
+    # 会隐式连带此值，这里显式写不吃默认——自文档 + 抗将来只改一边。与 Tomcat 翻开关同构：
+    # 消平台线程上限（threads=200 成死参数，不许写 threads/queues），DB 侧由连接池兜。
+    threadpool: virtual
+  consumer:
+    check: false
+  # 本服务是兑换边的 Provider：没有这一行 @DubboService 不会被打扫到——应用照常启动、
+  # bean 也在，但一条 Export dubbo service 日志都没有，抽奖侧报 No provider available
+  scan:
+    base-packages: com.betterschool.marketing
+
+xxl:
+  job:
+    admin:
+      addresses: http://localhost:9090/xxl-job-admin
+    access-token: default_token
+    executor:
+      appname: marketing-executor
+      port: 9998
+      log-path: ./logs/xxl-job-marketing
+      log-retention-days: 30
+
+# 库存合并器（spec §2.4：与计数侧同一套窗口 / 批 / 超时，分片与线程更小；全部未经扫参）。
+# 上线后只按 MergeMetrics 的 flushed ÷ batches（合并比）、timedOut、rejectedFull 调，调参不改代码结构。
+# flush-threads 的硬上限是「连接池 - 2」，由 marketing-app/config/QuotaMergeConfig 启动时校验并把两个数打进日志。
+# shardCapacity 比计数侧小是刻意的：库存资金敏感 ⇒ 满了立刻降级为同步单条扣减，队列别长。
+merge:
+  inventory:
+    shard-count: 64         # 2 的幂；库存热点是「一次活动 1~3 个 invId」，64 个缓冲够
+    window-ms: 5            # 合并窗口：分片首个请求排定 5ms 后 flush，攒满可提前触发
+    max-batch: 200          # 200 行 ≈ 8ms 落库；再大 wait-timeout-ms 就吃紧
+    wait-timeout-ms: 100    # 必须 > window-ms：5ms 窗口 + 8ms 落库 + 抖动；超时 = TIMEOUT_UNKNOWN
+    shard-capacity: 2000    # 只当「降级触发点 + 内存上界」，满了就拒（调用方同步降级），不扩容
+    flush-threads: 2        # 必须 <= 连接池上限 - 2（池 10 ⇒ 上限 8）
+    drain-timeout-ms: 5000  # 停机排空（停收 → 排空 → 关池）的等待上限
+
+logging:
+  level:
+    com.betterschool: debug
+    # mapper SQL 日志走 slf4j 后在此关掉（MyBatis 日志名 = mapper 接口包名；
+    # 域段插在 dao 前，没有假公共前缀可以扫，只能逐域列——与 @MapperScan 的清单保持一致）
+    com.betterschool.marketing.infrastructure.points.dao: warn
+    com.betterschool.marketing.infrastructure.drawcount.dao: warn
+    com.betterschool.marketing.infrastructure.config.dao: warn
+    com.betterschool.marketing.infrastructure.raffle.dao: warn
+    com.betterschool.marketing.infrastructure.inventory.dao: warn
+    com.betterschool.marketing.infrastructure.common.dao: warn

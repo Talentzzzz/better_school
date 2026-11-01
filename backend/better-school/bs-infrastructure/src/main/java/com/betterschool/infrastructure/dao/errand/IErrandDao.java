@@ -1,0 +1,184 @@
+package com.betterschool.infrastructure.dao.errand;
+
+import com.betterschool.domain.errand.model.valobj.ErrandFeedCursorVO;
+import com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO;
+import com.betterschool.infrastructure.dao.errand.po.ErrandOrderEventPO;
+import com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+/**
+ * 跑腿订单 Mapper：SQL 定义在 app 模块 resources/mybatis/mapper/ErrandMapper.xml
+ */
+@Mapper
+public interface IErrandDao {
+
+    int insert(ErrandOrderPO orderPO);
+
+    /** 业务 ID 回写：errand_order_id = id（同事务，见 sql.md 主键口径） */
+    int bindBizId(@Param("id") Long id);
+
+    ErrandOrderPO selectById(@Param("orderId") Long orderId);
+
+    /** 按 id 列表查询（不分状态，搜索同步反查/搜索结果组装用） */
+    List<ErrandOrderPO> selectByIds(@Param("ids") List<Long> orderIds);
+
+    /** 搜索索引全量重建的游标页：id > lastId 按 id 升序取 limit 条 */
+    List<Long> selectIdsAfter(@Param("lastId") Long lastId, @Param("limit") int limit);
+
+    List<ErrandOrderPO> selectPage(@Param("type") String type, @Param("state") String state,
+                                   @Param("sort") String sort,
+                                   @Param("offset") int offset, @Param("limit") int limit);
+
+    long count(@Param("type") String type, @Param("state") String state);
+
+    /**
+     * 跑腿大厅索引序扫描（market-feed-uv 票 04）：只取 PUBLISHED（行常驻 + state 快照），
+     * 排序键 / 游标谓词 / 排序方向随 sort 分支，走 (state, 排序键, errand_order_id) 索引的 range scan。
+     * 部分列直映域 VO（游标锚点要排序键随行带出，热度快照供大厅展示浏览量）
+     */
+    List<ErrandFeedIndexItemVO> selectFeedIndex(@Param("sort") String sort,
+                                                @Param("cursor") ErrandFeedCursorVO cursor,
+                                                @Param("limit") int limit);
+
+    int payById(@Param("orderId") Long orderId, @Param("deadline") LocalDateTime deadline);
+
+    int grab(@Param("orderId") Long orderId, @Param("takerId") String takerId);
+
+    /** 抢单后的当前轮次（同事务内读，锁单超时注册的复合 bizId 要带上它） */
+    int selectLockSeqById(@Param("orderId") Long orderId);
+
+    /** 锁单超时释放（轮次守卫）：LOCKED → PUBLISHED 清 taker_id；lock_seq 挡住陈旧轮次回调 */
+    int releaseLockedByTimeout(@Param("orderId") Long orderId, @Param("lockSeq") int lockSeq);
+
+    /** 确认接单：LOCKED → CONFIRMED（仅持单人；不改 lock_seq） */
+    int acceptLockedById(@Param("orderId") Long orderId, @Param("takerId") String takerId);
+
+    /** 放弃：LOCKED → PUBLISHED（仅持单人；清 taker_id，不动 taker_canceled / lock_seq） */
+    int abandonLockedById(@Param("orderId") Long orderId, @Param("takerId") String takerId);
+
+    /** 窗口内主动放弃次数（actor_id + LOCK_ABANDONED + create_time >= since） */
+    int countAbandonsSince(@Param("actorId") String actorId, @Param("since") LocalDateTime since);
+
+    /** 窗口内最近一次主动放弃时刻（无则 null） */
+    LocalDateTime selectLatestAbandonTimeSince(@Param("actorId") String actorId, @Param("since") LocalDateTime since);
+
+    int pickupById(@Param("orderId") Long orderId, @Param("takerId") String takerId);
+
+    int deliverById(@Param("orderId") Long orderId, @Param("takerId") String takerId);
+
+    int confirmById(@Param("orderId") Long orderId, @Param("publisherId") String publisherId);
+
+    int cancelByPublisher(@Param("orderId") Long orderId, @Param("publisherId") String publisherId);
+
+    int cancelByTaker(@Param("orderId") Long orderId, @Param("takerId") String takerId);
+
+    int disputeById(@Param("orderId") Long orderId);
+
+    int arbitrateCancelById(@Param("orderId") Long orderId);
+
+    int arbitrateCompleteById(@Param("orderId") Long orderId);
+
+    int markTimeout(@Param("orderId") Long orderId);
+
+    /** 待支付超时取消：PENDING_PAYMENT → CANCELLED（未冻结无退款） */
+    int cancelPendingPayment(@Param("orderId") Long orderId);
+
+    /** 草稿全量编辑（仅 DRAFT 行生效；作者与状态位不在 SET 列内） */
+    int updateDraft(ErrandOrderPO orderPO);
+
+    /** 提交草稿：DRAFT → PENDING_PAYMENT（条件 UPDATE，带作者守卫） */
+    int submitDraft(@Param("orderId") Long orderId, @Param("publisherId") String publisherId);
+
+    /** 删除草稿：软删 DRAFT → DELETED（条件 UPDATE，带作者守卫） */
+    int softDelete(@Param("orderId") Long orderId, @Param("publisherId") String publisherId);
+
+    /** 待支付超时订单 id 列表（PENDING_PAYMENT 且进入待支付早于 before：直接发布=落库时刻，草稿提交=提交时刻） */
+    List<Long> selectPayTimeoutOrderIds(@Param("before") LocalDateTime before, @Param("limit") int limit);
+
+    /** 订单超时 id 列表（PUBLISHED/LOCKED/CONFIRMED/PICKED_UP 且 deadline 已过） */
+    List<Long> selectTimeoutOrderIds(@Param("limit") int limit);
+
+    /** 待审超时 id 列表（PENDING_REVIEW 且进入待审早于 before，24h 提醒扫描用） */
+    List<Long> selectPendingReviewTimeoutOrderIds(@Param("before") LocalDateTime before, @Param("limit") int limit);
+
+    /** 审核通过：PENDING_REVIEW → PENDING_PAYMENT，返回影响行数（1=本次刚通过） */
+    int reviewApproveById(@Param("orderId") Long orderId);
+
+    /** 审核驳回：PENDING_REVIEW → CANCELLED，返回影响行数 */
+    int reviewRejectById(@Param("orderId") Long orderId);
+
+    /** 送达超时订单 id 列表（DELIVERED 且送达早于 before，24h 自动完成扫描用） */
+    List<Long> selectAutoCompleteOrderIds(@Param("before") LocalDateTime before, @Param("limit") int limit);
+
+    /** 送达后自动完成：DELIVERED → COMPLETED（发布方 24h 未确认） */
+    int autoCompleteById(@Param("orderId") Long orderId);
+
+    List<ErrandOrderPO> selectMyPublished(@Param("userId") String userId, @Param("state") String state,
+                                          @Param("offset") int offset, @Param("limit") int limit);
+
+    long countMyPublished(@Param("userId") String userId, @Param("state") String state);
+
+    /** 某用户发布的进行中跑腿单分页（作者主页「跑腿」tab，访客口径）：publisher_id 且 state IN ('PUBLISHED','LOCKED','CONFIRMED') */
+    List<ErrandOrderPO> selectPublicPageByPublisher(@Param("userId") String userId,
+                                                    @Param("offset") int offset, @Param("limit") int limit);
+
+    long countPublicByPublisher(@Param("userId") String userId);
+
+    List<ErrandOrderPO> selectMyTaken(@Param("userId") String userId, @Param("state") String state,
+                                      @Param("offset") int offset, @Param("limit") int limit);
+
+    long countMyTaken(@Param("userId") String userId, @Param("state") String state);
+
+    /** 订单状态流转事件落表（同事务，只插入） */
+    int insertOrderEvent(ErrandOrderEventPO eventPO);
+
+    // ── 跑腿浏览 UV 三步（market-feed-uv 票 02，照帖子 user_view_history / post_view_count 先例）──
+    // 一组一个事务：INSERT IGNORE 明细（影响行数 = 真正新增的 UV 数）→ 全组刷 viewed_at → 加速列 += 新增数
+
+    /** 第一步：UV 明细批量写，(user_id, errand_order_id) 主键撞键裁决重复浏览 */
+    int insertOrderViewHistory(@Param("orderId") Long orderId, @Param("userIds") List<String> userIds);
+
+    /** 第二步：刷新本组全部键的浏览时刻（含刚插入的行）——重复浏览的唯一可见效果 */
+    int touchOrderViewedAt(@Param("orderId") Long orderId, @Param("userIds") List<String> userIds);
+
+    /** 第三步：加速列 upsert（行懒建 ODKU）；增量 = insertOrderViewHistory 的影响行数 */
+    int upsertOrderViewCount(@Param("orderId") Long orderId, @Param("delta") int delta);
+
+    /** 订单当前的浏览 UV 数（加速列 errand_view_count；计数行不存在返回 null，调用方按 0 收） */
+    Integer selectViewCount(@Param("orderId") Long orderId);
+
+    /** 当前用户浏览过的订单 id 集合（大厅已读灰显批量回显，走 (user_id, errand_order_id) 主键前缀） */
+    List<Long> selectViewedOrderIds(@Param("userId") String userId, @Param("orderIds") List<Long> orderIds);
+
+    // ── feed 异构索引同事务直写（market-feed-uv 票 03：行常驻 + state 快照，审核通过行诞生，
+    //    此后 13 态流转点旁带同步，照帖子 post_feed_index 先例）──
+
+    /** 审核通过：行诞生（INSERT...SELECT 取 reward 快照；ODKU 只翻 state——跑腿无重提再过审） */
+    int upsertFeedIndexOnApprove(@Param("orderId") Long orderId);
+
+    /** 状态快照同步：镜像 errand_order 的新状态（大厅可见 = PUBLISHED，读路径按快照挑状态） */
+    int updateFeedIndexState(@Param("orderId") Long orderId, @Param("state") String state);
+
+    /** 浏览合并事务旁路 ±N：纯 UPDATE 不 upsert；0 行 = 索引行缺失，调用方落 warn 交重建 job */
+    int updateFeedIndexViewCount(@Param("orderId") Long orderId, @Param("delta") int delta);
+
+    // ── feed 索引全量重建（market-feed-uv 票 06：兜底恢复手段，照帖子 IPostDao 同名四条先例）──
+    // 四条语句由仓储收进一个事务（执行序：计数校准 → 清空索引 → 重灌投影）：
+    // 先算准计数窄表再抄进重灌语句，读者要么看到重建前、要么看到重建后的完整索引
+
+    /** 清空索引表（DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉与重灌语句的原子性） */
+    int clearFeedIndex();
+
+    /** 重灌：行集 = PUBLISHED ∪ 有过审批通过；feed_time = MAX(APPROVE) 兜底 create_time；view_count 抄计数窄表 */
+    int rebuildFeedIndexProjection();
+
+    /** 浏览 UV 加速列校准收尾：清掉没有明细行的孤儿计数行（重投影由 {@link #recalibrateViewCounts} 完成） */
+    int deleteViewCountsMissingHistory();
+
+    /** 浏览 UV 加速列校准：errand_view_count 重投影 = errand_view_history 行数（ODKU 补缺行 / 刷漂移 / 幂等落回同值） */
+    int recalibrateViewCounts();
+}

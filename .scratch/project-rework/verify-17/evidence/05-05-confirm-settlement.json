@@ -1,0 +1,81 @@
+{
+  "order_id": 2,
+  "db_order_row": [
+    "COMPLETED"
+  ],
+  "buyer_wallet_after_confirm": {
+    "balance": "1239.80",
+    "frozen_amount": "0.00",
+    "available": "1239.80"
+  },
+  "seller_wallet_before_confirm": {
+    "balance": "1019.90",
+    "frozen_amount": "0.00",
+    "available": "1019.90"
+  },
+  "seller_wallet_after_confirm": {
+    "balance": "1039.80",
+    "frozen_amount": "0.00",
+    "available": "1039.80"
+  },
+  "buyer_wallet_detail": [
+    {
+      "type": "PRODUCT_FROZEN",
+      "amount": "19.90",
+      "order_id": "2",
+      "biz_round": "0",
+      "create_time": "2026-10-07 00:01:35"
+    },
+    {
+      "type": "PRODUCT_UNFROZEN",
+      "amount": "19.90",
+      "order_id": "2",
+      "biz_round": "0",
+      "create_time": "2026-10-07 00:01:36"
+    }
+  ],
+  "seller_wallet_detail": [
+    {
+      "type": "PRODUCT_INCOME",
+      "amount": "19.90",
+      "order_id": "2",
+      "biz_round": "0",
+      "create_time": "2026-10-07 00:01:36"
+    }
+  ],
+  "product_order_event": [
+    [
+      "CREATED",
+      "NULL",
+      "PENDING_PAYMENT",
+      "BUYER"
+    ],
+    [
+      "PAID",
+      "PENDING_PAYMENT",
+      "PAID",
+      "BUYER"
+    ],
+    [
+      "DELIVERED",
+      "PAID",
+      "DELIVERED",
+      "SELLER"
+    ],
+    [
+      "COMPLETED",
+      "DELIVERED",
+      "COMPLETED",
+      "BUYER"
+    ]
+  ],
+  "db_product_row": [
+    "SOLD",
+    "2",
+    "2026-10-07 00:01:32",
+    "2026-11-06 00:01:32",
+    "19.90",
+    "3",
+    "九成新民谣吉他"
+  ]
+}

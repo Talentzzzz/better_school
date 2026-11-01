@@ -1,0 +1,13 @@
+{
+  "http_status": 200,
+  "request": {
+    "targetType": "POST",
+    "targetId": 13,
+    "approve": true
+  },
+  "response": {
+    "code": "200",
+    "info": "成功",
+    "data": null
+  }
+}

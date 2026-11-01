@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "request": {
+    "targetType": "POST",
+    "targetId": 14,
+    "approve": false,
+    "reasonCode": "OTHER",
+    "supplement": "标题与内容不符"
+  },
+  "response": {
+    "code": "200",
+    "info": "成功",
+    "data": null
+  }
+}

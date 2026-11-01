@@ -1,0 +1,42 @@
+{
+  "order_id": 2,
+  "pay_response": null,
+  "wallet_before": {
+    "balance": "1239.80",
+    "frozen_amount": "0.00",
+    "available": "1239.80"
+  },
+  "wallet_after": {
+    "balance": "1239.80",
+    "frozen_amount": "19.90",
+    "available": "1219.90"
+  },
+  "db_order_row": [
+    "PAID",
+    "19.90"
+  ],
+  "wallet_detail_rows": [
+    {
+      "type": "PRODUCT_FROZEN",
+      "amount": "19.90",
+      "order_id": "2",
+      "biz_round": "0",
+      "create_time": "2026-10-07 00:01:35"
+    }
+  ],
+  "product_order_event": [
+    [
+      "CREATED",
+      "NULL",
+      "PENDING_PAYMENT",
+      "BUYER"
+    ],
+    [
+      "PAID",
+      "PENDING_PAYMENT",
+      "PAID",
+      "BUYER"
+    ]
+  ],
+  "expected_deduction": "19.90"
+}

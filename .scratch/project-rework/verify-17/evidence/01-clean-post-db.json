@@ -1,0 +1,14 @@
+{
+  "post": [
+    {
+      "post_id": "13",
+      "user_id": "1",
+      "title": "冒烟干净帖",
+      "content": "正常帖子内容，等待人工审核 SMOKE17CLEAN R100700071168",
+      "state": "PENDING_REVIEW",
+      "review_round": "1",
+      "review_entered_at": "2026-10-07 00:07:13",
+      "create_time": "2026-10-07 00:07:13"
+    }
+  ]
+}

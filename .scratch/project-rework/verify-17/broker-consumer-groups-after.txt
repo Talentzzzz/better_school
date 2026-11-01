@@ -1,0 +1,16 @@
+#Group                                                            #Count  #Version                 #Type  #Model          #TPS     #Diff Total
+bs-errand-paid-group                                              1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-errand-pay-timeout-group                                       1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-monolith-lottery-drawn-group                                   1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-search-sync-group                                              1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-points-lottery-drawn-group                                     1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-product-pay-timeout-group                                      1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-chat-recall-group                                              1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-chat-push-group                                                1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-raffle-shipping-group                                          1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-post-count-group                                               1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-monolith-points-changed-group                                  1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-product-count-group                                            1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-comment-review-group                                           1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-user-register-group                                            1       V5_3_1                   PUSH   CLUSTERING      0        0
+bs-chat-read-group                                                1       V5_3_1                   PUSH   CLUSTERING      0        0

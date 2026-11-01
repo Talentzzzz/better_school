@@ -1,0 +1,75 @@
+﻿
+== 1/7 docker compose up -d（cwd = backend/）
+
+== 2/7 等中间件就绪
+  [ok] bs-mysql healthy
+  [ok] bs-redis healthy
+  [ok] bs-minio healthy
+  [ok] bs-nacos healthy
+  [ok] bs-rocketmq-namesrv healthy
+  [ok] bs-es healthy
+  [warn] bs-rocketmq-broker 无 healthcheck，当前状态：running
+  [warn] bs-xxl-job-admin 无 healthcheck，当前状态：running
+
+== 3/7 建库（幂等，已存在则不动）
+  [ok] better_school = init-dev.sql + schema.sql
+  [ok] bs_marketing = init-dev.sql + schema.sql（init 自带 USE）
+  [ok] bs_timeout = init-dev.sql + USE bs_timeout + schema-timeout-task.sql
+  [ok] xxl_job 已在（xxl_job_info 存在），跳过官方建库脚本
+  [ok] 表数 better_school	29
+  [ok] 表数 bs_marketing	22
+  [ok] 表数 bs_timeout	16
+
+== 4/7 xxl-job 注册收口（幂等）
+  [ok] 清掉已无 handler 的历史任务行：dailyCreditJob, delayOutboxScan, wantToBuyTimeoutScan, lotteryDeductMerge, lotteryDrawCountExpireScan, lotteryOutboxScan, referralOutboxScan
+  [ok] 清掉废弃执行器组：marketing-asset-executor, marketing-activity-executor
+  [ok] 灌入三份 sql/xxl-job-tasks.sql
+  当前注册表（组 → handler，trigger_status）：
+    better-school-executor 鈫?errandTimeoutScan (trigger_status=1)
+    better-school-executor 鈫?outboxScan (trigger_status=1)
+    better-school-executor 鈫?postReviewTimeoutScan (trigger_status=0)
+    better-school-executor 鈫?productTimeoutScan (trigger_status=1)
+    better-school-executor 鈫?searchIndexRebuildJob (trigger_status=0)
+    better-school-executor 鈫?timeoutRegisterOutboxScan (trigger_status=1)
+    better-school-executor 鈫?tradeExpireScan (trigger_status=1)
+    marketing-executor 鈫?drawCountBucketExpireScan (trigger_status=1)
+    marketing-executor 鈫?inventoryBucketWarmup (trigger_status=0)
+    marketing-executor 鈫?inventoryMerge (trigger_status=1)
+    marketing-executor 鈫?outboxScan (trigger_status=1)
+    marketing-executor 鈫?pointsExpireScan (trigger_status=1)
+    marketing-executor 鈫?raffleCacheWarmup (trigger_status=1)
+    timeout-center-executor 鈫?timeoutTaskScanJob (trigger_status=1)
+
+== 5/7 注册面清理 · Nacos（已删工程留下的 dataId）
+  [ok] dev 无废弃配置（已清零）
+  [ok] test 无废弃配置（已清零）
+
+== 5/7 注册面清理 · RocketMQ（已无生产/消费方的 topic 与消费组）
+  [ok] deleteTopic bs-agent-review
+  [ok] deleteTopic %RETRY%bs-agent-review-group
+  [ok] deleteSubGroup bs-agent-review-group
+  [ok] deleteTopic bs-want-paid
+  [ok] deleteTopic %RETRY%bs-want-paid-group
+  [ok] deleteSubGroup bs-want-paid-group
+  [ok] deleteTopic bs-errand-grouped
+  [ok] deleteTopic %RETRY%bs-errand-grouped-group
+  [ok] deleteSubGroup bs-errand-grouped-group
+  [ok] deleteTopic bs-errand-member-changed
+  [ok] deleteTopic %RETRY%bs-errand-member-changed-group
+  [ok] deleteSubGroup bs-errand-member-changed-group
+
+== 6/7 构建（-SkipBuild，复用已有 jar）
+
+== 7/7 起三服务（timeout-center → better-school → marketing）
+  [warn] timeout-center 的 8083 已在监听——先 down 再 up（跳过）
+  [warn] better-school 的 8080 已在监听——先 down 再 up（跳过）
+  [warn] marketing 的 8081 已在监听——先 down 再 up（跳过）
+  [ok] timeout-center 健康（http://localhost:8083/api/admin/timeout-tasks/dead-letters?page=1&pageSize=1）
+  [ok] better-school 健康（http://localhost:8080/api/community/posts?page=1&pageSize=1）
+  [ok] marketing 健康（http://localhost:8081/api/lottery/activity）
+
+== 健康检查
+  timeout-center  HTTP 8083 GET /api/admin/timeout-tasks/dead-letters?page=1&pageSize=1  |  dubbo 50054 = ok  |  xxl 9996 = ok
+  better-school   HTTP 8080 GET /api/community/posts?page=1&pageSize=1  |  dubbo 50051 = ok  |  xxl 9999 = ok
+  marketing       HTTP 8081 GET /api/lottery/activity  |  dubbo 50052 = ok  |  xxl 9998 = ok
+  [ok] 三服务全部健康

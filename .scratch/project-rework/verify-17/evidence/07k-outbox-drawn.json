@@ -1,0 +1,19 @@
+{
+  "outbox_rows": [
+    {
+      "id": "9",
+      "msg_id": "4cf8088c-4d3f-4d07-b19a-0e4e60702850",
+      "destination": "bs-lottery-drawn",
+      "state": "1",
+      "retry_count": "0"
+    },
+    {
+      "id": "10",
+      "msg_id": "9378e046-e882-4e74-b194-73ff2da7af3a",
+      "destination": "bs-points-changed",
+      "state": "1",
+      "retry_count": "0"
+    }
+  ],
+  "expect": "destination=bs-lottery-drawn, state=1（已投递）"
+}

@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.betterschool</groupId>
+        <artifactId>better-school</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>bs-app</artifactId>
+    <name>bs-app</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.betterschool</groupId>
+            <artifactId>bs-trigger</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.betterschool</groupId>
+            <artifactId>bs-infrastructure</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.betterschool</groupId>
+            <artifactId>bs-case</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.betterschool</groupId>
+            <artifactId>bs-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.betterschool</groupId>
+            <artifactId>bs-domain</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.betterschool</groupId>
+            <artifactId>bs-types</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <!-- ShardingSphere 特性 artifact（内嵌化票 02）：shardingsphere-jdbc / sharding-api 由
+             bs-infrastructure 传递（HintManager + 算法 SPI 在那边编译）。这里补齐驱动运行期需要的
+             特性实现——5.5.x 缺任何一个都是启动或首条 SQL 才炸、报错不提示（见根 pom 同段注释） -->
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-sharding-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-infra-url-classpath</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-infra-data-source-pool-hikari</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-standalone-mode-repository-memory</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-authority-simple</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-parser-sql-engine-mysql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-parser-sql-engine-sql92</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.xuxueli</groupId>
+            <artifactId>xxl-job-core</artifactId>
+        </dependency>
+        <!-- 配置中心：jwt.secret 与三个营销服务共用一份 better-school-shared.yml（本地 jwt.* 已删） -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- 集成测试：连 scripts/test-env.sh 起好的常驻栈，HTTP 走 trigger 层入口 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

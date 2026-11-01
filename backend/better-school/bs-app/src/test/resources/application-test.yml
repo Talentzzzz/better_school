@@ -1,0 +1,75 @@
+# 集成测试 profile：测试环境的唯一事实来源（地址、库名、库 index、桶名、端口）。# 连的是 scripts/test-env.sh up 备好的常驻栈（与开发栈共用 MySQL/Redis/MinIO 容器，见 backend/docker-compose.yml
+# 头注释 5），测试进程不创建任何容器；环境没起时测试直接连接失败——先备环境再启动是约定的一部分。
+# 隔离口径：MySQL 库 better_school_test、
+# Redis 逻辑库 1、MinIO 桶 bs-files-it；Nacos 与 RocketMQ namesrv 是测试专用容器（18848 / 19876）。
+# Nacos 地址（spring.cloud.nacos.server-addr）不在这里，仍由基类 System.setProperty 注入——
+# 它必须早于 config data 阶段（application.yml 的 spring.config.import 要立刻用），
+# yml 的 profile 文档与 @DynamicPropertySource 都晚于那一阶段。jwt.secret 因此来自 Nacos 的共享 dataId。
+# dubbo.protocol.port 也不在这里：仍取空闲端口（与开发单体的 50051 错开），同样走 System.setProperty。
+# RocketMQ / xxl-job / ES 自动装配保持开启（OutboxMessageSender 硬依赖 RocketMQTemplate，
+# 排除会导致上下文起不来）；中间件不可达的副作用 = 日志告警 + 发送失败被 catch，不影响被测行为。
+spring:
+  datasource:
+    # 主 datasource 坐在 ShardingSphere 驱动上（内嵌化票 02）：测试侧真实库地址在
+    # sharding-test.yaml（src/test/resources，jdbcUrl 指 better_school_test@13306）
+    driver-class-name: org.apache.shardingsphere.driver.ShardingSphereDriver
+    url: jdbc:shardingsphere:classpath:sharding-test.yaml
+    # 由驱动忽略（YAML 里的才是真的），留空会触发 Hikari 的空凭据告警
+    username: root
+    password: bs123456
+  data:
+    redis:
+      host: localhost
+      port: 16379
+      database: 1   # 与开发（逻辑库 0）隔离；Redisson 同读此处，基类读验证码自动落在测试逻辑库
+      password: bs123456
+  elasticsearch:
+    uris: http://localhost:19200   # 测试不依赖 ES：指向必然不可达端口，杜绝测试索引写进开发 ES（9200）
+
+rocketmq:
+  name-server: localhost:19876
+
+dubbo:
+  registry:
+    address: nacos://127.0.0.1:18848
+
+minio:
+  endpoint: http://localhost:19000   # 共用 bs-minio，测试侧 host 端口
+  public-url: http://localhost:19000
+  access-key: bsadmin
+  secret-key: bs123456   # 共用容器即开发凭据；与测试专用容器时代的 bs123456-test 已无关
+  bucket: bs-files-it
+
+xxl:
+  job:
+    executor:
+      port: 9998   # 与 IDE 里开发单体的 9999 错开，两边可同时运行
+      # appname 也必须错开（票 10 起）：admin 里启用的任务会打到同 appname 的任一注册实例，
+      # 否则 outboxScan / errandTimeoutScan 等兜底 job 会打到测试实例、动被测数据（与用例断言竞态）
+      appname: better-school-executor-test
+
+# 内嵌超时中心（票 04）：测试显式写死与开发同值——用例断言「退避 30s / 16 次进死信 / 并行度 4」，
+# 值由配置漂移驱动会让断言失去意义（用例读这里的值做期望，不另抄一份字面量）
+timeout:
+  scan:
+    batch-size: 200
+    parallelism: 4
+  retry:
+    base-seconds: 30
+    max-seconds: 3600
+    max-times: 16
+
+logging:
+  level:
+    com.betterschool: info
+    com.betterschool.infrastructure.dao: warn
+    # 中间件不可达的后台重试日志降噪（rocketmq 消费者/xxl-job 执行器注册）
+    org.apache.rocketmq: off
+    com.xxl.job: off
+    org.elasticsearch: off
+
+# 超时分表路由集成测试（TimeoutShardingRouteIntegrationTest）的物理断言专用：绕过 ShardingSphere
+# 的裸 MySQL 连接（物理分表经 SS 连接查不到，见该测试类注释）。地址与上面 sharding-test.yaml 的
+# jdbcUrl 同源同值——SS 的 ${} 到不了 YAML 那层，无法引用同一份，这里手工对齐（改库要改两处）
+timeout-it:
+  raw-mysql-url: jdbc:mysql://localhost:13306/better_school_test?useSSL=false&allowPublicKeyRetrieval=true

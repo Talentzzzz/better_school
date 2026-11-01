@@ -1,0 +1,13 @@
+{
+  "details": [
+    {
+      "id": "3",
+      "inv_id": "8111",
+      "bucket_id": "0",
+      "quantity": "1",
+      "state": "1"
+    }
+  ],
+  "issued_qty_after": 1,
+  "issued_qty_before": 0
+}

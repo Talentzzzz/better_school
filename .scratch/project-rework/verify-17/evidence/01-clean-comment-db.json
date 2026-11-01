@@ -1,0 +1,14 @@
+{
+  "post_comment": [
+    {
+      "comment_id": "4",
+      "post_id": "13",
+      "user_id": "2",
+      "content": "干净评论内容 SMOKE17CLEAN R100700071168",
+      "state": "PENDING_REVIEW",
+      "root_id": "0",
+      "parent_id": "0",
+      "create_time": "2026-10-07 00:07:18"
+    }
+  ]
+}

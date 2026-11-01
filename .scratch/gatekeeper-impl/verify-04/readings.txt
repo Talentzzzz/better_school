@@ -1,0 +1,31 @@
+
+=== ① 首租 A：实测需求 400 次/5s = 80/s（规则上界 100/s） ===
+{"rule_version":"f63e8b1331a55e28be1e5a176480d881#1","refresh_interval_ms":5000,"results":[{"key":"api:/orders/create","status":"granted","share":80.0,"ttl_ms":5000}]}
+
+=== ② 首租 B：同 key 第二个实例 ⇒ 只拿未用量 20（Σ = 100 = R） ===
+{"rule_version":"f63e8b1331a55e28be1e5a176480d881#1","refresh_interval_ms":5000,"results":[{"key":"api:/orders/create","status":"granted","share":20.0,"ttl_ms":10000}]}
+
+=== ③ A 立刻续租（过频窗内）⇒ 不重算份额、回剩余 ttl ===
+{"rule_version":"f63e8b1331a55e28be1e5a176480d881#1","refresh_interval_ms":5000,"results":[{"key":"api:/orders/create","status":"granted","share":80.0,"ttl_ms":4794}]}
+
+=== ④ B 归还 ⇒ 200 ===
+HTTP 200
+
+=== ⑤ B 归还后立刻用同一三元组再租 ⇒ 首租命中过频窗 ⇒ throttled ===
+{"rule_version":"f63e8b1331a55e28be1e5a176480d881#1","refresh_interval_ms":5000,"results":[{"key":"api:/orders/create","status":"throttled"}]}
+
+=== ⑥ 换世代（真实重启语义）⇒ 条目确实已删，按冷 key 重新发放 ===
+{"rule_version":"f63e8b1331a55e28be1e5a176480d881#1","refresh_interval_ms":5000,"results":[{"key":"api:/orders/create","status":"granted","share":20.0,"ttl_ms":10000}]}
+
+=== ⑦ 配置基线：零到达窗口 + wants=5 ⇒ 保住 5；不带 wants ⇒ 0 ===
+{"rule_version":"f63e8b1331a55e28be1e5a176480d881#1","refresh_interval_ms":5000,"results":[{"key":"api:/orders/baseline","status":"granted","share":5.0,"ttl_ms":5000},{"key":"api:/orders/no-baseline","status":"granted","share":0.0,"ttl_ms":5000}]}
+
+=== ⑧ 未匹配规则的 key ⇒ unmatched（无 share 字段） ===
+{"rule_version":"f63e8b1331a55e28be1e5a176480d881#1","refresh_interval_ms":5000,"results":[{"key":"web:/home","status":"unmatched"}]}
+
+=== ⑨ /metrics 里本票新增与相关的计数 ===
+gatekeeper_config_rule_version_mismatch_total 7.0
+gatekeeper_lease_first_result_total{result="granted"} 5.0
+gatekeeper_lease_first_result_total{result="throttled"} 1.0
+gatekeeper_lease_idempotent_hit_total 1.0
+gatekeeper_lease_share_granted_total{rule="orders"} 125.0

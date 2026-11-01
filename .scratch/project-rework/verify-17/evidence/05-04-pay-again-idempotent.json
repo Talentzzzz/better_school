@@ -1,0 +1,29 @@
+{
+  "second_pay_response": [
+    200,
+    {
+      "code": "200",
+      "info": "成功",
+      "data": null
+    }
+  ],
+  "wallet_after_second_pay": {
+    "balance": "1239.80",
+    "frozen_amount": "19.90",
+    "available": "1219.90"
+  },
+  "db_order_row": [
+    "PAID",
+    "19.90"
+  ],
+  "PRODUCT_FROZEN_detail_count": 1,
+  "event_types": [
+    "CREATED",
+    "PAID"
+  ],
+  "wallet_first_pay": {
+    "balance": "1239.80",
+    "frozen_amount": "19.90",
+    "available": "1219.90"
+  }
+}

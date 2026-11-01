@@ -1,0 +1,80 @@
+{
+  "attempts": [
+    {
+      "raffleCacheWarmup": {
+        "job_id": 23,
+        "executor_param": "8101",
+        "http_status": 200,
+        "response": {
+          "code": 200,
+          "data": null,
+          "msg": "Success",
+          "success": true
+        }
+      },
+      "inventoryBucketWarmup": {
+        "job_id": 22,
+        "executor_param": "",
+        "http_status": 200,
+        "response": {
+          "code": 200,
+          "data": null,
+          "msg": "Success",
+          "success": true
+        }
+      },
+      "redis": {
+        "table_key_ok": true,
+        "bucket_keys": {
+          "bs:inventory:virtual:bucket:8111:0": true,
+          "bs:inventory:virtual:bucket:8113:0": true,
+          "bs:inventory:quota:bucket:8112:0": true
+        }
+      },
+      "attempts": "ok"
+    }
+  ],
+  "final": {
+    "raffleCacheWarmup": {
+      "job_id": 23,
+      "executor_param": "8101",
+      "http_status": 200,
+      "response": {
+        "code": 200,
+        "data": null,
+        "msg": "Success",
+        "success": true
+      }
+    },
+    "inventoryBucketWarmup": {
+      "job_id": 22,
+      "executor_param": "",
+      "http_status": 200,
+      "response": {
+        "code": 200,
+        "data": null,
+        "msg": "Success",
+        "success": true
+      }
+    },
+    "redis": {
+      "table_key_ok": true,
+      "bucket_keys": {
+        "bs:inventory:virtual:bucket:8111:0": true,
+        "bs:inventory:virtual:bucket:8113:0": true,
+        "bs:inventory:quota:bucket:8112:0": true
+      }
+    }
+  },
+  "job_ids": {
+    "raffleCacheWarmup": 23,
+    "inventoryBucketWarmup": 22,
+    "inventoryMerge": 21
+  },
+  "redis_table_key_ok": true,
+  "redis_bucket_keys": {
+    "bs:inventory:virtual:bucket:8111:0": true,
+    "bs:inventory:virtual:bucket:8113:0": true,
+    "bs:inventory:quota:bucket:8112:0": true
+  }
+}

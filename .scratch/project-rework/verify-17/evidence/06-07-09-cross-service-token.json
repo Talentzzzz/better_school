@@ -1,0 +1,13 @@
+{
+  "http_status": 200,
+  "response": {
+    "code": "200",
+    "info": "成功",
+    "data": {
+      "userId": 9,
+      "nickname": "冒烟抽奖",
+      "avatar": null,
+      "createdAt": "2026-10-07T00:00:32"
+    }
+  }
+}
