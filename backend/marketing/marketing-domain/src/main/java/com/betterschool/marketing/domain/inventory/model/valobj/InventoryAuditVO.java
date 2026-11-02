@@ -12,7 +12,7 @@ import lombok.Data;
 @Builder
 public class InventoryAuditVO {
 
-    private Long invId;
+    private String invId;
     /** 台账 {@code surplus_qty}（{@code -1 = 不限量}） */
     private Long surplusQty;
     /** 台账 {@code waiting_qty}（虚拟恒 0） */

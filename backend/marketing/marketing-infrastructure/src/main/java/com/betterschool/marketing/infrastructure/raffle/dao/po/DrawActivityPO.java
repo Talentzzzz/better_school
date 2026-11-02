@@ -9,9 +9,9 @@ import java.time.LocalDateTime;
 public class DrawActivityPO {
 
     private Long id;
-    private Long activityId;
+    private String activityId;
     private String activityName;
-    private Long strategyId;
+    private String strategyId;
     private LocalDateTime beginDateTime;
     private LocalDateTime endDateTime;
     private String state;

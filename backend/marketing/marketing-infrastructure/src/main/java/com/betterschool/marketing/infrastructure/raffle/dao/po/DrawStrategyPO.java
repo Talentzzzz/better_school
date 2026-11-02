@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 public class DrawStrategyPO {
 
     private Long id;
-    private Long strategyId;
+    private String strategyId;
     private String strategyDesc;
     /** 规则链节点码，逗号分隔（rule_blacklist,rule_weight） */
     private String rule;

@@ -20,7 +20,7 @@ public class PointsDeductPort implements IPointsDeductPort {
     private final IPointsAccountService pointsAccountService;
 
     @Override
-    public PointsDeductOutcome deduct(String userId, int amount, Long refId) {
+    public PointsDeductOutcome deduct(String userId, int amount, String refId) {
         PointsDeductResultVO result = pointsAccountService.deduct(userId, amount, PointsReasonType.REDEEM_DRAW_COUNT, refId);
         if (result.isSuccess()) {
             return PointsDeductOutcome.ok(result.getBalance());

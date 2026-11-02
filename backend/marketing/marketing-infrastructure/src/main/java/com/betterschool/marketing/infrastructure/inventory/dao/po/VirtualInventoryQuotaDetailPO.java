@@ -9,13 +9,13 @@ import java.time.LocalDateTime;
 public class VirtualInventoryQuotaDetailPO {
 
     private Long id;
-    private Long invId;
+    private String invId;
     private Integer bucketId;
     private Long quantity;
     /** 业务类型：LOTTERY_DRAW（抽奖预扣） */
     private String bizType;
     /** 业务 ID：draw_record.record_id */
-    private Long bizId;
+    private String bizId;
     private Integer state;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;

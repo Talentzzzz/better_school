@@ -38,7 +38,7 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
     private IOutboxDao outboxDao;
 
     /** 把概率变成确定性：全部 normal 档归零后只留目标档 1.0 */
-    private void onlyAwardRate(long awardId) {
+    private void onlyAwardRate(String awardId) {
         jdbcTemplate.update("UPDATE draw_strategy_award SET award_rate = 0 WHERE type = 'normal'");
         jdbcTemplate.update("UPDATE draw_strategy_award SET award_rate = 1 WHERE award_id = ?", awardId);
         raffleWarmupService.warmupByStrategyId(STRATEGY_ID);
@@ -53,17 +53,17 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
 
         JsonNode response = draw(USER, TOKEN);
         TestingEnvironment.assertSuccess(response, "单抽");
-        long recordId = response.path("data").path("recordId").asLong();
+        String recordId = response.path("data").path("recordId").asText();
 
         assertThat(outboxCount(Constants.LOTTERY_DRAWN_TOPIC)).as("有且仅有一行中奖事件").isEqualTo(1);
         JsonNode event = onlyOutboxEvent(Constants.LOTTERY_DRAWN_TOPIC);
         Map<String, Object> record = lastDrawRecordOf(USER);
-        assertThat(event.path("recordId").asLong()).isEqualTo(recordId);
-        assertThat(event.path("recordId").asLong())
+        assertThat(event.path("recordId").asText()).isEqualTo(recordId);
+        assertThat(event.path("recordId").asText())
                 .as("载荷 recordId 与 draw_record 一致")
                 .isEqualTo(((Number) record.get("record_id")).longValue());
         assertThat(event.path("userId").asText()).isEqualTo(USER);
-        assertThat(event.path("prizeId").asLong())
+        assertThat(event.path("prizeId").asText())
                 .isEqualTo(((Number) record.get("award_id")).longValue());
         assertThat(event.path("prizeType").asText()).isEqualTo("VIRTUAL");
         assertThat(event.path("pointsAmount").asInt()).as("积分档面额取自台账").isEqualTo(20);
@@ -100,13 +100,13 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
     @Test
     @DisplayName("同事务：业务事务后半段异常 → draw_record、明细、outbox 事件一起回滚（一处都不落）")
     void outboxEvent_rollsBackWithBusinessTransaction() {
-        long probeRecordId = 777_001L;
+        String probeRecordId = "777001";
 
         outboxTransactionProbe.insertThenCommit(OTHER_USER, probeRecordId);
         assertThat(drawRecordCountOf(OTHER_USER)).as("正常路径：记录已提交").isEqualTo(1);
         assertThat(outboxCount(Constants.LOTTERY_DRAWN_TOPIC)).as("正常路径：事件已提交").isEqualTo(1);
 
-        long failedRecordId = 777_002L;
+        String failedRecordId = "777002";
         assertThat(catchFailure(() -> outboxTransactionProbe.insertThenFail(OTHER_USER, failedRecordId)))
                 .as("探针应把异常抛出来").isTrue();
         assertThat(drawRecordCountOf(OTHER_USER)).as("回滚后没有第二条记录").isEqualTo(1);

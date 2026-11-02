@@ -16,7 +16,7 @@ public interface IChainNode {
      * @param strategyId 抽奖策略业务 ID
      * @param activityId 抽奖活动业务 ID（节点目前不读活动配置，入参为票 13 主链路留位）
      */
-    RaffleChainFactory.ChainAwardVO execute(String userId, Long strategyId, Long activityId);
+    RaffleChainFactory.ChainAwardVO execute(String userId, String strategyId, String activityId);
 
     IChainNode next();
 

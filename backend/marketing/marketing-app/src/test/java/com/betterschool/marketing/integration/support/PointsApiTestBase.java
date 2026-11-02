@@ -88,7 +88,7 @@ public abstract class PointsApiTestBase extends TestingEnvironment {
      * 投一条 {@code bs-lottery-drawn}：构造 broker 会投递的那份 JSON，走消费者真实的解析与处理路径
      * （测试栈没有 broker，消费者当普通 Bean 调用；真 MQ 链路归联调票）
      */
-    protected void publishLotteryDrawn(String userId, long recordId, String prizeType, Integer pointsAmount) {
+    protected void publishLotteryDrawn(String userId, String recordId, String prizeType, Integer pointsAmount) {
         String payload = "{\"recordId\":%d,\"userId\":\"%s\",\"prizeId\":1,\"prizeType\":\"%s\",\"pointsAmount\":%s}"
                 .formatted(recordId, userId, prizeType, pointsAmount == null ? "null" : pointsAmount);
         lotteryDrawnConsumer.onMessage(payload);
@@ -96,13 +96,13 @@ public abstract class PointsApiTestBase extends TestingEnvironment {
 
     /** 直接造一个历史桶（可指定过期时间），供懒过期与 FIFO 用例铺前置态；返回桶行 id */
     protected long insertBucket(String userId, int amount, int remain, LocalDateTime expireAt, String reasonType,
-                                long refId) {
+                                String refId) {
         jdbcTemplate.update("""
                         INSERT INTO points_bucket (bucket_id, user_id, amount, remain, expire_at, reason_type, ref_id,
                                                    create_time, update_time)
                         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                         """,
-                com.betterschool.marketing.types.common.SnowflakeIdGenerator.nextId(),
+                com.betterschool.marketing.types.id.UuidIdGenerator.INSTANCE.nextId(),
                 userId, amount, remain, java.sql.Timestamp.valueOf(expireAt), reasonType, refId);
         return jdbcTemplate.queryForObject("SELECT MAX(id) FROM points_bucket WHERE user_id = ?", Long.class, userId);
     }

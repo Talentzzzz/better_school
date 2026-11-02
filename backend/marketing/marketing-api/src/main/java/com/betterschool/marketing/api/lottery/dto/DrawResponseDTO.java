@@ -12,10 +12,10 @@ import lombok.Data;
 @Data
 public class DrawResponseDTO {
 
-    private Long recordId;
+    private String recordId;
     /** VIRTUAL / PHYSICAL / THANKS */
     private String prizeType;
-    private Long prizeId;
+    private String prizeId;
     private Integer tier;
     private String name;
     /** 积分档发放的积分数，其余为 null */

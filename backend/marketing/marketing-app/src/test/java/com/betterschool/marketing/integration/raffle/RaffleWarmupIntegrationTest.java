@@ -2,7 +2,7 @@ package com.betterschool.marketing.integration.raffle;
 
 import com.betterschool.marketing.domain.raffle.service.warmup.IRaffleWarmupService;
 import com.betterschool.marketing.integration.support.TestingEnvironment;
-import com.betterschool.marketing.types.common.SnowflakeIdGenerator;
+import com.betterschool.marketing.types.id.UuidIdGenerator;
 import com.betterschool.marketing.types.raffle.Constants;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,8 +48,8 @@ class RaffleWarmupIntegrationTest extends TestingEnvironment {
         redissonClient.getKeys().deleteByPattern(Constants.RAFFLE_KEY_PREFIX + "*");
     }
 
-    private long insertStrategy(String rule) {
-        long strategyId = SnowflakeIdGenerator.nextId();
+    private String insertStrategy(String rule) {
+        String strategyId = UuidIdGenerator.INSTANCE.nextId();
         jdbcTemplate.update("""
                         INSERT INTO draw_strategy (strategy_id, strategy_desc, rule, create_time, update_time)
                         VALUES (?, '预热测试策略', ?, NOW(), NOW())
@@ -57,7 +57,7 @@ class RaffleWarmupIntegrationTest extends TestingEnvironment {
         return strategyId;
     }
 
-    private void insertAward(long strategyId, long awardId, String awardType, String rate, String type) {
+    private void insertAward(String strategyId, String awardId, String awardType, String rate, String type) {
         jdbcTemplate.update("""
                         INSERT INTO draw_strategy_award (strategy_id, award_id, award_name, award_desc, award_type,
                                                         award_rate, level, inv_id, type, sort, create_time, update_time)
@@ -66,26 +66,26 @@ class RaffleWarmupIntegrationTest extends TestingEnvironment {
                 strategyId, awardId, "奖品" + awardId, awardType, new BigDecimal(rate), type);
     }
 
-    private void insertWeight(long strategyId, int count, String weights) {
+    private void insertWeight(String strategyId, int count, String weights) {
         jdbcTemplate.update("""
                         INSERT INTO draw_strategy_weight (strategy_id, count, weights, create_time, update_time)
                         VALUES (?, ?, ?, NOW(), NOW())
                         """, strategyId, count, weights);
     }
 
-    private long awardSlotsOf(String tableKey, long awardId) {
+    private long awardSlotsOf(String tableKey, String awardId) {
         var table = redissonClient.getMap(tableKey);
-        return table.values().stream().filter(value -> ((Long) value) == awardId).count();
+        return table.values().stream().filter(value -> awardId.equals(String.valueOf(value))).count();
     }
 
     @Test
     @DisplayName("预热后 Redis 概率表与 DB 配置符：默认表 award_rate×10000、权重表池内归一化、特型奖品位入缓存")
     void warmup_buildsTablesMatchingDbConfig() {
-        long strategyId = insertStrategy("rule_blacklist,rule_weight");
-        long award1 = SnowflakeIdGenerator.nextId();
-        long award2 = SnowflakeIdGenerator.nextId();
-        long blacklistAward = SnowflakeIdGenerator.nextId();
-        long fallbackAward = SnowflakeIdGenerator.nextId();
+        String strategyId = insertStrategy("rule_blacklist,rule_weight");
+        String award1 = UuidIdGenerator.INSTANCE.nextId();
+        String award2 = UuidIdGenerator.INSTANCE.nextId();
+        String blacklistAward = UuidIdGenerator.INSTANCE.nextId();
+        String fallbackAward = UuidIdGenerator.INSTANCE.nextId();
         insertAward(strategyId, award1, "VIRTUAL", "0.3000", "normal");
         insertAward(strategyId, award2, "THANKS", "0.7000", "normal");
         insertAward(strategyId, blacklistAward, "VIRTUAL", "0.0000", "blacklist");
@@ -117,10 +117,10 @@ class RaffleWarmupIntegrationTest extends TestingEnvironment {
     @Test
     @DisplayName("按活动预热 + 配置变更后重预热生效：新概率占比、陈旧槽位被清、预热态先无后有")
     void warmupByActivityId_andRewarmAfterConfigChange() {
-        long strategyId = insertStrategy(null);
-        long activityId = SnowflakeIdGenerator.nextId();
-        long award1 = SnowflakeIdGenerator.nextId();
-        long award2 = SnowflakeIdGenerator.nextId();
+        String strategyId = insertStrategy(null);
+        String activityId = UuidIdGenerator.INSTANCE.nextId();
+        String award1 = UuidIdGenerator.INSTANCE.nextId();
+        String award2 = UuidIdGenerator.INSTANCE.nextId();
         insertAward(strategyId, award1, "VIRTUAL", "0.2500", "normal");
         insertAward(strategyId, award2, "VIRTUAL", "0.7500", "normal");
         jdbcTemplate.update("""
@@ -138,7 +138,7 @@ class RaffleWarmupIntegrationTest extends TestingEnvironment {
         // 配置变更（概率重配 + 撤掉一个奖品位）后重预热：新占比生效，且没有残留槽位
         jdbcTemplate.update("UPDATE draw_strategy_award SET award_rate = 0.6000 WHERE award_id = ?", award1);
         jdbcTemplate.update("DELETE FROM draw_strategy_award WHERE award_id = ?", award2);
-        long award3 = SnowflakeIdGenerator.nextId();
+        String award3 = UuidIdGenerator.INSTANCE.nextId();
         insertAward(strategyId, award3, "VIRTUAL", "0.4000", "normal");
         raffleWarmupService.warmupByStrategyId(strategyId);
 
@@ -153,9 +153,9 @@ class RaffleWarmupIntegrationTest extends TestingEnvironment {
     @Test
     @DisplayName("预热态按策略隔离：预热 A 不影响 B，key 带 strategyId")
     void warmupState_isPerStrategy() {
-        long warmedStrategyId = insertStrategy(null);
-        long coldStrategyId = insertStrategy(null);
-        long awardId = SnowflakeIdGenerator.nextId();
+        String warmedStrategyId = insertStrategy(null);
+        String coldStrategyId = insertStrategy(null);
+        String awardId = UuidIdGenerator.INSTANCE.nextId();
         insertAward(warmedStrategyId, awardId, "VIRTUAL", "1.0000", "normal");
 
         raffleWarmupService.warmupByStrategyId(warmedStrategyId);

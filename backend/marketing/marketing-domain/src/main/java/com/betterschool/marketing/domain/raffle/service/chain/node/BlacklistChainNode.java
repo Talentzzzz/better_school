@@ -26,9 +26,9 @@ public class BlacklistChainNode extends AbstractChainNode {
     }
 
     @Override
-    public RaffleChainFactory.ChainAwardVO execute(String userId, Long strategyId, Long activityId) {
+    public RaffleChainFactory.ChainAwardVO execute(String userId, String strategyId, String activityId) {
         if (raffleRepository.isUserBlacklisted(strategyId, userId)) {
-            Long awardId = raffleRepository.queryAwardIdBySlot(strategyId, IRaffleRepository.SLOT_BLACKLIST);
+            String awardId = raffleRepository.queryAwardIdBySlot(strategyId, IRaffleRepository.SLOT_BLACKLIST);
             if (awardId != null) {
                 log.info("规则链黑名单命中 userId={} strategyId={} 强制出黑名单奖品位 awardId={}",
                         userId, strategyId, awardId);

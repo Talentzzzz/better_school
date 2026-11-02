@@ -10,6 +10,6 @@ import lombok.Data;
 @AllArgsConstructor
 public class RedeemResultVO {
 
-    private Long redeemOrderId;
+    private String redeemOrderId;
     private Integer drawCount;
 }

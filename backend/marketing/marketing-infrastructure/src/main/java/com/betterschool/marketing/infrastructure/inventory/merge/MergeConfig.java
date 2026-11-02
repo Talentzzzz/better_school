@@ -80,15 +80,15 @@ public record MergeConfig(int shardCount,
     /**
      * 分片路由：同一个 {@code invId} 永远落同一个分片（预扣与确认共用，撞片无害且是顺序的前提）。
      *
-     * <p><b>先做高位折叠再看低位</b>：{@code key ^ (key >>> 32)}。本仓库 {@code inv_id} 是配置里给的
-     * 两位数，此时等价于 {@code key & mask}，折叠一行不省；留它的理由是「将来换雪花 ID 就自动生效」——
-     * 分表拼接 ID 的低位可能长期不变，直接取低位会把它们全挤进 0 号片，那一个分片扛全部热点，
-     * 合并比看着漂亮、单飞却成了瓶颈。折叠是内部实现，不外泄（调用方只给 {@code invId}，不感知分片）。
+     * <p>inv_id 已 UUID 化（uuid-biz-id 票 07），数值低位折叠不再适用：改为对字符串 hashCode
+     * 做高低位折叠再取掩码——{@code h ^ (h >>> 16)}，把高位信息带进低位，避免大量 key 只差在
+     * 高位时全挤进同一片。折叠是内部实现，不外泄（调用方只给 {@code invId}，不感知分片）。
      *
-     * <p>用 {@code &} 而不是 {@code Math.floorMod}：掩码恒正，负 key 也算不出负下标，且无分支。
+     * <p>用 {@code &} 而不是 {@code Math.floorMod}：掩码恒正，负 hash 也算不出负下标，且无分支。
      */
-    int shardOf(long key) {
-        return (int) ((key ^ (key >>> 32)) & mask());
+    int shardOf(String key) {
+        int h = key.hashCode();
+        return (h ^ (h >>> 16)) & mask();
     }
 
     private static void require(boolean condition, String template, Object... args) {

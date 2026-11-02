@@ -52,12 +52,12 @@ public class RaffleRepository implements IRaffleRepository {
     // ---------------------------------------------------------------- 配置读（决策侧）
 
     @Override
-    public DrawActivityEntity queryActivityEntityByActivityId(Long activityId) {
+    public DrawActivityEntity queryActivityEntityByActivityId(String activityId) {
         return toActivityEntity(raffleDao.selectActivityByActivityId(activityId));
     }
 
     @Override
-    public DrawStrategyEntity queryStrategyEntityByStrategyId(Long strategyId) {
+    public DrawStrategyEntity queryStrategyEntityByStrategyId(String strategyId) {
         DrawStrategyPO strategyPO = raffleDao.selectStrategyByStrategyId(strategyId);
         if (strategyPO == null) {
             return null;
@@ -78,13 +78,13 @@ public class RaffleRepository implements IRaffleRepository {
     }
 
     @Override
-    public List<DrawStrategyAwardEntity> queryAwardListByStrategyId(Long strategyId) {
+    public List<DrawStrategyAwardEntity> queryAwardListByStrategyId(String strategyId) {
         return raffleDao.selectAwardListByStrategyId(strategyId).stream()
                 .map(this::toAwardEntity).toList();
     }
 
     @Override
-    public List<DrawStrategyWeightEntity> queryWeightListByStrategyId(Long strategyId) {
+    public List<DrawStrategyWeightEntity> queryWeightListByStrategyId(String strategyId) {
         return raffleDao.selectWeightListByStrategyId(strategyId).stream().map(weightPO -> {
             DrawStrategyWeightEntity entity = new DrawStrategyWeightEntity();
             entity.setId(weightPO.getId());
@@ -92,7 +92,7 @@ public class RaffleRepository implements IRaffleRepository {
             entity.setCount(weightPO.getCount());
             entity.setWeights(Arrays.stream(weightPO.getWeights().split(","))
                     .map(String::trim).filter(segment -> !segment.isEmpty())
-                    .map(Long::valueOf).toList());
+                    .toList());
             entity.setCreateTime(weightPO.getCreateTime());
             entity.setUpdateTime(weightPO.getUpdateTime());
             return entity;
@@ -100,42 +100,42 @@ public class RaffleRepository implements IRaffleRepository {
     }
 
     @Override
-    public int queryUserDrawCount(Long strategyId, String userId) {
+    public int queryUserDrawCount(String strategyId, String userId) {
         return raffleDao.countUserRecords(strategyId, userId);
     }
 
     // ---------------------------------------------------------------- 决策数据（Redis）
 
     @Override
-    public void cacheRaffleTable(String key, Map<Integer, Long> table) {
+    public void cacheRaffleTable(String key, Map<Integer, String> table) {
         redissonClient.getMap(key).delete();
-        RMap<Integer, Long> raffleTable = redissonClient.getMap(key);
+        RMap<Integer, String> raffleTable = redissonClient.getMap(key);
         raffleTable.putAll(table);
     }
 
     @Override
-    public Map<Integer, Long> getRaffleTable(String key) {
-        RMap<Integer, Long> raffleTable = redissonClient.getMap(key);
+    public Map<Integer, String> getRaffleTable(String key) {
+        RMap<Integer, String> raffleTable = redissonClient.getMap(key);
         return raffleTable.isEmpty() ? Collections.emptyMap() : raffleTable.readAllMap();
     }
 
     @Override
-    public boolean isUserBlacklisted(Long strategyId, String userId) {
+    public boolean isUserBlacklisted(String strategyId, String userId) {
         return blacklistUserBucket(strategyId, userId).isExists();
     }
 
     @Override
-    public void cacheAwardId(Long strategyId, String slot, Long awardId) {
-        awardBucket(strategyId, slot).set(String.valueOf(awardId));
+    public void cacheAwardId(String strategyId, String slot, String awardId) {
+        awardBucket(strategyId, slot).set(awardId);
     }
 
     @Override
-    public Long queryAwardIdBySlot(Long strategyId, String slot) {
+    public String queryAwardIdBySlot(String strategyId, String slot) {
         String cached = awardBucket(strategyId, slot).get();
         if (cached != null) {
-            return Long.valueOf(cached);
+            return cached;
         }
-        Long awardId = raffleDao.selectAwardIdBySlot(strategyId, slot);
+        String awardId = raffleDao.selectAwardIdBySlot(strategyId, slot);
         if (awardId != null) {
             cacheAwardId(strategyId, slot, awardId);
         }
@@ -143,13 +143,13 @@ public class RaffleRepository implements IRaffleRepository {
     }
 
     @Override
-    public void cacheWarmupState(Long strategyId) {
+    public void cacheWarmupState(String strategyId) {
         redissonClient.getBucket(RAFFLE_WARMUP_STATE_KEY + strategyId, StringCodec.INSTANCE)
                 .set(LocalDateTime.now().toString());
     }
 
     @Override
-    public boolean isWarmed(Long strategyId) {
+    public boolean isWarmed(String strategyId) {
         return redissonClient.getBucket(RAFFLE_WARMUP_STATE_KEY + strategyId, StringCodec.INSTANCE)
                 .isExists();
     }
@@ -162,12 +162,12 @@ public class RaffleRepository implements IRaffleRepository {
     }
 
     @Override
-    public DrawRecordEntity queryRecordByRecordId(Long recordId) {
+    public DrawRecordEntity queryRecordByRecordId(String recordId) {
         return toRecordEntity(raffleDao.selectRecordByRecordId(recordId));
     }
 
     @Override
-    public Integer queryPointsValueByInvId(Long invId) {
+    public Integer queryPointsValueByInvId(String invId) {
         return raffleDao.selectPointsValueByInvId(invId);
     }
 
@@ -177,7 +177,7 @@ public class RaffleRepository implements IRaffleRepository {
     }
 
     @Override
-    public List<PrizeCatalogVO> queryPrizeCatalog(Long strategyId) {
+    public List<PrizeCatalogVO> queryPrizeCatalog(String strategyId) {
         return raffleDao.selectPrizeCatalog(strategyId).stream().map(po -> {
             PrizeCatalogVO vo = new PrizeCatalogVO();
             vo.setAwardId(po.getAwardId());
@@ -259,7 +259,7 @@ public class RaffleRepository implements IRaffleRepository {
     // ---------------------------------------------------------------- 发货状态机写面
 
     @Override
-    public boolean advanceState(String userId, Long recordId, String fromState,
+    public boolean advanceState(String userId, String recordId, String fromState,
                                 List<DrawRecordDetailEntity> details) {
         Boolean advanced = transactionTemplate.execute(status -> {
             String currentState = fromState;
@@ -294,12 +294,12 @@ public class RaffleRepository implements IRaffleRepository {
 
     // ---------------------------------------------------------------- PO / Entity 转换
 
-    private RBucket<String> blacklistUserBucket(Long strategyId, String userId) {
+    private RBucket<String> blacklistUserBucket(String strategyId, String userId) {
         return redissonClient.getBucket(RAFFLE_BLACKLIST_USER_KEY + strategyId + ":" + userId,
                 StringCodec.INSTANCE);
     }
 
-    private RBucket<String> awardBucket(Long strategyId, String slot) {
+    private RBucket<String> awardBucket(String strategyId, String slot) {
         return redissonClient.getBucket(RAFFLE_AWARD_KEY + strategyId + ":" + slot,
                 StringCodec.INSTANCE);
     }

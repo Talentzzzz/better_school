@@ -21,7 +21,7 @@ public class PointsTransactionResponseDTO {
     /** LOTTERY_WIN / REDEEM_DRAW_COUNT / REDEEM_PRIZE */
     private String reasonType;
     /** 来源业务 id：入账 = 抽奖记录 id、出账 = 兑换单 id */
-    private Long refId;
+    private String refId;
     private LocalDateTime createdAt;
     /** 该桶的过期时间（仅 IN 行有；OUT 行为 null） */
     private LocalDateTime expireAt;

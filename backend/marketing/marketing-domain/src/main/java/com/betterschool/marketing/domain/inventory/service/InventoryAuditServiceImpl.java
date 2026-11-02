@@ -24,7 +24,7 @@ public class InventoryAuditServiceImpl implements IInventoryAuditService {
     private final IInventoryRepository inventoryRepository;
 
     @Override
-    public InventoryAuditVO audit(InventorySegmentVO segment, Long invId) {
+    public InventoryAuditVO audit(InventorySegmentVO segment, String invId) {
         InventoryLedgerVO ledger = inventoryRepository.queryLedger(segment, invId);
         if (ledger == null) {
             throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),

@@ -7,7 +7,7 @@ import com.betterschool.marketing.domain.drawcount.model.entity.DrawCountDetailE
 import com.betterschool.marketing.infrastructure.drawcount.dao.IDrawCountDao;
 import com.betterschool.marketing.infrastructure.drawcount.dao.po.DrawCountBucketPO;
 import com.betterschool.marketing.infrastructure.drawcount.dao.po.DrawCountDetailPO;
-import com.betterschool.marketing.types.common.SnowflakeIdGenerator;
+import com.betterschool.marketing.types.id.IIdGenerator;
 import com.betterschool.marketing.types.drawcount.DrawCountReasonType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,15 +31,16 @@ public class DrawCountRepository implements IDrawCountRepository {
     private final IDrawCountDao drawCountDao;
     private final IDrawCountConfigPort drawCountConfigPort;
     private final TransactionTemplate transactionTemplate;
+    private final IIdGenerator idGenerator;
 
     @Override
-    public boolean creditBucket(String userId, int amount, DrawCountReasonType reasonType, Long refId) {
+    public boolean creditBucket(String userId, int amount, DrawCountReasonType reasonType, String refId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status ->
                 insertBucket(newBucket(userId, amount, reasonType, refId, LocalDateTime.now()))));
     }
 
     @Override
-    public boolean deductForDraw(String userId, Long recordId) {
+    public boolean deductForDraw(String userId, String recordId) {
         Boolean result = transactionTemplate.execute(status -> {
             if (existsDetailForUpdate(recordId)) {
                 // 同一抽奖记录重放：幂等跳过，不重复扣次
@@ -73,7 +74,7 @@ public class DrawCountRepository implements IDrawCountRepository {
     }
 
     @Override
-    public boolean existsDetailForUpdate(Long refId) {
+    public boolean existsDetailForUpdate(String refId) {
         return drawCountDao.selectDetailIdForUpdate(refId) != null;
     }
 
@@ -128,11 +129,11 @@ public class DrawCountRepository implements IDrawCountRepository {
         return drawCountDao.insertIgnoreBucket(bucketPO) > 0;
     }
 
-    /** 造一行待入账的桶：bucket_id 雪花生成，expire_at = 入账时点 + 次数有效期配置（都在事务内取） */
-    private DrawCountBucketEntity newBucket(String userId, int amount, DrawCountReasonType reasonType, Long refId,
+    /** 造一行待入账的桶：bucket_id 走统一 IdGenerator 发号（uuid-biz-id 票 07），expire_at = 入账时点 + 次数有效期配置（都在事务内取） */
+    private DrawCountBucketEntity newBucket(String userId, int amount, DrawCountReasonType reasonType, String refId,
                                             LocalDateTime now) {
         DrawCountBucketEntity bucket = new DrawCountBucketEntity();
-        bucket.setBucketId(SnowflakeIdGenerator.nextId());
+        bucket.setBucketId(idGenerator.nextId());
         bucket.setUserId(userId);
         bucket.setAmount(amount);
         bucket.setRemain(amount);

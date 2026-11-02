@@ -6,7 +6,7 @@ import lombok.Data;
 @Data
 public class DrawPrizeViewPO {
 
-    private Long awardId;
+    private String awardId;
     private String awardName;
     private String awardType;
     private Integer level;

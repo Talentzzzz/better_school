@@ -21,9 +21,9 @@ import lombok.NoArgsConstructor;
 public class LotteryDrawnMessage {
 
     /** 抽奖记录 id：本服务入账幂等键的 ref_id（MQ 重投不重复加分） */
-    private Long recordId;
+    private String recordId;
     private String userId;
-    private Long prizeId;
+    private String prizeId;
     /** VIRTUAL / PHYSICAL / THANKS（票 13 新模型口径；旧的 POINTS 值已作废） */
     private String prizeType;
     /** 积分档发放的积分数（非积分档为空） */

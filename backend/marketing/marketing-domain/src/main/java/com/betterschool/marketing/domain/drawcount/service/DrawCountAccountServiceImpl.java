@@ -29,7 +29,7 @@ public class DrawCountAccountServiceImpl implements IDrawCountAccountService {
     private final IDrawCountConfigPort drawCountConfigPort;
 
     @Override
-    public boolean creditForRedeem(String userId, Long redeemOrderId, int amount) {
+    public boolean creditForRedeem(String userId, String redeemOrderId, int amount) {
         if (userId == null || redeemOrderId == null || amount <= 0) {
             throw new AppException(ResponseCode.LOTTERY_PARAM_ERROR);
         }
@@ -37,7 +37,7 @@ public class DrawCountAccountServiceImpl implements IDrawCountAccountService {
     }
 
     @Override
-    public boolean creditForRebate(String actionType, String userId, Long refId) {
+    public boolean creditForRebate(String actionType, String userId, String refId) {
         if (actionType == null || actionType.isBlank() || userId == null || refId == null) {
             throw new AppException(ResponseCode.LOTTERY_PARAM_ERROR);
         }
@@ -54,7 +54,7 @@ public class DrawCountAccountServiceImpl implements IDrawCountAccountService {
     }
 
     @Override
-    public boolean deductForDraw(String userId, Long recordId) {
+    public boolean deductForDraw(String userId, String recordId) {
         if (userId == null || recordId == null) {
             throw new AppException(ResponseCode.LOTTERY_PARAM_ERROR);
         }
@@ -67,7 +67,7 @@ public class DrawCountAccountServiceImpl implements IDrawCountAccountService {
     }
 
     /** 入账共享体：REDEEM / REBATE 共用一条路径，幂等键落在 uk_user_reason_ref 上 */
-    private boolean credit(String userId, int amount, DrawCountReasonType reasonType, Long refId) {
+    private boolean credit(String userId, int amount, DrawCountReasonType reasonType, String refId) {
         if (!drawCountRepository.creditBucket(userId, amount, reasonType, refId)) {
             // 撞 uk = 这笔发放已记过（重试 / 重投）：不重复加次数
             log.info("[DrawCountAccount] 次数入账已存在，幂等跳过 userId={}, reasonType={}, refId={}",

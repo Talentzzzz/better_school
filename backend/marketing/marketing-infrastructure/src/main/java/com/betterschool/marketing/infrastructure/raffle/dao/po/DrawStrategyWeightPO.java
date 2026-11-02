@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 public class DrawStrategyWeightPO {
 
     private Long id;
-    private Long strategyId;
+    private String strategyId;
     /** 该档生效的抽数阈值 */
     private Integer count;
     /** 该档保底奖品池（逗号分隔的 award_id） */

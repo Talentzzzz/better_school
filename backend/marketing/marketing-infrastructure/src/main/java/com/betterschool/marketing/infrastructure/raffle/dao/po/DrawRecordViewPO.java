@@ -8,8 +8,8 @@ import java.time.LocalDateTime;
 @Data
 public class DrawRecordViewPO {
 
-    private Long recordId;
-    private Long awardId;
+    private String recordId;
+    private String awardId;
     private String awardName;
     private String awardType;
     private Integer level;

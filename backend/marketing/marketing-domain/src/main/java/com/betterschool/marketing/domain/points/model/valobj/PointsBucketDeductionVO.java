@@ -12,7 +12,7 @@ import lombok.Getter;
 public class PointsBucketDeductionVO {
 
     /** 桶业务 ID（points_bucket.bucket_id，不是物理自增 id） */
-    private final Long bucketId;
+    private final String bucketId;
     /** 这一笔从该桶扣掉的积分 */
     private final Integer amount;
 }

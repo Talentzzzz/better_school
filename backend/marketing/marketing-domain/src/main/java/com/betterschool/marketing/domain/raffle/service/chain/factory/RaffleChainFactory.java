@@ -23,7 +23,7 @@ public class RaffleChainFactory {
 
     private final ApplicationContext applicationContext;
     private final IRaffleRepository raffleRepository;
-    private final Map<Long, IChainNode> chainMap = new ConcurrentHashMap<>();
+    private final Map<String, IChainNode> chainMap = new ConcurrentHashMap<>();
 
     public RaffleChainFactory(ApplicationContext applicationContext, IRaffleRepository raffleRepository) {
         this.applicationContext = applicationContext;
@@ -31,7 +31,7 @@ public class RaffleChainFactory {
     }
 
     /** 取策略链头（首次按 DB 配置组链，之后走缓存） */
-    public IChainNode getFirstChainNode(Long strategyId) {
+    public IChainNode getFirstChainNode(String strategyId) {
         IChainNode headNode = chainMap.get(strategyId);
         if (headNode != null) {
             return headNode;
@@ -46,7 +46,7 @@ public class RaffleChainFactory {
     }
 
     /** 配置变更后失效缓存（下次取链头按新配置重组） */
-    public void evict(Long strategyId) {
+    public void evict(String strategyId) {
         chainMap.remove(strategyId);
     }
 
@@ -83,7 +83,7 @@ public class RaffleChainFactory {
     @NoArgsConstructor
     public static class ChainAwardVO {
 
-        private Long awardId;
+        private String awardId;
         private RaffleRuleNodeVO logicModel;
         private Integer weightCount;
     }

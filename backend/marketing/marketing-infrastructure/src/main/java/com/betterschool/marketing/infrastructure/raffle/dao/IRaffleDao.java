@@ -22,20 +22,20 @@ import java.util.List;
 @Mapper
 public interface IRaffleDao {
 
-    DrawActivityPO selectActivityByActivityId(@Param("activityId") Long activityId);
+    DrawActivityPO selectActivityByActivityId(@Param("activityId") String activityId);
 
-    DrawStrategyPO selectStrategyByStrategyId(@Param("strategyId") Long strategyId);
+    DrawStrategyPO selectStrategyByStrategyId(@Param("strategyId") String strategyId);
 
-    List<DrawStrategyAwardPO> selectAwardListByStrategyId(@Param("strategyId") Long strategyId);
+    List<DrawStrategyAwardPO> selectAwardListByStrategyId(@Param("strategyId") String strategyId);
 
     /** 权重档按 count 升序（档命中取「count ≤ 累计抽数」里最大的一档） */
-    List<DrawStrategyWeightPO> selectWeightListByStrategyId(@Param("strategyId") Long strategyId);
+    List<DrawStrategyWeightPO> selectWeightListByStrategyId(@Param("strategyId") String strategyId);
 
     /** 特型奖品位（type = normal/fallback/blacklist），取 sort,id 最小的一行 */
-    Long selectAwardIdBySlot(@Param("strategyId") Long strategyId, @Param("type") String type);
+    String selectAwardIdBySlot(@Param("strategyId") String strategyId, @Param("type") String type);
 
     /** 用户在该策略下的累计抽数 = draw_record 行数（权重档命中判据） */
-    int countUserRecords(@Param("strategyId") Long strategyId, @Param("userId") String userId);
+    int countUserRecords(@Param("strategyId") String strategyId, @Param("userId") String userId);
 
     int insertDrawRecord(DrawRecordPO recordPO);
 
@@ -48,16 +48,16 @@ public interface IRaffleDao {
     DrawActivityPO selectCurrentActivity();
 
     /** 按记录业务 ID 查（主链路幂等重放 / 并发去重） */
-    DrawRecordPO selectRecordByRecordId(@Param("recordId") Long recordId);
+    DrawRecordPO selectRecordByRecordId(@Param("recordId") String recordId);
 
     /** 积分面额：virtual_inventory_quota.value（仅 type=POINTS 行） */
-    Integer selectPointsValueByInvId(@Param("invId") Long invId);
+    Integer selectPointsValueByInvId(@Param("invId") String invId);
 
     /** 今日已抽数 = draw_record 该用户当日行数 */
     int countTodayDrawn(@Param("userId") String userId);
 
     /** 奖品目录视图：奖品位 LEFT JOIN 两段库存台账（remaining/total 展示口径） */
-    List<DrawPrizeViewPO> selectPrizeCatalog(@Param("strategyId") Long strategyId);
+    List<DrawPrizeViewPO> selectPrizeCatalog(@Param("strategyId") String strategyId);
 
     /** 我的中奖记录（恒过滤 THANKS，create_time DESC） */
     int countDrawRecords(@Param("userId") String userId);
@@ -78,6 +78,6 @@ public interface IRaffleDao {
      * 条件推进 draw_record.state（守卫 = 起点状态）：返回 0 = 状态已不在起点
      * （重复投递 / 并发重放 / 已终态），调用方据此判定「本次没有推进」。
      */
-    int updateRecordState(@Param("recordId") Long recordId, @Param("fromState") String fromState,
+    int updateRecordState(@Param("recordId") String recordId, @Param("fromState") String fromState,
                           @Param("toState") String toState);
 }

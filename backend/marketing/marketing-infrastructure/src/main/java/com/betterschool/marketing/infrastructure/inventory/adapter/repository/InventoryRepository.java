@@ -52,7 +52,7 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
     // ---------------------------------------------------------------- 台账
 
     @Override
-    public InventoryLedgerVO queryLedger(InventorySegmentVO segment, Long invId) {
+    public InventoryLedgerVO queryLedger(InventorySegmentVO segment, String invId) {
         return switch (segment) {
             case VIRTUAL -> toVirtualLedger(virtualInventoryQuotaDao.selectInventory(invId));
             case QUOTA -> toQuotaLedger(physicalQuotaDao.selectQuota(invId));
@@ -92,7 +92,7 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
      * 明细与台账仍然平（插进去的是 k 行不是 N 行）；{@code k = 0} 则整批 {@code INSUFFICIENT}。
      */
     @Override
-    public List<DeductResult> flushDeductGroup(InventorySegmentVO segment, long invId,
+    public List<DeductResult> flushDeductGroup(InventorySegmentVO segment, String invId,
                                                List<InventoryDeductRequestVO> requests) {
         if (requests.isEmpty()) {
             return List.of();
@@ -168,7 +168,7 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
     }
 
     @Override
-    public boolean existsDeductDetail(InventorySegmentVO segment, Long invId, String bizType, long bizId) {
+    public boolean existsDeductDetail(InventorySegmentVO segment, String invId, String bizType, String bizId) {
         return switch (segment) {
             case VIRTUAL -> virtualInventoryQuotaDao.existsDeductDetail(invId, bizType, bizId);
             // 实物只认 type = 1（预扣结转）的行：type = 2 是兑换确认，不是同一笔预扣
@@ -177,7 +177,7 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
     }
 
     /** 批量 {@code INSERT IGNORE}：新代码不写 {@code state}（列默认 0）与 {@code bucket_id}（桶层已删） */
-    private int insertDeductDetails(InventorySegmentVO segment, long invId, List<InventoryDeductRequestVO> requests) {
+    private int insertDeductDetails(InventorySegmentVO segment, String invId, List<InventoryDeductRequestVO> requests) {
         return switch (segment) {
             case VIRTUAL -> virtualInventoryQuotaDao.batchInsertIgnoreDeductDetails(invId,
                     requests.stream().map(r -> toVirtualDeductPO(invId, r)).toList());
@@ -189,14 +189,14 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
     /** 回查批内已存在的业务行：命中下标集合 + 命中量（它们的量在更早的事务里已经扣过） */
     private Set<Integer> findDuplicates(InventorySegmentVO segment, List<InventoryDeductRequestVO> requests) {
         // 按 bizType 分组回查（唯一键的前缀），同组 bizType 恒一致，这里只为防混批
-        Map<String, List<Long>> byBizType = new LinkedHashMap<>();
+        Map<String, List<String>> byBizType = new LinkedHashMap<>();
         for (int i = 0; i < requests.size(); i++) {
             InventoryDeductRequestVO request = requests.get(i);
             byBizType.computeIfAbsent(request.bizType(), key -> new ArrayList<>()).add(request.bizId());
         }
-        Set<Long> existingBizIds = new HashSet<>();
-        for (Map.Entry<String, List<Long>> entry : byBizType.entrySet()) {
-            List<Long> bizIds = entry.getValue();
+        Set<String> existingBizIds = new HashSet<>();
+        for (Map.Entry<String, List<String>> entry : byBizType.entrySet()) {
+            List<String> bizIds = entry.getValue();
             switch (segment) {
                 case VIRTUAL -> virtualInventoryQuotaDao.listExistingDeductDetails(entry.getKey(), bizIds)
                         .forEach(po -> existingBizIds.add(po.getBizId()));
@@ -233,14 +233,14 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
         return duplicates.stream().mapToLong(i -> requests.get(i).quantity()).sum();
     }
 
-    private Long selectSurplus(InventorySegmentVO segment, long invId) {
+    private Long selectSurplus(InventorySegmentVO segment, String invId) {
         return switch (segment) {
             case VIRTUAL -> virtualInventoryQuotaDao.selectSurplus(invId);
             case QUOTA -> physicalQuotaDao.selectSurplus(invId);
         };
     }
 
-    private int deductLedger(InventorySegmentVO segment, long invId, long quantity) {
+    private int deductLedger(InventorySegmentVO segment, String invId, long quantity) {
         return switch (segment) {
             case VIRTUAL -> virtualInventoryQuotaDao.deductLedger(invId, quantity);
             case QUOTA -> physicalQuotaDao.deductLedger(invId, quantity);
@@ -332,7 +332,7 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
      * ⇒ 服务层抛可重试 ⇒ MQ 重投 ⇒ 死信（spec §4.5，不复活 4312、不做部分确认）。
      */
     @Override
-    public List<ClaimOutcome> flushClaimGroup(long invId, List<ClaimItem> items) {
+    public List<ClaimOutcome> flushClaimGroup(String invId, List<ClaimItem> items) {
         if (items.isEmpty()) {
             return List.of();
         }
@@ -381,7 +381,7 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
     }
 
     /** 预扣结转明细（{@code type = 1}，不写 bucket_id / state——桶层已删，state 落列默认 0） */
-    private PhysicalMarketingQuotaDetailPO toQuotaDeductPO(long invId, InventoryDeductRequestVO request) {
+    private PhysicalMarketingQuotaDetailPO toQuotaDeductPO(String invId, InventoryDeductRequestVO request) {
         PhysicalMarketingQuotaDetailPO detailPO = new PhysicalMarketingQuotaDetailPO();
         detailPO.setInvId(invId);
         detailPO.setQuantity(request.quantity());
@@ -392,7 +392,7 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
     }
 
     /** 兑换确认明细（{@code type = 2}，不写 bucket_id / state——桶层已删，state 落列默认 0） */
-    private PhysicalMarketingQuotaDetailPO toClaimDetailPO(long invId, ClaimItem item) {
+    private PhysicalMarketingQuotaDetailPO toClaimDetailPO(String invId, ClaimItem item) {
         PhysicalMarketingQuotaDetailPO detailPO = new PhysicalMarketingQuotaDetailPO();
         detailPO.setInvId(invId);
         detailPO.setQuantity(item.quantity());
@@ -402,7 +402,7 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
         return detailPO;
     }
 
-    private VirtualInventoryQuotaDetailPO toVirtualDeductPO(long invId, InventoryDeductRequestVO request) {
+    private VirtualInventoryQuotaDetailPO toVirtualDeductPO(String invId, InventoryDeductRequestVO request) {
         VirtualInventoryQuotaDetailPO detailPO = new VirtualInventoryQuotaDetailPO();
         detailPO.setInvId(invId);
         detailPO.setQuantity(request.quantity());

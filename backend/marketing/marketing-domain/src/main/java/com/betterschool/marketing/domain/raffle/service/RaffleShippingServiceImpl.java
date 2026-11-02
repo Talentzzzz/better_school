@@ -31,7 +31,7 @@ public class RaffleShippingServiceImpl implements IRaffleShippingService {
     private final IRaffleRepository raffleRepository;
 
     @Override
-    public ShippingPlanVO planShipAfterDraw(String userId, Long recordId) {
+    public ShippingPlanVO planShipAfterDraw(String userId, String recordId) {
         DrawRecordEntity record = raffleRepository.queryRecordByRecordId(recordId);
         if (record == null || !record.getUserId().equals(userId)) {
             // 本服务自有事件回放却查无此记录（或归属不符）：不是错误路径，记日志跳过
@@ -81,7 +81,7 @@ public class RaffleShippingServiceImpl implements IRaffleShippingService {
     }
 
     @Override
-    public ShippingResultVO confirmReceived(String userId, Long recordId) {
+    public ShippingResultVO confirmReceived(String userId, String recordId) {
         DrawRecordEntity record = raffleRepository.queryRecordByRecordId(recordId);
         if (record == null || !record.getUserId().equals(userId)) {
             // 不存在与不是本人的对外同码：不泄漏「这条记录存在但不是你的」
@@ -104,7 +104,7 @@ public class RaffleShippingServiceImpl implements IRaffleShippingService {
         return completed(recordId, true);
     }
 
-    private DrawRecordDetailEntity detail(String userId, Long recordId, DrawRecordActionVO action) {
+    private DrawRecordDetailEntity detail(String userId, String recordId, DrawRecordActionVO action) {
         LocalDateTime now = LocalDateTime.now();
         DrawRecordDetailEntity detail = new DrawRecordDetailEntity();
         detail.setUserId(userId);
@@ -115,12 +115,12 @@ public class RaffleShippingServiceImpl implements IRaffleShippingService {
         return detail;
     }
 
-    private ShippingResultVO notAdvanced(Long recordId) {
+    private ShippingResultVO notAdvanced(String recordId) {
         return new ShippingResultVO(recordId, null, false);
     }
 
     /** 确认收货的三种出参（已终态 / 并发败者 / 本次推进）共用一条构造，只是 {@code advanced} 不同 */
-    private ShippingResultVO completed(Long recordId, boolean advanced) {
+    private ShippingResultVO completed(String recordId, boolean advanced) {
         return new ShippingResultVO(recordId, DrawRecordStateVO.COMPLETED, advanced);
     }
 }

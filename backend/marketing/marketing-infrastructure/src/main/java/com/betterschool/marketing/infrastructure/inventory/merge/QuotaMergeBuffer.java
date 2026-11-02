@@ -122,8 +122,8 @@ public class QuotaMergeBuffer {
      * @throws IllegalArgumentException {@code request.invId()} 与 {@code invId} 不一致（同一行给了两个 key，
      *                                 会让两个分片各自合并同一行，单飞立刻失效）
      */
-    public DeductResult submitAndWait(long invId, InventoryDeductRequestVO request) {
-        if (request.invId() != invId) {
+    public DeductResult submitAndWait(String invId, InventoryDeductRequestVO request) {
+        if (!request.invId().equals(invId)) {
             throw new IllegalArgumentException(String.format(
                     "[调用错误] shardKey(%s) 必须等于 request.invId(%s)：同一行给两个 key 会让两个分片各自合并同一行",
                     invId, request.invId()));
@@ -157,7 +157,7 @@ public class QuotaMergeBuffer {
      *              在调用方做，不与「账不平」共用异常
      * @param item  业务身份 + 数量
      */
-    public ClaimOutcome submitAndWait(long invId, ClaimItem item) {
+    public ClaimOutcome submitAndWait(String invId, ClaimItem item) {
         Pending<ClaimOutcome> pending = Pending.claim(invId, item);
         SubmitOutcome outcome = enqueue(pending);
         if (outcome == SubmitOutcome.BUFFER_FULL) {
@@ -429,6 +429,6 @@ public class QuotaMergeBuffer {
     }
 
     /** 二次分组的键：动作 × segment × 台账行主键 */
-    private record GroupKey(QuotaAction action, InventorySegmentVO segment, long shardKey) {
+    private record GroupKey(QuotaAction action, InventorySegmentVO segment, String shardKey) {
     }
 }

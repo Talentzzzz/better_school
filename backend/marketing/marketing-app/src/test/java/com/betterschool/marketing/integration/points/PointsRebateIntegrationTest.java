@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PointsRebateIntegrationTest extends PointsApiTestBase {
 
     private static final String USER_ID = "user-1004";
-    private static final long REF_ID = 60001L;
+    private static final String REF_ID = "60001";
     private static final long POINTS_CONFIG_ID = 1L;
 
     @Test
@@ -45,7 +45,7 @@ class PointsRebateIntegrationTest extends PointsApiTestBase {
         assertThat(event.path("delta").asInt()).isEqualTo(20);
         assertThat(event.path("balanceAfter").asInt()).isEqualTo(20);
         assertThat(event.path("reasonType").asText()).isEqualTo("REBATE");
-        assertThat(event.path("refId").asLong()).isEqualTo(REF_ID);
+        assertThat(event.path("refId").asText()).isEqualTo(REF_ID);
     }
 
     @Test

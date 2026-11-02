@@ -21,7 +21,7 @@ public interface IPointsDao {
     /** 该用户该笔业务的消费行 id（不存在返回 null）；幂等预检用，普通快照读、不加锁 */
     Long selectConsumeId(@Param("userId") String userId,
                          @Param("reasonType") String reasonType,
-                         @Param("refId") Long refId);
+                         @Param("refId") String refId);
 
     /** 当前可用桶，FIFO（expire_at, id）加行锁 */
     List<PointsBucketPO> selectAvailableBucketsForUpdate(@Param("userId") String userId);
@@ -41,10 +41,10 @@ public interface IPointsDao {
      *
      * @return 命中并清零的行数（必须等于 {@code bucketIds} 条数，否则余量与方案不一致）
      */
-    int drainBuckets(@Param("userId") String userId, @Param("bucketIds") List<Long> bucketIds);
+    int drainBuckets(@Param("userId") String userId, @Param("bucketIds") List<String> bucketIds);
 
     /** 扣桶余量（方案里唯一那张部分扣的桶；带 remain >= amount 守卫，正常路径必中 1 行） */
-    int deductRemain(@Param("bucketId") Long bucketId, @Param("amount") int amount);
+    int deductRemain(@Param("bucketId") String bucketId, @Param("amount") int amount);
 
     int sumAvailableRemain(@Param("userId") String userId);
 

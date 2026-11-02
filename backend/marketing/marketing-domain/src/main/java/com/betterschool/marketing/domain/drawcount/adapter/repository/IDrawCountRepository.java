@@ -16,7 +16,7 @@ import java.util.List;
 public interface IDrawCountRepository {
 
     /**
-     * 一次入账，**同一事务**内完成：造桶（bucket_id 雪花生成、expire_at = 事务内时点 + 次数有效期）
+     * 一次入账，**同一事务**内完成：造桶（bucket_id 走统一 IdGenerator 发号（uuid-biz-id 票 07）、expire_at = 事务内时点 + 次数有效期）
      * → 插桶（撞 {@code uk_user_reason_ref} 即幂等命中）。幂等键落在 uk_user_reason_ref 上，
      * 重复入账不重复加次数；「幂等跳过」的日志由域服务按业务口径打。
      * <p>
@@ -25,16 +25,16 @@ public interface IDrawCountRepository {
      * @param reasonType REDEEM（兑换入账）或 REBATE（行为返利）
      * @return true = 本次真的入账了；false = 这笔入账已记过（幂等跳过）
      */
-    boolean creditBucket(String userId, int amount, DrawCountReasonType reasonType, Long refId);
+    boolean creditBucket(String userId, int amount, DrawCountReasonType reasonType, String refId);
 
     /**
      * 一次抽奖扣次，**同一事务**内完成：幂等预检（该抽奖记录已扣过即跳过）→ FIFO 取最早可用桶 →
      * 落一行明细并把该桶 remain 减 1。桶不足返回 false，一行都没动（无半扣）。
      */
-    boolean deductForDraw(String userId, Long recordId);
+    boolean deductForDraw(String userId, String recordId);
 
     /** 是否已有该抽奖记录的消费明细（加锁读幂等预检）：重放快路径，真正的互斥是明细撞 uk 后回滚 */
-    boolean existsDetailForUpdate(Long refId);
+    boolean existsDetailForUpdate(String refId);
 
     /** 当前可用桶（{@code remain > 0 AND expire_at > NOW()}），按 FIFO（expire_at, id）加行锁 */
     List<DrawCountBucketEntity> listAvailableBucketsForUpdate(String userId);

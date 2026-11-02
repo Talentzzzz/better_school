@@ -21,7 +21,7 @@ public interface IInventoryDeductPort {
      * @return true = 已扣（Redis 桶减了、明细落了 state=0）或这笔预扣已落过；false = 库存不可用或所有桶余量不足
      * @throws com.betterschool.marketing.types.common.AppException inv_id 查无此库存
      */
-    boolean preDeductVirtual(Long invId, long quantity, long recordId);
+    boolean preDeductVirtual(String invId, long quantity, String recordId);
 
     /**
      * 实物营销配额带兜底的预扣：配额桶不足改扣兜底虚拟权益，配额段零写入（不产生悬挂 waiting_qty）。
@@ -31,5 +31,5 @@ public interface IInventoryDeductPort {
      * @return 见 {@link Outcome}
      * @throws com.betterschool.marketing.types.common.AppException inv_id 查无此配额
      */
-    Outcome preDeductPhysicalWithFallback(Long invId, Long fallbackInvId, long quantity, long recordId);
+    Outcome preDeductPhysicalWithFallback(String invId, String fallbackInvId, long quantity, String recordId);
 }

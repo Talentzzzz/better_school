@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 class QuotaMergeBufferTest {
 
-    private static final long INV_ID = 9_001L;
+    private static final String INV_ID = "9_001";
     private static final InventorySegmentVO SEGMENT = InventorySegmentVO.QUOTA;
 
     private QuotaMergeBuffer engine;
@@ -60,12 +60,12 @@ class QuotaMergeBufferTest {
         return new MergeConfig(8, 1, maxBatch, 5_000, 5_000, 4, 2_000);
     }
 
-    private static InventoryDeductRequestVO deduct(long bizId) {
-        return new InventoryDeductRequestVO(SEGMENT, INV_ID, 1, InventoryBizTypes.LOTTERY_DRAW, bizId);
+    private static InventoryDeductRequestVO deduct(int bizId) {
+        return new InventoryDeductRequestVO(SEGMENT, INV_ID, 1, InventoryBizTypes.LOTTERY_DRAW, String.valueOf(bizId));
     }
 
-    private static ClaimItem claim(long bizId) {
-        return new ClaimItem(InventoryBizTypes.LOTTERY_CLAIM, bizId, 1);
+    private static ClaimItem claim(int bizId) {
+        return new ClaimItem(InventoryBizTypes.LOTTERY_CLAIM, String.valueOf(bizId), 1);
     }
 
     /**
@@ -136,7 +136,7 @@ class QuotaMergeBufferTest {
 
         List<DeductResult> results = Collections.synchronizedList(new ArrayList<>());
         runConcurrently(threads, threadNo -> {
-            long base = threadNo * 1_000L;
+            int base = threadNo * 1_000;
             for (int i = 0; i < perThread; i++) {
                 results.add(buffer.submitAndWait(INV_ID, deduct(base + i)));
             }
@@ -225,7 +225,7 @@ class QuotaMergeBufferTest {
 
         List<DeductResult> results = Collections.synchronizedList(new ArrayList<>());
         runConcurrently(threads, threadNo -> {
-            long base = threadNo * 1_000L;
+            int base = threadNo * 1_000;
             for (int i = 0; i < perThread; i++) {
                 results.add(buffer.submitAndWait(INV_ID, deduct(base + i)));
             }
@@ -453,7 +453,7 @@ class QuotaMergeBufferTest {
         List<Object> landed = handler.payloadsOf(INV_ID);
         assertEquals(total, landed.size(), "件数不能少");
         for (int i = 0; i < total; i++) {
-            assertEquals(i + 1, ((InventoryDeductRequestVO) landed.get(i)).bizId(),
+            assertEquals(String.valueOf(i + 1), ((InventoryDeductRequestVO) landed.get(i)).bizId(),
                     "同分片必须按入队序落库，第 " + i + " 件错位");
         }
     }

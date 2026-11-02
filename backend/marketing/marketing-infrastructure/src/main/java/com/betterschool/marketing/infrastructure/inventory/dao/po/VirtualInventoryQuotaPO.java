@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 public class VirtualInventoryQuotaPO {
 
     private Long id;
-    private Long invId;
+    private String invId;
     private String name;
     private String type;
     private Integer value;

@@ -41,13 +41,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DisplayName("库存两段式 · 实物营销配额")
 class PhysicalQuotaIntegrationTest extends TestingEnvironment {
 
-    private static final long QUOTA_INV_ID = 9101L;
+    private static final String QUOTA_INV_ID = "9101";
     /** 兜底虚拟权益（积分池），surplus 预置 999 份 */
-    private static final long FALLBACK_INV_ID = 9002L;
+    private static final String FALLBACK_INV_ID = "9002";
     private static final long QUOTA_SURPLUS = 100L;
     private static final long FALLBACK_SURPLUS = 999L;
     /** 抽奖记录 id（明细 biz_id）：同一笔业务重复预扣靠 uk_biz_type 去重 */
-    private static final long RECORD_ID = 95001L;
+    private static final String RECORD_ID = "95001";
 
     @BeforeAll
     static void prepareEnvironment() {
@@ -80,12 +80,12 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
                 FALLBACK_INV_ID, FALLBACK_SURPLUS);
     }
 
-    private boolean preDeduct(long quantity, long recordId) {
+    private boolean preDeduct(long quantity, String recordId) {
         return inventoryQuotaService.preDeduct(InventorySegmentVO.QUOTA, QUOTA_INV_ID, quantity,
                 InventoryBizTypes.LOTTERY_DRAW, recordId);
     }
 
-    private DeductOutcomeVO preDeductWithFallback(Long fallbackInvId, long quantity, long recordId) {
+    private DeductOutcomeVO preDeductWithFallback(String fallbackInvId, long quantity, String recordId) {
         InventoryDeductRequestVO primary = new InventoryDeductRequestVO(InventorySegmentVO.QUOTA, QUOTA_INV_ID,
                 quantity, InventoryBizTypes.LOTTERY_DRAW, recordId);
         InventoryDeductRequestVO fallback = fallbackInvId == null ? null
@@ -100,7 +100,7 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
                 QUOTA_INV_ID);
     }
 
-    private long detailCount(String table, String invColumn, long invId) {
+    private long detailCount(String table, String invColumn, String invId) {
         var count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM " + table + " WHERE " + invColumn + " = ?",
                 Long.class, invId);
@@ -113,7 +113,7 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
     }
 
     /** 该记录的兑换确认行（type = 2）：取不到即断言失败。state 列已随 D9 形态删除（确认返回即已提交） */
-    private Map<String, Object> claimRow(long recordId) {
+    private Map<String, Object> claimRow(String recordId) {
         return jdbcTemplate.queryForMap("""
                         SELECT type, biz_type, quantity
                         FROM physical_marketing_quota_detail
@@ -122,7 +122,7 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
                 QUOTA_INV_ID, Constants.DETAIL_TYPE_CLAIM, recordId);
     }
 
-    private int claimRowCount(long recordId) {
+    private int claimRowCount(String recordId) {
         Integer count = jdbcTemplate.queryForObject("""
                         SELECT COUNT(*) FROM physical_marketing_quota_detail
                         WHERE inv_id = ? AND type = ? AND biz_id = ?
@@ -155,7 +155,7 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
                 QUOTA_INV_ID);
         assertThat(((Number) detail.get("type")).intValue()).as("预扣结转 type=1").isEqualTo(1);
         assertThat(detail.get("biz_type")).as("业务类型 = 抽奖预扣").isEqualTo("LOTTERY_DRAW");
-        assertThat(((Number) detail.get("biz_id")).longValue()).as("业务 ID = draw_record.record_id")
+        assertThat((String) detail.get("biz_id")).as("业务 ID = draw_record.record_id")
                 .isEqualTo(RECORD_ID);
         assertThat(((Number) detail.get("quantity")).longValue()).isEqualTo(3L);
 

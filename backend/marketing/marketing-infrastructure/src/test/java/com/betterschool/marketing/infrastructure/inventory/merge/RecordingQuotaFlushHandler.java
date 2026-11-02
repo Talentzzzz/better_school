@@ -56,7 +56,7 @@ final class RecordingQuotaFlushHandler implements IQuotaMergeFlushHandler {
     private final AtomicInteger fillBudget = new AtomicInteger();
 
     /** 一组落库的形状 */
-    record Group(QuotaAction action, InventorySegmentVO segment, long invId, List<Object> payloads) {
+    record Group(QuotaAction action, InventorySegmentVO segment, String invId, List<Object> payloads) {
 
         int size() {
             return payloads.size();
@@ -65,7 +65,7 @@ final class RecordingQuotaFlushHandler implements IQuotaMergeFlushHandler {
 
     @Override
     public List<DeductResult> flushDeductGroup(InventorySegmentVO segment,
-                                               long invId,
+                                               String invId,
                                                List<InventoryDeductRequestVO> requests) {
         enter(new Group(QuotaAction.DEDUCT, segment, invId, List.copyOf(requests)));
         int fill = fillCount(requests.size());
@@ -76,7 +76,7 @@ final class RecordingQuotaFlushHandler implements IQuotaMergeFlushHandler {
     }
 
     @Override
-    public List<ClaimOutcome> flushClaimGroup(long invId, List<ClaimItem> items) {
+    public List<ClaimOutcome> flushClaimGroup(String invId, List<ClaimItem> items) {
         enter(new Group(QuotaAction.CLAIM, null, invId, List.copyOf(items)));
         int fill = fillCount(items.size());
         if (fill == 0) {
@@ -161,7 +161,7 @@ final class RecordingQuotaFlushHandler implements IQuotaMergeFlushHandler {
     }
 
     /** 某个台账行上，各件被落库的先后顺序（用于保序断言） */
-    List<Object> payloadsOf(long invId) {
+    List<Object> payloadsOf(String invId) {
         List<Object> ordered = new ArrayList<>();
         synchronized (groups) {
             for (Group group : groups) {

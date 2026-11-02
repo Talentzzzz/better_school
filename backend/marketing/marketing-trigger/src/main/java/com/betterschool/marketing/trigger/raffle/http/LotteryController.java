@@ -153,7 +153,7 @@ public class LotteryController implements ILotteryService {
 
     @Override
     @PostMapping("/my-prizes/{id}/receive")
-    public Response<ReceivePrizeResponseDTO> confirmReceived(@PathVariable Long id) {
+    public Response<ReceivePrizeResponseDTO> confirmReceived(@PathVariable String id) {
         ShippingResultVO shipping = raffleShippingService.confirmReceived(SecurityUtils.currentUserId(), id);
         return Response.ok(new ReceivePrizeResponseDTO(id, toApiStatus(shipping.getState())));
     }

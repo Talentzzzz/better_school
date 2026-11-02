@@ -8,11 +8,11 @@ package com.betterschool.marketing.domain.raffle.service.warmup;
 public interface IRaffleWarmupService {
 
     /** 按活动预热（活动 → 策略 → 概率表 + 权重表 + 特型奖品位 + 预热态标记） */
-    void warmupByActivityId(Long activityId);
+    void warmupByActivityId(String activityId);
 
     /** 按策略预热（已知策略 ID 时跳过活动查表） */
-    void warmupByStrategyId(Long strategyId);
+    void warmupByStrategyId(String strategyId);
 
     /** 预热态可查：true = 预热态；false = 降级态（票 13 接 DB 直算降级入口） */
-    boolean isWarmed(Long strategyId);
+    boolean isWarmed(String strategyId);
 }

@@ -17,6 +17,6 @@ public class RedeemDrawCountResponseDTO {
      * 兑换单 id（= 幂等键）：由请求的 token 确定性映射而来，同一 token 重放恒同一单号；
      * 所以**重试要带的是同一个 token**（不是这个 id）。
      */
-    private Long redeemOrderId;
+    private String redeemOrderId;
     private Integer drawCount;
 }

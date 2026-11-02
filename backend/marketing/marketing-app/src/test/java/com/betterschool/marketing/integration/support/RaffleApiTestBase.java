@@ -41,18 +41,18 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
     protected static final LocalDateTime ACTIVITY_START = LocalDateTime.of(2026, 1, 1, 0, 0, 0);
     protected static final LocalDateTime ACTIVITY_END = LocalDateTime.of(2027, 12, 31, 23, 59, 59);
 
-    protected static final long ACTIVITY_ID = 8801L;
-    protected static final long STRATEGY_ID = 8802L;
+    protected static final String ACTIVITY_ID = "8801";
+    protected static final String STRATEGY_ID = "8802";
     /** 奖品位（单活动单策略）：1 积分档 / 2 实物档 / 3 谢谢参与 / 4 兜底 */
-    protected static final long AWARD_POINTS = 8803L;
-    protected static final long AWARD_BAG = 8804L;
-    protected static final long AWARD_THANKS = 8805L;
-    protected static final long AWARD_FALLBACK = 8806L;
+    protected static final String AWARD_POINTS = "8803";
+    protected static final String AWARD_BAG = "8804";
+    protected static final String AWARD_THANKS = "8805";
+    protected static final String AWARD_FALLBACK = "8806";
 
     /** 库存 / 配额业务 ID */
-    protected static final long POINTS_INV_ID = 8811L;
-    protected static final long QUOTA_INV_ID = 8812L;
-    protected static final long FALLBACK_INV_ID = 8813L;
+    protected static final String POINTS_INV_ID = "8811";
+    protected static final String QUOTA_INV_ID = "8812";
+    protected static final String FALLBACK_INV_ID = "8813";
 
     /** giveChances 的 ref_id 发号器（每次调用换一个，避免撞 uk_user_reason_ref） */
     private static final AtomicLong REF_ID_SEQ = new AtomicLong(9_000_000L);
@@ -119,8 +119,8 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
                         """, STRATEGY_ID, rule);
     }
 
-    protected void insertAward(long awardId, String awardName, String awardType, String rate,
-                               int level, long invId, String type) {
+    protected void insertAward(String awardId, String awardName, String awardType, String rate,
+                               int level, String invId, String type) {
         jdbcTemplate.update("""
                         INSERT INTO draw_strategy_award (strategy_id, award_id, award_name, award_desc, award_type,
                                                         award_rate, level, inv_id, type, sort, create_time, update_time)
@@ -133,11 +133,11 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
     protected void insertDefaultAwards() {
         insertAward(AWARD_POINTS, "20 积分", "VIRTUAL", "0.2000", 3, POINTS_INV_ID, "normal");
         insertAward(AWARD_BAG, "校园帆布包", "PHYSICAL", "0.3000", 2, QUOTA_INV_ID, "normal");
-        insertAward(AWARD_THANKS, "谢谢参与", "THANKS", "0.5000", 5, 0, "normal");
+        insertAward(AWARD_THANKS, "谢谢参与", "THANKS", "0.5000", 5, "0", "normal");
         insertAward(AWARD_FALLBACK, "5 积分安慰奖", "VIRTUAL", "0.0000", 6, FALLBACK_INV_ID, "fallback");
     }
 
-    protected void insertVirtualInventory(long invId, String name, String type, int value,
+    protected void insertVirtualInventory(String invId, String name, String type, int value,
                                           long surplusQty, long issuedQty, String state) {
         jdbcTemplate.update("""
                         INSERT INTO virtual_inventory_quota (inv_id, name, type, value, surplus_qty, issued_qty,
@@ -146,7 +146,7 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
                         """, invId, name, type, value, surplusQty, issuedQty, state);
     }
 
-    protected void insertQuota(long invId, String name, long surplusQty, long waitingQty,
+    protected void insertQuota(String invId, String name, long surplusQty, long waitingQty,
                                long issuedQty, String state) {
         jdbcTemplate.update("""
                         INSERT INTO physical_marketing_quota (inv_id, name, surplus_qty, waiting_qty, issued_qty,
@@ -174,7 +174,7 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
     /** 直接塞一个次数桶（模拟兑换入账），供抽奖用例铺前置态 */
     protected void giveChances(String userId, int amount) {
         long refId = REF_ID_SEQ.incrementAndGet();
-        long bucketId = com.betterschool.marketing.types.common.SnowflakeIdGenerator.nextId();
+        String bucketId = com.betterschool.marketing.types.id.UuidIdGenerator.INSTANCE.nextId();
         jdbcTemplate.update("""
                         INSERT INTO draw_count_bucket (bucket_id, user_id, amount, remain, expire_at,
                                                        reason_type, ref_id, create_time, update_time)
@@ -253,7 +253,7 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
     }
 
     /** 确认收货（票 14）：走 HTTP 入口，{@code id} = draw_record.record_id */
-    protected JsonNode confirmReceived(String userId, long recordId) {
+    protected JsonNode confirmReceived(String userId, String recordId) {
         return postJson("/api/lottery/my-prizes/" + recordId + "/receive", tokenOf(userId), "{}");
     }
 
@@ -263,35 +263,36 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
      * 投一条 {@code bs-lottery-drawn}：构造 broker 会投递的那份 JSON 再走消费者真实解析路径
      * （测试栈没有 broker，消费侧当普通 Bean 调用；真 MQ 链路归联调）。自动从库里补齐奖品字段。
      */
-    protected void publishLotteryDrawn(long recordId) {
+    protected void publishLotteryDrawn(String recordId) {
         lotteryShippingConsumer.onMessage(drawnPayloadOf(recordId));
     }
 
     /** 手搓一条中奖事件（记录不存在等场景用不了「从库里读字段」的那条路） */
-    protected void publishLotteryDrawnRaw(long recordId, String userId, String prizeType, Integer pointsAmount) {
+    protected void publishLotteryDrawnRaw(String recordId, String userId, String prizeType, Integer pointsAmount) {
         lotteryShippingConsumer.onMessage(
-                "{\"recordId\":%d,\"userId\":\"%s\",\"prizeId\":1,\"prizeType\":\"%s\",\"pointsAmount\":%s}"
+                "{\"recordId\":%s,\"userId\":\"%s\",\"prizeId\":1,\"prizeType\":\"%s\",\"pointsAmount\":%s}"
                         .formatted(recordId, userId, prizeType, pointsAmount == null ? "null" : pointsAmount));
     }
 
     /** 与 outbox 里那份同形状的 JSON（从 draw_record 现读字段，避免用例各写一份字面量） */
-    protected String drawnPayloadOf(long recordId) {
+    protected String drawnPayloadOf(String recordId) {
         Map<String, Object> record = jdbcTemplate.queryForMap(
                 "SELECT user_id, award_id, award_type, inv_id FROM draw_record WHERE record_id = ?", recordId);
         Integer pointsAmount = record.get("inv_id") == null ? null
                 : jdbcTemplate.query("SELECT value FROM virtual_inventory_quota WHERE inv_id = ? AND type = 'POINTS'",
                         rs -> rs.next() ? rs.getInt(1) : null, record.get("inv_id"));
-        return "{\"recordId\":%d,\"userId\":\"%s\",\"prizeId\":%d,\"prizeType\":\"%s\",\"pointsAmount\":%s}"
+        // uuid-biz-id 票 07：recordId / prizeId 已是 UUID 字符串，payload 里按字符串（带引号）序列化
+        return "{\"recordId\":\"%s\",\"userId\":\"%s\",\"prizeId\":\"%s\",\"prizeType\":\"%s\",\"pointsAmount\":%s}"
                 .formatted(recordId, record.get("user_id"),
-                        ((Number) record.get("award_id")).longValue(), record.get("award_type"),
+                        record.get("award_id"), record.get("award_type"),
                         pointsAmount == null ? "null" : pointsAmount);
     }
 
-    protected String stateOf(long recordId) {
+    protected String stateOf(String recordId) {
         return jdbcTemplate.queryForObject("SELECT state FROM draw_record WHERE record_id = ?", String.class, recordId);
     }
 
-    protected int detailCountOf(long recordId, String type) {
+    protected int detailCountOf(String recordId, String type) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM draw_record_detail WHERE record_id = ? AND type = ?", Integer.class,
                 recordId, type);
@@ -318,7 +319,7 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
         return count == null ? 0 : count;
     }
 
-    protected Map<String, Object> quotaOf(long invId) {
+    protected Map<String, Object> quotaOf(String invId) {
         return jdbcTemplate.queryForMap(
                 "SELECT surplus_qty, waiting_qty, issued_qty FROM physical_marketing_quota WHERE inv_id = ?", invId);
     }
@@ -373,21 +374,21 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
                         + " FROM draw_record WHERE user_id = ? ORDER BY id DESC LIMIT 1", userId);
     }
 
-    protected int drawDetailCountOf(long recordId) {
+    protected int drawDetailCountOf(String recordId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM draw_record_detail WHERE record_id = ?", Integer.class, recordId);
         return count == null ? 0 : count;
     }
 
     /** 预扣明细行数（state 列已随 D9 形态删除：明细存在即已提交，不再分未合并/已合并） */
-    protected int virtualDetailCount(long invId) {
+    protected int virtualDetailCount(String invId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM virtual_inventory_quota_detail WHERE inv_id = ?",
                 Integer.class, invId);
         return count == null ? 0 : count;
     }
 
-    protected int quotaDetailCount(long invId) {
+    protected int quotaDetailCount(String invId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM physical_marketing_quota_detail WHERE inv_id = ?",
                 Integer.class, invId);
@@ -395,7 +396,7 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
     }
 
     /** 虚拟台账已占用份数（票 06 起 Redis 桶消失，台账三列是唯一真相） */
-    protected long virtualIssuedQtyOf(long invId) {
+    protected long virtualIssuedQtyOf(String invId) {
         Long issued = jdbcTemplate.queryForObject(
                 "SELECT issued_qty FROM virtual_inventory_quota WHERE inv_id = ?", Long.class, invId);
         return issued == null ? 0 : issued;
@@ -409,7 +410,7 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
     }
 
     /** 黑名单用户集合由风控侧写入（本域无黑名单用户表），用例自造 */
-    protected void blacklistUser(long strategyId, String userId) {
+    protected void blacklistUser(String strategyId, String userId) {
         redissonClient.getBucket("bs:raffle:blacklist:user:" + strategyId + ":" + userId,
                 org.redisson.client.codec.StringCodec.INSTANCE).set("exist");
     }

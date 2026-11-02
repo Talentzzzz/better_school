@@ -39,7 +39,7 @@ public class RaffleShippingCase {
      * 中奖事件驱动的发货：实物档**先**做库存兑换确认、**再**推进状态到已发货；
      * 虚拟 / 次数档只推进状态（入账由消费同一事件的积分域负责）。
      */
-    public ShippingResultVO shipAfterDraw(String userId, Long recordId) {
+    public ShippingResultVO shipAfterDraw(String userId, String recordId) {
         ShippingPlanVO plan = raffleShippingService.planShipAfterDraw(userId, recordId);
         if (!plan.isActive()) {
             // 重复投递 / 已终态 / 谢谢参与 / 查无记录：三步都不做

@@ -20,5 +20,5 @@ public class PointsChangedMessage {
     /** LOTTERY_WIN / REDEEM_DRAW_COUNT / REDEEM_PRIZE */
     private String reasonType;
     /** 来源业务 id（抽奖记录 id / 兑换单 id） */
-    private Long refId;
+    private String refId;
 }

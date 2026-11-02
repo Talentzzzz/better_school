@@ -21,6 +21,16 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  */
 class MarketingNoticeIntegrationTest extends CommunityApiTestBase {
 
+    // uuid-biz-id 票 07：营销域业务 ID 已 UUID 字符串化，事件体 recordId/prizeId/refId 均按真实 wire 形状（UUID 串）构造
+    private static final String REC_201 = "00000000-0000-4000-8000-000000000201";
+    private static final String REC_202 = "00000000-0000-4000-8000-000000000202";
+    private static final String REC_203 = "00000000-0000-4000-8000-000000000203";
+    private static final String PRIZE_11 = "00000000-0000-4000-8000-000000000011";
+    private static final String PRIZE_12 = "00000000-0000-4000-8000-000000000012";
+    private static final String PRIZE_13 = "00000000-0000-4000-8000-000000000013";
+    private static final String REF_301 = "00000000-0000-4000-8000-000000000301";
+    private static final String REF_401 = "00000000-0000-4000-8000-000000000401";
+
     @Autowired
     private LotteryDrawnConsumer lotteryDrawnConsumer;
     @Autowired
@@ -32,45 +42,45 @@ class MarketingNoticeIntegrationTest extends CommunityApiTestBase {
     void 积分档中奖事件落积分文案且重投只一条() {
         String userId = registerAndLogin("13800009003", "中奖用户").userId();
         // 票 13 起抽奖域的虚拟档口径是 VIRTUAL（旧值是 POINTS）
-        Map<String, Object> event = Map.of("recordId", 201L, "userId", userId,
-                "prizeId", 11L, "prizeType", "VIRTUAL", "pointsAmount", 100);
+        Map<String, Object> event = Map.of("recordId", REC_201, "userId", userId,
+                "prizeId", PRIZE_11, "prizeType", "VIRTUAL", "pointsAmount", 100);
 
         lotteryDrawnConsumer.onMessage(json(event));
         lotteryDrawnConsumer.onMessage(json(event));
 
-        assertThat(noticeCount(userId, "LOTTERY_WON", 201L))
+        assertThat(noticeCount(userId, "LOTTERY_WON", REC_201))
                 .as("ref_id 取 recordId，重投不重复").isEqualTo(1);
-        String content = noticeContent(userId, "LOTTERY_WON", 201L);
+        String content = noticeContent(userId, "LOTTERY_WON", REC_201);
         assertThat(content).contains("100").contains("积分");
-        assertMarketingSystemNotice(userId, "LOTTERY_WON", "MARKETING:DRAWN:201");
+        assertMarketingSystemNotice(userId, "LOTTERY_WON", "MARKETING:DRAWN:" + REC_201);
     }
 
     @Test
     void 旧版积分档取值POINTS仍落积分文案() {
         String userId = registerAndLogin("13800009005", "旧版中奖用户").userId();
-        lotteryDrawnConsumer.onMessage(json(Map.of("recordId", 203L, "userId", userId,
-                "prizeId", 13L, "prizeType", "POINTS", "pointsAmount", 100)));
+        lotteryDrawnConsumer.onMessage(json(Map.of("recordId", REC_203, "userId", userId,
+                "prizeId", PRIZE_13, "prizeType", "POINTS", "pointsAmount", 100)));
 
-        String content = noticeContent(userId, "LOTTERY_WON", 203L);
+        String content = noticeContent(userId, "LOTTERY_WON", REC_203);
         assertThat(content).as("在途旧消息不落成实物文案").contains("100").contains("积分");
     }
 
     @Test
     void 实物档中奖事件落领取指引文案() {
         String userId = registerAndLogin("13800009004", "实物中奖用户").userId();
-        lotteryDrawnConsumer.onMessage(json(Map.of("recordId", 202L, "userId", userId,
-                "prizeId", 12L, "prizeType", "PHYSICAL", "pointsAmount", 0)));
+        lotteryDrawnConsumer.onMessage(json(Map.of("recordId", REC_202, "userId", userId,
+                "prizeId", PRIZE_12, "prizeType", "PHYSICAL", "pointsAmount", 0)));
 
-        String content = noticeContent(userId, "LOTTERY_WON", 202L);
+        String content = noticeContent(userId, "LOTTERY_WON", REC_202);
         assertThat(content).contains("实物奖品").contains("我的奖品");
     }
 
     @Test
     void 谢谢参与事件不落通知() {
         String userId = registerAndLogin("13800009005", "谢谢参与用户").userId();
-        lotteryDrawnConsumer.onMessage(json(Map.of("recordId", 203L, "userId", userId,
-                "prizeId", 13L, "prizeType", "THANKS", "pointsAmount", 0)));
-        assertThat(noticeCount(userId, "LOTTERY_WON", 203L)).isZero();
+        lotteryDrawnConsumer.onMessage(json(Map.of("recordId", REC_203, "userId", userId,
+                "prizeId", PRIZE_13, "prizeType", "THANKS", "pointsAmount", 0)));
+        assertThat(noticeCount(userId, "LOTTERY_WON", REC_203)).isZero();
     }
 
     // ---------- 积分变动事件：变动量 + 余额，正负都可 ----------
@@ -79,19 +89,19 @@ class MarketingNoticeIntegrationTest extends CommunityApiTestBase {
     void 积分入账与消费事件各落一条且文案带变动量与余额() {
         String userId = registerAndLogin("13800009006", "积分用户").userId();
         pointsChangedConsumer.onMessage(json(Map.of("userId", userId, "delta", 100,
-                "balanceAfter", 350, "reasonType", "LOTTERY_WIN", "refId", 301L)));
+                "balanceAfter", 350, "reasonType", "LOTTERY_WIN", "refId", REF_301)));
         pointsChangedConsumer.onMessage(json(Map.of("userId", userId, "delta", -50,
-                "balanceAfter", 300, "reasonType", "REDEEM_PRIZE", "refId", 401L)));
+                "balanceAfter", 300, "reasonType", "REDEEM_PRIZE", "refId", REF_401)));
 
-        assertThat(noticeContent(userId, "POINTS_CHANGED", 301L)).contains("+100").contains("350");
-        assertThat(noticeContent(userId, "POINTS_CHANGED", 401L)).contains("-50").contains("300");
-        assertMarketingSystemNotice(userId, "POINTS_CHANGED", "MARKETING:POINTS:LOTTERY_WIN:301");
-        assertThat(noticeCount(userId, "POINTS_CHANGED", 301L)).isEqualTo(1);
+        assertThat(noticeContent(userId, "POINTS_CHANGED", REF_301)).contains("+100").contains("350");
+        assertThat(noticeContent(userId, "POINTS_CHANGED", REF_401)).contains("-50").contains("300");
+        assertMarketingSystemNotice(userId, "POINTS_CHANGED", "MARKETING:POINTS:LOTTERY_WIN:" + REF_301);
+        assertThat(noticeCount(userId, "POINTS_CHANGED", REF_301)).isEqualTo(1);
 
         // 同一笔变动重投：dedup_key 幂等只一条
         pointsChangedConsumer.onMessage(json(Map.of("userId", userId, "delta", 100,
-                "balanceAfter", 350, "reasonType", "LOTTERY_WIN", "refId", 301L)));
-        assertThat(noticeCount(userId, "POINTS_CHANGED", 301L)).isEqualTo(1);
+                "balanceAfter", 350, "reasonType", "LOTTERY_WIN", "refId", REF_301)));
+        assertThat(noticeCount(userId, "POINTS_CHANGED", REF_301)).isEqualTo(1);
     }
 
     // ---------- 边界：残缺载荷静默丢弃 ----------
@@ -117,14 +127,14 @@ class MarketingNoticeIntegrationTest extends CommunityApiTestBase {
         }
     }
 
-    private int noticeCount(String userId, String type, long refId) {
+    private int noticeCount(String userId, String type, String refId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM notification WHERE user_id = ? AND type = ? AND ref_id = ?",
                 Integer.class, userId, type, refId);
         return count == null ? 0 : count;
     }
 
-    private String noticeContent(String userId, String type, long refId) {
+    private String noticeContent(String userId, String type, String refId) {
         return jdbcTemplate.queryForObject(
                 "SELECT content FROM notification WHERE user_id = ? AND type = ? AND ref_id = ?",
                 String.class, userId, type, refId);

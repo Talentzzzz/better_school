@@ -15,7 +15,7 @@ public class DrawRecordDetailEntity {
     /** 冗余自 draw_record，按人查动作历史 */
     private String userId;
     /** 抽奖记录业务 ID（draw_record.record_id） */
-    private Long recordId;
+    private String recordId;
     /** 动作类型（{@link com.betterschool.marketing.domain.raffle.model.valobj.DrawRecordActionVO}） */
     private String type;
     private LocalDateTime createTime;

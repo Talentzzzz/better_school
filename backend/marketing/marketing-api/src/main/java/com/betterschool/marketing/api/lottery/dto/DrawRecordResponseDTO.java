@@ -13,8 +13,8 @@ import java.time.LocalDateTime;
 @Data
 public class DrawRecordResponseDTO {
 
-    private Long recordId;
-    private Long prizeId;
+    private String recordId;
+    private String prizeId;
     private Integer tier;
     private String name;
     /** VIRTUAL / PHYSICAL / THANKS */

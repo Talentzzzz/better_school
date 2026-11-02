@@ -37,5 +37,5 @@ public interface IPointsDeductPort {
     /**
      * 兑换扣分（幂等键 = refId，即兑换单 id）：FIFO 跨桶扣减，凑不够返回「积分不足」而不扣任何一行。
      */
-    PointsDeductOutcome deduct(String userId, int amount, Long refId);
+    PointsDeductOutcome deduct(String userId, int amount, String refId);
 }

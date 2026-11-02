@@ -25,21 +25,21 @@ public class RaffleShippingConsumerIntegrationTest extends RaffleApiTestBase {
     private static final String USER = "user-3201";
     private static final String OTHER_USER = "user-3202";
 
-    private void onlyAwardRate(long awardId) {
+    private void onlyAwardRate(String awardId) {
         jdbcTemplate.update("UPDATE draw_strategy_award SET award_rate = 0 WHERE type = 'normal'");
         jdbcTemplate.update("UPDATE draw_strategy_award SET award_rate = 1 WHERE award_id = ?", awardId);
         raffleWarmupService.warmupByStrategyId(STRATEGY_ID);
     }
 
     /** 抽一注并返回 recordId */
-    private long drawAndGetRecordId(String userId, String token) {
+    private String drawAndGetRecordId(String userId, String token) {
         JsonNode response = draw(userId, token);
         TestingEnvironment.assertSuccess(response, "单抽");
-        return response.path("data").path("recordId").asLong();
+        return response.path("data").path("recordId").asText();
     }
 
     /** 该记录的实物兑换确认行数（{@code type = 2}）：行本身是唯一事实 */
-    private int claimRowCount(long recordId) {
+    private int claimRowCount(String recordId) {
         Integer count = jdbcTemplate.queryForObject("""
                         SELECT COUNT(*) FROM physical_marketing_quota_detail
                         WHERE inv_id = ? AND type = ? AND biz_id = ?
@@ -54,7 +54,7 @@ public class RaffleShippingConsumerIntegrationTest extends RaffleApiTestBase {
         prepareDefaultScenario();
         onlyAwardRate(AWARD_POINTS);
         giveChances(USER, 1);
-        long recordId = drawAndGetRecordId(USER, "token-virtual");
+        String recordId = drawAndGetRecordId(USER, "token-virtual");
         assertThat(stateOf(recordId)).as("抽中时停在待兑换").isEqualTo("待兑换");
 
         publishLotteryDrawn(recordId);
@@ -72,7 +72,7 @@ public class RaffleShippingConsumerIntegrationTest extends RaffleApiTestBase {
         prepareDefaultScenario();
         onlyAwardRate(AWARD_POINTS);
         giveChances(USER, 1);
-        long recordId = drawAndGetRecordId(USER, "token-virtual-replay");
+        String recordId = drawAndGetRecordId(USER, "token-virtual-replay");
 
         publishLotteryDrawn(recordId);
         long detailCountAfterFirst = drawDetailCountOf(recordId);
@@ -91,7 +91,7 @@ public class RaffleShippingConsumerIntegrationTest extends RaffleApiTestBase {
         prepareDefaultScenario();
         onlyAwardRate(AWARD_BAG);
         giveChances(USER, 1);
-        long recordId = drawAndGetRecordId(USER, "token-physical");
+        String recordId = drawAndGetRecordId(USER, "token-physical");
 
         // 预扣返回即台账已动（票 06）：waiting 已增，无需再等合并
         assertThat(quotaOf(QUOTA_INV_ID).get("waiting_qty")).as("预扣已翻进 waiting").isEqualTo(1L);
@@ -124,7 +124,7 @@ public class RaffleShippingConsumerIntegrationTest extends RaffleApiTestBase {
         prepareDefaultScenario();
         onlyAwardRate(AWARD_BAG);
         giveChances(USER, 1);
-        long recordId = drawAndGetRecordId(USER, "token-physical-replay");
+        String recordId = drawAndGetRecordId(USER, "token-physical-replay");
 
         publishLotteryDrawn(recordId);
         assertThat(quotaOf(QUOTA_INV_ID).get("issued_qty")).as("首次确认即转移").isEqualTo(1L);
@@ -147,7 +147,7 @@ public class RaffleShippingConsumerIntegrationTest extends RaffleApiTestBase {
         prepareDefaultScenario();
         onlyAwardRate(AWARD_BAG);
         giveChances(USER, 1);
-        long recordId = drawAndGetRecordId(USER, "token-receive-guard");
+        String recordId = drawAndGetRecordId(USER, "token-receive-guard");
 
         // 还在待兑换：不可确认收货
         TestingEnvironment.assertFailure(confirmReceived(USER, recordId), "4314", "该奖品不可确认收货");
@@ -167,8 +167,8 @@ public class RaffleShippingConsumerIntegrationTest extends RaffleApiTestBase {
     @DisplayName("记录不存在的中奖事件：消费不抛异常、不落任何明细（重投也不会成功）")
     void ship_unknownRecord_isSkipped() {
         prepareDefaultScenario();
-        publishLotteryDrawnRaw(999_999L, USER, "VIRTUAL", 20);
+        publishLotteryDrawnRaw("999999", USER, "VIRTUAL", 20);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM draw_record_detail WHERE record_id = ?",
-                Integer.class, 999_999L)).isZero();
+                Integer.class, "999999")).isZero();
     }
 }

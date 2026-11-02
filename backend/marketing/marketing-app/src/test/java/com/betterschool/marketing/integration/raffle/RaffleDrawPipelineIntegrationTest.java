@@ -31,7 +31,7 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
     private static final String TOKEN = "b6d4f0a0-1111-4bbb-8ccc-000000000001";
 
     /** 把概率变成确定性：全部 normal 档归零后只留目标档 1.0，重预热即必中该档 */
-    private void onlyAwardRate(long awardId) {
+    private void onlyAwardRate(String awardId) {
         jdbcTemplate.update("UPDATE draw_strategy_award SET award_rate = 0 WHERE type = 'normal'");
         jdbcTemplate.update("UPDATE draw_strategy_award SET award_rate = 1 WHERE award_id = ?", awardId);
         raffleWarmupService.warmupByStrategyId(STRATEGY_ID);
@@ -43,7 +43,7 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
      * 若让两线程同时走扣次，败者在赢家落 draw_record 之前可能拿到 4303，用例会假红。
      */
     private void preConsumeDrawCount(String userId, String token) {
-        long recordId = IdempotencyKeys.of(userId, token);
+        String recordId = IdempotencyKeys.of(userId, token);
         Long bucketId = jdbcTemplate.queryForObject(
                 "SELECT bucket_id FROM draw_count_bucket WHERE user_id = ?", Long.class, userId);
         jdbcTemplate.update("""
@@ -90,9 +90,9 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
 
         TestingEnvironment.assertSuccess(response, "单抽");
         JsonNode data = response.path("data");
-        assertThat(data.path("recordId").asLong()).as("对外 recordId").isPositive();
+        assertThat(data.path("recordId").asText()).as("对外 recordId 是 UUID 字符串").matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
         assertThat(data.path("prizeType").asText()).isEqualTo("VIRTUAL");
-        assertThat(data.path("prizeId").asLong()).isEqualTo(AWARD_POINTS);
+        assertThat(data.path("prizeId").asText()).isEqualTo(AWARD_POINTS);
         assertThat(data.path("tier").asInt()).isEqualTo(3);
         assertThat(data.path("name").asText()).isEqualTo("20 积分");
         assertThat(data.path("pointsAmount").asInt()).as("积分档面额取自台账").isEqualTo(20);
@@ -101,12 +101,12 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
         assertThat(virtualIssuedQtyOf(POINTS_INV_ID)).as("预扣返回即台账已动（issued +1）").isEqualTo(1L);
         assertThat(virtualDetailCount(POINTS_INV_ID)).as("明细一行").isEqualTo(1);
         assertThat(drawRecordCountOf(USER)).isEqualTo(1);
-        long recordId = data.path("recordId").asLong();
+        String recordId = data.path("recordId").asText();
         assertThat(drawDetailCountOf(recordId)).as("DRAW 动作明细一行").isEqualTo(1);
         var record = jdbcTemplate.queryForMap(
                 "SELECT state, inv_id FROM draw_record WHERE record_id = ?", recordId);
         assertThat(record.get("state")).isEqualTo("待兑换");
-        assertThat(((Number) record.get("inv_id")).longValue()).isEqualTo(POINTS_INV_ID);
+        assertThat((String) record.get("inv_id")).isEqualTo(POINTS_INV_ID);
     }
 
     @Test
@@ -167,8 +167,8 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
     @DisplayName("黑名单拦截：强制出 blacklist 奖品位，无库存预扣")
     void draw_blacklist_shortCircuits() {
         prepareDefaultScenario();
-        long blacklistAward = 8899L;
-        insertAward(blacklistAward, "黑名单安慰", "VIRTUAL", "0.0000", 9, 0, "blacklist");
+        String blacklistAward = "8899";
+        insertAward(blacklistAward, "黑名单安慰", "VIRTUAL", "0.0000", 9, "0", "blacklist");
         raffleWarmupService.warmupByStrategyId(STRATEGY_ID);
         blacklistUser(STRATEGY_ID, USER);
         giveChances(USER, 1);
@@ -176,7 +176,7 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
         JsonNode response = draw(USER, TOKEN);
 
         TestingEnvironment.assertSuccess(response, "单抽");
-        assertThat(response.path("data").path("prizeId").asLong()).isEqualTo(blacklistAward);
+        assertThat(response.path("data").path("prizeId").asText()).isEqualTo(blacklistAward);
         assertThat(virtualDetailCount(POINTS_INV_ID)).as("黑名单无库存预扣").isZero();
     }
 
@@ -193,7 +193,7 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
 
         TestingEnvironment.assertSuccess(response, "单抽");
         JsonNode data = response.path("data");
-        assertThat(data.path("prizeId").asLong()).as("落兜底奖品位").isEqualTo(AWARD_FALLBACK);
+        assertThat(data.path("prizeId").asText()).as("落兜底奖品位").isEqualTo(AWARD_FALLBACK);
         assertThat(data.path("name").asText()).isEqualTo("5 积分安慰奖");
         assertThat(data.path("pointsAmount").asInt()).isEqualTo(5);
         assertThat(quotaDetailCount(QUOTA_INV_ID)).as("配额段零写入").isZero();
@@ -215,7 +215,7 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
 
         TestingEnvironment.assertSuccess(response, "单抽");
         JsonNode data = response.path("data");
-        assertThat(data.path("prizeId").asLong()).as("落兜底奖品位").isEqualTo(AWARD_FALLBACK);
+        assertThat(data.path("prizeId").asText()).as("落兜底奖品位").isEqualTo(AWARD_FALLBACK);
         assertThat(data.path("pointsAmount").asInt()).isEqualTo(5);
         assertThat(virtualDetailCount(POINTS_INV_ID)).as("积分池段零写入").isZero();
         assertThat(virtualIssuedQtyOf(POINTS_INV_ID)).isZero();
@@ -235,9 +235,9 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
         JsonNode first = draw(USER, TOKEN);
         JsonNode replay = draw(USER, TOKEN);
 
-        assertThat(replay.path("data").path("recordId").asLong())
+        assertThat(replay.path("data").path("recordId").asText())
                 .as("同一 token 同一记录")
-                .isEqualTo(first.path("data").path("recordId").asLong());
+                .isEqualTo(first.path("data").path("recordId").asText());
         assertThat(remainingChancesOf(USER)).as("次数只扣一次").isEqualTo(2);
         assertThat(virtualIssuedQtyOf(POINTS_INV_ID)).as("净扣一份").isEqualTo(1L);
         assertThat(virtualDetailCount(POINTS_INV_ID)).as("明细只有一行").isEqualTo(1);
@@ -254,10 +254,10 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
 
         List<JsonNode> responses = drawConcurrently(USER, TOKEN);
 
-        long recordId = responses.get(0).path("data").path("recordId").asLong();
+        String recordId = responses.get(0).path("data").path("recordId").asText();
         for (JsonNode response : responses) {
             TestingEnvironment.assertSuccess(response, "并发双击");
-            assertThat(response.path("data").path("recordId").asLong()).as("同一 token 回放同一记录")
+            assertThat(response.path("data").path("recordId").asText()).as("同一 token 回放同一记录")
                     .isEqualTo(recordId);
         }
         assertThat(virtualDetailCount(POINTS_INV_ID)).as("业务唯一键保证明细只有一行").isEqualTo(1);
@@ -279,10 +279,10 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
 
         List<JsonNode> responses = drawConcurrently(USER, TOKEN);
 
-        long recordId = responses.get(0).path("data").path("recordId").asLong();
+        String recordId = responses.get(0).path("data").path("recordId").asText();
         for (JsonNode response : responses) {
             TestingEnvironment.assertSuccess(response, "并发双击");
-            assertThat(response.path("data").path("recordId").asLong()).as("同一 token 回放同一记录")
+            assertThat(response.path("data").path("recordId").asText()).as("同一 token 回放同一记录")
                     .isEqualTo(recordId);
         }
         assertThat(quotaDetailCount(QUOTA_INV_ID)).as("业务唯一键保证明细只有一行").isEqualTo(1);
@@ -307,8 +307,8 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
         JsonNode first = draw(USER, TOKEN);
         JsonNode second = draw(USER, TOKEN + "-2");
 
-        assertThat(second.path("data").path("recordId").asLong())
-                .isNotEqualTo(first.path("data").path("recordId").asLong());
+        assertThat(second.path("data").path("recordId").asText())
+                .isNotEqualTo(first.path("data").path("recordId").asText());
         assertThat(remainingChancesOf(USER)).isZero();
         assertThat(drawRecordCountOf(USER)).isEqualTo(2);
     }
@@ -324,9 +324,9 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
         JsonNode response = draw(USER, TOKEN);
 
         TestingEnvironment.assertSuccess(response, "单抽");
-        assertThat(response.path("data").path("recordId").asLong()).isPositive();
+        assertThat(response.path("data").path("recordId").asText()).matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
         assertThat(drawRecordCountOf(USER)).isEqualTo(1);
-        assertThat(drawDetailCountOf(response.path("data").path("recordId").asLong())).isEqualTo(1);
+        assertThat(drawDetailCountOf(response.path("data").path("recordId").asText())).isEqualTo(1);
     }
 
     @Test

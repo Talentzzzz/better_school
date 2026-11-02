@@ -26,12 +26,8 @@ public class CacheWarmupJob {
             XxlJobHelper.handleFail("缺少 activityId 参数");
             return;
         }
-        try {
-            raffleWarmupService.warmupByActivityId(Long.parseLong(param.trim()));
-        } catch (NumberFormatException e) {
-            XxlJobHelper.handleFail("参数格式错误（应为 activityId）：" + param);
-            return;
-        }
+        // activityId 已 UUID 化（uuid-biz-id 票 07）：参数直接以字符串传递，不再做数值解析
+        raffleWarmupService.warmupByActivityId(param.trim());
         log.info("xxl-job: 抽奖决策表预热成功 activityId={}", param.trim());
     }
 }

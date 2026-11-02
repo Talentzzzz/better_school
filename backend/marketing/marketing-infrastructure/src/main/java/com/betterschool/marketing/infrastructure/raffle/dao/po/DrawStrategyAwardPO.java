@@ -10,14 +10,14 @@ import java.time.LocalDateTime;
 public class DrawStrategyAwardPO {
 
     private Long id;
-    private Long strategyId;
-    private Long awardId;
+    private String strategyId;
+    private String awardId;
     private String awardName;
     private String awardDesc;
     private String awardType;
     private BigDecimal awardRate;
     private Integer level;
-    private Long invId;
+    private String invId;
     private String type;
     private Integer sort;
     private LocalDateTime createTime;

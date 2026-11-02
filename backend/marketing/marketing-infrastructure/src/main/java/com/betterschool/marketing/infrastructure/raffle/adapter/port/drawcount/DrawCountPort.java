@@ -16,12 +16,12 @@ public class DrawCountPort implements IDrawCountPort {
     private final IDrawCountAccountService drawCountAccountService;
 
     @Override
-    public boolean deductForDraw(String userId, Long recordId) {
+    public boolean deductForDraw(String userId, String recordId) {
         return drawCountAccountService.deductForDraw(userId, recordId);
     }
 
     @Override
-    public boolean creditForRedeem(String userId, Long redeemOrderId, int amount) {
+    public boolean creditForRedeem(String userId, String redeemOrderId, int amount) {
         return drawCountAccountService.creditForRedeem(userId, redeemOrderId, amount);
     }
 

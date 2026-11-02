@@ -4,7 +4,7 @@ import com.betterschool.marketing.domain.points.service.IPointsAccountService;
 import com.betterschool.marketing.integration.support.RaffleApiTestBase;
 import com.betterschool.marketing.integration.support.TestingEnvironment;
 import com.betterschool.marketing.types.common.IdempotencyKeys;
-import com.betterschool.marketing.types.common.SnowflakeIdGenerator;
+import com.betterschool.marketing.types.id.UuidIdGenerator;
 import com.betterschool.marketing.types.points.PointsReasonType;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
@@ -60,8 +60,8 @@ public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
 
         JsonNode prizes = prizeCatalog().path("data");
         assertThat(prizes).hasSize(4);
-        var byAward = new java.util.HashMap<Long, JsonNode>();
-        prizes.forEach(prize -> byAward.put(prize.path("prizeId").asLong(), prize));
+        var byAward = new java.util.HashMap<String, JsonNode>();
+        prizes.forEach(prize -> byAward.put(prize.path("prizeId").asText(), prize));
 
         assertThat(byAward.get(AWARD_POINTS).path("type").asText()).isEqualTo("VIRTUAL");
         assertThat(byAward.get(AWARD_POINTS).path("pointsAmount").asInt()).isEqualTo(20);
@@ -96,14 +96,14 @@ public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
     @DisplayName("中奖记录：过滤谢谢参与、create_time DESC、只看得见自己")
     void records_filteredAndOwn() {
         prepareDefaultScenario();
-        long winRecordId = insertDrawRecord(USER, LocalDateTime.now().minusHours(2), AWARD_POINTS, "VIRTUAL");
+        String winRecordId = insertDrawRecord(USER, LocalDateTime.now().minusHours(2), AWARD_POINTS, "VIRTUAL");
         insertDrawRecord(USER, LocalDateTime.now().minusHours(1), AWARD_THANKS, "THANKS");
         insertDrawRecord(OTHER, LocalDateTime.now(), AWARD_BAG, "PHYSICAL");
 
         JsonNode records = records(USER, 1, 10).path("data");
         assertThat(records.path("total").asInt()).as("谢谢参与被过滤").isEqualTo(1);
         JsonNode row = records.path("list").get(0);
-        assertThat(row.path("recordId").asLong()).isEqualTo(winRecordId);
+        assertThat(row.path("recordId").asText()).isEqualTo(winRecordId);
         assertThat(row.path("prizeType").asText()).isEqualTo("VIRTUAL");
         assertThat(row.path("pointsAmount").asInt()).isEqualTo(20);
     }
@@ -112,7 +112,7 @@ public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
     @DisplayName("我的奖品：状态过滤映射四段状态，claimedAt 取 EXCHANGE 动作时刻")
     void myPrizes_statusTabs() {
         prepareDefaultScenario();
-        long pendingId = insertDrawRecord(USER, LocalDateTime.now().minusHours(1), AWARD_BAG, "PHYSICAL");
+        String pendingId = insertDrawRecord(USER, LocalDateTime.now().minusHours(1), AWARD_BAG, "PHYSICAL");
         insertDrawRecord(USER, LocalDateTime.now(), AWARD_POINTS, "VIRTUAL", "已完成", "COMPLETE");
 
         assertThat(myPrizes(USER, "PENDING").path("data").path("total").asInt()).isEqualTo(1);
@@ -144,13 +144,13 @@ public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
     @DisplayName("兑换次数成功：积分扣 + 次数入账，返回兑换单 id 与兑后余额")
     void exchangeDrawCount_success() {
         prepareDefaultScenario();
-        pointsAccountService.addForLotteryWin(USER, SnowflakeIdGenerator.nextId(), 500);
+        pointsAccountService.addForLotteryWin(USER, UuidIdGenerator.INSTANCE.nextId(), 500);
 
         JsonNode response = exchangeDrawCount(USER, EXCHANGE_TOKEN);
 
         TestingEnvironment.assertSuccess(response, "兑换次数");
         JsonNode data = response.path("data");
-        assertThat(data.path("redeemOrderId").asLong()).isPositive();
+        assertThat(data.path("redeemOrderId").asText()).matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
         assertThat(data.path("drawCount").asInt()).isEqualTo(1);
         assertThat(remainingChancesOf(USER)).isEqualTo(1);
         Integer pointsBalance = pointsAccountService.getBalance(USER);
@@ -168,16 +168,16 @@ public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
     @DisplayName("兑换次数幂等：同 token 重放只入账一次，积分只扣一次、次数只加一次")
     void exchangeDrawCount_sameTokenReplay_isIdempotent() {
         prepareDefaultScenario();
-        pointsAccountService.addForLotteryWin(USER, SnowflakeIdGenerator.nextId(), 500);
+        pointsAccountService.addForLotteryWin(USER, UuidIdGenerator.INSTANCE.nextId(), 500);
 
         JsonNode first = exchangeDrawCount(USER, EXCHANGE_TOKEN);
         JsonNode replay = exchangeDrawCount(USER, EXCHANGE_TOKEN);
 
         TestingEnvironment.assertSuccess(first, "兑换次数");
         TestingEnvironment.assertSuccess(replay, "兑换次数重放");
-        assertThat(replay.path("data").path("redeemOrderId").asLong())
+        assertThat(replay.path("data").path("redeemOrderId").asText())
                 .as("同一 token 同一单号（确定性映射，不落重放表）")
-                .isEqualTo(first.path("data").path("redeemOrderId").asLong());
+                .isEqualTo(first.path("data").path("redeemOrderId").asText());
         assertThat(remainingChancesOf(USER)).as("次数只加一次").isEqualTo(1);
         assertThat(pointsAccountService.getBalance(USER)).as("积分只扣一次").isEqualTo(400);
         Integer bucketRows = jdbcTemplate.queryForObject(
@@ -194,7 +194,7 @@ public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
     @DisplayName("积分不足：LOTTERY_INSUFFICIENT_POINTS，一分不扣、一桶不加")
     void exchangeDrawCount_insufficientPoints() {
         prepareDefaultScenario();
-        pointsAccountService.addForLotteryWin(USER, SnowflakeIdGenerator.nextId(), 50);
+        pointsAccountService.addForLotteryWin(USER, UuidIdGenerator.INSTANCE.nextId(), 50);
 
         TestingEnvironment.assertFailure(exchangeDrawCount(USER, EXCHANGE_TOKEN), "4306", "积分不足");
 
@@ -206,11 +206,11 @@ public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
     @DisplayName("兑换中间态可重试收敛：积分已扣而次数未入账时，带同一 token 重试只补入账、不重复扣分")
     void exchangeDrawCount_retryAfterDeductOnly_converges() {
         prepareDefaultScenario();
-        pointsAccountService.addForLotteryWin(USER, SnowflakeIdGenerator.nextId(), 500);
+        pointsAccountService.addForLotteryWin(USER, UuidIdGenerator.INSTANCE.nextId(), 500);
 
         // 模拟「扣分已提交、入账还没发生」（进程崩溃 / 次数域短暂故障）：只走积分侧那半边，
         // ref_id 用与兑换同一个确定性单号——正是 case 层两步共用的幂等键
-        long redeemOrderId = IdempotencyKeys.of(USER, EXCHANGE_TOKEN);
+        String redeemOrderId = IdempotencyKeys.of(USER, EXCHANGE_TOKEN);
         var deducted = pointsAccountService.deduct(USER, 100, PointsReasonType.REDEEM_DRAW_COUNT, redeemOrderId);
         assertThat(deducted.isSuccess()).isTrue();
         assertThat(pointsAccountService.getBalance(USER)).isEqualTo(400);
@@ -219,7 +219,7 @@ public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
         // 客户端带同一 token 重试：第一步幂等跳过、第二步补上
         JsonNode retried = exchangeDrawCount(USER, EXCHANGE_TOKEN);
         TestingEnvironment.assertSuccess(retried, "兑换次数重试");
-        assertThat(retried.path("data").path("redeemOrderId").asLong()).isEqualTo(redeemOrderId);
+        assertThat(retried.path("data").path("redeemOrderId").asText()).isEqualTo(redeemOrderId);
         assertThat(retried.path("data").path("drawCount").asInt()).isEqualTo(1);
         assertThat(pointsAccountService.getBalance(USER)).as("重试不重复扣分").isEqualTo(400);
         assertThat(remainingChancesOf(USER)).isEqualTo(1);
@@ -244,30 +244,30 @@ public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
     // ---- 夹具 ----
 
     /** 把概率变成确定性：全部 normal 档归零后只留目标档 1.0，重预热即必中该档 */
-    private void onlyAwardRateFor(long awardId) {
+    private void onlyAwardRateFor(String awardId) {
         jdbcTemplate.update("UPDATE draw_strategy_award SET award_rate = 0 WHERE type = 'normal'");
         jdbcTemplate.update("UPDATE draw_strategy_award SET award_rate = 1 WHERE award_id = ?", awardId);
         raffleWarmupService.warmupByStrategyId(STRATEGY_ID);
     }
 
-    private long insertDrawRecord(String userId, LocalDateTime createTime) {
+    private String insertDrawRecord(String userId, LocalDateTime createTime) {
         return insertDrawRecord(userId, createTime, AWARD_BAG, "PHYSICAL");
     }
 
     /** 直接塞一行 draw_record（快照列照新模型），返回 recordId；extraType 追加一条动作明细 */
-    private long insertDrawRecord(String userId, LocalDateTime createTime, long awardId, String awardType) {
+    private String insertDrawRecord(String userId, LocalDateTime createTime, String awardId, String awardType) {
         return insertDrawRecord(userId, createTime, awardId, awardType, "待兑换", null);
     }
 
-    private long insertDrawRecord(String userId, LocalDateTime createTime, long awardId, String awardType,
+    private String insertDrawRecord(String userId, LocalDateTime createTime, String awardId, String awardType,
                                   String state, String extraType) {
-        long recordId = SnowflakeIdGenerator.nextId();
-        long invId = awardId == AWARD_POINTS ? POINTS_INV_ID : awardId == AWARD_BAG ? QUOTA_INV_ID : 0L;
+        String recordId = UuidIdGenerator.INSTANCE.nextId();
+        String invId = AWARD_POINTS.equals(awardId) ? POINTS_INV_ID : AWARD_BAG.equals(awardId) ? QUOTA_INV_ID : "0";
         jdbcTemplate.update("""
                         INSERT INTO draw_record (record_id, user_id, activity_id, strategy_id, award_id,
                                                  award_name, award_desc, award_type, level, inv_id, state,
                                                  create_time, update_time)
-                        VALUES (?, ?, ?, ?, ?, 'x', NULL, ?, 1, NULLIF(?, 0), ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, 'x', NULL, ?, 1, NULLIF(?, '0'), ?, ?, ?)
                         """,
                 recordId, userId, ACTIVITY_ID, STRATEGY_ID, awardId, awardType, invId, state,
                 java.sql.Timestamp.valueOf(createTime), java.sql.Timestamp.valueOf(createTime));

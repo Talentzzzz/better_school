@@ -12,7 +12,7 @@ public class Constants {
     /**
      * 概率表 key：{@code RAFFLE_TABLE_KEY + strategyId + ":default"} 与
      * {@code RAFFLE_TABLE_KEY + strategyId + ":weight:" + count}。
-     * 结构为 Redisson RMap&lt;Integer 槽位, Long awardId&gt;，恒 10000 槽（概率 ×10000 口径），预热整体重建。
+     * 结构为 Redisson RMap&lt;Integer 槽位, String awardId&gt;，恒 10000 槽（概率 ×10000 口径），预热整体重建。
      */
     public final static String RAFFLE_TABLE_KEY = RAFFLE_KEY_PREFIX + "table:";
 
@@ -43,12 +43,12 @@ public class Constants {
     public final static int DRAW_COUNT_EXCHANGE_PRICE = 100;
 
     /** 默认概率表 key（RMap 槽位 → awardId，恒 10000 槽） */
-    public static String defaultTableKey(Long strategyId) {
+    public static String defaultTableKey(String strategyId) {
         return RAFFLE_TABLE_KEY + strategyId + ":default";
     }
 
     /** 权重档概率表 key（档内 award_rate 归一化，恒 10000 槽） */
-    public static String weightTableKey(Long strategyId, Integer count) {
+    public static String weightTableKey(String strategyId, Integer count) {
         return RAFFLE_TABLE_KEY + strategyId + ":weight:" + count;
     }
 }

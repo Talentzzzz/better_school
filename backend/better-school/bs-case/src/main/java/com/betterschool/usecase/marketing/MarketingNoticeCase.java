@@ -40,7 +40,7 @@ public class MarketingNoticeCase {
                 ? "恭喜您在抽奖中抽中 " + message.getPointsAmount() + " 积分，已发放至您的积分账户"
                 : "恭喜您在抽奖中抽中实物奖品，可在活动页「我的奖品」中查看";
         notificationService.sendSystem(message.getUserId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.LOTTERY_WON,
-                "抽奖中奖", content, REF_TYPE_MARKETING, String.valueOf(message.getRecordId()),
+                "抽奖中奖", content, REF_TYPE_MARKETING, message.getRecordId(),
                 marketingDedupKey("DRAWN", message.getRecordId()));
         log.info("[MarketingNoticeCase] 中奖通知已落 recordId={} userId={} prizeType={}",
                 message.getRecordId(), message.getUserId(), message.getPrizeType());
@@ -63,7 +63,7 @@ public class MarketingNoticeCase {
         String content = reasonText + "：积分 " + (delta >= 0 ? "+" : "") + delta
                 + "，当前余额 " + message.getBalanceAfter();
         notificationService.sendSystem(message.getUserId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.POINTS_CHANGED,
-                "积分变动", content, REF_TYPE_MARKETING, String.valueOf(message.getRefId()),
+                "积分变动", content, REF_TYPE_MARKETING, message.getRefId(),
                 marketingDedupKey("POINTS", message.getReasonType(), message.getRefId()));
         log.info("[MarketingNoticeCase] 积分变动通知已落 userId={} delta={} reasonType={} refId={}",
                 message.getUserId(), delta, message.getReasonType(), message.getRefId());

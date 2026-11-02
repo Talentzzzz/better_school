@@ -28,7 +28,7 @@ public class RaffleExchangeServiceImpl implements IRaffleExchangeService {
 
     @Override
     public RedeemIntentVO exchangeDrawCount(String userId, String token) {
-        long redeemOrderId = IdempotencyKeys.of(userId, token);
+        String redeemOrderId = IdempotencyKeys.of(userId, token);
         IPointsDeductPort.PointsDeductOutcome outcome =
                 pointsDeductPort.deduct(userId, Constants.DRAW_COUNT_EXCHANGE_PRICE, redeemOrderId);
         if (!outcome.success) {

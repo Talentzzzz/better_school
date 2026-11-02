@@ -30,7 +30,7 @@ public interface IInventoryRepository {
     // ---- 台账 ----
 
     /** 台账行（不限 state，open 与否由域服务判）；该段不存在这个 inv 时返回 null */
-    InventoryLedgerVO queryLedger(InventorySegmentVO segment, Long invId);
+    InventoryLedgerVO queryLedger(InventorySegmentVO segment, String invId);
 
     /** 该段全部 open 的台账 */
     List<InventoryLedgerVO> listOpenLedgers(InventorySegmentVO segment);
@@ -58,14 +58,14 @@ public interface IInventoryRepository {
      * @return 与 {@code requests} 一一对应的逐件结果（{@code DEDUCTED} / {@code INSUFFICIENT}）
      * @throws IllegalStateException 台账行缺失（不变量破坏，整组回滚后抛出）
      */
-    List<DeductResult> flushDeductGroup(InventorySegmentVO segment, long invId,
+    List<DeductResult> flushDeductGroup(InventorySegmentVO segment, String invId,
                                         List<InventoryDeductRequestVO> requests);
 
     /**
      * 预扣明细是否已存在（业务幂等预检）：只在台账非 open 时调用，用于区分
      * 「真余量不足」与「这场流转在本 inv 上已落过」（重放）。实物段只查 {@code type = 1} 的预扣行。
      */
-    boolean existsDeductDetail(InventorySegmentVO segment, Long invId, String bizType, long bizId);
+    boolean existsDeductDetail(InventorySegmentVO segment, String invId, String bizType, String bizId);
 
     // ---- 兑换确认（仅实物段有第二段流转；票 07 起同步合并，一组一个事务） ----
 
@@ -90,5 +90,5 @@ public interface IInventoryRepository {
      * @return 与 {@code items} 一一对应的逐件结果（现只有 {@code CONFIRMED}：撞键回放也是成功）
      * @throws IllegalStateException {@code waiting} 不足（不变量破坏，整组回滚后抛出）
      */
-    List<ClaimOutcome> flushClaimGroup(long invId, List<ClaimItem> items);
+    List<ClaimOutcome> flushClaimGroup(String invId, List<ClaimItem> items);
 }

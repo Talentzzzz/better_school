@@ -16,9 +16,9 @@ import java.time.LocalDateTime;
 public class DrawStrategyAwardEntity {
 
     private Long id;
-    private Long strategyId;
+    private String strategyId;
     /** 奖品 ID（策略内唯一） */
-    private Long awardId;
+    private String awardId;
     private String awardName;
     private String awardDesc;
     /** VIRTUAL(虚拟资产) / PHYSICAL(实物资产) / THANKS(谢谢参与占位，rate 计入概率池、无库存) */
@@ -28,7 +28,7 @@ public class DrawStrategyAwardEntity {
     /** 奖项层级（1 等奖 = 1，越大越低） */
     private Integer level;
     /** 关联库存业务 ID（0 = 无库存/不限量） */
-    private Long invId;
+    private String invId;
     /** 奖品位类型 normal / fallback / blacklist */
     private String type;
     private Integer sort;

@@ -37,7 +37,7 @@ public interface IRaffleShippingService {
      * 中奖事件的处置计划（只读）：记录不存在 / 不属本人 / 已不在待兑换 / 谢谢参与档时
      * 返回 {@code active=false}（调用方直接返回，两步都不做）。
      */
-    ShippingPlanVO planShipAfterDraw(String userId, Long recordId);
+    ShippingPlanVO planShipAfterDraw(String userId, String recordId);
 
     /**
      * 按计划推进状态：虚拟 / 次数档 → 已完成（EXCHANGE + COMPLETE）；实物档 → 已发货（SHIP）。
@@ -49,5 +49,5 @@ public interface IRaffleShippingService {
      * 用户确认收货：已发货 → 已完成（实物档终态）。记录不属本人 / 状态不是已发货时抛业务异常。
      * 单域动作：由 trigger 直调，不经 case 层编排（没有跨域写）。
      */
-    ShippingResultVO confirmReceived(String userId, Long recordId);
+    ShippingResultVO confirmReceived(String userId, String recordId);
 }

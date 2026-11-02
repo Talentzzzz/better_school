@@ -31,14 +31,14 @@ public class WeightRuleChainNode extends AbstractChainNode {
     }
 
     @Override
-    public RaffleChainFactory.ChainAwardVO execute(String userId, Long strategyId, Long activityId) {
+    public RaffleChainFactory.ChainAwardVO execute(String userId, String strategyId, String activityId) {
         int userDrawCount = raffleRepository.queryUserDrawCount(strategyId, userId);
         DrawStrategyWeightEntity matched = matchWeight(userDrawCount,
                 raffleRepository.queryWeightListByStrategyId(strategyId));
         if (matched == null) {
             return next().execute(userId, strategyId, activityId);
         }
-        Map<Integer, Long> weightTable = raffleRepository
+        Map<Integer, String> weightTable = raffleRepository
                 .getRaffleTable(Constants.weightTableKey(strategyId, matched.getCount()));
         if (weightTable.isEmpty()) {
             // 该档概率表缺失（未预热/预热被清）：降级走默认节点，DB 直算入口归票 13 接
@@ -46,7 +46,7 @@ public class WeightRuleChainNode extends AbstractChainNode {
                     strategyId, userId, matched.getCount());
             return next().execute(userId, strategyId, activityId);
         }
-        Long awardId = weightTable.get(ThreadLocalRandom.current().nextInt(0, weightTable.size()));
+        String awardId = weightTable.get(ThreadLocalRandom.current().nextInt(0, weightTable.size()));
         log.info("规则链权重保底命中 userId={} strategyId={} count={} awardId={}",
                 userId, strategyId, matched.getCount(), awardId);
         return new RaffleChainFactory.ChainAwardVO(awardId, RaffleRuleNodeVO.RULE_WEIGHT, matched.getCount());

@@ -9,13 +9,13 @@ import java.time.LocalDateTime;
 public class DrawCountBucketPO {
 
     private Long id;
-    private Long bucketId;
+    private String bucketId;
     private String userId;
     private Integer amount;
     private Integer remain;
     private LocalDateTime expireAt;
     private String reasonType;
-    private Long refId;
+    private String refId;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

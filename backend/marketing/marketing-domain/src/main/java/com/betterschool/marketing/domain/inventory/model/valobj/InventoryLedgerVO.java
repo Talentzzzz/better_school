@@ -8,7 +8,7 @@ package com.betterschool.marketing.domain.inventory.model.valobj;
  * {@code waitingQty} 在虚拟段恒 0（虚拟没有兑换确认，合成就直接进 {@code issued_qty}）；
  * 实物段对账口径 {@code waiting + issued} 因此在两段是同一个表达（spec §8）。
  */
-public record InventoryLedgerVO(Long invId,
+public record InventoryLedgerVO(String invId,
                                 Long surplusQty,
                                 Long waitingQty,
                                 Long issuedQty,

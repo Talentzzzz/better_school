@@ -14,12 +14,12 @@ public class PointsDetailEntity {
     private Long id;
     private String userId;
     /** 被扣的桶业务 ID（FIFO 顺序） */
-    private Long bucketId;
+    private String bucketId;
     /** 本次从该桶扣掉的积分数（恒正） */
     private Integer amount;
     private PointsReasonType reasonType;
     /** 来源业务 id = 兑换单 id（兑换幂等键） */
-    private Long refId;
+    private String refId;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

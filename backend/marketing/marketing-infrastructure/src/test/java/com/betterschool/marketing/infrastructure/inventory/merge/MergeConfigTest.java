@@ -76,19 +76,25 @@ class MergeConfigTest {
     }
 
     @Test
-    @DisplayName("路由：同一 key 恒落同一片，且高位参与折叠（雪花 / 分表拼接 ID 不会全挤 0 号片）")
-    void foldsHighBitsSoSnowflakeIdsSpreadAcrossShards() {
+    @DisplayName("路由：同一 key 恒落同一片，且不同 invId 散开多片（hashCode 折叠后不会全挤 0 号片）")
+    void spreadsDistinctKeysAcrossShards() {
         MergeConfig config = MergeConfig.quotaDefaults();
 
-        // 低位恒定、高位递增：直接 key & mask 会全落在同一个分片
+        // uuid-biz-id 票 07：inv_id 已 UUID 字符串化，路由输入从 long 改字符串 hashCode 折叠。
+        // 64 个互异 key 至少散进一半以上分片（hashCode 均匀性下 64 个全同片的概率可忽略），
+        // 关键反例是「全挤在 0 号片」。
+        // 注意：key 不能只差末尾几位十进制数字——31^2 ≡ 1 (mod 64)，那种 key 折叠后只有
+        // 末两位数字有效权重，64 个只会落进 ~30 片（轮次实测 30），是 key 造得退化，不是路由的锅。
+        // 高低位两段都带序号，模拟真实 UUID 的熵分布。
         Set<Integer> shards = new HashSet<>();
-        for (long high = 1; high <= 64; high++) {
-            shards.add(config.shardOf((high << 32) | 0xFFL));
+        for (int i = 0; i < 64; i++) {
+            shards.add(config.shardOf("%08x-0000-4000-8000-%012x".formatted(i, i)));
         }
-        assertEquals(64, shards.size(), "64 个高位不同的 ID 必须散到 64 个分片，而不是挤在 0 号片");
+        assertTrue(shards.size() >= 32,
+                "64 个不同的 invId 至少要散进一半分片，实际 " + shards.size());
 
         // 稳定性：预扣与确认给同一个 invId，必须落到同一片（否则单飞失效、确认可能看不到已落账的 waiting）
-        long invId = 9_001L;
+        String invId = "00000000-0000-4000-8000-000000009001";
         int first = config.shardOf(invId);
         for (int i = 0; i < 100; i++) {
             assertEquals(first, config.shardOf(invId));

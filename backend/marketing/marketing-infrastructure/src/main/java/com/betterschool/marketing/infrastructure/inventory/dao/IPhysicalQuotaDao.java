@@ -20,10 +20,10 @@ public interface IPhysicalQuotaDao {
 
     // ---- 台账 ----
 
-    PhysicalMarketingQuotaPO selectQuota(@Param("invId") Long invId);
+    PhysicalMarketingQuotaPO selectQuota(@Param("invId") String invId);
 
     /** 台账当前余量（预扣「探一次再切」的剩余量来源）；{@code -1 = 不限量} */
-    Long selectSurplus(@Param("invId") Long invId);
+    Long selectSurplus(@Param("invId") String invId);
 
     // ---- 预扣落库（一组一事务，票 06） ----
 
@@ -31,7 +31,7 @@ public interface IPhysicalQuotaDao {
      * 批量 {@code INSERT IGNORE} 预扣明细（{@code type = 1}）：撞 {@code uk_biz_type} 的行静默跳过，
      * 返回实际新增行数。幂等裁决完全交给唯一键。
      */
-    int batchInsertIgnoreDeductDetails(@Param("invId") long invId,
+    int batchInsertIgnoreDeductDetails(@Param("invId") String invId,
                                        @Param("details") List<PhysicalMarketingQuotaDetailPO> details);
 
     /**
@@ -40,18 +40,18 @@ public interface IPhysicalQuotaDao {
      * 落在别的 inv 上的同业务行同样算「已落过」。
      */
     List<PhysicalMarketingQuotaDetailPO> listExistingDeductDetails(@Param("bizType") String bizType,
-                                                                   @Param("bizIds") List<Long> bizIds);
+                                                                   @Param("bizIds") List<String> bizIds);
 
     /**
      * 台账扣减（一条 {@code UPDATE}）：{@code surplus → waiting}，带余量守卫——
      * 返回 0 行 = 余量不够（{@code affected = 0}，调用方探一次再切）。{@code -1 = 不限量}不守卫、不动 surplus。
      * surplus 恰好扣空由 {@code open} 置 {@code exhausted}。
      */
-    int deductLedger(@Param("invId") Long invId, @Param("quantity") long quantity);
+    int deductLedger(@Param("invId") String invId, @Param("quantity") long quantity);
 
     /** 业务幂等预检：这场业务（type + biz_type + biz_id）在本 inv 的明细是否已存在（命中 = 已落过） */
-    boolean existsDeductDetail(@Param("invId") Long invId, @Param("type") int type,
-                               @Param("bizType") String bizType, @Param("bizId") long bizId);
+    boolean existsDeductDetail(@Param("invId") String invId, @Param("type") int type,
+                               @Param("bizType") String bizType, @Param("bizId") String bizId);
 
     // ---- 兑换确认（同步合并，票 07） ----
 
@@ -64,7 +64,7 @@ public interface IPhysicalQuotaDao {
     int insertIgnoreClaimDetail(PhysicalMarketingQuotaDetailPO detailPO);
 
     /** waiting_qty >= qty 守卫下的转移（确认组落库的台账步）：0 行 = 没有足够的悬挂预扣 = 不变量破坏 */
-    int transferWaitingToIssued(@Param("invId") Long invId, @Param("quantity") long quantity);
+    int transferWaitingToIssued(@Param("invId") String invId, @Param("quantity") long quantity);
 
     // ---- 预热 ----
 

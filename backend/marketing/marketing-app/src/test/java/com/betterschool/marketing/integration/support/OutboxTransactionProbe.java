@@ -29,29 +29,29 @@ public class OutboxTransactionProbe {
     private final TransactionTemplate transactionTemplate;
 
     /** 同事务落 draw_record + DRAW 明细 + outbox 事件（不抛异常：正常路径） */
-    public void insertThenCommit(String userId, long recordId) {
+    public void insertThenCommit(String userId, String recordId) {
         insert(userId, recordId, false);
     }
 
     /** 同事务落三处后抛异常：验证记录与事件一起回滚 */
-    public void insertThenFail(String userId, long recordId) {
+    public void insertThenFail(String userId, String recordId) {
         insert(userId, recordId, true);
     }
 
-    private void insert(String userId, long recordId, boolean failAfterwards) {
+    private void insert(String userId, String recordId, boolean failAfterwards) {
         transactionTemplate.executeWithoutResult(status -> {
             LocalDateTime now = LocalDateTime.now();
 
             DrawRecordEntity record = new DrawRecordEntity();
             record.setRecordId(recordId);
             record.setUserId(userId);
-            record.setActivityId(1L);
-            record.setStrategyId(1L);
-            record.setAwardId(1L);
+            record.setActivityId("00000000-0000-4000-8000-000000000001");
+            record.setStrategyId("00000000-0000-4000-8000-000000000001");
+            record.setAwardId("00000000-0000-4000-8000-000000000001");
             record.setAwardName("探针奖品");
             record.setAwardType("VIRTUAL");
             record.setLevel(1);
-            record.setInvId(9999L);
+            record.setInvId("00000000-0000-4000-8000-000000000999");
             record.setState(DrawRecordStateVO.PENDING);
             record.setCreateTime(now);
             record.setUpdateTime(now);
@@ -66,7 +66,7 @@ public class OutboxTransactionProbe {
             DrawRecordAggregate aggregate = new DrawRecordAggregate();
             aggregate.setRecord(record);
             aggregate.setDetail(detail);
-            aggregate.setDrawnEvent(new LotteryDrawnMessage(recordId, userId, 1L, "VIRTUAL", 20));
+            aggregate.setDrawnEvent(new LotteryDrawnMessage(recordId, userId, "00000000-0000-4000-8000-000000000001", "VIRTUAL", 20));
             raffleRepository.insertDrawRecord(aggregate);
 
             if (failAfterwards) {

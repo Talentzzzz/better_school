@@ -21,5 +21,5 @@ public class PointsDeductRequestDTO implements Serializable {
     /** 只接受 REDEEM_DRAW_COUNT / REDEEM_PRIZE 两个值（字符串而非枚举：跨服务序列化最稳） */
     private String reasonType;
     /** 兑换单 id（幂等键） */
-    private Long refId;
+    private String refId;
 }

@@ -11,7 +11,7 @@ import lombok.Data;
 public class PrizeCatalogVO {
 
     /** 奖品 ID（draw_strategy_award.award_id，策略内唯一） */
-    private Long awardId;
+    private String awardId;
     private String awardName;
     /** VIRTUAL / PHYSICAL / THANKS */
     private String awardType;

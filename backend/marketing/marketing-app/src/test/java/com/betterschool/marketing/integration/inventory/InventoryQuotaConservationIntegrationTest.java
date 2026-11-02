@@ -51,8 +51,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("库存守恒 · B1–B4")
 class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
 
-    private static final long VIRTUAL_INV_ID = 9801L;
-    private static final long QUOTA_INV_ID = 9802L;
+    private static final String VIRTUAL_INV_ID = "9801";
+    private static final String QUOTA_INV_ID = "9802";
     private static final long INITIAL_SURPLUS = 100L;
     private static final AtomicLong RECORD_SEQ = new AtomicLong(98_000_000L);
 
@@ -79,7 +79,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
         insertQuotaLedger(QUOTA_INV_ID, INITIAL_SURPLUS);
     }
 
-    private void insertVirtualLedger(long invId, long surplusQty) {
+    private void insertVirtualLedger(String invId, long surplusQty) {
         jdbcTemplate.update("""
                         INSERT INTO virtual_inventory_quota (inv_id, name, type, value, surplus_qty, issued_qty,
                                                        state, create_time, update_time)
@@ -87,7 +87,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
                         """, invId, surplusQty);
     }
 
-    private void insertQuotaLedger(long invId, long surplusQty) {
+    private void insertQuotaLedger(String invId, long surplusQty) {
         jdbcTemplate.update("""
                         INSERT INTO physical_marketing_quota (inv_id, name, decr, surplus_qty, waiting_qty, issued_qty,
                                                               state, create_time, update_time)
@@ -95,28 +95,28 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
                         """, invId, surplusQty);
     }
 
-    private long surplusOf(String table, long invId) {
+    private long surplusOf(String table, String invId) {
         return jdbcTemplate.queryForObject(
                 "SELECT surplus_qty FROM " + table + " WHERE inv_id = ?", Long.class, invId);
     }
 
-    private long issuedOf(String table, long invId) {
+    private long issuedOf(String table, String invId) {
         return jdbcTemplate.queryForObject(
                 "SELECT issued_qty FROM " + table + " WHERE inv_id = ?", Long.class, invId);
     }
 
-    private long waitingOf(long invId) {
+    private long waitingOf(String invId) {
         return jdbcTemplate.queryForObject(
                 "SELECT waiting_qty FROM physical_marketing_quota WHERE inv_id = ?", Long.class, invId);
     }
 
-    private long detailCount(String table, long invId) {
+    private long detailCount(String table, String invId) {
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM " + table + " WHERE inv_id = ?", Long.class, invId);
         return count == null ? 0 : count;
     }
 
-    private long detailSum(String table, long invId) {
+    private long detailSum(String table, String invId) {
         Long sum = jdbcTemplate.queryForObject(
                 "SELECT COALESCE(SUM(quantity), 0) FROM " + table + " WHERE inv_id = ? AND type = 1",
                 Long.class, invId);
@@ -136,7 +136,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
         List<Future<Boolean>> futures = new ArrayList<>();
         try {
             for (int i = 0; i < concurrent; i++) {
-                long recordId = RECORD_SEQ.incrementAndGet();
+                String recordId = String.valueOf(RECORD_SEQ.incrementAndGet());
                 futures.add(pool.submit((Callable<Boolean>) () -> {
                     start.await();
                     return deductUntilSettled(recordId);
@@ -168,7 +168,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
      * 唯一键兜底不双扣；重放撞键按成功回放。只重试「库存处理中」这条可重试出口，
      * 参数错等业务异常原样抛出。
      */
-    private boolean deductUntilSettled(long recordId) throws InterruptedException {
+    private boolean deductUntilSettled(String recordId) throws InterruptedException {
         for (int attempt = 0; attempt < 100; attempt++) {
             try {
                 return inventoryQuotaService.preDeduct(InventorySegmentVO.VIRTUAL, VIRTUAL_INV_ID, 1,
@@ -193,7 +193,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
 
         for (int i = 0; i < 20; i++) {
             inventoryQuotaService.preDeduct(InventorySegmentVO.QUOTA, QUOTA_INV_ID, 1,
-                    InventoryBizTypes.LOTTERY_DRAW, RECORD_SEQ.incrementAndGet());
+                    InventoryBizTypes.LOTTERY_DRAW, String.valueOf(RECORD_SEQ.incrementAndGet()));
         }
         // 读数前等合并器排空（票 08 改写的夹具）：B2 / B3 是台账断言，不能带在途 flush
         assertThat(InventoryMergeTestSupport.awaitDrained(quotaMergeBuffer, 5000))
@@ -219,7 +219,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
 
         List<InventoryDeductRequestVO> batch = LongStream.range(0, 5)
                 .mapToObj(i -> new InventoryDeductRequestVO(InventorySegmentVO.QUOTA, QUOTA_INV_ID, 1,
-                        InventoryBizTypes.LOTTERY_DRAW, RECORD_SEQ.incrementAndGet()))
+                        InventoryBizTypes.LOTTERY_DRAW, String.valueOf(RECORD_SEQ.incrementAndGet())))
                 .toList();
 
         List<DeductResult> results =
@@ -245,7 +245,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
     @Test
     @DisplayName("B4 整批撞 uk：扣 0、直接提交、按成功回放，明细仍 1 行、净扣 1 份")
     void wholeBatchDuplicate_replaysAsSuccessWithoutSecondDeduction() {
-        long recordId = RECORD_SEQ.incrementAndGet();
+        String recordId = String.valueOf(RECORD_SEQ.incrementAndGet());
         assertThat(inventoryQuotaService.preDeduct(InventorySegmentVO.VIRTUAL, VIRTUAL_INV_ID, 3,
                 InventoryBizTypes.LOTTERY_DRAW, recordId)).isTrue();
         long issuedAfterFirst = issuedOf("virtual_inventory_quota", VIRTUAL_INV_ID);
@@ -266,7 +266,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
     @Test
     @DisplayName("B4 部分撞键：回查命中行并从本次扣减量剔除，其余照扣")
     void partialDuplicate_excludesExistingFromDeduction() {
-        long duplicateRecordId = RECORD_SEQ.incrementAndGet();
+        String duplicateRecordId = String.valueOf(RECORD_SEQ.incrementAndGet());
         assertThat(inventoryQuotaService.preDeduct(InventorySegmentVO.QUOTA, QUOTA_INV_ID, 2,
                 InventoryBizTypes.LOTTERY_DRAW, duplicateRecordId)).isTrue();
         long waitingAfterFirst = waitingOf(QUOTA_INV_ID);
@@ -276,9 +276,9 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
                 new InventoryDeductRequestVO(InventorySegmentVO.QUOTA, QUOTA_INV_ID, 2,
                         InventoryBizTypes.LOTTERY_DRAW, duplicateRecordId),
                 new InventoryDeductRequestVO(InventorySegmentVO.QUOTA, QUOTA_INV_ID, 1,
-                        InventoryBizTypes.LOTTERY_DRAW, RECORD_SEQ.incrementAndGet()),
+                        InventoryBizTypes.LOTTERY_DRAW, String.valueOf(RECORD_SEQ.incrementAndGet())),
                 new InventoryDeductRequestVO(InventorySegmentVO.QUOTA, QUOTA_INV_ID, 1,
-                        InventoryBizTypes.LOTTERY_DRAW, RECORD_SEQ.incrementAndGet()));
+                        InventoryBizTypes.LOTTERY_DRAW, String.valueOf(RECORD_SEQ.incrementAndGet())));
 
         List<DeductResult> results =
                 inventoryRepository.flushDeductGroup(InventorySegmentVO.QUOTA, QUOTA_INV_ID, batch);
@@ -296,7 +296,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
     @Test
     @DisplayName("扣不动 ⇒ 第一事务整体回滚不留明细残痕；恢复余量后凭同一 bizId 重试，唯一键兜底不双扣")
     void transactionFailure_rollsBackAndRetryDoesNotDoubleDeduct() {
-        long recordId = RECORD_SEQ.incrementAndGet();
+        String recordId = String.valueOf(RECORD_SEQ.incrementAndGet());
         // 余量拉成 0：一组一笔也扣不动，第一事务（含明细 INSERT）整体回滚
         jdbcTemplate.update("UPDATE physical_marketing_quota SET surplus_qty = 0 WHERE inv_id = ?", QUOTA_INV_ID);
         List<InventoryDeductRequestVO> batch = List.of(new InventoryDeductRequestVO(

@@ -49,7 +49,7 @@ public interface IQuotaMergeFlushHandler {
      * @return 与 {@code requests} 一一对应的逐件结果（{@code DEDUCTED} / {@code INSUFFICIENT}）
      */
     List<DeductResult> flushDeductGroup(InventorySegmentVO segment,
-                                       long invId,
+                                       String invId,
                                        List<InventoryDeductRequestVO> requests);
 
     /**
@@ -62,5 +62,5 @@ public interface IQuotaMergeFlushHandler {
      * @param items 该组的确认件，顺序 = 入队顺序
      * @return 与 {@code items} 一一对应的逐件结果（现只有 {@code CONFIRMED}：撞键回放也是成功）
      */
-    List<ClaimOutcome> flushClaimGroup(long invId, List<ClaimItem> items);
+    List<ClaimOutcome> flushClaimGroup(String invId, List<ClaimItem> items);
 }

@@ -29,9 +29,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("库存两段式 · 虚拟权益池")
 class VirtualInventoryIntegrationTest extends TestingEnvironment {
 
-    private static final long INV_ID = 9001L;
+    private static final String INV_ID = "9001";
     /** 抽奖记录 id（明细 biz_id）：同一笔业务重复预扣靠它撞 uk_biz */
-    private static final long RECORD_ID = 93001L;
+    private static final String RECORD_ID = "93001";
 
     @BeforeAll
     static void prepareEnvironment() {
@@ -51,12 +51,12 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
         insertVirtualInventory(INV_ID, "暑期签到积分池", "POINTS", 50, 100L, 0L, "open");
     }
 
-    private boolean preDeduct(long quantity, long recordId) {
+    private boolean preDeduct(long quantity, String recordId) {
         return inventoryQuotaService.preDeduct(InventorySegmentVO.VIRTUAL, INV_ID, quantity,
                 InventoryBizTypes.LOTTERY_DRAW, recordId);
     }
 
-    private void insertVirtualInventory(long invId, String name, String type, int value,
+    private void insertVirtualInventory(String invId, String name, String type, int value,
                                         long surplusQty, long issuedQty, String state) {
         jdbcTemplate.update("""
                         INSERT INTO virtual_inventory_quota (inv_id, name, type, value, surplus_qty, issued_qty,
@@ -105,7 +105,7 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
                         + " WHERE inv_id = ?", INV_ID);
         assertThat(((Number) detail.get("quantity")).longValue()).isEqualTo(3L);
         assertThat(detail.get("biz_type")).as("业务类型 = 抽奖预扣").isEqualTo("LOTTERY_DRAW");
-        assertThat(((Number) detail.get("biz_id")).longValue()).as("业务 ID = draw_record.record_id")
+        assertThat((String) detail.get("biz_id")).as("业务 ID = draw_record.record_id")
                 .isEqualTo(RECORD_ID);
         assertThat(detail.get("create_time")).as("create_time 由 DB NOW() 写，非 null").isNotNull();
 
@@ -140,7 +140,7 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
         assertThat(detailCount()).as("重放不落第二行").isEqualTo(1);
         assertThat(longOf(inventoryRow(), "issued_qty")).as("重放不再扣账").isEqualTo(3L);
 
-        assertThat(preDeduct(1, RECORD_ID + 1))
+        assertThat(preDeduct(1, RECORD_ID + "-next"))
                 .as("exhausted 台账不可再预扣").isFalse();
         assertThat(detailCount()).isEqualTo(1);
     }

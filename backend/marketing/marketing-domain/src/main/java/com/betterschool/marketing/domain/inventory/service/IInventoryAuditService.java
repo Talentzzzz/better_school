@@ -21,5 +21,5 @@ public interface IInventoryAuditService {
      * @return 台账三列读数（{@code invId / surplusQty / ledgerWaitingQty / ledgerIssuedQty}）
      * @throws com.betterschool.marketing.types.common.AppException 该段没有这个 inv 的台账
      */
-    InventoryAuditVO audit(InventorySegmentVO segment, Long invId);
+    InventoryAuditVO audit(InventorySegmentVO segment, String invId);
 }

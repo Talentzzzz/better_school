@@ -15,8 +15,8 @@ import java.time.LocalDateTime;
 @Data
 public class UserPrizeResponseDTO {
 
-    private Long id;
-    private Long prizeId;
+    private String id;
+    private String prizeId;
     private Integer tier;
     private String name;
     /** VIRTUAL / PHYSICAL / THANKS（列表恒不含 THANKS） */

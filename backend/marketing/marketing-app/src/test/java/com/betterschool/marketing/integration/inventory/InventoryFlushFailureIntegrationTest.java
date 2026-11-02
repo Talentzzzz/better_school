@@ -25,7 +25,6 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 
 /**
@@ -42,7 +41,7 @@ import static org.mockito.Mockito.doThrow;
 @DisplayName("库存落库失败 · FAILED 可重试且不双扣")
 class InventoryFlushFailureIntegrationTest extends TestingEnvironment {
 
-    private static final long QUOTA_INV_ID = 9901L;
+    private static final String QUOTA_INV_ID = "9901";
 
     @BeforeAll
     static void prepareEnvironment() {
@@ -80,9 +79,9 @@ class InventoryFlushFailureIntegrationTest extends TestingEnvironment {
     @Test
     @DisplayName("flushFailureReturnsFailedThenRetryDoesNotDoubleDeduct：落库抛 → 回滚 → ERROR；重试净扣一份")
     void flushFailureReturnsFailedThenRetryDoesNotDoubleDeduct() {
-        long recordId = 990_001L;
+        String recordId = "990001";
         doThrow(new IllegalStateException("探针：落库失败（模拟事务回滚）"))
-                .when(physicalQuotaDao).batchInsertIgnoreDeductDetails(anyLong(), anyList());
+                .when(physicalQuotaDao).batchInsertIgnoreDeductDetails(QUOTA_INV_ID, anyList());
 
         assertThatThrownBy(() -> inventoryQuotaService.preDeduct(InventorySegmentVO.QUOTA, QUOTA_INV_ID, 1,
                 InventoryBizTypes.LOTTERY_DRAW, recordId))

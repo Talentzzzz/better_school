@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PointsLotteryWinIntegrationTest extends PointsApiTestBase {
 
     private static final String USER_ID = "user-1001";
-    private static final long RECORD_ID = 70001L;
+    private static final String RECORD_ID = "70001";
 
     @Test
     @DisplayName("积分档中奖：桶入账 + 余额增加 + 流水出现 + 积分变动事件发出")
@@ -30,8 +30,8 @@ class PointsLotteryWinIntegrationTest extends PointsApiTestBase {
         var bucket = jdbcTemplate.queryForMap(
                 "SELECT bucket_id, amount, remain, reason_type, ref_id, expire_at FROM points_bucket WHERE user_id = ?",
                 USER_ID);
-        assertThat(((Number) bucket.get("bucket_id")).longValue())
-                .as("bucket_id 是独立业务 ID，不复用物理自增 id").isPositive();
+        assertThat((String) bucket.get("bucket_id"))
+                .as("bucket_id 是 UUID 字符串业务 ID，不复用物理自增 id").matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
         assertThat(bucket.get("amount")).isEqualTo(200);
         assertThat(bucket.get("remain")).isEqualTo(200);
         assertThat(bucket.get("reason_type")).isEqualTo("LOTTERY_WIN");
@@ -54,7 +54,7 @@ class PointsLotteryWinIntegrationTest extends PointsApiTestBase {
         assertThat(row.path("direction").asText()).isEqualTo("IN");
         assertThat(row.path("amount").asInt()).isEqualTo(200);
         assertThat(row.path("reasonType").asText()).isEqualTo("LOTTERY_WIN");
-        assertThat(row.path("refId").asLong()).isEqualTo(RECORD_ID);
+        assertThat(row.path("refId").asText()).isEqualTo(RECORD_ID);
         assertThat(row.path("expireAt").isNull()).as("入账行带过期时间").isFalse();
 
         // 事件：{userId, delta, balanceAfter, reasonType, refId}
@@ -63,7 +63,7 @@ class PointsLotteryWinIntegrationTest extends PointsApiTestBase {
         assertThat(event.path("delta").asInt()).isEqualTo(200);
         assertThat(event.path("balanceAfter").asInt()).isEqualTo(200);
         assertThat(event.path("reasonType").asText()).isEqualTo("LOTTERY_WIN");
-        assertThat(event.path("refId").asLong()).isEqualTo(RECORD_ID);
+        assertThat(event.path("refId").asText()).isEqualTo(RECORD_ID);
     }
 
     @Test
@@ -81,7 +81,7 @@ class PointsLotteryWinIntegrationTest extends PointsApiTestBase {
     @DisplayName("非积分档（谢谢参与 / 实物）不入账也不发事件")
     void nonPointsPrize_isIgnored() {
         publishLotteryDrawn(USER_ID, RECORD_ID, "THANKS", null);
-        publishLotteryDrawn(USER_ID, RECORD_ID + 1, "PHYSICAL", null);
+        publishLotteryDrawn(USER_ID, RECORD_ID + "-next", "PHYSICAL", null);
 
         assertThat(bucketCountOf(USER_ID)).isZero();
         assertThat(pointsAccountService.getBalance(USER_ID)).isZero();

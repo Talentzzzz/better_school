@@ -16,9 +16,9 @@ import lombok.NoArgsConstructor;
 public class LotteryDrawnMessage {
 
     /** 抽奖记录 id：本服务落通知的幂等键（ref_id） */
-    private Long recordId;
+    private String recordId;
     private String userId;
-    private Long prizeId;
+    private String prizeId;
     /** PHYSICAL / POINTS / THANKS（字符串而非枚举：跨服务序列化最稳） */
     private String prizeType;
     /** 仅 prizeType = POINTS 有意义 */

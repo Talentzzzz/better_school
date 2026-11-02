@@ -23,5 +23,5 @@ public interface IQuotaConfirmPort {
      * @param recordId 抽奖记录 id（= {@code draw_record.record_id}）——从来不是独立兑换单号
      * @throws com.betterschool.marketing.types.common.AppException 配额不存在，或这笔记录没有预扣结转行
      */
-    void confirmIssued(Long invId, Long recordId, long quantity);
+    void confirmIssued(String invId, String recordId, long quantity);
 }

@@ -40,7 +40,7 @@ public class RaffleWarmupServiceImpl implements IRaffleWarmupService {
     private final RaffleChainFactory raffleChainFactory;
 
     @Override
-    public void warmupByActivityId(Long activityId) {
+    public void warmupByActivityId(String activityId) {
         DrawActivityEntity activityEntity = raffleRepository.queryActivityEntityByActivityId(activityId);
         if (activityEntity == null) {
             throw new AppException(ResponseCode.CONFIG_PARAM_ERROR.getCode(), "抽奖活动不存在 activityId=" + activityId);
@@ -49,7 +49,7 @@ public class RaffleWarmupServiceImpl implements IRaffleWarmupService {
     }
 
     @Override
-    public void warmupByStrategyId(Long strategyId) {
+    public void warmupByStrategyId(String strategyId) {
         List<DrawStrategyAwardEntity> awards = raffleRepository.queryAwardListByStrategyId(strategyId);
         List<DrawStrategyAwardEntity> normalAwards = normalAwards(strategyId, awards);
         raffleRepository.cacheRaffleTable(Constants.defaultTableKey(strategyId),
@@ -70,16 +70,16 @@ public class RaffleWarmupServiceImpl implements IRaffleWarmupService {
     }
 
     @Override
-    public boolean isWarmed(Long strategyId) {
+    public boolean isWarmed(String strategyId) {
         return raffleRepository.isWarmed(strategyId);
     }
 
     // ---- 表构建 ----
 
-    private Map<Integer, Long> buildDefaultTable(Long strategyId, List<DrawStrategyAwardEntity> normalAwards) {
+    private Map<Integer, String> buildDefaultTable(String strategyId, List<DrawStrategyAwardEntity> normalAwards) {
         // DECIMAL(6,4) → ×10000 恒为整数；合计必须恰 = 10000 槽
         int totalSlots = 0;
-        List<Long> slotAwardIds = new ArrayList<>(TABLE_SLOTS);
+        List<String> slotAwardIds = new ArrayList<>(TABLE_SLOTS);
         for (DrawStrategyAwardEntity award : normalAwards) {
             int slots = award.getAwardRate().movePointRight(4).intValueExact();
             totalSlots += slots;
@@ -88,21 +88,21 @@ public class RaffleWarmupServiceImpl implements IRaffleWarmupService {
             }
         }
         if (totalSlots != TABLE_SLOTS) {
-            throw configError("策略 %d 的 normal 奖品位概率合计 %d ≠ %d（award_rate 口径 1.0000）"
+            throw configError("策略 %s 的 normal 奖品位概率合计 %d ≠ %d（award_rate 口径 1.0000）"
                     .formatted(strategyId, totalSlots, TABLE_SLOTS));
         }
         return toSlotMap(slotAwardIds);
     }
 
-    private Map<Integer, Long> buildWeightTable(Long strategyId, DrawStrategyWeightEntity weight,
+    private Map<Integer, String> buildWeightTable(String strategyId, DrawStrategyWeightEntity weight,
                                                 List<DrawStrategyAwardEntity> normalAwards) {
-        Map<Long, DrawStrategyAwardEntity> normalById = normalAwards.stream()
+        Map<String, DrawStrategyAwardEntity> normalById = normalAwards.stream()
                 .collect(Collectors.toMap(DrawStrategyAwardEntity::getAwardId, award -> award));
         List<DrawStrategyAwardEntity> pool = weight.getWeights().stream()
                 .map(awardId -> {
                     DrawStrategyAwardEntity award = normalById.get(awardId);
                     if (award == null) {
-                        throw configError("权重档引用的奖品不在 normal 池 strategyId=%d count=%d awardId=%d"
+                        throw configError("权重档引用的奖品不在 normal 池 strategyId=%s count=%d awardId=%s"
                                 .formatted(strategyId, weight.getCount(), awardId));
                     }
                     return award;
@@ -116,10 +116,10 @@ public class RaffleWarmupServiceImpl implements IRaffleWarmupService {
             rawSum += raws[i];
         }
         if (rawSum <= 0) {
-            throw configError("权重档奖品池概率合计为 0 strategyId=%d count=%d"
+            throw configError("权重档奖品池概率合计为 0 strategyId=%s count=%d"
                     .formatted(strategyId, weight.getCount()));
         }
-        List<Long> slotAwardIds = new ArrayList<>(TABLE_SLOTS);
+        List<String> slotAwardIds = new ArrayList<>(TABLE_SLOTS);
         int allocated = 0;
         for (int i = 0; i < pool.size(); i++) {
             int slots = (int) (raws[i] * TABLE_SLOTS / rawSum);
@@ -143,12 +143,12 @@ public class RaffleWarmupServiceImpl implements IRaffleWarmupService {
         return toSlotMap(slotAwardIds);
     }
 
-    private Map<Integer, Long> toSlotMap(List<Long> slotAwardIds) {
+    private Map<Integer, String> toSlotMap(List<String> slotAwardIds) {
         if (slotAwardIds.size() != TABLE_SLOTS) {
             throw configError("概率表槽位数 %d ≠ %d".formatted(slotAwardIds.size(), TABLE_SLOTS));
         }
         Collections.shuffle(slotAwardIds);
-        Map<Integer, Long> table = new HashMap<>(TABLE_SLOTS * 2);
+        Map<Integer, String> table = new HashMap<>(TABLE_SLOTS * 2);
         for (int slot = 0; slot < slotAwardIds.size(); slot++) {
             table.put(slot, slotAwardIds.get(slot));
         }
@@ -157,17 +157,17 @@ public class RaffleWarmupServiceImpl implements IRaffleWarmupService {
 
     // ---- 杂项 ----
 
-    private List<DrawStrategyAwardEntity> normalAwards(Long strategyId, List<DrawStrategyAwardEntity> awards) {
+    private List<DrawStrategyAwardEntity> normalAwards(String strategyId, List<DrawStrategyAwardEntity> awards) {
         List<DrawStrategyAwardEntity> normalAwards = awards.stream()
                 .filter(award -> "normal".equals(award.getType())).toList();
         if (normalAwards.isEmpty()) {
-            throw configError("策略 %d 没有配 normal 奖品位，无法预热概率表".formatted(strategyId));
+            throw configError("策略 %s 没有配 normal 奖品位，无法预热概率表".formatted(strategyId));
         }
         return normalAwards;
     }
 
     /** 特型奖品位（blacklist / fallback）各取 sort 最小的一行缓存 awardId；没配则跳过 */
-    private void cacheSlotAward(Long strategyId, String slot, List<DrawStrategyAwardEntity> awards) {
+    private void cacheSlotAward(String strategyId, String slot, List<DrawStrategyAwardEntity> awards) {
         awards.stream()
                 .filter(award -> slot.equals(award.getType()))
                 .findFirst()

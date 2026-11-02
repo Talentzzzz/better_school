@@ -33,19 +33,19 @@ public interface IRaffleRepository {
     // ---- 配置读（DB，决策侧） ----
 
     /** 按活动业务 ID 查活动（不存在返回 null） */
-    DrawActivityEntity queryActivityEntityByActivityId(Long activityId);
+    DrawActivityEntity queryActivityEntityByActivityId(String activityId);
 
     /** 按策略业务 ID 查策略（rule 列已切开为节点码序列；不存在返回 null） */
-    DrawStrategyEntity queryStrategyEntityByStrategyId(Long strategyId);
+    DrawStrategyEntity queryStrategyEntityByStrategyId(String strategyId);
 
     /** 该策略的全部奖品位（含 normal / fallback / blacklist，概率口径以 award_rate 为准） */
-    List<DrawStrategyAwardEntity> queryAwardListByStrategyId(Long strategyId);
+    List<DrawStrategyAwardEntity> queryAwardListByStrategyId(String strategyId);
 
     /** 该策略的全部权重档（weights 列已切开为 award_id 列表），按 count 升序 */
-    List<DrawStrategyWeightEntity> queryWeightListByStrategyId(Long strategyId);
+    List<DrawStrategyWeightEntity> queryWeightListByStrategyId(String strategyId);
 
     /** 用户在该策略下的累计抽数 = draw_record 中该 user_id + strategy_id 的行数（权重档命中判据） */
-    int queryUserDrawCount(Long strategyId, String userId);
+    int queryUserDrawCount(String strategyId, String userId);
 
     // ---- 决策数据（Redis） ----
 
@@ -53,25 +53,25 @@ public interface IRaffleRepository {
      * 整体重建一张概率表（预热用）：key 口径见 {@code types.raffle.Constants.RAFFLE_TABLE_KEY}，
      * 恒 10000 槽（槽位 0..9999 → awardId）。先删旧 key 再写，保证配置变更重预热后无陈旧槽位。
      */
-    void cacheRaffleTable(String key, Map<Integer, Long> table);
+    void cacheRaffleTable(String key, Map<Integer, String> table);
 
     /** 读概率表；未预热 / key 不存在返回空 map */
-    Map<Integer, Long> getRaffleTable(String key);
+    Map<Integer, String> getRaffleTable(String key);
 
     /** 黑名单成员判定（bucket 存在即命中）；集合由风控侧写入，本域无黑名单用户表 */
-    boolean isUserBlacklisted(Long strategyId, String userId);
+    boolean isUserBlacklisted(String strategyId, String userId);
 
     /** 缓存特型奖品位 awardId（slot = blacklist / fallback，预热时自配置表灌入） */
-    void cacheAwardId(Long strategyId, String slot, Long awardId);
+    void cacheAwardId(String strategyId, String slot, String awardId);
 
     /** 读特型奖品位 awardId；缓存未命中回查 DB（type = slot 的第一行，按 sort,id），都没有返回 null */
-    Long queryAwardIdBySlot(Long strategyId, String slot);
+    String queryAwardIdBySlot(String strategyId, String slot);
 
     /** 标记策略预热完成（值 = 完成时刻 ISO 文本，可观测）；不存在该 key 即降级态 */
-    void cacheWarmupState(Long strategyId);
+    void cacheWarmupState(String strategyId);
 
     /** 预热态可查：true = 已预热（预热态），false = 降级态 */
-    boolean isWarmed(Long strategyId);
+    boolean isWarmed(String strategyId);
 
     // ---- 读侧（主链路幂等重放 / 活动 / 积分面额 / 对外翻页视图） ----
 
@@ -79,16 +79,16 @@ public interface IRaffleRepository {
     DrawActivityEntity queryCurrentActivity();
 
     /** 按记录业务 ID 查（幂等重放 / 并发去重 / 状态机判定起点）；不存在返回 null */
-    DrawRecordEntity queryRecordByRecordId(Long recordId);
+    DrawRecordEntity queryRecordByRecordId(String recordId);
 
     /** 积分面额：virtual_inventory_quota.value（仅 type=POINTS 行），无匹配返回 null */
-    Integer queryPointsValueByInvId(Long invId);
+    Integer queryPointsValueByInvId(String invId);
 
     /** 今日已抽数 = draw_record 该用户当日行数 */
     int countTodayDrawn(String userId);
 
     /** 奖品目录视图：奖品位 LEFT JOIN 两段库存台账的展示口径（remaining/total），inv_id=0 = 不限量 */
-    List<PrizeCatalogVO> queryPrizeCatalog(Long strategyId);
+    List<PrizeCatalogVO> queryPrizeCatalog(String strategyId);
 
     /** 我的中奖记录：恒过滤 THANKS，create_time DESC */
     long countDrawRecords(String userId);
@@ -119,5 +119,5 @@ public interface IRaffleRepository {
      * @param details 按推进顺序排列的动作明细（每条的 type 决定目标状态），长度 1 或 2
      * @return true = 本次真的推进了；false = 起点状态不匹配（重复投递 / 已终态）
      */
-    boolean advanceState(String userId, Long recordId, String fromState, List<DrawRecordDetailEntity> details);
+    boolean advanceState(String userId, String recordId, String fromState, List<DrawRecordDetailEntity> details);
 }

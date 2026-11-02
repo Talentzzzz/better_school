@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 @Data
 public class ActivityInfoVO {
 
-    private Long activityId;
+    private String activityId;
     private String name;
     private LocalDateTime startAt;
     private LocalDateTime endAt;

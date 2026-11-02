@@ -22,12 +22,12 @@ public class QuotaMergePort implements IQuotaMergePort {
     private final QuotaMergeBuffer quotaMergeBuffer;
 
     @Override
-    public DeductResult submitAndWait(long invId, InventoryDeductRequestVO request) {
+    public DeductResult submitAndWait(String invId, InventoryDeductRequestVO request) {
         return quotaMergeBuffer.submitAndWait(invId, request);
     }
 
     @Override
-    public ClaimOutcome submitAndWait(long invId, ClaimItem item) {
+    public ClaimOutcome submitAndWait(String invId, ClaimItem item) {
         return quotaMergeBuffer.submitAndWait(invId, item);
     }
 }

@@ -18,7 +18,7 @@ import lombok.Data;
 @Data
 public class LotteryPrizeResponseDTO {
 
-    private Long prizeId;
+    private String prizeId;
     private Integer tier;
     private String name;
     /** VIRTUAL / PHYSICAL / THANKS */

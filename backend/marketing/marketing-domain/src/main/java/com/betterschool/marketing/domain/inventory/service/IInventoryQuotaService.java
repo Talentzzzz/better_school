@@ -34,7 +34,7 @@ public interface IInventoryQuotaService {
      * @throws com.betterschool.marketing.types.common.AppException inv_id 查无此库存（参数错），
      *              或预扣还在缓冲 / 落库中、或落库事务失败（可重试：不切兜底、不落库，凭同一业务身份重放）
      */
-    boolean preDeduct(InventorySegmentVO segment, long invId, long quantity, String bizType, long bizId);
+    boolean preDeduct(InventorySegmentVO segment, String invId, long quantity, String bizType, String bizId);
 
     /**
      * 带兜底的预扣（spec §7.2）：主档扣不出 → 换个 inv_id（可换段）再扣；两段都扣不出 = FAILED。
@@ -67,5 +67,5 @@ public interface IInventoryQuotaService {
      * @throws com.betterschool.marketing.types.common.AppException 还在缓冲 / 落库中、或落库失败
      *              （可重试：MQ 重投撞唯一键回放或补上）
      */
-    void confirmIssued(long invId, String bizType, long bizId, long quantity);
+    void confirmIssued(String invId, String bizType, String bizId, long quantity);
 }

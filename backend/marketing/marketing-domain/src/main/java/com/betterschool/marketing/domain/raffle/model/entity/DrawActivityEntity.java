@@ -13,10 +13,10 @@ public class DrawActivityEntity {
 
     private Long id;
     /** 业务 ID（对外唯一标识） */
-    private Long activityId;
+    private String activityId;
     private String activityName;
     /** 绑定的抽奖策略 ID（draw_strategy.strategy_id） */
-    private Long strategyId;
+    private String strategyId;
     private LocalDateTime beginDateTime;
     private LocalDateTime endDateTime;
     /** create / open / close */

@@ -35,7 +35,7 @@
     </select>
 
     <!-- 特型奖品位：blacklist / fallback 各取第一行（sort,id 最小）；没有该型行返回 null -->
-    <select id="selectAwardIdBySlot" resultType="java.lang.Long">
+    <select id="selectAwardIdBySlot" resultType="java.lang.String">
         SELECT award_id
         FROM draw_strategy_award
         WHERE strategy_id = #{strategyId} AND type = #{type}
@@ -106,9 +106,9 @@
                a.award_type AS awardType,
                a.level      AS level,
                CASE WHEN a.award_type = 'VIRTUAL' AND vi.type = 'POINTS' THEN vi.value END AS pointsAmount,
-               CASE WHEN a.inv_id = 0 OR COALESCE(vi.surplus_qty, q.surplus_qty) &lt; 0 THEN NULL
+               CASE WHEN a.inv_id = '0' OR COALESCE(vi.surplus_qty, q.surplus_qty) &lt; 0 THEN NULL
                     ELSE COALESCE(vi.surplus_qty, q.surplus_qty) END  AS remaining,
-               CASE WHEN a.inv_id = 0 OR COALESCE(vi.surplus_qty, q.surplus_qty) &lt; 0 THEN NULL
+               CASE WHEN a.inv_id = '0' OR COALESCE(vi.surplus_qty, q.surplus_qty) &lt; 0 THEN NULL
                     WHEN vi.inv_id IS NOT NULL THEN vi.surplus_qty + vi.issued_qty
                     ELSE q.surplus_qty + q.waiting_qty + q.issued_qty END AS total
         FROM draw_strategy_award a

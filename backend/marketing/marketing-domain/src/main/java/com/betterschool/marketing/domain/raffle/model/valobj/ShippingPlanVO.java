@@ -20,7 +20,7 @@ import lombok.Data;
 @AllArgsConstructor
 public class ShippingPlanVO {
 
-    private Long recordId;
+    private String recordId;
     /** 中奖落库时的奖品类型快照（VIRTUAL / PHYSICAL / DRAW_COUNT / …），决定推进哪些动作 */
     private String awardType;
     /**
@@ -40,7 +40,7 @@ public class ShippingPlanVO {
     @AllArgsConstructor
     public static class QuotaConfirmVO {
         /** 实物营销配额业务 ID（= draw_record.inv_id） */
-        private Long invId;
+        private String invId;
         /** 本次确认份数（一抽一份） */
         private long quantity;
     }

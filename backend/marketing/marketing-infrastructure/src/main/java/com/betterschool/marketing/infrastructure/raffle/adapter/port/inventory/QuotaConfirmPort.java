@@ -17,7 +17,7 @@ public class QuotaConfirmPort implements IQuotaConfirmPort {
     private final IInventoryQuotaService inventoryQuotaService;
 
     @Override
-    public void confirmIssued(Long invId, Long recordId, long quantity) {
+    public void confirmIssued(String invId, String recordId, long quantity) {
         inventoryQuotaService.confirmIssued(invId, InventoryBizTypes.LOTTERY_CLAIM, recordId, quantity);
     }
 }

@@ -13,7 +13,7 @@ import lombok.Data;
 @AllArgsConstructor
 public class ShippingResultVO {
 
-    private Long recordId;
+    private String recordId;
     /** 推进后的 draw_record.state；未推进时为 null */
     private String state;
     /** 是否发生了状态推进 */

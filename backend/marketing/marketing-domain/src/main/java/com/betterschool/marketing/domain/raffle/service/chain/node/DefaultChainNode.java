@@ -31,15 +31,15 @@ public class DefaultChainNode extends AbstractChainNode {
     }
 
     @Override
-    public RaffleChainFactory.ChainAwardVO execute(String userId, Long strategyId, Long activityId) {
-        Map<Integer, Long> raffleTable = raffleRepository
+    public RaffleChainFactory.ChainAwardVO execute(String userId, String strategyId, String activityId) {
+        Map<Integer, String> raffleTable = raffleRepository
                 .getRaffleTable(Constants.defaultTableKey(strategyId));
         if (raffleTable.isEmpty()) {
             log.warn("默认概率表未预热 strategyId={} userId={}", strategyId, userId);
             throw new AppException(ResponseCode.RAFFLE_WARMUP_MISSING.getCode(),
                     ResponseCode.RAFFLE_WARMUP_MISSING.getInfo());
         }
-        Long awardId = raffleTable.get(ThreadLocalRandom.current().nextInt(0, raffleTable.size()));
+        String awardId = raffleTable.get(ThreadLocalRandom.current().nextInt(0, raffleTable.size()));
         log.info("规则链默认兜底出奖 userId={} strategyId={} awardId={}", userId, strategyId, awardId);
         return new RaffleChainFactory.ChainAwardVO(awardId, RaffleRuleNodeVO.RULE_DEFAULT, null);
     }

@@ -12,8 +12,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class DrawRecordVO {
 
-    private Long recordId;
-    private Long awardId;
+    private String recordId;
+    private String awardId;
     private String awardName;
     /** VIRTUAL / PHYSICAL / THANKS（列表恒不含 THANKS） */
     private String awardType;

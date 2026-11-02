@@ -8,17 +8,21 @@
 -- hot-row-merge-l2w256 票 09：本文件写**最终形态**——无两张库存桶表、明细表无 bucket_id / state
 -- （列与两条索引在存量库由 sql/cutover/d9-finalize.sql 于 D9 收口删除；存量库与新装库 7 天不一致是明知的代价，
 --  过渡期的切换动作见 sql/cutover/：window-ddl.sql（state SET DEFAULT 1）→ d9-finalize.sql）。
+-- uuid-biz-id 票 07：marketing 自有业务键（bucket_id / activity_id / strategy_id / award_id / record_id /
+-- inv_id / 兑换 ref_id / 台账 biz_id）全改 VARCHAR(36)，由应用层统一 IdGenerator 在 insert 前发号一次写入，
+-- 物理自增 id 保留为纯内部键；draw_strategy_award.inv_id 的「不限量」哨兵由数值 0 改字符串 '0'；
+-- draw_strategy_weight.weights 随 award_id 变长加宽到 VARCHAR(512)。存量数据不迁移，删库重建。
 SET NAMES utf8mb4;
 
 CREATE TABLE IF NOT EXISTS points_bucket (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
-    bucket_id   BIGINT      NOT NULL COMMENT '业务 ID（对外唯一标识）',
+    bucket_id   VARCHAR(36)      NOT NULL COMMENT '业务 ID（对外唯一标识）',
     user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID（跨 schema 只存 id，不 join 单体库）',
     amount      INT         NOT NULL COMMENT '入账积分数（恒正；方向由「在哪张表 + 哪个 reason_type」表达）',
     remain      INT         NOT NULL COMMENT '该桶剩余可用积分（消费按 FIFO 递减，过期清理置 0）',
     expire_at   DATETIME    NOT NULL COMMENT '过期时间 = 入账时点 + points_validity_config.points_valid_days',
     reason_type VARCHAR(30) NOT NULL COMMENT '积分来源 LOTTERY_WIN(抽奖中奖) / REBATE(行为返利：签到/支付等，规则见 action_rebate_config，ref_id=发放幂等键)',
-    ref_id      BIGINT      NOT NULL COMMENT '来源业务 ID（LOTTERY_WIN = 抽奖记录 id）',
+    ref_id      VARCHAR(36)      NOT NULL COMMENT '来源业务 ID（LOTTERY_WIN = 抽奖记录 id）',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -30,10 +34,10 @@ CREATE TABLE IF NOT EXISTS points_bucket (
 CREATE TABLE IF NOT EXISTS points_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
     user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID',
-    bucket_id   BIGINT      NOT NULL COMMENT '被扣的桶业务 ID（FIFO 顺序）',
+    bucket_id   VARCHAR(36)      NOT NULL COMMENT '被扣的桶业务 ID（FIFO 顺序）',
     amount      INT         NOT NULL COMMENT '本次从该桶扣掉的积分数（恒正）',
     reason_type VARCHAR(30) NOT NULL COMMENT '消费原因 REDEEM_DRAW_COUNT(兑换抽奖次数) / REDEEM_PRIZE(兑换奖品)',
-    ref_id      BIGINT      NOT NULL COMMENT '来源业务 ID（REDEEM_DRAW_COUNT = 兑换单 id，与 draw_count_bucket.ref_id 同值同事务；REDEEM_PRIZE = 抽奖记录 id，draw_record.record_id）',
+    ref_id      VARCHAR(36)      NOT NULL COMMENT '来源业务 ID（REDEEM_DRAW_COUNT = 兑换单 id，与 draw_count_bucket.ref_id 同值同事务；REDEEM_PRIZE = 抽奖记录 id，draw_record.record_id）',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -44,13 +48,13 @@ CREATE TABLE IF NOT EXISTS points_detail (
 
 CREATE TABLE IF NOT EXISTS draw_count_bucket (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
-    bucket_id   BIGINT      NOT NULL COMMENT '业务 ID（对外唯一标识）',
+    bucket_id   VARCHAR(36)      NOT NULL COMMENT '业务 ID（对外唯一标识）',
     user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID',
     amount      INT         NOT NULL COMMENT '入账次数（恒正）',
     remain      INT         NOT NULL COMMENT '该桶剩余可用次数（消费按 FIFO 递减，过期清理置 0）',
     expire_at   DATETIME    NOT NULL COMMENT '过期时间 = 入账时点 + draw_count_config.draw_count_valid_days',
     reason_type VARCHAR(20) NOT NULL COMMENT '次数来源 REDEEM(积分兑换) / REBATE(行为返利：签到/支付等，规则见 action_rebate_config，ref_id=发放幂等键)',
-    ref_id      BIGINT      NOT NULL COMMENT '来源业务 ID（REDEEM = 兑换单 id，与 points_detail.ref_id 的 REDEEM_DRAW_COUNT 同值、同事务写入）',
+    ref_id      VARCHAR(36)      NOT NULL COMMENT '来源业务 ID（REDEEM = 兑换单 id，与 points_detail.ref_id 的 REDEEM_DRAW_COUNT 同值、同事务写入）',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -62,8 +66,8 @@ CREATE TABLE IF NOT EXISTS draw_count_bucket (
 CREATE TABLE IF NOT EXISTS draw_count_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
     user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID',
-    bucket_id   BIGINT      NOT NULL COMMENT '被扣的桶业务 ID（FIFO 顺序）',
-    ref_id      BIGINT      NOT NULL COMMENT '抽奖记录业务 ID（draw_record.record_id，消费幂等键；每次抽奖扣 1 次）',
+    bucket_id   VARCHAR(36)      NOT NULL COMMENT '被扣的桶业务 ID（FIFO 顺序）',
+    ref_id      VARCHAR(36)      NOT NULL COMMENT '抽奖记录业务 ID（draw_record.record_id，消费幂等键；每次抽奖扣 1 次）',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -105,9 +109,9 @@ CREATE TABLE IF NOT EXISTS action_rebate_config (
 
 CREATE TABLE IF NOT EXISTS draw_activity (
     id              BIGINT      NOT NULL AUTO_INCREMENT,
-    activity_id     BIGINT      NOT NULL COMMENT '业务 ID（对外唯一标识）',
+    activity_id     VARCHAR(36)      NOT NULL COMMENT '业务 ID（对外唯一标识）',
     activity_name   VARCHAR(64) NOT NULL COMMENT '活动名称',
-    strategy_id     BIGINT      NOT NULL COMMENT '抽奖策略 ID',
+    strategy_id     VARCHAR(36)      NOT NULL COMMENT '抽奖策略 ID',
     begin_date_time DATETIME    NOT NULL COMMENT '开始时间',
     end_date_time   DATETIME    NOT NULL COMMENT '结束时间',
     state           VARCHAR(16) NOT NULL DEFAULT 'create' COMMENT '活动状态 create/open/close',
@@ -120,7 +124,7 @@ CREATE TABLE IF NOT EXISTS draw_activity (
 
 CREATE TABLE IF NOT EXISTS draw_strategy (
     id            BIGINT       NOT NULL AUTO_INCREMENT,
-    strategy_id   BIGINT       NOT NULL COMMENT '业务 ID（对外唯一标识）',
+    strategy_id   VARCHAR(36)       NOT NULL COMMENT '业务 ID（对外唯一标识）',
     strategy_desc VARCHAR(128) NULL COMMENT '抽奖策略描述',
     rule          VARCHAR(256) NULL COMMENT '规则模型（逗号分隔的规则链，如 rule_blacklist,rule_weight）',
     create_time   DATETIME     NOT NULL COMMENT '创建时间',
@@ -131,14 +135,14 @@ CREATE TABLE IF NOT EXISTS draw_strategy (
 
 CREATE TABLE IF NOT EXISTS draw_strategy_award (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
-    strategy_id BIGINT       NOT NULL COMMENT '所属抽奖策略 ID',
-    award_id    BIGINT       NOT NULL COMMENT '奖品 ID（策略内唯一）',
+    strategy_id VARCHAR(36)       NOT NULL COMMENT '所属抽奖策略 ID',
+    award_id    VARCHAR(36)       NOT NULL COMMENT '奖品 ID（策略内唯一）',
     award_name  VARCHAR(128) NOT NULL COMMENT '奖品名称',
     award_desc  VARCHAR(255) NULL     COMMENT '奖品描述',
     award_type  VARCHAR(20)  NOT NULL COMMENT '奖品类型 VIRTUAL(虚拟资产：积分、抽奖次数) / PHYSICAL(实物资产) / THANKS(谢谢参与占位：award_rate 计入概率池、type=normal、inv_id=0 无库存)',
     award_rate  DECIMAL(6,4) NOT NULL COMMENT '中奖概率（如 0.0500 = 5%；同一策略内各奖品位概率合计 = 1.0000）',
     level       INT          NOT NULL COMMENT '奖项层级（1 等奖 = 1，越大越低）',
-    inv_id      BIGINT       NOT NULL DEFAULT 0 COMMENT '关联库存业务 ID（0 = 无库存/不限量）',
+    inv_id      VARCHAR(36)       NOT NULL DEFAULT '0' COMMENT '关联库存业务 ID（''0'' = 无库存/不限量）',
     type        VARCHAR(20)  NOT NULL DEFAULT 'normal' COMMENT '奖品位类型 normal(正常) / fallback(兜底) / blacklist(黑名单)',
     sort        INT          NOT NULL DEFAULT 0 COMMENT '排序值',
     create_time DATETIME     NOT NULL COMMENT '创建时间',
@@ -152,9 +156,9 @@ CREATE TABLE IF NOT EXISTS draw_strategy_award (
 -- 规范化并回写 sql.md：表名并入 draw_* 家族，create_time/update_time 收尾不带默认值（应用写入）。
 CREATE TABLE IF NOT EXISTS draw_strategy_weight (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
-    strategy_id BIGINT       NOT NULL COMMENT '所属抽奖策略 ID',
+    strategy_id VARCHAR(36)       NOT NULL COMMENT '所属抽奖策略 ID',
     count       INT          NOT NULL COMMENT '权重档的抽数阈值：用户在该策略下累计抽数 ≥ count 时此档生效，多档取满足阈值中 count 最大的一档（累计抽数 = draw_record 中该 user_id + strategy_id 的行数）',
-    weights     VARCHAR(256) NOT NULL COMMENT '该档保底奖品池（逗号分隔的 award_id 列表，指向 draw_strategy_award.award_id；命中档位后在池内按 award_rate 归一化概率出奖）',
+    weights     VARCHAR(512) NOT NULL COMMENT '该档保底奖品池（逗号分隔的 award_id 列表，指向 draw_strategy_award.award_id；命中档位后在池内按 award_rate 归一化概率出奖）',
     create_time DATETIME     NOT NULL COMMENT '创建时间',
     update_time DATETIME     NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -164,16 +168,16 @@ CREATE TABLE IF NOT EXISTS draw_strategy_weight (
 
 CREATE TABLE IF NOT EXISTS draw_record (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
-    record_id   BIGINT       NOT NULL COMMENT '业务 ID（对外唯一标识；points_bucket.ref_id 的 LOTTERY_WIN 指向它）',
+    record_id   VARCHAR(36)       NOT NULL COMMENT '业务 ID（对外唯一标识；points_bucket.ref_id 的 LOTTERY_WIN 指向它）',
     user_id     VARCHAR(36)       NOT NULL COMMENT '用户 ID',
-    activity_id BIGINT       NOT NULL COMMENT '抽奖活动 ID',
-    strategy_id BIGINT       NOT NULL COMMENT '抽奖策略 ID',
-    award_id    BIGINT       NOT NULL COMMENT '命中的奖品 ID（策略内唯一）',
+    activity_id VARCHAR(36)       NOT NULL COMMENT '抽奖活动 ID',
+    strategy_id VARCHAR(36)       NOT NULL COMMENT '抽奖策略 ID',
+    award_id    VARCHAR(36)       NOT NULL COMMENT '命中的奖品 ID（策略内唯一）',
     award_name  VARCHAR(128) NOT NULL COMMENT '奖品名称快照（抽中时写入，此后不可变）',
     award_desc  VARCHAR(255) NULL COMMENT '奖品描述快照（抽中时写入，此后不可变）',
     award_type  VARCHAR(20)  NOT NULL COMMENT '奖品类型快照 VIRTUAL(虚拟资产) / PHYSICAL(实物资产) / THANKS(谢谢参与)',
     level       INT          NOT NULL COMMENT '奖项层级快照（1 等奖 = 1，越大越低）',
-    inv_id      BIGINT       NULL COMMENT '发放来源库存/配额业务 ID（快照；无库存来源为 NULL）',
+    inv_id      VARCHAR(36)       NULL COMMENT '发放来源库存/配额业务 ID（快照；无库存来源为 NULL）',
     state       VARCHAR(16)  NOT NULL DEFAULT '待兑换' COMMENT '奖品状态 待兑换/已兑换/已发货/已完成（THANKS 行落库即已完成，不走兑换/发货）',
     create_time DATETIME     NOT NULL COMMENT '创建时间',
     update_time DATETIME     NOT NULL COMMENT '更新时间',
@@ -186,7 +190,7 @@ CREATE TABLE IF NOT EXISTS draw_record (
 CREATE TABLE IF NOT EXISTS draw_record_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
     user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID（冗余自 draw_record，按人查询/鉴权用）',
-    record_id   BIGINT      NOT NULL COMMENT '抽奖记录业务 ID（draw_record.record_id）',
+    record_id   VARCHAR(36)      NOT NULL COMMENT '抽奖记录业务 ID（draw_record.record_id）',
     type        VARCHAR(20) NOT NULL COMMENT '动作类型 DRAW(抽中落库，对应 state=待兑换) / EXCHANGE(兑换，→已兑换) / SHIP(发货，→已发货) / COMPLETE(完成，→已完成)：落库与 state 每推进一步各落一条',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
@@ -197,7 +201,7 @@ CREATE TABLE IF NOT EXISTS draw_record_detail (
 
 CREATE TABLE IF NOT EXISTS virtual_inventory_quota (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
-    inv_id      BIGINT       NOT NULL COMMENT '业务 ID（库存全局唯一标识）',
+    inv_id      VARCHAR(36)       NOT NULL COMMENT '业务 ID（库存全局唯一标识）',
     name        VARCHAR(128) NOT NULL COMMENT '库存/权益名称，如「暑期签到积分池」',
     type        VARCHAR(20)  NOT NULL COMMENT '虚拟资产类型 POINTS(积分) / DRAW_COUNT(抽奖次数)',
     value       INT          NOT NULL DEFAULT 0 COMMENT '单次发放面额，如 50 积分、1 次抽奖机会',
@@ -214,10 +218,10 @@ CREATE TABLE IF NOT EXISTS virtual_inventory_quota (
 
 CREATE TABLE IF NOT EXISTS virtual_inventory_quota_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
-    inv_id      BIGINT      NOT NULL COMMENT '配额业务 ID',
+    inv_id      VARCHAR(36)      NOT NULL COMMENT '配额业务 ID',
     quantity    BIGINT      NOT NULL DEFAULT 0 COMMENT '本次预扣数量',
     biz_type    VARCHAR(32) NOT NULL COMMENT '业务类型：LOTTERY_DRAW（抽奖预扣）',
-    biz_id      BIGINT      NOT NULL COMMENT '业务 ID（抽奖 = draw_record.record_id）',
+    biz_id      VARCHAR(36)      NOT NULL COMMENT '业务 ID（抽奖 = draw_record.record_id）',
     create_time DATETIME    NOT NULL COMMENT '插入时间（DB NOW()）',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -226,7 +230,7 @@ CREATE TABLE IF NOT EXISTS virtual_inventory_quota_detail (
 
 CREATE TABLE IF NOT EXISTS physical_marketing_quota (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
-    inv_id      BIGINT       NOT NULL COMMENT '业务 ID（配额全局唯一标识）',
+    inv_id      VARCHAR(36)       NOT NULL COMMENT '业务 ID（配额全局唯一标识）',
     name        VARCHAR(128) NOT NULL COMMENT '配额名称，如「暑期实物营销配额」',
     decr        VARCHAR(255) NULL     COMMENT '配额说明',
     surplus_qty BIGINT       NOT NULL DEFAULT -1 COMMENT '剩余可发份数，-1=不限量',
@@ -243,11 +247,11 @@ CREATE TABLE IF NOT EXISTS physical_marketing_quota (
 
 CREATE TABLE IF NOT EXISTS physical_marketing_quota_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
-    inv_id      BIGINT      NOT NULL COMMENT '配额业务 ID',
+    inv_id      VARCHAR(36)      NOT NULL COMMENT '配额业务 ID',
     quantity    BIGINT      NOT NULL DEFAULT 0 COMMENT '本次流转数量',
     type        TINYINT     NOT NULL COMMENT '1-预扣结转（进 waiting）2-兑换确认（waiting → issued）',
     biz_type    VARCHAR(32) NOT NULL COMMENT '业务类型：LOTTERY_DRAW（预扣）/ LOTTERY_CLAIM（兑换确认）',
-    biz_id      BIGINT      NOT NULL COMMENT '业务 ID（抽奖与兑换确认都用 draw_record.record_id）',
+    biz_id      VARCHAR(36)      NOT NULL COMMENT '业务 ID（抽奖与兑换确认都用 draw_record.record_id）',
     create_time DATETIME    NOT NULL COMMENT '插入时间（DB NOW()）',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),

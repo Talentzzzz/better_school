@@ -18,7 +18,7 @@ import java.util.List;
 public interface IPointsRepository {
 
     /**
-     * 一次入账，**同一事务**内完成：造桶（bucket_id 雪花生成、expire_at = 事务内时点 + 积分有效期）
+     * 一次入账，**同一事务**内完成：造桶（bucket_id 走统一 IdGenerator 发号（uuid-biz-id 票 07）、expire_at = 事务内时点 + 积分有效期）
      * → 插桶（撞 {@code uk_user_reason_ref} 即幂等命中）→ 读变动后余额 → 落积分变动事件（走本服务 outbox）。
      * 桶已存在时不读余额、不发事件、也不打日志，返回 false——「幂等跳过」的日志由域服务按业务口径打。
      * <p>
@@ -27,7 +27,7 @@ public interface IPointsRepository {
      *
      * @return true = 本次真的入了账；false = 这笔入账已记过（幂等跳过）
      */
-    boolean insertBucketWithChanged(String userId, int amount, PointsReasonType reasonType, Long refId);
+    boolean insertBucketWithChanged(String userId, int amount, PointsReasonType reasonType, String refId);
 
     /**
      * 一次消费（兑抽奖次数 / 兑奖品），**同一事务**内完成：幂等预检（已扣过即按成功返回）→
@@ -38,7 +38,7 @@ public interface IPointsRepository {
      * 并发重复兑换在明细撞唯一键（表现为批量写明细的影响行数偏少）时整事务回滚，
      * 由本方法在事务外重读真实余额按幂等成功返回。
      */
-    PointsDeductResultVO deduct(String userId, int amount, PointsReasonType reasonType, Long refId);
+    PointsDeductResultVO deduct(String userId, int amount, PointsReasonType reasonType, String refId);
 
     /** 余额 = 未过期且未扣完的桶 remain 之和（没有余额列） */
     int sumAvailableRemain(String userId);

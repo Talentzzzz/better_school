@@ -13,7 +13,7 @@ public class PointsTransactionPO {
     private String direction;
     private Integer amount;
     private String reasonType;
-    private Long refId;
+    private String refId;
     private LocalDateTime createdAt;
     /** 仅入账行有值 */
     private LocalDateTime expireAt;

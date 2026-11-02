@@ -15,5 +15,5 @@ package com.betterschool.marketing.domain.inventory.model.valobj;
  * @param bizId   抽奖记录 id（= {@code draw_record.record_id}），不是独立兑换单号
  * @param quantity 本次转移的份数；一笔确认 = 一份实物出库，恒 &gt; 0
  */
-public record ClaimItem(String bizType, long bizId, long quantity) {
+public record ClaimItem(String bizType, String bizId, long quantity) {
 }

@@ -9,16 +9,16 @@ import java.time.LocalDateTime;
 public class DrawRecordPO {
 
     private Long id;
-    private Long recordId;
+    private String recordId;
     private String userId;
-    private Long activityId;
-    private Long strategyId;
-    private Long awardId;
+    private String activityId;
+    private String strategyId;
+    private String awardId;
     private String awardName;
     private String awardDesc;
     private String awardType;
     private Integer level;
-    private Long invId;
+    private String invId;
     private String state;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;

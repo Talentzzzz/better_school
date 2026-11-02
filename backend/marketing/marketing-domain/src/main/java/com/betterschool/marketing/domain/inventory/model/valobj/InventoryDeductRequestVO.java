@@ -10,8 +10,8 @@ import com.betterschool.marketing.types.inventory.InventorySegmentVO;
  * @param bizId   业务 ID（抽奖 = {@code draw_record.record_id}）：明细唯一键的去重锚点
  */
 public record InventoryDeductRequestVO(InventorySegmentVO segment,
-                                       long invId,
+                                       String invId,
                                        long quantity,
                                        String bizType,
-                                       long bizId) {
+                                       String bizId) {
 }

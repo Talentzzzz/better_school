@@ -17,7 +17,7 @@ import com.betterschool.marketing.infrastructure.points.dao.po.PointsDetailPO;
 import com.betterschool.marketing.infrastructure.points.dao.po.PointsTransactionPO;
 import com.betterschool.marketing.types.common.Constants;
 import com.betterschool.marketing.types.common.ResponseCode;
-import com.betterschool.marketing.types.common.SnowflakeIdGenerator;
+import com.betterschool.marketing.types.id.IIdGenerator;
 import com.betterschool.marketing.types.points.PointsReasonType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,9 +48,10 @@ public class PointsRepository implements IPointsRepository {
     private final OutboxMessageStore outboxMessageStore;
     private final IPointsConfigPort pointsConfigPort;
     private final TransactionTemplate transactionTemplate;
+    private final IIdGenerator idGenerator;
 
     @Override
-    public boolean insertBucketWithChanged(String userId, int amount, PointsReasonType reasonType, Long refId) {
+    public boolean insertBucketWithChanged(String userId, int amount, PointsReasonType reasonType, String refId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             PointsBucketEntity bucket = newBucket(userId, amount, reasonType, refId, LocalDateTime.now());
             if (!insertBucket(bucket)) {
@@ -63,7 +64,7 @@ public class PointsRepository implements IPointsRepository {
     }
 
     @Override
-    public PointsDeductResultVO deduct(String userId, int amount, PointsReasonType reasonType, Long refId) {
+    public PointsDeductResultVO deduct(String userId, int amount, PointsReasonType reasonType, String refId) {
         PointsDeductResultVO result = transactionTemplate.execute(status -> {
             if (existsConsume(userId, reasonType, refId)) {
                 // 重试同一笔兑换：已经扣过就按成功返回，不重复扣、不重复发事件
@@ -122,7 +123,7 @@ public class PointsRepository implements IPointsRepository {
     // ---------------------------------------------------------------- 内部
 
     /** 发一条积分变动事件（走本服务 outbox，与业务同事务）：入账与消费两个用例的最后一步 */
-    private void savePointsChanged(String userId, int delta, int balanceAfter, PointsReasonType reasonType, Long refId) {
+    private void savePointsChanged(String userId, int delta, int balanceAfter, PointsReasonType reasonType, String refId) {
         outboxMessageStore.save(Constants.POINTS_CHANGED_TOPIC,
                 new PointsChangedMessage(userId, delta, balanceAfter, reasonType.name(), refId));
     }
@@ -143,7 +144,7 @@ public class PointsRepository implements IPointsRepository {
      * 后面还剩够用的桶），明细行数对得上，唯一键也不出场。逐桶版同样如此，不是本次改动引入的；
      * 要收它得改幂等键的粒度（例如按兑换单号唯一），那是另开票的事。
      */
-    private boolean existsConsume(String userId, PointsReasonType reasonType, Long refId) {
+    private boolean existsConsume(String userId, PointsReasonType reasonType, String refId) {
         return pointsDao.selectConsumeId(userId, reasonType.name(), refId) != null;
     }
 
@@ -170,7 +171,7 @@ public class PointsRepository implements IPointsRepository {
      *
      * @return false = 明细的影响行数少于明细条数（撞了 {@code uk_bucket_reason_ref}），这些桶里已有这一笔业务
      */
-    private boolean writePlan(PointsDeductPlanVO plan, String userId, PointsReasonType reasonType, Long refId,
+    private boolean writePlan(PointsDeductPlanVO plan, String userId, PointsReasonType reasonType, String refId,
                               LocalDateTime now) {
         List<PointsBucketDeductionVO> deductions = plan.deductions();
         // 第一条：全部明细一次写完。行数偏少 = 有桶撞了 uk_bucket_reason_ref，从这一条开始回滚
@@ -182,7 +183,7 @@ public class PointsRepository implements IPointsRepository {
         }
         // 第二条：扣光的桶一条语句清零。桶已在 listAvailableBucketsForUpdate 里加了行锁，方案又按同一份 remain
         // 算出，这里必然命中集合里的每一行；少命中一行就说明余量与方案不一致
-        List<Long> drainedBucketIds = plan.getDrainedBuckets().stream()
+        List<String> drainedBucketIds = plan.getDrainedBuckets().stream()
                 .map(PointsBucketDeductionVO::getBucketId)
                 .toList();
         if (!drainedBucketIds.isEmpty()) {
@@ -207,7 +208,7 @@ public class PointsRepository implements IPointsRepository {
 
     /** 造一行待落的消费明细：方案的一条 + 本次消费的来源业务（同一次消费的所有行共享一个时点） */
     private PointsDetailEntity newDetail(String userId, PointsBucketDeductionVO deduction, PointsReasonType reasonType,
-                                         Long refId, LocalDateTime now) {
+                                         String refId, LocalDateTime now) {
         PointsDetailEntity detail = new PointsDetailEntity();
         detail.setUserId(userId);
         detail.setBucketId(deduction.getBucketId());
@@ -246,11 +247,11 @@ public class PointsRepository implements IPointsRepository {
         return pointsDao.insertIgnoreBucket(bucketPO) > 0;
     }
 
-    /** 造一行待入账的桶：bucket_id 雪花生成，expire_at = 入账时点 + 积分有效期配置（都在事务内取） */
-    private PointsBucketEntity newBucket(String userId, int amount, PointsReasonType reasonType, Long refId,
+    /** 造一行待入账的桶：bucket_id 走统一 IdGenerator 发号（uuid-biz-id 票 07），expire_at = 入账时点 + 积分有效期配置（都在事务内取） */
+    private PointsBucketEntity newBucket(String userId, int amount, PointsReasonType reasonType, String refId,
                                          LocalDateTime now) {
         PointsBucketEntity bucket = new PointsBucketEntity();
-        bucket.setBucketId(SnowflakeIdGenerator.nextId());
+        bucket.setBucketId(idGenerator.nextId());
         bucket.setUserId(userId);
         bucket.setAmount(amount);
         bucket.setRemain(amount);

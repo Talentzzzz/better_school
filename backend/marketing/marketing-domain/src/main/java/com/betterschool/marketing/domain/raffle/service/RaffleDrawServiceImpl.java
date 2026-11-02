@@ -32,7 +32,8 @@ import java.util.stream.Collectors;
  * 三条降级 / 兜底路径：预热缺失（链尾默认节点抛 4311）→ DB 直算概率；虚拟奖品桶不足 / 实物配额不足
  * → 切兜底奖品位（type=fallback）；连兜底也扣不出 → RAFFLE_ISSUE_FAILED，本次不落任何库存。
  * <p>
- * 幂等口径：record_id = hash(userId, token)（确定性映射，无重放表）。重放走「先查记录」快路径；
+ * 幂等口径：record_id = hash(userId, token) 的确定性 UUID 映射（无重放表，见
+ * {@link com.betterschool.marketing.types.common.IdempotencyKeys}）。重放走「先查记录」快路径；
  * 并发双击靠扣次的明细唯一键串行化——败者要么在扣次后查到已落记录回放，要么在落库时撞
  * uk_record_id 后回放；两条路都不重复扣次数、不重复预扣。
  */
@@ -51,7 +52,7 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
         if (token == null || token.isBlank()) {
             throw new AppException(ResponseCode.LOTTERY_PARAM_ERROR);
         }
-        long recordId = recordIdOf(userId, token);
+        String recordId = recordIdOf(userId, token);
 
         DrawRecordEntity replayed = queryOwnRecord(recordId, userId);
         if (replayed != null) {
@@ -73,7 +74,7 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
         }
 
         List<DrawStrategyAwardEntity> awardList = raffleRepository.queryAwardListByStrategyId(activity.getStrategyId());
-        Map<Long, DrawStrategyAwardEntity> awardMap = awardList.stream()
+        Map<String, DrawStrategyAwardEntity> awardMap = awardList.stream()
                 .collect(Collectors.toMap(DrawStrategyAwardEntity::getAwardId, Function.identity()));
 
         RaffleChainFactory.ChainAwardVO decision = decide(activity, userId, awardList);
@@ -144,21 +145,21 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
     }
 
     /**
-     * 库存预扣（inv_id=0 = 不限量，跳过）：实物走带兜底的配额预扣（票 12 的 port），
+     * 库存预扣（inv_id='0' = 不限量，跳过）：实物走带兜底的配额预扣（票 12 的 port），
      * 虚拟走权益池预扣；扣不出切兜底奖品位，兜底也扣不出 → RAFFLE_ISSUE_FAILED。
      * <p>
      * 预扣带 {@code recordId}（票 03）：库存明细以 {@code (biz_type, biz_id = recordId)} 为业务唯一键，
      * 同 token 并发双击时第二笔撞键 → 库存侧回补本次 Redis 扣减并按「已扣」回放，净扣减只有一份。
      */
-    private DrawStrategyAwardEntity issueWithFallback(DrawStrategyAwardEntity award, Long strategyId,
-                                                      Map<Long, DrawStrategyAwardEntity> awardMap, long recordId) {
-        if (award.getInvId() == null || award.getInvId() == 0) {
+    private DrawStrategyAwardEntity issueWithFallback(DrawStrategyAwardEntity award, String strategyId,
+                                                      Map<String, DrawStrategyAwardEntity> awardMap, String recordId) {
+        if (award.getInvId() == null || "0".equals(award.getInvId())) {
             return award;
         }
         DrawStrategyAwardEntity fallbackAward = findFallbackAward(strategyId, awardMap);
         if ("PHYSICAL".equals(award.getAwardType())) {
-            Long fallbackInvId = fallbackAward != null && fallbackAward.getInvId() != null
-                    && fallbackAward.getInvId() != 0 ? fallbackAward.getInvId() : null;
+            String fallbackInvId = fallbackAward != null && fallbackAward.getInvId() != null
+                    && !"0".equals(fallbackAward.getInvId()) ? fallbackAward.getInvId() : null;
             IInventoryDeductPort.Outcome outcome = inventoryDeductPort
                     .preDeductPhysicalWithFallback(award.getInvId(), fallbackInvId, 1, recordId);
             if (outcome == IInventoryDeductPort.Outcome.FALLBACK) {
@@ -167,8 +168,8 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
                 return requireFallback(fallbackAward);
             }
             if (outcome == IInventoryDeductPort.Outcome.FAILED) {
-                // 兜底库存也空了；兜底奖品位若本身不限量（inv_id=0）仍可发
-                if (fallbackAward != null && fallbackAward.getInvId() != null && fallbackAward.getInvId() == 0) {
+                // 兜底库存也空了；兜底奖品位若本身不限量（inv_id='0'）仍可发
+                if (fallbackAward != null && fallbackAward.getInvId() != null && "0".equals(fallbackAward.getInvId())) {
                     return fallbackAward;
                 }
                 throw new AppException(ResponseCode.RAFFLE_ISSUE_FAILED);
@@ -182,14 +183,14 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
         if (fallbackAward == null) {
             throw new AppException(ResponseCode.RAFFLE_ISSUE_FAILED);
         }
-        if (fallbackAward.getInvId() != null && fallbackAward.getInvId() != 0
+        if (fallbackAward.getInvId() != null && !"0".equals(fallbackAward.getInvId())
                 && !inventoryDeductPort.preDeductVirtual(fallbackAward.getInvId(), 1, recordId)) {
             throw new AppException(ResponseCode.RAFFLE_ISSUE_FAILED);
         }
         return fallbackAward;
     }
 
-    private DrawStrategyAwardEntity requireAward(Map<Long, DrawStrategyAwardEntity> awardMap, Long awardId) {
+    private DrawStrategyAwardEntity requireAward(Map<String, DrawStrategyAwardEntity> awardMap, String awardId) {
         DrawStrategyAwardEntity award = awardMap.get(awardId);
         if (award == null) {
             // 链命中的 awardId 不在配置里 = 配置错 / 配置变更窗口，直接炸出来
@@ -198,8 +199,8 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
         return award;
     }
 
-    private DrawStrategyAwardEntity findFallbackAward(Long strategyId, Map<Long, DrawStrategyAwardEntity> awardMap) {
-        Long fallbackAwardId = raffleRepository.queryAwardIdBySlot(strategyId,
+    private DrawStrategyAwardEntity findFallbackAward(String strategyId, Map<String, DrawStrategyAwardEntity> awardMap) {
+        String fallbackAwardId = raffleRepository.queryAwardIdBySlot(strategyId,
                 IRaffleRepository.SLOT_FALLBACK);
         return fallbackAwardId == null ? null : awardMap.get(fallbackAwardId);
     }
@@ -213,7 +214,7 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
         return fallbackAward;
     }
 
-    private DrawRecordEntity persistRecord(String userId, DrawActivityEntity activity, long recordId,
+    private DrawRecordEntity persistRecord(String userId, DrawActivityEntity activity, String recordId,
                                            DrawStrategyAwardEntity award) {
         LocalDateTime now = LocalDateTime.now();
         DrawRecordEntity record = new DrawRecordEntity();
@@ -226,7 +227,7 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
         record.setAwardDesc(award.getAwardDesc());
         record.setAwardType(award.getAwardType());
         record.setLevel(award.getLevel());
-        record.setInvId(award.getInvId() == null || award.getInvId() == 0 ? null : award.getInvId());
+        record.setInvId(award.getInvId() == null || "0".equals(award.getInvId()) ? null : award.getInvId());
         // THANKS 落库即已完成（sql.md 口径，不走兑换/发货）；其余从待兑换起步，推进归票 14
         record.setState("THANKS".equals(award.getAwardType())
                 ? DrawRecordActionVO.COMPLETE.getTargetState()
@@ -281,7 +282,7 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
     // ---------------------------------------------------------------- 重放与出参
 
     /** 幂等重放必须校验归属：hash 碰撞把别人的记录顶出来时按系统错拒绝（概率可忽略，不可回放他人结果） */
-    private DrawRecordEntity queryOwnRecord(long recordId, String userId) {
+    private DrawRecordEntity queryOwnRecord(String recordId, String userId) {
         DrawRecordEntity record = raffleRepository.queryRecordByRecordId(recordId);
         if (record != null && !record.getUserId().equals(userId)) {
             throw new AppException(ResponseCode.SYSTEM_ERROR);
@@ -295,11 +296,11 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
     }
 
     /**
-     * record_id = hash(userId, token) 截断为正 long（见 {@link com.betterschool.marketing.types.common.IdempotencyKeys}）：
+     * record_id = hash(userId, token) 的确定性 UUID 映射（见 {@link com.betterschool.marketing.types.common.IdempotencyKeys}）：
      * 同一 (userId, token) 恒映射同一记录——重放不需要重放表，uk_record_id 就是幂等互斥。
-     * 碰撞概率 ~2^-63 量级，撞了由 uk + 归属校验兜底。
+     * 碰撞概率 ~2^-128 量级，撞了由 uk + 归属校验兜底。
      */
-    private static long recordIdOf(String userId, String token) {
+    private static String recordIdOf(String userId, String token) {
         return com.betterschool.marketing.types.common.IdempotencyKeys.of(userId, token);
     }
 }

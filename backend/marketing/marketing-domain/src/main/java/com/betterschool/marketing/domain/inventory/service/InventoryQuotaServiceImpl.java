@@ -46,7 +46,7 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
     private final IQuotaMergePort quotaMergePort;
 
     @Override
-    public boolean preDeduct(InventorySegmentVO segment, long invId, long quantity, String bizType, long bizId) {
+    public boolean preDeduct(InventorySegmentVO segment, String invId, long quantity, String bizType, String bizId) {
         InventoryLedgerVO ledger = inventoryRepository.queryLedger(segment, invId);
         if (ledger == null) {
             throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),
@@ -116,7 +116,7 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
      * 一条 {@code UPDATE}」的另一组（与预扣不合成一条三列 {@code UPDATE}——两个失败域不能混在一句里）。
      * 返回即 {@code waiting -= c, issued += c} 已提交，**没有第二步**。
      * <p>
-     * {@code invId <= 0}（不限量档，{@code draw_record.inv_id} 落 {@code NULL}）先短路为
+     * {@code invId} 空（不限量档，{@code draw_record.inv_id} 落 {@code NULL}）先短路为
      * 「无事可做」，不与「账不平」共用异常。
      * <p>
      * 幂等：同一条记录重复确认会撞 {@code uk_biz_type (type, biz_type, biz_id)}——撞键 = 已确认过
@@ -126,8 +126,8 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
      * + 抛可重试 ⇒ MQ 重投 ⇒ 死信。不复活 {@code INVENTORY_WAITING_SHORTAGE(4312)}，不做部分确认。
      */
     @Override
-    public void confirmIssued(long invId, String bizType, long bizId, long quantity) {
-        if (invId <= 0) {
+    public void confirmIssued(String invId, String bizType, String bizId, long quantity) {
+        if (invId == null || invId.isBlank()) {
             // 不限量档没有实物配额行可转移：无事可做（与「账不平」是两个出口，spec §4.5）
             log.info("兑换确认无事可做（不限量档，无实物配额行） bizType={} bizId={} quantity={}",
                     bizType, bizId, quantity);
@@ -152,7 +152,7 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
      * **复用同一个落库方法**（{@code flushClaimGroup}）——两套 SQL 迟早漂移，而漂移只在压力最大时暴露
      * （spec §2.6）。落库事务失败（含 waiting 不足的整组回滚）原样抛给调用方 ⇒ MQ 重投。
      */
-    private void degradeConfirm(long invId, ClaimItem item) {
+    private void degradeConfirm(String invId, ClaimItem item) {
         log.warn("合并器缓冲满或已停机，降级为同步确认（组大小 1） invId={} bizId={}", invId, item.bizId());
         List<ClaimOutcome> results = inventoryRepository.flushClaimGroup(invId, List.of(item));
         if (results.size() != 1 || results.get(0) != ClaimOutcome.CONFIRMED) {
@@ -167,7 +167,7 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
      * **复用同一个落库方法**（{@code flushDeductGroup}）——两套 SQL 迟早漂移，而漂移只在压力最大时暴露
      * （spec §2.6）。落库事务失败原样抛给调用方（ERROR，凭 bizId 重试不双扣）。
      */
-    private boolean degradeFlush(InventorySegmentVO segment, long invId, InventoryDeductRequestVO request) {
+    private boolean degradeFlush(InventorySegmentVO segment, String invId, InventoryDeductRequestVO request) {
         log.warn("合并器缓冲满或已停机，降级为同步落库（组大小 1） segment={} invId={} bizId={}",
                 segment.getCode(), invId, request.bizId());
         List<DeductResult> results =
@@ -180,7 +180,7 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
      * 只在失败路径调用（成功路径靠唯一键撞键，不多付一次查询）——覆盖
      * 「台账已 exhausted / closed，压根进不了合并器」窗口内的同 {@code bizId} 重放。
      */
-    private boolean alreadyDeducted(InventorySegmentVO segment, long invId, String bizType, long bizId) {
+    private boolean alreadyDeducted(InventorySegmentVO segment, String invId, String bizType, String bizId) {
         if (!inventoryRepository.existsDeductDetail(segment, invId, bizType, bizId)) {
             return false;
         }

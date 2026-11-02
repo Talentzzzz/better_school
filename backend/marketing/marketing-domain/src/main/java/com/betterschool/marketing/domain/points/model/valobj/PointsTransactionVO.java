@@ -17,7 +17,7 @@ public class PointsTransactionVO {
     private PointsTransactionDirectionVO direction;
     private Integer amount;
     private PointsReasonType reasonType;
-    private Long refId;
+    private String refId;
     private LocalDateTime createdAt;
     /** 该桶的过期时间（仅 IN 行有） */
     private LocalDateTime expireAt;

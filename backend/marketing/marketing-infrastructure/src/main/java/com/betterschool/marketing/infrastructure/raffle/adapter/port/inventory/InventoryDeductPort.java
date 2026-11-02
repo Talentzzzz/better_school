@@ -23,13 +23,13 @@ public class InventoryDeductPort implements IInventoryDeductPort {
     private final IInventoryQuotaService inventoryQuotaService;
 
     @Override
-    public boolean preDeductVirtual(Long invId, long quantity, long recordId) {
+    public boolean preDeductVirtual(String invId, long quantity, String recordId) {
         return inventoryQuotaService.preDeduct(InventorySegmentVO.VIRTUAL, invId, quantity,
                 InventoryBizTypes.LOTTERY_DRAW, recordId);
     }
 
     @Override
-    public Outcome preDeductPhysicalWithFallback(Long invId, Long fallbackInvId, long quantity, long recordId) {
+    public Outcome preDeductPhysicalWithFallback(String invId, String fallbackInvId, long quantity, String recordId) {
         InventoryDeductRequestVO primary = new InventoryDeductRequestVO(InventorySegmentVO.QUOTA, invId, quantity,
                 InventoryBizTypes.LOTTERY_DRAW, recordId);
         InventoryDeductRequestVO fallback = fallbackInvId == null ? null

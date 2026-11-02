@@ -21,8 +21,8 @@ class PointsExpireIntegrationTest extends PointsApiTestBase {
     @Test
     @DisplayName("懒过期：过期桶不计入余额，但仍留在流水里可查")
     void expiredBucket_isExcludedFromBalance_butStaysInTransactions() {
-        long expiredBucketId = insertBucket(USER_ID, 50, 50, LocalDateTime.now().minusDays(1), "LOTTERY_WIN", 80001L);
-        insertBucket(USER_ID, 30, 30, LocalDateTime.now().plusDays(10), "LOTTERY_WIN", 80002L);
+        long expiredBucketId = insertBucket(USER_ID, 50, 50, LocalDateTime.now().minusDays(1), "LOTTERY_WIN", "80001");
+        insertBucket(USER_ID, 30, 30, LocalDateTime.now().plusDays(10), "LOTTERY_WIN", "80002");
 
         // 读路径：余额只算未过期的那 30
         assertThat(pointsAccountService.getBalance(USER_ID)).isEqualTo(30);
@@ -41,8 +41,8 @@ class PointsExpireIntegrationTest extends PointsApiTestBase {
     @Test
     @DisplayName("过期落账清理：只把 remain 置 0 且不删行、不发事件")
     void expireScan_zeroesRemainWithoutDeletingRowOrEmittingEvent() {
-        long expiredBucketId = insertBucket(USER_ID, 50, 50, LocalDateTime.now().minusDays(1), "LOTTERY_WIN", 80011L);
-        long validBucketId = insertBucket(USER_ID, 30, 30, LocalDateTime.now().plusDays(10), "LOTTERY_WIN", 80012L);
+        long expiredBucketId = insertBucket(USER_ID, 50, 50, LocalDateTime.now().minusDays(1), "LOTTERY_WIN", "80011");
+        long validBucketId = insertBucket(USER_ID, 30, 30, LocalDateTime.now().plusDays(10), "LOTTERY_WIN", "80012");
 
         int cleaned = pointsAccountService.expireBuckets();
 

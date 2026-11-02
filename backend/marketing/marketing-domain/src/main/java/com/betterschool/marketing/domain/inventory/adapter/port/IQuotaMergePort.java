@@ -35,12 +35,12 @@ public interface IQuotaMergePort {
      *
      * @param invId 台账行主键（= 分片键），与 {@code request.invId()} 必须一致
      */
-    DeductResult submitAndWait(long invId, InventoryDeductRequestVO request);
+    DeductResult submitAndWait(String invId, InventoryDeductRequestVO request);
 
     /**
      * 兑换确认（等结果，仅实物段）。
      *
      * @param invId 台账行主键（= 分片键）；{@code invId <= 0} 的短路在调用方做
      */
-    ClaimOutcome submitAndWait(long invId, ClaimItem item);
+    ClaimOutcome submitAndWait(String invId, ClaimItem item);
 }

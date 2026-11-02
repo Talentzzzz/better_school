@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class Pending<R> {
 
     private final QuotaAction action;
-    private final long shardKey;
+    private final String shardKey;
     /** 预扣的段（分组键的第二维）；确认没有段，恒 null */
     private final InventorySegmentVO segment;
     /** 落库入参：{@link QuotaAction#DEDUCT} ⇒ {@link InventoryDeductRequestVO}，{@link QuotaAction#CLAIM} ⇒ {@link ClaimItem} */
@@ -46,7 +46,7 @@ final class Pending<R> {
     private final AtomicBoolean settled = new AtomicBoolean();
 
     private Pending(QuotaAction action,
-                    long shardKey,
+                    String shardKey,
                     InventorySegmentVO segment,
                     Object payload,
                     R failureValue) {
@@ -58,12 +58,12 @@ final class Pending<R> {
     }
 
     /** 一件预扣 */
-    static Pending<DeductResult> deduct(long invId, InventoryDeductRequestVO request) {
+    static Pending<DeductResult> deduct(String invId, InventoryDeductRequestVO request) {
         return new Pending<>(QuotaAction.DEDUCT, invId, request.segment(), request, DeductResult.FAILED);
     }
 
     /** 一件兑换确认（只有实物段，没有 segment） */
-    static Pending<ClaimOutcome> claim(long invId, ClaimItem item) {
+    static Pending<ClaimOutcome> claim(String invId, ClaimItem item) {
         return new Pending<>(QuotaAction.CLAIM, invId, null, item, ClaimOutcome.FAILED);
     }
 
@@ -71,7 +71,7 @@ final class Pending<R> {
         return action;
     }
 
-    long shardKey() {
+    String shardKey() {
         return shardKey;
     }
 

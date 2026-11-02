@@ -10,8 +10,8 @@ public class DrawCountDetailPO {
 
     private Long id;
     private String userId;
-    private Long bucketId;
-    private Long refId;
+    private String bucketId;
+    private String refId;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

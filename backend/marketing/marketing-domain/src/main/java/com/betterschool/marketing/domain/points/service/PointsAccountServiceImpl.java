@@ -35,7 +35,7 @@ public class PointsAccountServiceImpl implements IPointsAccountService {
     private final IPointsConfigPort pointsConfigPort;
 
     @Override
-    public void addForLotteryWin(String userId, Long recordId, int pointsAmount) {
+    public void addForLotteryWin(String userId, String recordId, int pointsAmount) {
         if (pointsAmount <= 0) {
             // 非积分档（实物 / 谢谢参与）不该走到这里；真收到了也只是不加分，不抛异常打断 MQ 消费
             return;
@@ -47,7 +47,7 @@ public class PointsAccountServiceImpl implements IPointsAccountService {
     }
 
     @Override
-    public boolean creditForRebate(String actionType, String userId, Long refId) {
+    public boolean creditForRebate(String actionType, String userId, String refId) {
         if (actionType == null || actionType.isBlank() || userId == null || refId == null) {
             throw new AppException(ResponseCode.POINTS_PARAM_ERROR);
         }
@@ -64,7 +64,7 @@ public class PointsAccountServiceImpl implements IPointsAccountService {
     }
 
     @Override
-    public PointsDeductResultVO deduct(String userId, int amount, PointsReasonType reasonType, Long refId) {
+    public PointsDeductResultVO deduct(String userId, int amount, PointsReasonType reasonType, String refId) {
         if (amount <= 0 || refId == null) {
             throw new AppException(ResponseCode.POINTS_PARAM_ERROR);
         }

@@ -10,7 +10,7 @@ public class DrawRecordDetailPO {
 
     private Long id;
     private String userId;
-    private Long recordId;
+    private String recordId;
     private String type;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;

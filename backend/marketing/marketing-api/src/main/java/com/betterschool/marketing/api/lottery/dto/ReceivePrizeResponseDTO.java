@@ -12,7 +12,7 @@ import lombok.Data;
 public class ReceivePrizeResponseDTO {
 
     /** 抽奖记录业务 ID（= draw_record.record_id，前端「我的奖品」行的 id） */
-    private Long id;
+    private String id;
     /** 推进后的状态 PENDING / EXCHANGED / SHIPPED / COMPLETED */
     private String status;
 }

@@ -60,5 +60,5 @@ public interface ILotteryService {
      * 幂等：已完成的记录重复调用直接返回 COMPLETED；记录不存在 / 非本人 / 状态不是已发货
      * 一律 {@code PRIZE_NOT_RECEIVABLE(4314)}。
      */
-    Response<ReceivePrizeResponseDTO> confirmReceived(Long id);
+    Response<ReceivePrizeResponseDTO> confirmReceived(String id);
 }

@@ -14,12 +14,12 @@ public class DrawRecordEntity {
 
     private Long id;
     /** 业务 ID（对外唯一标识；points_bucket.ref_id 的 LOTTERY_WIN 指向它） */
-    private Long recordId;
+    private String recordId;
     private String userId;
-    private Long activityId;
-    private Long strategyId;
+    private String activityId;
+    private String strategyId;
     /** 命中的奖品 ID（策略内唯一） */
-    private Long awardId;
+    private String awardId;
     /** 奖品名称快照 */
     private String awardName;
     /** 奖品描述快照 */
@@ -29,7 +29,7 @@ public class DrawRecordEntity {
     /** 奖项层级快照 */
     private Integer level;
     /** 发放来源库存/配额业务 ID（快照；无库存来源为 null） */
-    private Long invId;
+    private String invId;
     /** 待兑换 / 已兑换 / 已发货 / 已完成 */
     private String state;
     private LocalDateTime createTime;

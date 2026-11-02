@@ -11,8 +11,8 @@ import lombok.Data;
 public class DrawResultVO {
 
     /** 抽奖记录业务 ID（draw_record.record_id，幂等键的落点） */
-    private Long recordId;
-    private Long awardId;
+    private String recordId;
+    private String awardId;
     private String awardName;
     /** VIRTUAL / PHYSICAL / THANKS */
     private String awardType;

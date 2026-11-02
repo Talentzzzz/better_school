@@ -16,11 +16,11 @@ import java.util.List;
 public class DrawStrategyWeightEntity {
 
     private Long id;
-    private Long strategyId;
+    private String strategyId;
     /** 该档生效的抽数阈值 */
     private Integer count;
     /** 该档保底奖品池（weights 列逗号分隔的 award_id） */
-    private List<Long> weights;
+    private List<String> weights;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

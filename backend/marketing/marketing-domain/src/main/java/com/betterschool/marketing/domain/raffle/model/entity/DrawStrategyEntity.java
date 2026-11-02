@@ -14,7 +14,7 @@ public class DrawStrategyEntity {
 
     private Long id;
     /** 业务 ID（对外唯一标识） */
-    private Long strategyId;
+    private String strategyId;
     private String strategyDesc;
     /** 规则链节点码序列（rule 列逗号分隔，可能为空 = 只装默认兜底节点） */
     private List<String> ruleModels;
