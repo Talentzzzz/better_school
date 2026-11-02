@@ -72,8 +72,7 @@ DELETE FROM xxl_job_info WHERE executor_handler = 'inventoryMerge' AND job_group
 
 -- hot-row-merge-l2w256 票 09：inventoryMergeBackstop / inventoryBucketWarmup 不再注册——
 -- 新代码没有这两个 handler（合并进进程、无桶可预热），seed 也不再造出它们。
--- 存量库的旧行处置：切换窗口内 trigger_status = 0 停用（回滚形态要放开），
--- D9 收口才 DELETE（sql/cutover/d9-finalize.sql 第 ③ 步）。
+-- 存量库的旧行处置：uuid-biz-id 票 08 起存量库退役（删库重建），reset-test-db / db-reset 重灌本 seed 即不再有这两行。
 
 -- 票 11（决策侧预热）：参数 = activityId；配置变更后手动重跑，幂等（先删后写）
 -- 票 13 补登：handler 早已存在（trigger/raffle/job/CacheWarmupJob），此前漏了 seed 行

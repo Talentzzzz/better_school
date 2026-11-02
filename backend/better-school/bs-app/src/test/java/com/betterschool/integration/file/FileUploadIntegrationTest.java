@@ -86,7 +86,7 @@ class FileUploadIntegrationTest extends CommunityApiTestBase {
         for (int i = 0; i < 6; i++) {
             images.add(assertUploadOk(upload(PNG_BYTES, "p" + i + ".png", MediaType.IMAGE_PNG_VALUE, user)));
         }
-        long orderId = createErrand(user, images);
+        String orderId = createErrand(user, images);
 
         String imagesJson = jdbcTemplate.queryForObject(
                 "SELECT images FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
@@ -113,7 +113,7 @@ class FileUploadIntegrationTest extends CommunityApiTestBase {
     @Test
     void 订单无配图images为空列表() {
         Session user = registerAndLogin("13800001008", "无图用户");
-        long orderId = createErrand(user, null);
+        String orderId = createErrand(user, null);
         String imagesJson = jdbcTemplate.queryForObject(
                 "SELECT images FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
         assertThat(imagesJson).isNull();
@@ -125,10 +125,11 @@ class FileUploadIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 工具 ----------
 
-    private long createErrand(Session user, List<String> images) {
+    private String createErrand(Session user, List<String> images) {
         JsonNode response = postJson("/api/errand/orders", errandBody(images), user);
         assertSuccess(response, "发布跑腿");
-        return response.path("data").asLong();
+        // uuid-biz-id 票 05 起订单 ID 是 UUID 字符串（此文件漏翻，票 08 全量回归抓出）
+        return response.path("data").asText();
     }
 
     private Map<String, Object> errandBody(List<String> images) {

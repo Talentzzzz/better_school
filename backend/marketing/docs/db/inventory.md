@@ -36,7 +36,8 @@
   实物必须带 `type`——抽奖预扣行与兑换确认行共用 `biz_id = recordId`，只用 `(biz_type, biz_id)` 会互撞。
   **撞键不是错误**：撞键 = 这条流转已落过，按成功回放处理。
 - 旧的两态 `state` 列、`bucket_id` 列、`idx_key_cell` / `idx_pending` 两条索引**已删**
-  （`schema.sql` 写最终形态；存量库由 `sql/cutover/d9-finalize.sql` 在 D9 收口删，过渡期见下「切换与 D9」）。
+  （`schema.sql` 写最终形态；uuid-biz-id 票 08 起存量库退役（删库重建），历史切换包 `sql/cutover/` 已删除）。
+- uuid-biz-id 票 07：`inv_id` / `biz_id` 均为 `varchar(36)` UUID 字符串（合并分片键按字符串 hashCode 路由）。
 
 ## 落库：进程内合并，一组一个事务
 
@@ -104,13 +105,11 @@ SELECT d.inv_id, d.biz_id, d.quantity, d.create_time
  ORDER BY d.create_time;
 ```
 
-## 切换与 D9（存量库）
+## 切换与 D9（历史，已退役）
 
-切换包在 `sql/cutover/`：运行手册 [cutover-runbook.md](../../sql/cutover/cutover-runbook.md)
-（D0 切 bs → D1 晚高峰后抽样 → D2 切 marketing → D9 收口；8 步 + 回滚 4 步 + D9 3 步）、
-`cutover-catchup.sql`（在途 `state = 0` 明细按旧逻辑合完，含 `type = 2`）、
-`cutover-cleanup.sql`（outbox 收尾 + 逐 inv 差额只记不修 + 清桶）、`rollback-warmup.sh`（回滚重灌桶）、
-`window-ddl.sql`（`state SET DEFAULT 1`）、`d9-finalize.sql`（删列删索引 / 白名单删两张桶表 / 删 xxl 注册，**不可逆**）。
+hot-row-merge-l2w256 切换期的存量库处置原有一套切换包（运行手册 / catchup / cleanup / 回滚重灌 /
+window-ddl / d9-finalize）。uuid-biz-id 票 08 起存量数据一律不迁移（删库重建），该切换包随割接脚本整体删除，
+此节仅存档说明。
 
 ## 与主链路相接
 

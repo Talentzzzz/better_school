@@ -5,7 +5,7 @@
 ## 帖子
 
 ### GET /posts
-时间线 feed：排序（`sort=time|hot`）+ 分页（feed-index-uv 票 04 起走 post_feed_index 索引序 + keyset 游标分页；分类已退役——feed-index-uv 票 06，墙上纯社交内容的发现 = 时间线 + 搜索）。访客视角返回摘要（不暴露浏览量）；摘要含 `content` 截断正文（约前 50 字，票 05，文字小卡渲染用）。封面口径（票 05）：`cover` = 独立封面 ?? 相册第一张，均空 null 即无封面帖。登录用户每行带 `viewed` 是否浏览过（feed-index-uv 票 05 已读灰显，页内批量回查浏览明细；未登录 false）。
+时间线 feed：排序（`sort=time|hot`）+ 分页（feed-index-uv 票 04 起走 post_feed_index 索引序 + keyset 游标分页；分类已退役——feed-index-uv 票 06，墙上纯社交内容的发现 = 时间线 + 搜索）。`hot`（热榜）= 点赞数降序，同值按 `feed_time` 降序、再按 `post_id` 降序收敛成确定序（uuid-biz-id 票 03 起：UUID 无序，业务 id 不再是时间代理，同值收敛改「时间 + 业务 id」复合键）；`time` = `feed_time` 降序 + `post_id` 降序。访客视角返回摘要（不暴露浏览量）；摘要含 `content` 截断正文（约前 50 字，票 05，文字小卡渲染用）。封面口径（票 05）：`cover` = 独立封面 ?? 相册第一张，均空 null 即无封面帖。登录用户每行带 `viewed` 是否浏览过（feed-index-uv 票 05 已读灰显，页内批量回查浏览明细；未登录 false）。
 
 ### GET /posts/history
 我的浏览历史（feed-index-uv 票 05）：按最近浏览时刻倒序，分页。已删/被拒的他人帖过滤（点卡片要能进详情），本人浏览过的待审/驳回/草稿帖照常展示。GET 白名单内匿名可达，匿名一律空页。
@@ -49,7 +49,7 @@
 ## 评论（楼中楼 v2：票 03-06 已合入，07 待做）
 
 ### GET /posts/{postId}/comments?sort&page&pageSize
-根评论列表（`root_id=0`）：`sort=hot`（like_count 降序、同数 id 升序；v2-06 起按真实点赞数生效）或 `sort=new`（id 升序），默认最热。每项带 `replyCount`（楼内可见子回复数）、`likeCount`（点赞数）与 `liked`（当前用户已赞态，访客恒 false）。
+根评论列表（`root_id=0`）：`sort=hot`（like_count 降序，同值按发布时刻 `create_time` 升序、再按 `comment_id` 升序收敛成确定序——uuid-biz-id 票 03 起业务 id 不再代表发布先后；v2-06 起按真实点赞数生效）或 `sort=new`（`create_time` 升序 + `comment_id` 升序），默认最热。每项带 `replyCount`（楼内可见子回复数）、`likeCount`（点赞数）与 `liked`（当前用户已赞态，访客恒 false）。
 **hot 档不自见**（comment-count-narrow-table 票 01 起如此，票 05 明写）：最热档只返回**已过审**根评论——热评排序读的是只收可见根评论的排序快照，作者的待审/驳回根评论不在其中，因此不再以 0 赞垫底参与排序。**默认请求（不带 `sort`）走 hot，所以默认视图就是不自见的**：作者发完评论刷新详情页看不到自己待审的根评论，切成 `sort=new` 才见。
 作者视角：登录用户额外可见自己 PENDING_REVIEW / REJECTED 的根评论（PENDING 与正常评论展示无差别、无任何标识；REJECTED 额外带 `rejectReason` 拒绝理由，仅作者本人能读到）；他人与访客不可见——**自见行只出现在 `sort=new` 档**。
 `total` 为他人可见口径（仅 NORMAL，不含待审/未通过）——`sort=new` 时作者行数可能多于 total（多出自己的审核中/未通过评论）；hot 档不含自见行，行数与 total 同口径。

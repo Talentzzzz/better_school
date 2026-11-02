@@ -9,7 +9,7 @@
 |wallet_detail|钱包流水（资金事实源，uk_order_type 幂等）|
 |user_credit_detail|信用分流水（信用分事实源，uk_user_reason_ref 幂等）|
 
-**主键口径（全库统一）**：`id` 是纯内部物理自增，**对外与跨表引用一律用业务 ID 列**（本组表为 `user_id` / `wallet_id`）；插入时业务列先写 0，同事务 `UPDATE t SET biz_col = id WHERE id = ?` 回写，故二者同值但语义不同。
+**主键口径（全库统一，uuid-biz-id 起）**：`id` 是纯内部物理自增，**对外与跨表引用一律用业务 ID 列**（本组表为 `user_id` / `wallet_id`）；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`IIdGenerator` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
 
 # bs_user
 
@@ -18,7 +18,7 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键，不对外|
-|user_id|bigint|UNIQUE(uk_user_id), NOT NULL|业务 ID：登录态、跨表引用、接口出参一律用它|
+|user_id|varchar(36)|UNIQUE(uk_user_id), NOT NULL|业务 ID（UUID 字符串）：登录态、跨表引用、接口出参一律用它|
 |phone|varchar(20)|UNIQUE(uk_phone), NOT NULL|手机号，登录凭证；**对外资料接口不返回**（PII）|
 |nickname|varchar(50)|NOT NULL|昵称|
 |avatar|varchar(255)|NULL|头像 URL（MinIO）|
@@ -54,15 +54,15 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
-|wallet_id|bigint|UNIQUE(uk_wallet_id), NOT NULL|业务 ID（对外唯一标识）|
-|user_id|bigint|UNIQUE(uk_user), NOT NULL|钱包所有者；一人一钱包|
+|wallet_id|varchar(36)|UNIQUE(uk_wallet_id), NOT NULL|业务 ID（UUID 字符串，对外唯一标识）|
+|user_id|varchar(36)|UNIQUE(uk_user), NOT NULL|钱包所有者；一人一钱包|
 |balance|decimal(10,2)|NOT NULL, DEFAULT 0.00|余额|
 |frozen_amount|decimal(10,2)|NOT NULL, DEFAULT 0.00|冻结金额（托管中，不参与可用余额）|
 |create_time|datetime|NOT NULL|创建时间|
 |update_time|datetime|NOT NULL|更新时间|
 
 ## 注意
-- 建钱包走 `INSERT IGNORE`（撞 `uk_user` = 已存在，幂等），随后同事务回写 `wallet_id = id`
+- 建钱包走 `INSERT IGNORE`（撞 `uk_user` = 已存在，幂等）；`wallet_id` 由 `IIdGenerator` 在 insert 前发号随行写入（uuid-biz-id 票 06 起，不再回写）
 - 可用余额 = `balance − frozen_amount`；冻结是条件 UPDATE（`balance − frozen_amount >= amount`，不满足=余额不足），解冻是 `GREATEST(0, frozen_amount − amount)`
 - **资金一律「流水先行」**：先 `INSERT IGNORE` wallet_detail（撞 `uk_order_type` = 已处理过，幂等跳过），影响 0 行就直接返回，不再动余额/冻结
 
@@ -73,11 +73,11 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
-|wallet_id|bigint|NOT NULL|钱包 ID（写入时由 `virtual_wallet` 子查询带出）|
-|user_id|bigint|NOT NULL, INDEX(idx_user)|流水归属用户（INCOME 为收款方）|
+|wallet_id|varchar(36)|NOT NULL|钱包业务 ID（引用 `virtual_wallet.wallet_id`）|
+|user_id|varchar(36)|NOT NULL, INDEX(idx_user)|流水归属用户（INCOME 为收款方）|
 |type|varchar(20)|NOT NULL|RECHARGE/FROZEN/UNFROZEN/INCOME（跑腿）+ PRODUCT_FROZEN/PRODUCT_UNFROZEN/PRODUCT_INCOME（商品）|
 |amount|decimal(10,2)|NOT NULL|变动金额（正数，方向由 `type` 表达）|
-|order_id|bigint|NULL, INDEX(uk_order_type 首列)|关联订单 ID（跑腿=`errand_order_id`、商品=`product_order_id`；RECHARGE 为 NULL）|
+|order_id|varchar(36)|NULL, INDEX(uk_order_type 首列)|关联订单业务 ID（跑腿=`errand_order_id`、商品=`product_order_id`，UUID 字符串；RECHARGE 为 NULL）|
 |biz_round|int|NOT NULL, DEFAULT 0|业务轮次：同一订单同类型多轮资金操作的去重维度（预留，当前恒 0）|
 |create_time|datetime|NOT NULL|创建时间|
 |update_time|datetime|NOT NULL|更新时间|
@@ -94,10 +94,10 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
-|user_id|bigint|NOT NULL, INDEX(idx_user)|变动用户|
+|user_id|varchar(36)|NOT NULL, INDEX(idx_user)|变动用户|
 |change|int|NOT NULL|信用分变化量（可为负；列名是 SQL 关键字 `change`，SQL 里必须反引号）|
 |reason_type|varchar(30)|NOT NULL|原因类型，取 `CreditReasonTypeVO` 枚举名：ERRAND_TAKER_CANCEL(-20) / ERRAND_TIMEOUT(-20) / REPORT_CONFIRMED(-10，预留未接入) / TRADE_COMPLAINT(-20，预留未接入) / ADMIN_ADJUST / ADMIN_BAN / ADMIN_UNBAN(0)|
-|ref_id|bigint|NULL|关联业务 ID（跑腿类=`errand_order_id`；举报核实=`content_report.id`；ADMIN 类为 NULL）|
+|ref_id|varchar(36)|NULL|关联业务 ID（跑腿类=`errand_order_id` UUID；举报核实=`content_report.report_id` UUID，uuid-biz-id 票 06；ADMIN 类为 NULL）|
 |create_time|datetime|NOT NULL|创建时间（也是「每日上限」统计的时间窗依据）|
 |update_time|datetime|NOT NULL|更新时间|
 

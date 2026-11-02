@@ -4,7 +4,7 @@
 
 **Blocked by:** 03, 04, 05, 06, 07
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 > **票 04 注记（2026-11-01）**：`ChatMapper.xml` 的 room/message 列口径注释仍标注「（sql.md）」，而 sql.md 的 chat 段还是 `room_id/msg_id BIGINT` + 「业务 ID 回写」旧口径——本票收口时 sql.md 的 chat 五表段（room/direct_room_pair/room_member/message/timeline）须按 VARCHAR(36) + 应用层发号新口径重写。另：front 的 chat 详情页存在 `Number(route.params.roomId)` 硬编码与 `/chat/:roomId(\\d+)` 数字路由正则（front 整体 userId 也仍按 number 定型），front 适配不在本票范围，收口时须确认已另立 front 适配票。
 
@@ -14,7 +14,15 @@
 
 > **票 07 注记（2026-11-02）**：sql.md 的 marketing 段（约 22 表）仍是 BIGINT + 雪花旧口径，收口时按 VARCHAR(36) + IIdGenerator 发号重写——注意含 `draw_strategy_award.inv_id` DEFAULT `'0'`（不限量哨兵，注释里 `''0''` 转义）与 `draw_strategy_weight.weights VARCHAR(512)` 两处特例；`.scratch/project-rework/cmp_schema_marketing.py` 比对脚本需同步新口径。docs/api 的 lottery/points DTO（recordId/prizeId/refId/redeemOrderId）代码侧已是 string，文档示例值改 UUID。front 的抽奖/积分页如有按数字解析 id 的硬编码随 front 适配批次收口。marketing/sql/cutover 下的 window-ddl.sql、d9-finalize.sql 属 BIGINT 时代存量割接脚本，收口时退役或按新体系重写。票 07 集成测试因「不跑全量」豁免未执行，本票全量回归时重点复跑积分 FIFO 扣减、抽奖全链路、库存合并台账（QuotaMergeBuffer 并发用例）、兑换幂等四类。
 
-- [ ] 注册、发帖、评论、发消息、下单、抽奖等新建资源返回的 id 均可被 UUID.fromString 解析，且后续请求用该字符串 id 引用成功（集成断言）
-- [ ] 退役割接脚本删除或按新类型体系重写，仓库内无 BIGINT 业务键残留（schema 全文检查）
-- [ ] docs/api、docs/db、sql.md、CONTEXT.md、backend/CLAUDE.md 与代码一致
-- [ ] better-school 全量（~410 用例）与 marketing 全量全绿
+- [x] 注册、发帖、评论、发消息、下单、抽奖等新建资源返回的 id 均可被 UUID.fromString 解析，且后续请求用该字符串 id 引用成功（集成断言）
+- [x] 退役割接脚本删除或按新类型体系重写，仓库内无 BIGINT 业务键残留（schema 全文检查）
+- [x] docs/api、docs/db、sql.md、CONTEXT.md、backend/CLAUDE.md 与代码一致
+- [x] better-school 全量（~410 用例）与 marketing 全量全绿
+
+> **收口注记（2026-11-02）**：全量回归实跑完成——better-school `mvn clean test` **405/405 全绿**（原 410 中 8 例属回填脚本专用测试，随脚本退役删除）、marketing `mvn clean test` **116/116 全绿**。回归前先过 code-review（standards + spec 双轴，无硬违规）。回归抓出并修复的残差：
+> 1. **回填脚本专用测试未随脚本退役**（5 红）：FeedIndexUvBackfill / MarketFeedUvBackfill 两类只服务于已删除的 `sql/backfill/*.sql`（类注释自述「把线上库的一次性操作当被测对象钉住」），随脚本一并 `git rm`；
+> 2. **errand 游标夹具 `INTERVAL ?` 被 ShardingSphere 解析弄丢**（6 错）：ErrandFeedCursorPagingIntegrationTest 的 seedPublishedOrders 按项目既有约定（ErrandPayBeforeReviewIntegrationTest 注释同款）改为 Java 侧算好时间当普通 `?` 传——票 05 残差，当时全量未实跑；
+> 3. **FileUploadIntegrationTest 漏翻**（票 05 残差）：`createErrand` 仍 `asLong()`（UUID 返回 0），改 `asText()` + String；此前被 MinIO 停机掩盖；
+> 4. **MinIO 官方镜像全渠道停发适配**：`minio/minio` 2025-10 起 Docker Hub 删库、quay 拒匿名拉，本机改为 `alpine/minio:RELEASE.2025-10-15T17-29-55Z` 重打 tag `minio/minio:latest`；该镜像默认非 root 运行对旧数据卷 rename 报错，compose 加 `user: "0:0"`，healthcheck 改 busybox wget 探活（镜像不带 mc）；
+> 5. **marketing 票 07 测试残差 7 文件 13 错**：PointsDeductPlanVOTest（bucket(long) 漏翻，且实体改型后增量编译未重编出 stale class 的 NoSuchMethodError）、PointsDeductIntegrationTest（bucket_id Number 强转）、PointsApiTestBase（载荷 `%d`→`"%s"`）、RaffleDrawPipelineIntegrationTest（preConsumeDrawCount 读 bucket_id 用 Long.class + biz_id Number 强转）、RaffleQueryIntegrationTest（ref_id Long.class）、RaffleShippingOutboxIntegrationTest（record_id/award_id Number 强转）、InventoryFlushFailureIntegrationTest（Mockito 裸值 + anyList() 混用补 eq()）。全部翻成 String/UUID 口径后 clean 全绿。
+> 过程记录：期间 Docker Desktop VM 整体崩溃一次（五容器同时 Exit 255/2，历史同款内存压力问题），重新拉栈 + reset-test-db 后复跑通过；Docker Hub 拉取曾依赖代理排障（token 无 scope = 代理出口 IP 被 Docker Hub 风控，最终绕开：仅 minio 需要替代镜像源）。

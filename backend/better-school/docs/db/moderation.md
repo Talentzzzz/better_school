@@ -10,14 +10,15 @@
 
 |字段|类型|约束|说明|
 |----|----|----|----|
-|id|bigint|PK, AUTO_INCREMENT|物理主键（工单详情按它寻址：`GET /api/moderation/tasks/{taskId}`）|
+|id|bigint|PK, AUTO_INCREMENT|物理主键（纯内部键；同刻入池 FIFO tie-break 用物理 id ASC——task_id 已 UUID 化，不再代表入池先后，uuid-biz-id 票 06）|
+|task_id|varchar(36)|NOT NULL, UNIQUE(`uk_task_id`)|工单业务 ID（UUID 字符串，对外唯一标识）：应用层 insert 前由 `IIdGenerator` 发号随行一次写入；工单详情按它寻址：`GET /api/moderation/tasks/{taskId}`；租约复合 bizId 首段也是它（`{taskId}:{claimSeq}`）|
 |target_type|varchar(20)|NOT NULL, `uk_target_round` 首列|内容类型 POST/COMMENT/PRODUCT/ERRAND（`ReviewTargetTypeVO` 可审值；USER/MESSAGE 仅举报用不入池）|
-|target_id|bigint|NOT NULL|内容业务 ID（post_id/comment_id/product_id/errand_order_id）|
+|target_id|varchar(36)|NOT NULL|内容业务 ID（post_id/comment_id/product_id/errand_order_id，UUID 字符串）|
 |review_round|int|NOT NULL, DEFAULT 1, `uk_target_round` 第三列|审核轮次，与 `content_review.review_round` 同源（COMMENT/ERRAND 恒 1）|
-|author_id|bigint|NOT NULL|作者用户 ID（冗余，工单详情/历史聚合免 join）|
+|author_id|varchar(36)|NOT NULL|作者用户 ID（冗余，工单详情/历史聚合免 join）|
 |source|varchar(20)|NOT NULL, DEFAULT 'MANUAL'|入池来源 MANUAL/KEYWORD/RANDOM（当前仅 MANUAL，其余扩展点）|
 |claim_state|varchar(20)|NOT NULL, DEFAULT 'PENDING'|工单态 PENDING(在池)/CLAIMED(租约中)/DONE(已裁决)。**不叫 status**（业务表已占 state）|
-|claim_by|bigint|NULL|当前持单人（审核员用户 ID）|
+|claim_by|varchar(36)|NULL|当前持单人（审核员用户 ID）|
 |claim_seq|int|NOT NULL, DEFAULT 0|领单轮次（每次 claim +1；租约复合 bizId `{id}:{claimSeq}` 与回调守卫）|
 |lease_expire_at|datetime|NULL|租约到期时刻（claim 时 = NOW()+5min）|
 |recycle_count|int|NOT NULL, DEFAULT 0|回收次数（≥3 置 escalated + 告警）|
@@ -44,14 +45,15 @@
 
 |字段|类型|约束|说明|
 |----|----|----|----|
-|id|bigint|PK, AUTO_INCREMENT|物理主键：仅库内用；「最新一轮」按它降序取|
+|id|bigint|PK, AUTO_INCREMENT|物理主键：纯内部键，永不对外|
+|review_id|varchar(36)|NOT NULL, UNIQUE(`uk_review_id`)|审核记录业务 ID（UUID 字符串，uuid-biz-id 票 06 起）：应用层 insert 前由 `IIdGenerator` 发号随行一次写入|
 |target_type|varchar(20)|NOT NULL, `uk_target_action_round` 首列|审核对象 POST/COMMENT/ERRAND/PRODUCT|
-|target_id|bigint|NOT NULL|审核对象业务 ID（各业务表的业务键，非物理 id）|
-|author_id|bigint|NOT NULL|作者用户 ID（冗余；对齐 `content_report.author_id`，按作者聚合历史裁决单表可查、免反查业务表，票 06/07）|
+|target_id|varchar(36)|NOT NULL|审核对象业务 ID（各业务表的业务键，非物理 id）|
+|author_id|varchar(36)|NOT NULL|作者用户 ID（冗余；对齐 `content_report.author_id`，按作者聚合历史裁决单表可查、免反查业务表，票 06/07）|
 |review_round|int|NOT NULL, DEFAULT 1|审核轮次 = 同一目标第 N 次进入待审：POST/PRODUCT 取自业务表当前 `review_round`；COMMENT/ERRAND 无再审出口恒为 1|
 |action|varchar(20)|NOT NULL|动作 APPROVE/REJECT|
 |source|varchar(20)|NOT NULL, DEFAULT 'MANUAL'|触发来源 MANUAL/KEYWORD/RANDOM（KEYWORD=敏感词命中转审、RANDOM=随机抽查；当前仅 MANUAL，其余为扩展点）|
-|operator_id|bigint|NOT NULL|裁决人用户 ID（审核员本人）|
+|operator_id|varchar(36)|NOT NULL|裁决人用户 ID（审核员本人）|
 |reason|varchar(200)|NULL|驳回原因/备注（拒绝理由，对外仅作者可见）|
 |reason_code|varchar(50)|NULL|拒绝理由枚举 code（RejectReasonCode；APPROVE/枚举化前历史数据为 NULL）|
 |create_time|datetime|NOT NULL|审核时间|
@@ -64,23 +66,24 @@
 ## 注意
 - 只插入审计/历史裁决：同一内容历轮裁决按 `(target_type, target_id)` 查（工单详情聚合，票 07），同一作者历史按 `author_id` 单表直查免 join
 - 写入走 `IReviewService.recordReview` → `INSERT IGNORE`，撞 `uk_target_action_round` = 该轮已记录过（重放裁决自然幂等跳过）；轮次由业务表行锚定，重复裁决业务行轮次不变 → 只插一行
-- 同一目标可被多次审核（商品转草稿重提、下架重发各成一轮），历史裁决留痕完整；拒绝理由按最新一次展示（`selectRejectReason` ORDER BY id DESC LIMIT 1）
-- 无业务 ID 列：对外无单行标识需求，靠 uk 定位
+- 同一目标可被多次审核（商品转草稿重提、下架重发各成一轮），历史裁决留痕完整；拒绝理由按最新一次展示（`selectRejectReason` ORDER BY 物理自增 id DESC LIMIT 1）
+- 业务 ID `review_id` 承担对外标识（uuid-biz-id 票 06 起）；物理 `id` 只作「最新一轮」排序等内部用途
 - 资金动作不在此表：跑腿拒绝退款走 wallet 流水（uk_order_type 幂等）
 
 # content_report（举报单）
 
 |字段|类型|约束|说明|
 |----|----|----|----|
-|id|bigint|PK, AUTO_INCREMENT|物理主键（列表排序键）|
+|id|bigint|PK, AUTO_INCREMENT|物理主键（纯内部键，永不对外）|
+|report_id|varchar(36)|NOT NULL, UNIQUE(`uk_report_id`)|举报单业务 ID（UUID 字符串，uuid-biz-id 票 06 起）：应用层 insert 前由 `IIdGenerator` 发号随行一次写入；信用分 REPORT_CONFIRMED 流水 `ref_id` 引用它；对外按它寻址|
 |target_type|varchar(20)|NOT NULL, `uk_reporter_target` 第二列|举报对象 POST/COMMENT/USER/MESSAGE（MESSAGE = 1v1 会话零审核的举报兜底）|
-|target_id|bigint|NOT NULL|举报对象业务 ID（MESSAGE 时 = `message.msg_id`）|
-|author_id|bigint|NOT NULL|被举报人用户 ID（冗余，免举报时回查业务表）|
-|reporter_id|bigint|NOT NULL, `uk_reporter_target` 首列|举报人用户 ID|
+|target_id|varchar(36)|NOT NULL|举报对象业务 ID（USER/POST/COMMENT = user_id/内容 id UUID；MESSAGE = `message.msg_id` UUID 字符串，票 04）|
+|author_id|varchar(36)|NOT NULL|被举报人用户 ID（冗余，免举报时回查业务表）|
+|reporter_id|varchar(36)|NOT NULL, `uk_reporter_target` 首列|举报人用户 ID|
 |reason|varchar(200)|NOT NULL|举报理由|
 |content_snapshot|varchar(1000)|NULL|举报时内容摘要（证据）|
 |status|varchar(20)|NOT NULL, DEFAULT 'PENDING'|状态 PENDING/PROCESSED(核实)/IGNORED(不实)。**本表状态列仍叫 `status`，未随票 05 改名 `state`**|
-|handler_id|bigint|NULL|处理人用户 ID（审核员）|
+|handler_id|varchar(36)|NULL|处理人用户 ID（审核员）|
 |handled_at|datetime|NULL|处理时间|
 |create_time|datetime|NOT NULL|创建时间|
 |update_time|datetime|NOT NULL|更新时间（处理时刷新）|
@@ -93,7 +96,7 @@
 ## 注意
 - 提交走 `INSERT IGNORE`，撞 `uk_reporter_target` = 重复举报，不插新行也不报错
 - 流转是条件 UPDATE：`PENDING → PROCESSED` / `PENDING → IGNORED`（带 `status='PENDING'` 守卫），处理后不可再改判
-- 无业务 ID 列：对外按 `id` 寻址
+- 对外按业务 ID `report_id` 寻址（uuid-biz-id 票 06 起，物理 `id` 不再对外）
 
 # sensitive_word（敏感词库）
 

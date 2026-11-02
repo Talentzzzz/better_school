@@ -60,11 +60,11 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
         Map<String, Object> record = lastDrawRecordOf(USER);
         assertThat(event.path("recordId").asText()).isEqualTo(recordId);
         assertThat(event.path("recordId").asText())
-                .as("载荷 recordId 与 draw_record 一致")
-                .isEqualTo(((Number) record.get("record_id")).longValue());
+                .as("载荷 recordId 与 draw_record 一致（uuid-biz-id 票 07 起 record_id/award_id 是 UUID 字符串）")
+                .isEqualTo((String) record.get("record_id"));
         assertThat(event.path("userId").asText()).isEqualTo(USER);
         assertThat(event.path("prizeId").asText())
-                .isEqualTo(((Number) record.get("award_id")).longValue());
+                .isEqualTo((String) record.get("award_id"));
         assertThat(event.path("prizeType").asText()).isEqualTo("VIRTUAL");
         assertThat(event.path("pointsAmount").asInt()).as("积分档面额取自台账").isEqualTo(20);
 

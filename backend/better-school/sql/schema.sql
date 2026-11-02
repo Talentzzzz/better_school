@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS post (
 -- post.category / idx_category_created 已删（feed-index-uv 票 07 收口：帖子分类退役，墙内容发现 =
 -- 时间线 + 搜索；商品的 category 是市集真需求，不受影响）；
 -- post.view_count 已删（同票：浏览切 UV 口径，真相源 user_view_history、加速列 post_view_count）。
--- 存量库删列用 backend/better-school/sql/backfill/feed-index-uv-drop-columns.sql。
+-- 存量库不迁移（uuid-biz-id：删库重建），历史删列/割接脚本已随 uuid-biz-id 票 08 退役。
 
 CREATE TABLE IF NOT EXISTS post_comment (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS post_comment (
 -- post_comment.like_count 已删（comment-count-narrow-table 票 04 收口：评论点赞计数切窄表，真源
 -- post_comment_like_count、排序快照 post_comment_feed_index）。删列前旧列已在票 02 停写停读；
 -- 存量点赞不搬（用户确认接受：历史评论点赞显示 0），删列即丢弃。
--- 存量库割接用 backend/better-school/sql/backfill/comment-like-count-cutover.sql（不幂等，头注释含执行序）。
+-- 存量库不迁移（uuid-biz-id：删库重建），历史割接脚本已随 uuid-biz-id 票 08 退役。
 
 CREATE TABLE IF NOT EXISTS product (
     id             BIGINT         NOT NULL AUTO_INCREMENT,
@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS product (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '二手商品表';
 -- product.view_count 已删（market-feed-uv 票 06 收口：浏览切 UV 口径，真相源 product_view_history、
 -- 加速列 product_view_count；存量 PV 随票 01 的一次性清零脚本废弃，清零脚本与列一同退役）。
--- 存量库删列用 backend/better-school/sql/backfill/market-feed-uv-drop-columns.sql。
+-- 存量库不迁移（uuid-biz-id：删库重建），历史删列脚本已随 uuid-biz-id 票 08 退役。
 
 CREATE TABLE IF NOT EXISTS product_favorite (
     id         BIGINT   NOT NULL AUTO_INCREMENT,
@@ -588,12 +588,9 @@ CREATE TABLE IF NOT EXISTS room (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '会话表（1v1，纯取号器 + 会话真相：预览/排序/未读已迁用户维度 room_member）';
 -- room.user_min / room.user_max / uk_direct_pair 已迁出（direct-room-pair 收口：1v1 查重与配对
 -- 映射独立成 direct_room_pair 表，room 回归纯会话实体、不知道「配对」的存在）。
--- 存量库割接用 backend/better-school/sql/backfill/direct-room-pair-cutover.sql（不幂等，
--- 头注释含执行序：建新表 → 回填配对 → 起新 jar → 删列；新库由本文件直接建全）。
 -- room.last_msg_type / last_msg_preview / last_msg_at 已迁出（列表职责迁用户维度：排序键与预览
 -- 三件套落 room_member，room 回归纯取号器 + 会话真相）。
--- 存量库割接用 backend/better-school/sql/backfill/room-list-dim-cutover.sql（不幂等，
--- 头注释含执行序：加列加索引 → 回填四列 → 起新 jar → 删列；新库由本文件直接建全）。
+-- 存量库不迁移（uuid-biz-id：删库重建），历史割接脚本已随 uuid-biz-id 票 08 退役。
 
 CREATE TABLE IF NOT EXISTS direct_room_pair (
     id          BIGINT   NOT NULL AUTO_INCREMENT,
@@ -634,7 +631,7 @@ CREATE TABLE IF NOT EXISTS message (
     content       VARCHAR(1024) NULL COMMENT 'TEXT=裸文本（上限 500 由代码常量收敛） / IMAGE=JSON{url,width,height} / CARD=恒空',
     client_msg_id VARCHAR(36)   NULL COMMENT '客户端幂等键（UUID）：重发复用同键',
     ref_type      VARCHAR(20)   NULL COMMENT 'CARD 引用类型 PRODUCT/POST/ERRAND（仅 CARD 非空）',
-    ref_id        VARCHAR(36)   NULL COMMENT 'CARD 引用对象业务 ID（POST=UUID 字符串；PRODUCT/ERRAND 过渡期仍为数值 id 的字符串形；渲染时实时查，失效显示「内容已失效」）',
+    ref_id        VARCHAR(36)   NULL COMMENT 'CARD 引用对象业务 ID（POST/PRODUCT/ERRAND 均为 UUID 字符串，票 03/05；渲染时实时查，失效显示「内容已失效」）',
     state         VARCHAR(20)   NOT NULL DEFAULT 'NORMAL' COMMENT 'NORMAL/RECALLED：撤回占 seq 不回退、计入未读',
     recalled_at   DATETIME      NULL COMMENT '撤回时间',
     recalled_by   VARCHAR(20)   NULL COMMENT 'USER=发送者限时窗口内自撤 / AUDITOR=举报强制撤回',

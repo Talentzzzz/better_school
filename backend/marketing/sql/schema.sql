@@ -5,9 +5,8 @@
 -- （不带默认值，由应用写入），全库无 created_at/updated_at。
 -- ⚠️ 唯一例外 strategy_weight 已在票 11 消除：该表按本库口径规范化并回写 sql.md（改名 draw_strategy_weight）。
 -- 旧域表与 schema-legacy.sql 已随票 13 整体删除：旧域十张表退出，draw_* 新模型是唯一抽奖落位。
--- hot-row-merge-l2w256 票 09：本文件写**最终形态**——无两张库存桶表、明细表无 bucket_id / state
--- （列与两条索引在存量库由 sql/cutover/d9-finalize.sql 于 D9 收口删除；存量库与新装库 7 天不一致是明知的代价，
---  过渡期的切换动作见 sql/cutover/：window-ddl.sql（state SET DEFAULT 1）→ d9-finalize.sql）。
+-- hot-row-merge-l2w256 票 09：本文件是**最终形态**——无两张库存桶表、明细表无 bucket_id / state
+-- （原存量库过渡形状与切换脚本 sql/cutover/ 已随 uuid-biz-id 票 08 一并退役：不迁移存量、删库重建）。
 -- uuid-biz-id 票 07：marketing 自有业务键（bucket_id / activity_id / strategy_id / award_id / record_id /
 -- inv_id / 兑换 ref_id / 台账 biz_id）全改 VARCHAR(36)，由应用层统一 IdGenerator 在 insert 前发号一次写入，
 -- 物理自增 id 保留为纯内部键；draw_strategy_award.inv_id 的「不限量」哨兵由数值 0 改字符串 '0'；
@@ -139,7 +138,7 @@ CREATE TABLE IF NOT EXISTS draw_strategy_award (
     award_id    VARCHAR(36)       NOT NULL COMMENT '奖品 ID（策略内唯一）',
     award_name  VARCHAR(128) NOT NULL COMMENT '奖品名称',
     award_desc  VARCHAR(255) NULL     COMMENT '奖品描述',
-    award_type  VARCHAR(20)  NOT NULL COMMENT '奖品类型 VIRTUAL(虚拟资产：积分、抽奖次数) / PHYSICAL(实物资产) / THANKS(谢谢参与占位：award_rate 计入概率池、type=normal、inv_id=0 无库存)',
+    award_type  VARCHAR(20)  NOT NULL COMMENT '奖品类型 VIRTUAL(虚拟资产：积分、抽奖次数) / PHYSICAL(实物资产) / THANKS(谢谢参与占位：award_rate 计入概率池、type=normal、inv_id=''0'' 无库存)',
     award_rate  DECIMAL(6,4) NOT NULL COMMENT '中奖概率（如 0.0500 = 5%；同一策略内各奖品位概率合计 = 1.0000）',
     level       INT          NOT NULL COMMENT '奖项层级（1 等奖 = 1，越大越低）',
     inv_id      VARCHAR(36)       NOT NULL DEFAULT '0' COMMENT '关联库存业务 ID（''0'' = 无库存/不限量）',

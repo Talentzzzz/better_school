@@ -155,9 +155,9 @@ public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
         assertThat(remainingChancesOf(USER)).isEqualTo(1);
         Integer pointsBalance = pointsAccountService.getBalance(USER);
         assertThat(pointsBalance).as("积分扣 100").isEqualTo(400);
-        // 两边同值同事务：次数桶 ref_id = points_detail.ref_id = 同一兑换单 id
-        Long refId = jdbcTemplate.queryForObject(
-                "SELECT ref_id FROM draw_count_bucket WHERE user_id = ?", Long.class, USER);
+        // 两边同值同事务：次数桶 ref_id = points_detail.ref_id = 同一兑换单 id（uuid-biz-id 票 07 起为 UUID 字符串）
+        String refId = jdbcTemplate.queryForObject(
+                "SELECT ref_id FROM draw_count_bucket WHERE user_id = ?", String.class, USER);
         Integer pointsRef = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM points_detail WHERE user_id = ? AND ref_id = ? AND reason_type = 'REDEEM_DRAW_COUNT'",
                 Integer.class, USER, refId);

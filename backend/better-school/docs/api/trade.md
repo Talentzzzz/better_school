@@ -67,7 +67,7 @@
 - Query: category/minPrice/maxPrice/sort(time|time_asc|hot|price_asc|price_desc)/cursor/page/pageSize(≤50)
 - 读路径（market-feed-uv 票 04）：**无筛选**走 `product_feed_index` 索引序扫描 + keyset 游标分页——
   `cursor` 非空则忽略 `page`，响应带 `cursor` 才续页、`total = -1`（未知，不再精确 COUNT）；
-  排序键 = 热度（浏览 UV 数）/ 进入可见轮时刻（时间升/降序同索引正反向扫描）/ 价格；
+  排序键 = 热度（浏览 UV 数降序，同值按 `create_time` 降序、再按业务 id 降序三段收敛——uuid-biz-id 票 05 起）/ 进入可见轮时刻（时间升/降序同索引正反向扫描，同值按业务 id 收敛）/ 价格；
   **带 category 或价格区间** → 旧直查（索引表无筛选列），精确 total、`cursor` 恒 null、按 page 续页；
   索引查询异常 warn 降级旧直查（同筛选路径口径）。游标是域内编解码的不透明串，换排序复用 / 篡改 → code 400；
   索引行与计数窄表的漂移（浏览旁路命中 0 行的 warn）由 `productFeedIndexRebuildJob` 手动重建兜底——

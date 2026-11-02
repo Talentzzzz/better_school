@@ -25,6 +25,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 
 /**
@@ -81,7 +82,7 @@ class InventoryFlushFailureIntegrationTest extends TestingEnvironment {
     void flushFailureReturnsFailedThenRetryDoesNotDoubleDeduct() {
         String recordId = "990001";
         doThrow(new IllegalStateException("探针：落库失败（模拟事务回滚）"))
-                .when(physicalQuotaDao).batchInsertIgnoreDeductDetails(QUOTA_INV_ID, anyList());
+                .when(physicalQuotaDao).batchInsertIgnoreDeductDetails(eq(QUOTA_INV_ID), anyList());
 
         assertThatThrownBy(() -> inventoryQuotaService.preDeduct(InventorySegmentVO.QUOTA, QUOTA_INV_ID, 1,
                 InventoryBizTypes.LOTTERY_DRAW, recordId))

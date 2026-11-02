@@ -183,6 +183,7 @@ public class Constants {
 3. MyBatis mapper XML 统一放 `app/src/main/resources/mybatis/mapper/`，接口在 infrastructure 的 `dao` 包。
 4. 新加业务域时，在 domain 下建 `model/service/adapter` 三件套，infrastructure 建对应 `adapter/dao` 实现。
 5. 变量命名见名知意，如UserAccount userAccount，不要省略user；各种类的创建要符合DDD规范
+6. **业务 ID 口径（uuid-biz-id 起）**：所有业务对象的对外唯一标识一律是 **UUID 字符串**（36 位连字符规范形，DB 列 `VARCHAR(36)`，Java 实体/PO/DTO/mapper 全链路 `String`）；由统一 `IIdGenerator`（types 模块，默认实现 `UuidIdGenerator` = `UUID.randomUUID()`）在 **insert 前生成、随行一次写入**。物理主键 `id BIGINT AUTO_INCREMENT` 保留为纯内部键：永不对外、永不再与业务键同值、禁止「业务列插 0 同事务回写物理 id」的旧形态（`bindBizId`/`useGeneratedKeys` 回写已全仓退役）。新增表/接口禁止用 `Long`/`bigint` 承载业务 ID；排序同值收敛用「时间 + 业务 ID」复合键，不要拿 UUID 当时间代理；分片/合并路由的哈希输入是业务 ID 字符串本身（`String.hashCode` 折叠），不做数值化假设。
 
 ## 9. 维护后端文档
 

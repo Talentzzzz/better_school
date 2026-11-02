@@ -8,7 +8,7 @@
 |post_like|帖子点赞关系（明细，uk_post_user 幂等）|
 |post_like_count|帖子点赞计数窄表（点赞计数真源，进程内合并同步落库）|
 
-**主键口径**：`id` 是纯内部物理自增，业务 ID 为 `post_id`（`uk_post_id`）；插入时 `post_id` 先写 0，同事务 `UPDATE post SET post_id = id WHERE id = ?` 回写。
+**主键口径（uuid-biz-id 起）**：`id` 是纯内部物理自增，业务 ID 为 `post_id`（`uk_post_id`）；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`IIdGenerator` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
 
 # post
 
@@ -17,8 +17,8 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键，不对外|
-|post_id|bigint|UNIQUE(uk_post_id), NOT NULL|业务 ID：跨表引用（post_comment / post_like / post_like_count）与接口出参用它|
-|user_id|bigint|NOT NULL, INDEX(idx_user)|发布者用户 ID|
+|post_id|varchar(36)|UNIQUE(uk_post_id), NOT NULL|业务 ID（UUID 字符串）：跨表引用（post_comment / post_like / post_like_count）与接口出参用它|
+|user_id|varchar(36)|NOT NULL, INDEX(idx_user)|发布者用户 ID|
 |title|varchar(100)|NULL|标题（可选）|
 |content|text|NULL|正文；草稿可空，提交时校验必填|
 |images|varchar(1000)|NULL|图片 URL 列表（JSON 数组，MinIO）|
@@ -30,7 +30,7 @@
 |create_time|datetime|NOT NULL|创建时间|
 |update_time|datetime|NOT NULL|更新时间|
 
-> 已删除的列：`category`（帖子分类，feed-index-uv 票 06 退役、票 07 删列——墙内容发现 = 时间线 + 搜索）与 `view_count`（浏览切 UV 口径后退役，同票删列——真相源 `user_view_history`、加速列 `post_view_count`）。存量库删列脚本 `sql/backfill/feed-index-uv-drop-columns.sql`。
+> 已删除的列：`category`（帖子分类，feed-index-uv 票 06 退役、票 07 删列——墙内容发现 = 时间线 + 搜索）与 `view_count`（浏览切 UV 口径后退役，同票删列——真相源 `user_view_history`、加速列 `post_view_count`）。存量库不迁移（uuid-biz-id：删库重建），历史删列脚本已退役。
 
 ## 索引
 - `uk_post_id (post_id)`
@@ -59,8 +59,8 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
-|post_id|bigint|NOT NULL, INDEX(uk_post_user 首列)|帖子业务 ID|
-|user_id|bigint|NOT NULL, INDEX(idx_user)|点赞用户 ID|
+|post_id|varchar(36)|NOT NULL, INDEX(uk_post_user 首列)|帖子业务 ID|
+|user_id|varchar(36)|NOT NULL, INDEX(idx_user)|点赞用户 ID|
 |create_time|datetime|NOT NULL|点赞时间|
 |update_time|datetime|NOT NULL|更新时间|
 
@@ -76,7 +76,7 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
-|post_id|bigint|UNIQUE(uk_post), NOT NULL|帖子业务 ID（一帖一行）|
+|post_id|varchar(36)|UNIQUE(uk_post), NOT NULL|帖子业务 ID（一帖一行）|
 |like_count|int|NOT NULL, DEFAULT 0|点赞数（可负增量，但刷盘语句带 `GREATEST(0, ...)` 兜底不为负）|
 |create_time|datetime|NOT NULL|首次建行时间|
 |update_time|datetime|NOT NULL|最近刷盘时间|

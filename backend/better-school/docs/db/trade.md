@@ -9,7 +9,7 @@
 |product_order|商品托管订单（下单时对商品做快照）|
 |product_order_event|订单状态流转记录（只插不改，纠纷溯源事实源）|
 
-**主键口径**：`id` 是纯内部物理自增，业务 ID 为 `product_id` / `product_order_id`；插入时业务列先写 0，同事务回写 `biz_col = id`。
+**主键口径（uuid-biz-id 起）**：`id` 是纯内部物理自增，业务 ID 为 `product_id` / `product_order_id`；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`IIdGenerator` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
 
 资金表（`virtual_wallet` / `wallet_detail`）见 [user](user.md)，商品与跑腿共用同一套钱包与流水。
 
@@ -20,8 +20,8 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键，不对外|
-|product_id|bigint|UNIQUE(uk_product_id), NOT NULL|业务 ID：product_favorite / product_order 引用它|
-|user_id|bigint|NOT NULL, INDEX(idx_user)|卖家用户 ID|
+|product_id|varchar(36)|UNIQUE(uk_product_id), NOT NULL|业务 ID（UUID 字符串）：product_favorite / product_order 引用它|
+|user_id|varchar(36)|NOT NULL, INDEX(idx_user)|卖家用户 ID|
 |title|varchar(30)|NULL|标题（草稿允许为空，提交时必填）|
 |description|varchar(500)|NULL|描述|
 |images|varchar(1000)|NULL|图片 URL 列表（JSON 数组，MinIO）|
@@ -35,7 +35,7 @@
 |create_time|datetime|NOT NULL|创建时间|
 |update_time|datetime|NOT NULL|更新时间|
 
-> 已删除的列：`view_count`（浏览数，旧 PV 口径——market-feed-uv 票 02 换源到计数窄表 `product_view_count`、票 06 删列。真相源 `product_view_history`、加速列 `product_view_count`，存量 PV 废弃不换算 UV）。存量库删列脚本 `sql/backfill/market-feed-uv-drop-columns.sql`。
+> 已删除的列：`view_count`（浏览数，旧 PV 口径——market-feed-uv 票 02 换源到计数窄表 `product_view_count`、票 06 删列。真相源 `product_view_history`、加速列 `product_view_count`，存量 PV 废弃不换算 UV）。存量库不迁移（uuid-biz-id：删库重建），历史删列脚本已退役。
 
 ## 索引
 - `uk_product_id (product_id)`
@@ -56,8 +56,8 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
-|user_id|bigint|NOT NULL, INDEX(uk_user_product 首列)|收藏用户 ID|
-|product_id|bigint|NOT NULL, INDEX(idx_product)|商品业务 ID|
+|user_id|varchar(36)|NOT NULL, INDEX(uk_user_product 首列)|收藏用户 ID|
+|product_id|varchar(36)|NOT NULL, INDEX(idx_product)|商品业务 ID|
 |create_time|datetime|NOT NULL|收藏时间|
 |update_time|datetime|NOT NULL|更新时间|
 
@@ -72,10 +72,10 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键，不对外|
-|product_order_id|bigint|UNIQUE(uk_product_order_id), NOT NULL|业务 ID：对外暴露 + `product_order_event.order_id` + 钱包流水 `order_id` 都用它|
-|buyer_id|bigint|NOT NULL, INDEX(idx_buyer)|买家用户 ID|
-|seller_id|bigint|NOT NULL, INDEX(idx_seller)|卖家用户 ID|
-|product_id|bigint|NOT NULL, INDEX(idx_product)|商品 ID（引用：跳转/反查/对账用）|
+|product_order_id|varchar(36)|UNIQUE(uk_product_order_id), NOT NULL|业务 ID（UUID 字符串）：对外暴露 + `product_order_event.order_id` + 钱包流水 `order_id` 都用它|
+|buyer_id|varchar(36)|NOT NULL, INDEX(idx_buyer)|买家用户 ID|
+|seller_id|varchar(36)|NOT NULL, INDEX(idx_seller)|卖家用户 ID|
+|product_id|varchar(36)|NOT NULL, INDEX(idx_product)|商品业务 ID（引用：跳转/反查/对账用）|
 |price|decimal(10,2)|NOT NULL|成交价快照|
 |product_title|varchar(30)|NULL|商品标题快照（下单时写入，此后不可变）|
 |product_description|varchar(500)|NULL|商品描述快照（下单时写入，此后不可变）|
@@ -105,11 +105,11 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键，同订单内递增即流转顺序|
-|order_id|bigint|NOT NULL, INDEX(idx_order)|商品订单**业务 ID**（= product_order.product_order_id）|
+|order_id|varchar(36)|NOT NULL, INDEX(idx_order)|商品订单业务 ID（= product_order.product_order_id，UUID 字符串）|
 |event_type|varchar(30)|NOT NULL|事件类型：CREATED/PAID/DELIVERED/COMPLETED/CANCELLED 等|
 |from_state|varchar(20)|NULL|变更前状态；创建事件为 NULL，**由服务端直接置终态的取消事件也写 NULL**，不要用「NULL = 创建事件」判定|
 |to_state|varchar(20)|NOT NULL|变更后状态|
-|actor_id|bigint|NULL|操作人用户 ID（仅 SYSTEM 事件允许 NULL）|
+|actor_id|varchar(36)|NULL|操作人用户 ID（仅 SYSTEM 事件允许 NULL）|
 |actor_role|varchar(20)|NOT NULL|操作方 BUYER/SELLER/SYSTEM/ADMIN|
 |reason_type|varchar(50)|NULL|原因类型，仅取消类事件写入：BUYER_CANCEL（买家取消）/ PAY_TIMEOUT（系统支付超时）|
 |reason|varchar(200)|NULL|原因补充说明（用户输入，提交时先过同步初筛；SYSTEM 事件恒 NULL）|

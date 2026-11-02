@@ -89,7 +89,8 @@ public abstract class PointsApiTestBase extends TestingEnvironment {
      * （测试栈没有 broker，消费者当普通 Bean 调用；真 MQ 链路归联调票）
      */
     protected void publishLotteryDrawn(String userId, String recordId, String prizeType, Integer pointsAmount) {
-        String payload = "{\"recordId\":%d,\"userId\":\"%s\",\"prizeId\":1,\"prizeType\":\"%s\",\"pointsAmount\":%s}"
+        // uuid-biz-id 票 07 起 recordId 是 UUID 字符串，载荷里按 JSON 字符串传（原 %d 数字形态退役）
+        String payload = "{\"recordId\":\"%s\",\"userId\":\"%s\",\"prizeId\":1,\"prizeType\":\"%s\",\"pointsAmount\":%s}"
                 .formatted(recordId, userId, prizeType, pointsAmount == null ? "null" : pointsAmount);
         lotteryDrawnConsumer.onMessage(payload);
     }

@@ -10,7 +10,7 @@
 |draw_activity|抽奖活动（活动 → 策略 1:1，uk_strategy_id；state create/open/close）|
 |draw_strategy|抽奖策略；`rule` 列 = 责任链节点码逗号序列（如 rule_blacklist,rule_weight），ChainFactory 按它动态组链|
 |draw_strategy_award|奖品位配置；概率口径 award_rate（DECIMAL(6,4)，×10000 即槽位）；type = normal（进概率池）/ fallback（库存兜底）/ blacklist（黑名单强制奖）|
-|draw_strategy_weight|权重档（票 11 自设计稿 strategy_weight 规范化：并入 draw_* 命名、去时间戳默认值、加 COMMENT；weights 从 varchar(32) 放宽到 256 容 snowflake award_id）|
+|draw_strategy_weight|权重档（票 11 自设计稿 strategy_weight 规范化：并入 draw_* 命名、去时间戳默认值、加 COMMENT；weights 随 uuid-biz-id 票 07 award_id UUID 化放宽到 varchar(512)）|
 |draw_record|抽奖记录（中奖事实 + 奖品快照；写入方 = 票 13 主链路）|
 |draw_record_detail|动作明细（只插入：DRAW/EXCHANGE/SHIP/COMPLETE，uk_record_type 幂等；票 13/14 用）|
 
@@ -39,7 +39,7 @@
      （`insertDrawRecord`）；
   3. **库存预扣**在库存域的域内事务（明细 + 台账一组一个事务，返回即 `surplus` 已减），与落库
      **不在同一事务**——这正是「预扣成功而落库失败」窗口（孤儿预扣）的来源，见下。
-- **幂等键**：`record_id = SHA-256(userId + ":" + token)` 截 63 位正整数（0 抬成 1）。
+- **幂等键**：`record_id = SHA-256(userId + ":" + token)` 取前 16 字节组 UUID（msb/lsb），输出 36 位规范形字符串（uuid-biz-id 票 07 起，原「截 63 位正整数」的 Long 形态退役）。
   **确定性映射、无重放表**——同一 `(userId, token)` 恒映射同一 `record_id`，`uk_record_id` 就是幂等互斥。
   - 重放快路径：先查 `draw_record`，命中即回放（不扣次数、不预扣）
   - 并发同 token 串行化：败者要么在扣次后查到已落记录回放，要么落库撞 `uk_record_id`
@@ -47,7 +47,7 @@
   - 回放**必校验归属**（`user_id` 不符按系统错拒绝）：防 hash 碰撞把他人记录顶出来
 - **`state` 初值**：`award_type = THANKS` 直接落 **已完成**（不走兑换/发货）；
   其余落 **待兑换**，推进归票 14 状态机。明细**只插 `DRAW` 一条**，其余三个动作由状态机落。
-- **`inv_id`**：不限量档（`inv_id = 0`）落库时置 `NULL`（「无库存来源」比 0 更好判）。
+- **`inv_id`**：不限量档（配置哨兵 `inv_id = '0'`，字符串）落库时置 `NULL`（「无库存来源」比哨兵更好判）。
 
 ## 发货状态机口径（票 14 定）
 

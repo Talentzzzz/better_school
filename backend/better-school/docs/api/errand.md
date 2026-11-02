@@ -9,7 +9,7 @@
 - 口径：**草稿（DRAFT）与软删（DELETED）单一律不出现**（显式传 `status=DRAFT/DELETED` 也不放行）
 - 读路径（market-feed-uv 票 04）：**无 type 筛选且 status=PUBLISHED** 走 `errand_feed_index` 索引序扫描 +
   keyset 游标分页——`cursor` 非空则忽略 `page`，响应带 `cursor` 才续页、`total = -1`（未知，不再精确 COUNT）；
-  排序键 = 热度（浏览 UV 数，列表 `viewCount` 取索引热度快照）/ 进入大厅时刻（时间升/降序同索引正反向扫描）/
+  排序键 = 热度（浏览 UV 数降序，同值按 `create_time` 降序、再按业务 id 降序三段收敛——uuid-biz-id 票 05 起）/ 进入大厅时刻（时间升/降序同索引正反向扫描，同值按业务 id 收敛）/
   悬赏（价格升降）；**带 type 或非 PUBLISHED 口径** → 旧直查，精确 total、`cursor` 恒 null、按 page 续页；
   索引查询异常 warn 降级旧直查。游标是域内编解码的不透明串，换排序复用 / 篡改 → code 400；
   索引行与计数窄表的漂移（浏览旁路命中 0 行的 warn）由 `errandFeedIndexRebuildJob` 手动重建兜底——

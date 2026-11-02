@@ -360,6 +360,8 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
                 Map.entry("category", "BOOKS")), seller);
         assertSuccess(response, "发布商品");
         String productId = response.path("data").asText();
+        // uuid-biz-id 票 08 收口：发商品返回 id 必须是可解析的 UUID 字符串（ID 形态断言）
+        assertUuidId(productId);
         assertThat(productStatus(productId)).as("先审后售：提交即待审").isEqualTo("PENDING_REVIEW");
         return productId;
     }
@@ -433,7 +435,10 @@ class TradeFullChainIntegrationTest extends CommunityApiTestBase {
     private String createProductOrder(Session buyer, String productId) {
         JsonNode response = postJson("/api/trade/orders?productId=" + productId, null, buyer);
         assertSuccess(response, "商品下单");
-        return response.path("data").asText();
+        String orderId = response.path("data").asText();
+        // uuid-biz-id 票 08 收口：下单返回 id 必须是可解析的 UUID 字符串（ID 形态断言），后续流转以同一字符串引用成功
+        assertUuidId(orderId);
+        return orderId;
     }
 
     /** 该商品订单的事件流水类型序（id 递增即状态流转顺序） */

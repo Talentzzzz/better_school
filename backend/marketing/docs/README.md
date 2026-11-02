@@ -29,7 +29,7 @@ HTTP **8081**，Dubbo 50052，xxl 执行器 `marketing-executor`（9998），库
 
 - DDL 来源：本工程 `sql/init-{dev,test}.sql`（只建库）+ `sql/schema.sql`（唯一 DDL 主体，18 张表；
   票 13 起 `schema-legacy.sql` 已删除，旧域九张表退出；hot-row-merge-l2w256 起为最终形态，
-  存量库过渡与 D9 收口见 `sql/cutover/`）。
+  uuid-biz-id 票 08 起存量库退役（删库重建），历史切换包 `sql/cutover/` 已删除）。
 - 子域名与跨库纪律见根 `backend/docs/db/README.md`。
 
 ## 架构与规格

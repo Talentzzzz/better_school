@@ -25,14 +25,14 @@
 
 | 字段 | 类型 | 约束 | 说明 |
 | ---- | ---- | ---- | ---- |
-| id | bigint | PK | 主键（无业务含义） |
-| bucket_id | bigint | UNIQUE, NOT NULL | 桶业务 ID（雪花生成，消费明细与对外引用挂它） |
-| user_id | bigint | NOT NULL | 用户 ID |
+| id | bigint | PK | 物理主键（纯内部键，永不对外） |
+| bucket_id | varchar(36) | UNIQUE, NOT NULL | 桶业务 ID（UUID 字符串，应用层 `IIdGenerator` insert 前发号一次写入，uuid-biz-id 票 07 起——原雪花 Long 退役；消费明细与对外引用挂它） |
+| user_id | varchar(36) | NOT NULL | 用户 ID |
 | amount | int | NOT NULL | 入账积分数（恒正） |
 | remain | int | NOT NULL | 该桶剩余可用（消费按 FIFO 递减，过期清理置 0） |
 | expire_at | datetime | NOT NULL | 过期时间 = 入账时点 + `points_validity_config.points_valid_days` |
 | reason_type | varchar(30) | NOT NULL | 入账来源：`LOTTERY_WIN` / `REBATE` |
-| ref_id | bigint | NOT NULL | LOTTERY_WIN = 抽奖记录 id（MQ 幂等键）；REBATE = 发放幂等键 |
+| ref_id | varchar(36) | NOT NULL | LOTTERY_WIN = 抽奖记录 id（UUID 字符串，MQ 幂等键）；REBATE = 发放幂等键 |
 | create_time / update_time | datetime | NOT NULL | 由应用写入 |
 
 ### 索引
@@ -59,12 +59,12 @@
 
 | 字段 | 类型 | 约束 | 说明 |
 | ---- | ---- | ---- | ---- |
-| id | bigint | PK | 主键 |
-| user_id | bigint | NOT NULL | 用户 ID |
-| bucket_id | bigint | NOT NULL | 被扣的**桶业务 ID**（FIFO 顺序；不再引用物理自增 id） |
+| id | bigint | PK | 物理主键 |
+| user_id | varchar(36) | NOT NULL | 用户 ID |
+| bucket_id | varchar(36) | NOT NULL | 被扣的**桶业务 ID**（FIFO 顺序；不再引用物理自增 id） |
 | amount | int | NOT NULL | 本次从该桶扣掉的量（恒正） |
 | reason_type | varchar(30) | NOT NULL | `REDEEM_DRAW_COUNT` / `REDEEM_PRIZE` |
-| ref_id | bigint | NOT NULL | 兑换单 id（兑换幂等键） |
+| ref_id | varchar(36) | NOT NULL | 兑换单 id / 抽奖记录 id（UUID 字符串，兑换幂等键） |
 | create_time / update_time | datetime | NOT NULL | 由应用写入 |
 
 ### 索引
@@ -76,7 +76,7 @@
 
 ## draw_count_bucket / draw_count_detail
 
-与积分侧**逐列同构**（票 10 只建能力，抽奖业务接入归票 13）：
+与积分侧**逐列同构**（票 10 只建能力，抽奖业务接入归票 13；uuid-biz-id 票 07 起 bucket_id / user_id / ref_id 同为 `varchar(36)` UUID 字符串）：
 
 - `draw_count_bucket.reason_type`：`REDEEM`（积分兑换，ref_id = 兑换单 id，与 `points_detail`
   的 REDEEM_DRAW_COUNT **同值同事务写入**）/ `REBATE`（ref_id = 发放幂等键）

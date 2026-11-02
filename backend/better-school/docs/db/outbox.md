@@ -9,7 +9,7 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理自增，标记/扫描按它寻址（分配序 = 提交序）|
-|msg_id|varchar(64)|UNIQUE(`uk_msg_id`), NOT NULL|消息 ID（幂等/去重）：由 `OutboxMessageStore` 生成 UUID，消费端按它幂等。**注意本列是 UUID 字符串，与 chat `message.msg_id`（bigint 业务 ID）只是同名**|
+|msg_id|varchar(64)|UNIQUE(`uk_msg_id`), NOT NULL|消息 ID（幂等/去重）：由 `OutboxMessageStore` 生成 UUID，消费端按它幂等。**注意本列是 UUID 字符串，与 chat `message.msg_id`（同为 UUID 字符串的业务 ID）只是同名不同列**|
 |destination|varchar(64)|NOT NULL|消息目的地（**原 `topic` 列**）：`topic` 或 `topic:tag` 语法，由业务端自行解析，取值见 `bs-types` 的 `Constants.*_TOPIC`（如 `bs-search-sync`、`bs-chat-push`）|
 |payload|text|NOT NULL|消息内容 JSON（落库与发送同一份）|
 |state|tinyint|NOT NULL, DEFAULT 0|0 待发送 / 1 已发送 / 2 发送失败（重试耗尽）。**本列是 tinyint 数字码（`OutboxStatus`），不是别处的 varchar 状态名**|

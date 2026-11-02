@@ -10,7 +10,7 @@
 |post_comment_like|评论点赞关系（明细，uk_comment_user 幂等）|
 |post_comment_feed_index|根评论热评排序投影（只服务「最热」序，不是真值源）|
 
-**主键口径**：`id` 是纯内部物理自增，业务 ID 为 `comment_id`（`uk_comment_id`）；插入时先写 0，同事务 `UPDATE post_comment SET comment_id = id WHERE id = ?` 回写。
+**主键口径（uuid-biz-id 起）**：`id` 是纯内部物理自增，业务 ID 为 `comment_id`（`uk_comment_id`）；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`IIdGenerator` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
 
 # post_comment
 
@@ -19,19 +19,19 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键，不对外|
-|comment_id|bigint|UNIQUE(uk_comment_id), NOT NULL|业务 ID：`root_id`/`parent_id`/post_comment_like 引用它|
-|post_id|bigint|NOT NULL, INDEX(idx_post / idx_post_state)|帖子业务 ID（外联 `post.post_id`）|
-|user_id|bigint|NOT NULL, INDEX(idx_user_state_created)|评论者用户 ID|
+|comment_id|varchar(36)|UNIQUE(uk_comment_id), NOT NULL|业务 ID（UUID 字符串）：`root_id`/`parent_id`/post_comment_like 引用它|
+|post_id|varchar(36)|NOT NULL, INDEX(idx_post / idx_post_state)|帖子业务 ID（外联 `post.post_id`）|
+|user_id|varchar(36)|NOT NULL, INDEX(idx_user_state_created)|评论者用户 ID|
 |content|varchar(500)|NULL|评论文字（可空：纯图评论时为空，与 `images` 至少一个非空）|
 |images|varchar(1000)|NULL|图片 URL 列表（JSON 数组，最多 6 张，MinIO）|
 |state|varchar(20)|NOT NULL, DEFAULT 'NORMAL'|NORMAL/PENDING_REVIEW/REJECTED/DELETED；先审后发，列表只查 NORMAL（原 `status` 列改名）|
-|root_id|bigint|NOT NULL, DEFAULT 0|楼根评论 id；0=根评论，回复根评论时=根评论 id，回复子回复时=楼根 id|
-|parent_id|bigint|NOT NULL, DEFAULT 0|被回复评论 id；根评论为 0，回复根评论时=根评论 id，回复子回复时=该子回复 id|
+|root_id|varchar(36)|NOT NULL, DEFAULT '0'|楼根评论业务 ID；`'0'`=根评论，回复根评论时=根评论 id，回复子回复时=楼根 id|
+|parent_id|varchar(36)|NOT NULL, DEFAULT '0'|被回复评论业务 ID；根评论为 `'0'`，回复根评论时=根评论 id，回复子回复时=该子回复 id|
 |reply_count|int|NOT NULL, DEFAULT 0|楼内可见子回复数（仅根评论有意义，仅 NORMAL 计入，同事务维护）|
 |create_time|datetime|NOT NULL|评论时间|
 |update_time|datetime|NOT NULL|更新时间|
 
-> 已删除的列：`like_count`（评论点赞计数，comment-count-narrow-table 票 04 收口删列——真源 `post_comment_like_count`、「最热」排序快照 `post_comment_feed_index`，本行再无点赞数）。**存量点赞不搬**：不回填、不搬历史点赞，存量库删列后历史评论的点赞显示 0（已确认接受；要「历史热评」只能重放 `post_comment_like` 明细，本轮不做）。存量库割接脚本 `sql/backfill/comment-like-count-cutover.sql`（不幂等，头注释含执行序：建两张新表 → 起新 jar → 删列）。删列前旧列已在票 02 停写停读（`PostCommentPO.likeCount` 保留为投影填充字段）。
+> 已删除的列：`like_count`（评论点赞计数，comment-count-narrow-table 票 04 收口删列——真源 `post_comment_like_count`、「最热」排序快照 `post_comment_feed_index`，本行再无点赞数）。**存量点赞不搬**：不回填、不搬历史点赞（已确认接受；要「历史热评」只能重放 `post_comment_like` 明细）。存量库不迁移（uuid-biz-id：删库重建），历史割接脚本已退役。删列前旧列已在票 02 停写停读（`PostCommentPO.likeCount` 保留为投影填充字段）。
 
 ## 索引
 - `uk_comment_id (comment_id)`
@@ -62,7 +62,7 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
-|post_id|bigint|UNIQUE(uk_post), NOT NULL|帖子业务 ID（一帖一行）|
+|post_id|varchar(36)|UNIQUE(uk_post), NOT NULL|帖子业务 ID（一帖一行）|
 |comment_count|int|NOT NULL, DEFAULT 0|评论数（只计 NORMAL 态）|
 |create_time|datetime|NOT NULL|首次建行时间|
 |update_time|datetime|NOT NULL|最近变更时间|
@@ -79,7 +79,7 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
-|comment_id|bigint|UNIQUE(uk_comment), NOT NULL|评论业务 ID（根评论或子回复，一评一行）|
+|comment_id|varchar(36)|UNIQUE(uk_comment), NOT NULL|评论业务 ID（根评论或子回复，一评一行）|
 |like_count|int|NOT NULL, DEFAULT 0|点赞数（点赞合并事务 / 取消赞同事务直写，`GREATEST(0, ±N)` clamp；真源 = post_comment_like 条数）|
 |create_time|datetime|NOT NULL|首次建行时间（= 审核通过时刻）|
 |update_time|datetime|NOT NULL|最近变更时间|
@@ -98,8 +98,8 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
-|comment_id|bigint|NOT NULL, INDEX(uk_comment_user 首列)|评论业务 ID（根评论或子回复）|
-|user_id|bigint|NOT NULL, INDEX(idx_user)|点赞用户 ID|
+|comment_id|varchar(36)|NOT NULL, INDEX(uk_comment_user 首列)|评论业务 ID（根评论或子回复）|
+|user_id|varchar(36)|NOT NULL, INDEX(idx_user)|点赞用户 ID|
 |create_time|datetime|NOT NULL|点赞时间|
 |update_time|datetime|NOT NULL|更新时间|
 
@@ -114,15 +114,15 @@
 
 |字段|类型|约束|说明|
 |----|----|----|----|
-|comment_id|bigint|PK, NOT NULL|根评论业务 ID（子回复不入本表；主键直接用业务键，同 `post_feed_index` 先例）|
-|post_id|bigint|NOT NULL, INDEX(idx_post_like 首列)|所属帖子业务 ID（「最热」按此前缀把扫描锁在单帖）|
+|comment_id|varchar(36)|PK, NOT NULL|根评论业务 ID（UUID 字符串；子回复不入本表；主键直接用业务键，同 `post_feed_index` 先例）|
+|post_id|varchar(36)|NOT NULL, INDEX(idx_post_like 首列)|所属帖子业务 ID（「最热」按此前缀把扫描锁在单帖）|
 |like_count|int|NOT NULL, DEFAULT 0|点赞数快照（点赞/取消赞同事务旁带 ±N；真源 `post_comment_like_count`，UPDATE 落 0 行落日志交重建 job；「最热」排序键）|
-|create_time|datetime|NOT NULL|建行时间（= 审核通过时刻）|
+|create_time|datetime|NOT NULL|建行时间（= 审核通过时刻）：点赞数同值时按它**升序**收敛成确定序（发布先后；UUID 无序，业务 id 不再是时间代理，uuid-biz-id 票 03 起三键收敛）|
 |update_time|datetime|NOT NULL|更新时间（技术时间戳，禁止当排序键）|
 
 ## 索引
 - `PRIMARY KEY (comment_id)`
-- `idx_post_like (post_id, like_count, comment_id)`：`post_id` 前缀把扫描锁在单帖、覆盖索引不回表；帖内按 `(like_count DESC, comment_id ASC)` 取页——两列方向相反，索引序给不出这个混合方向，排序落在「本帖那几十行」的窄范围内（`EXPLAIN`：covering index lookup + Sort），单帖楼数量级可接受
+- `idx_post_like (post_id, like_count, create_time, comment_id)`：`post_id` 前缀把扫描锁在单帖、覆盖索引不回表；帖内按 `(like_count DESC, create_time ASC, comment_id ASC)` 取页——方向混合，索引序给不出完整序，排序落在「本帖那几十行」的窄范围内（`EXPLAIN`：covering index lookup + Sort），单帖楼数量级可接受
 
 ## 注意
 - **行集 = 当前可见根评论**：审核通过事务 `INSERT`、根评论软删事务物理 `DELETE`。评论软删是终态、没有恢复路径，所以不像 `post_feed_index` 那样「行常驻 + `state` 快照镜像」——那列在这里恒为 NORMAL，没有维护价值。子回复不入本表（楼内不按赞排，只展示赞数）
@@ -136,10 +136,10 @@ comment-count-narrow-table 落地后的形状：各条读语句（根列表默�
 
 |读路径|排序键|计数来源|
 |----|----|----|
-|根列表 new 档（`sort=new`）|`post_comment.id` 升序（时间序）|页内 id 集回查 `post_comment_like_count`|
-|根列表 hot 档（`sort=hot`，也是不带 `sort` 时的默认）|`post_comment_feed_index` 的单帖前缀扫描 + 帖内 `(like_count DESC, comment_id ASC)` 排序|同上（页内 id 集回查）|
-|楼内子回复平铺|`post_comment.id` 升序|同上|
-|作者主页「评论」tab|`post_comment.create_time DESC, id DESC`|同上|
+|根列表 new 档（`sort=new`）|`create_time ASC, comment_id ASC`（同秒按业务 id 收敛成确定序）|页内 id 集回查 `post_comment_like_count`|
+|根列表 hot 档（`sort=hot`，也是不带 `sort` 时的默认）|`post_comment_feed_index` 的单帖前缀扫描 + 帖内 `(like_count DESC, create_time ASC, comment_id ASC)` 排序|同上（页内 id 集回查）|
+|楼内子回复平铺|`create_time ASC, comment_id ASC`|同上|
+|作者主页「评论」tab|`create_time DESC, comment_id DESC`|同上|
 |单条评论（详情定位等）|—|单元素回查（同一条通路）|
 
 - **最热档两级取数**：先在 `post_comment_feed_index` 上按帖子前缀扫出本页 `comment_id` 序，再按 id 集回查 `post_comment` 行（保留昵称/驳回理由 JOIN）并按扫描序重排，最后走同一条计数回查。索引行在而评论行不可见 = 漂移，跳过不补位（补位要么多查一页、要么让页大小漂移）

@@ -44,8 +44,9 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
      */
     private void preConsumeDrawCount(String userId, String token) {
         String recordId = IdempotencyKeys.of(userId, token);
-        Long bucketId = jdbcTemplate.queryForObject(
-                "SELECT bucket_id FROM draw_count_bucket WHERE user_id = ?", Long.class, userId);
+        // uuid-biz-id 票 07 起 bucket_id 是 UUID 字符串
+        String bucketId = jdbcTemplate.queryForObject(
+                "SELECT bucket_id FROM draw_count_bucket WHERE user_id = ?", String.class, userId);
         jdbcTemplate.update("""
                         INSERT INTO draw_count_detail (user_id, bucket_id, ref_id, create_time, update_time)
                         VALUES (?, ?, ?, NOW(), NOW())
@@ -266,7 +267,7 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
         var detail = jdbcTemplate.queryForMap(
                 "SELECT biz_type, biz_id FROM virtual_inventory_quota_detail WHERE inv_id = ?", POINTS_INV_ID);
         assertThat(detail.get("biz_type")).isEqualTo("LOTTERY_DRAW");
-        assertThat(((Number) detail.get("biz_id")).longValue()).isEqualTo(recordId);
+        assertThat((String) detail.get("biz_id")).as("biz_id=recordId（UUID 字符串）").isEqualTo(recordId);
     }
 
     @Test
@@ -295,7 +296,7 @@ public class RaffleDrawPipelineIntegrationTest extends RaffleApiTestBase {
                 "SELECT type, biz_type, biz_id FROM physical_marketing_quota_detail WHERE inv_id = ?", QUOTA_INV_ID);
         assertThat(((Number) detail.get("type")).intValue()).as("预扣结转 type=1").isEqualTo(1);
         assertThat(detail.get("biz_type")).isEqualTo("LOTTERY_DRAW");
-        assertThat(((Number) detail.get("biz_id")).longValue()).isEqualTo(recordId);
+        assertThat((String) detail.get("biz_id")).as("biz_id=recordId（UUID 字符串）").isEqualTo(recordId);
     }
 
     @Test

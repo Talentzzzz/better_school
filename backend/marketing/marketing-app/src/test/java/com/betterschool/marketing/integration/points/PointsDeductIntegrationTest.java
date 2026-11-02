@@ -49,17 +49,17 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
         return request;
     }
 
-    /** 桶行 id → 桶业务 ID（消费明细的 bucket_id 指向业务 ID，不是行 id） */
-    private long bucketBusinessIdOf(long bucketRowId) {
-        return jdbcTemplate.queryForObject("SELECT bucket_id FROM points_bucket WHERE id = ?", Long.class, bucketRowId);
+    /** 桶行 id → 桶业务 ID（消费明细的 bucket_id 指向业务 ID，不是行 id；uuid-biz-id 票 07 起 bucket_id 是 UUID 字符串） */
+    private String bucketBusinessIdOf(long bucketRowId) {
+        return jdbcTemplate.queryForObject("SELECT bucket_id FROM points_bucket WHERE id = ?", String.class, bucketRowId);
     }
 
     /** 消费明细按桶归集：bucket 业务 ID → 该桶被扣掉的积分（一行明细就是一张券的一次扣减） */
-    private Map<Long, Integer> detailAmountsByBucketOf(String userId) {
+    private Map<String, Integer> detailAmountsByBucketOf(String userId) {
         return jdbcTemplate.queryForList(
                         "SELECT bucket_id, amount FROM points_detail WHERE user_id = ?", userId).stream()
                 .collect(Collectors.toMap(
-                        row -> ((Number) row.get("bucket_id")).longValue(),
+                        row -> (String) row.get("bucket_id"),
                         row -> ((Number) row.get("amount")).intValue(),
                         (first, second) -> {
                             // 同一张券被记了两行明细：这本身就是契约被破坏，给个能直接读懂的失败信息
@@ -127,9 +127,9 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
         assertThat(details.get(1).get("reason_type")).isEqualTo("REDEEM_DRAW_COUNT");
         assertThat(String.valueOf(details.get(1).get("ref_id"))).isEqualTo(String.valueOf(REDEEM_ORDER_ID));
         // 明细的 bucket_id 都指向真实存在的桶业务 ID（非物理自增 id）
-        List<Long> detailBucketIds = details.stream().map(row -> ((Number) row.get("bucket_id")).longValue()).toList();
-        List<Long> bucketIds = jdbcTemplate.queryForList(
-                "SELECT bucket_id FROM points_bucket WHERE user_id = ?", Long.class, USER_ID);
+        List<String> detailBucketIds = details.stream().map(row -> (String) row.get("bucket_id")).toList();
+        List<String> bucketIds = jdbcTemplate.queryForList(
+                "SELECT bucket_id FROM points_bucket WHERE user_id = ?", String.class, USER_ID);
         assertThat(bucketIds).as("明细引用的桶业务 ID 必须在 points_bucket 里").containsAll(detailBucketIds);
 
         // 变动事件：delta 为负、balanceAfter 是扣后余额
@@ -167,7 +167,7 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
         assertThat(bucketRemainOf(thirdTwin)).as("同到期时间的后一张 40 - 差额 25").isEqualTo(15);
 
         // 明细：被碰到的四张券各一行，金额逐桶记账，合计等于本次扣分
-        Map<Long, Integer> deductedByBucket = detailAmountsByBucketOf(USER_ID);
+        Map<String, Integer> deductedByBucket = detailAmountsByBucketOf(USER_ID);
         assertThat(deductedByBucket).hasSize(4);
         assertThat(deductedByBucket).containsEntry(bucketBusinessIdOf(earliest), 20)
                 .containsEntry(bucketBusinessIdOf(second), 30)
@@ -209,7 +209,7 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
         assertThat(bucketRemainOf(untouched)).as("额度已够，第三张一分不动").isEqualTo(50);
 
         // 两行明细，各自等额扣光一张券；没有第三行，说明不产生零碎的残余记账
-        Map<Long, Integer> deductedByBucket = detailAmountsByBucketOf(USER_ID);
+        Map<String, Integer> deductedByBucket = detailAmountsByBucketOf(USER_ID);
         assertThat(deductedByBucket).hasSize(2);
         assertThat(deductedByBucket).containsEntry(bucketBusinessIdOf(first), 30)
                 .containsEntry(bucketBusinessIdOf(second), 70)
@@ -231,7 +231,7 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
         assertThat(result.getBalance()).as("100 - 60").isEqualTo(40);
         assertThat(bucketRemainOf(bucketId)).isEqualTo(40);
 
-        Map<Long, Integer> deductedByBucket = detailAmountsByBucketOf(USER_ID);
+        Map<String, Integer> deductedByBucket = detailAmountsByBucketOf(USER_ID);
         assertThat(deductedByBucket).containsExactly(Map.entry(bucketBusinessIdOf(bucketId), 60));
 
         JsonNode event = onlyPointsChangedEvent();
@@ -265,7 +265,7 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
         // 明细只有一份（被碰到的两张券各一行，合计 100）。
         // 同一张券同一单号插第二行会被 uk 挡住，所以「多扣」不会以多一行明细的样子出现——
         // 它要么表现为余量被多减一次、要么表现为事件多发一条，下面这两处断言兜的就是这个
-        Map<Long, Integer> deductedByBucket = detailAmountsByBucketOf(USER_ID);
+        Map<String, Integer> deductedByBucket = detailAmountsByBucketOf(USER_ID);
         assertThat(deductedByBucket).hasSize(2);
         assertThat(deductedByBucket).containsEntry(bucketBusinessIdOf(earliest), 60)
                 .containsEntry(bucketBusinessIdOf(later), 40);

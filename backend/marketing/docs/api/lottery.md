@@ -165,7 +165,7 @@
 - 成功: `{ redeemOrderId, drawCount }`（`drawCount` = 兑后的可用次数余额）
 - 失败: `4306` `LOTTERY_INSUFFICIENT_POINTS`（积分不足）
 - 定价：`Constants.DRAW_COUNT_EXCHANGE_PRICE = 100`（随 `GET /activity` 的 `drawCountPrice` 返回）
-- **幂等**：`redeemOrderId = hash(userId, token)`（确定性映射，不落重放表）——同一 token 重放恒映射同一单号，
+- **幂等**：`redeemOrderId = SHA-256(userId + ":" + token)` 取 16 字节组 UUID 的 36 位规范形字符串（确定性映射，不落重放表；uuid-biz-id 票 07 起）——同一 token 重放恒映射同一单号，
   两域各自的流水唯一键（积分 `(userId, REDEEM_DRAW_COUNT, refId)` / 次数 `(userId, REDEEM, refId)`
   即幂等互斥）保证**只成功入账一次**：积分只扣一次、次数只加一次。换 token 才是新的一笔。
 - **事务边界**：**不跨域开事务**。case 层（`RaffleExchangeCase`）顺序调两次、各自域内原子：
@@ -213,7 +213,7 @@
 
 handler 共 **4 个**：`outboxScan` / `pointsExpireScan` / `drawCountBucketExpireScan` / `raffleCacheWarmup`
 （hot-row-merge-l2w256 票 09：`inventoryMergeBackstop` / `inventoryBucketWarmup` 随桶与兜底整条退休，
-代码里已无这两个 handler；存量库的注册行在切换窗口停用、D9 收口删除，见 [cutover 运行手册](../../sql/cutover/cutover-runbook.md)）。
+代码里已无这两个 handler；uuid-biz-id 票 08 起存量库退役（删库重建），历史切换包已删除，重灌 seed 即无这两行）。
 
 | handler | 频率 | 干什么 |
 | --- | --- | --- |

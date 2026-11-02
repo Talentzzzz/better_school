@@ -175,10 +175,9 @@ points / drawcount / config / raffle / inventory 五段同库。跨 schema 的�
 
 | 文件 | 用途 |
 | --- | --- |
-| `marketing/sql/schema.sql` | DDL 主体（不含 `CREATE DATABASE` / `USE`，开发库与测试库共用；18 张表，全部 `IF NOT EXISTS` 幂等；hot-row-merge-l2w256 起为**最终形态**——无两张库存桶表、明细表无 `bucket_id` / `state`，存量库由 `sql/cutover/` 在切换窗口与 D9 收口对齐） |
+| `marketing/sql/schema.sql` | DDL 主体（不含 `CREATE DATABASE` / `USE`，开发库与测试库共用；18 张表，全部 `IF NOT EXISTS` 幂等；hot-row-merge-l2w256 起为**最终形态**——无两张库存桶表、明细表无 `bucket_id` / `state`；uuid-biz-id 票 08 起存量库退役，历史切换包已删，改库表 = 改 schema.sql + 删库重建） |
 | `marketing/sql/init-{dev,test}.sql` | 建库文件：只建 `bs_marketing` / `bs_marketing_test`，**不切库** |
 | `marketing/sql/xxl-job-tasks.sql` | xxl 执行器 + 任务注册落点（executor `marketing-executor`，4 handler：`outboxScan`（票 14 起只重发超时行）、`pointsExpireScan`、`drawCountBucketExpireScan`、`raffleCacheWarmup`，表里的 appname/cron 以此为准）；新增/改名 handler 时改这里并重灌 admin 库 |
-| `marketing/sql/cutover/` | 切换包（hot-row-merge-l2w256 票 09）：运行手册 + 记录模板 + `window-ddl.sql` / `cutover-catchup.sql` / `cutover-cleanup.sql` / `rollback-warmup.sh` / `d9-finalize.sql` |
 
 > 营销侧**尚未接入超时中心**（零接入方；内嵌化票 08 只定规格）：将来落表 / 落码的确定落法，
 > 以及它与既有扫描 job（`pointsExpireScan` / `drawCountBucketExpireScan`）的边界，

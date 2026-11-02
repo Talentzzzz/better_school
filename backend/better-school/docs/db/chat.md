@@ -7,23 +7,24 @@
 
 |字段|类型|约束|说明|
 |----|----|----|----|
-|id|bigint|PK, AUTO_INCREMENT|物理主键：仅库内用，禁止引用/暴露|
-|room_id|bigint|UNIQUE(`uk_room_id`), NOT NULL|会话业务 ID（对外唯一标识）：落库插 0，同事务回写 `room_id = id`；room_member/message/timeline 引用的都是它|
+|id|bigint|PK, AUTO_INCREMENT|物理主键：纯内部键，永不对外、永不再与业务键同值|
+|room_id|varchar(36)|UNIQUE(`uk_room_id`), NOT NULL|会话业务 ID（对外唯一标识，UUID 字符串）：应用层 insert 前由 `IIdGenerator` 发号、随行一次写入；room_member/message/timeline 引用的都是它|
 |source|varchar(20)|NULL|会话来源（首次由市集「私信联系」入口建会话时写入、**首来源钉死不覆盖**；首页/主页入口建的为 NULL）：ERRAND/PRODUCT|
-|initiator_id|bigint|NULL|首建发起人 user_id（对家角色标签的相对视角锚点；`source` 为 NULL 时也为 NULL）|
+|initiator_id|varchar(36)|NULL|首建发起人 user_id（对家角色标签的相对视角锚点；`source` 为 NULL 时也为 NULL）|
 |last_seq|bigint|NOT NULL, DEFAULT 0|消息序号水位（取号器）：发消息事务内 `UPDATE last_seq=last_seq+1` 原子取号，回滚无空洞|
 |state|varchar(20)|NOT NULL, DEFAULT 'ACTIVE'|与取号器同行：一把行锁完成取号+终态判定；当前恒 ACTIVE（SEALED 已随票 04 下线不再产生，列随口径保留）|
 |create_time|datetime|NOT NULL|创建时间（无默认值，应用写入；全库无 created_at）|
 |update_time|datetime|NOT NULL|更新时间|
 
-> `user_min`/`user_max`/`uk_direct_pair` 已迁出至 direct_room_pair（direct-room-pair 收口）——room 回归纯会话实体、不知道「配对」的存在；存量库割接用 `sql/backfill/direct-room-pair-cutover.sql`。
-> `last_msg_type`/`last_msg_preview`/`last_msg_at` 已迁出至 room_member（列表职责迁用户维度）——room 回归纯取号器 + 会话真相；存量库割接用 `sql/backfill/room-list-dim-cutover.sql`。
+> `user_min`/`user_max`/`uk_direct_pair` 已迁出至 direct_room_pair（direct-room-pair 收口）——room 回归纯会话实体、不知道「配对」的存在。
+> `last_msg_type`/`last_msg_preview`/`last_msg_at` 已迁出至 room_member（列表职责迁用户维度）——room 回归纯取号器 + 会话真相。
+> 历史存量割接脚本已随 uuid-biz-id 票 08 退役：存量数据不迁移，删库重建。
 
 ## 索引
 - `uk_room_id (room_id)`：业务键唯一；对外接口与跨表引用按它定位
 
 ## 注意
-- `id` 与 `room_id` 不是同一口径：所有读/改按 `room_id`，`id` 只用于回写业务键
+- `id` 与 `room_id` 不是同一口径：所有读/改按 `room_id`，`id` 是纯内部键（uuid-biz-id 起两者永不同值）
 - `last_seq` 是取号器，禁用自增 `id` 充当消息序号；取号必须与消息/时间线写入同事务
 - 未读数不落库 = `room_member.last_seq_copy − room_member.last_read_seq` O(1)（副本与水位线都在用户维度成员行上就地可算）
 - `source` 只写一次（`direct_room_pair.uk_pair` 命中即原样返回既有 room）：同一对人先聊闲置又聊跑腿仍是同一条会话、同一个标签
@@ -33,10 +34,10 @@
 
 |字段|类型|约束|说明|
 |----|----|----|----|
-|id|bigint|PK, AUTO_INCREMENT|物理主键：仅库内用，禁止引用/暴露|
-|user_min|bigint|NOT NULL, `uk_pair` 首列|1v1 双方 user_id 的较小方（min/max 归一化：无序对在有序存储里的规范表示）|
-|user_max|bigint|NOT NULL|1v1 双方 user_id 的较大方|
-|room_id|bigint|NOT NULL, UNIQUE(`uk_room_id`)|指向 `room.room_id`（配对→会话反查锚点）|
+|id|bigint|PK, AUTO_INCREMENT|物理主键：纯内部键，永不对外|
+|user_min|varchar(36)|NOT NULL, `uk_pair` 首列|1v1 双方 user_id 的**规范序在前方**（字符串字典序：UUID 无序，min/max 按字典序归一化，无序对在有序存储里的规范表示）|
+|user_max|varchar(36)|NOT NULL|1v1 双方 user_id 的规范序在后方（字符串字典序）|
+|room_id|varchar(36)|NOT NULL, UNIQUE(`uk_room_id`)|指向 `room.room_id`（配对→会话反查锚点）|
 |create_time|datetime|NOT NULL|创建时间|
 |update_time|datetime|NOT NULL|更新时间|
 
@@ -53,9 +54,9 @@
 
 |字段|类型|约束|说明|
 |----|----|----|----|
-|id|bigint|PK, AUTO_INCREMENT|物理主键：仅库内用，禁止引用/暴露|
-|room_id|bigint|NOT NULL, `uk_room_user` 首列|会话业务键（引用 `room.room_id`，非物理 `id`）|
-|user_id|bigint|NOT NULL|成员 user_id|
+|id|bigint|PK, AUTO_INCREMENT|物理主键：纯内部键，永不对外|
+|room_id|varchar(36)|NOT NULL, `uk_room_user` 首列|会话业务键（引用 `room.room_id`，非物理 `id`）|
+|user_id|varchar(36)|NOT NULL|成员 user_id|
 |last_seq_copy|bigint|NOT NULL, DEFAULT 0|会话水位副本：未读数 = `此列 − last_read_seq`（用户维度就地可算，与 OpenIM Conversation 行同构）；写链路 GREATEST 只进不退，真源 `room.last_seq` 仍由取号事务维护|
 |last_msg_type|varchar(20)|NULL|最后一条消息类型副本（列表预览标签：IMAGE=[图片]、CARD=按 ref_type 出 [商品]/[帖子]/[跑腿]，不查标题）|
 |last_msg_preview|varchar(200)|NULL|最后一条消息预览文案副本（TEXT=原文截断至 200，撤回=[已撤回]）|
@@ -78,16 +79,16 @@
 
 |字段|类型|约束|说明|
 |----|----|----|----|
-|id|bigint|PK, AUTO_INCREMENT|物理主键：仅库内用，禁止引用/暴露（timeline 引 `msg_id`）|
-|msg_id|bigint|UNIQUE(`uk_msg_id`), NOT NULL|消息业务 ID（对外唯一标识）：落库插 0，同事务回写 `msg_id = id`；跨表引用与对外暴露用它|
-|room_id|bigint|NOT NULL|会话业务键（引用 `room.room_id`）|
+|id|bigint|PK, AUTO_INCREMENT|物理主键：纯内部键，永不对外（timeline 引 `msg_id`）|
+|msg_id|varchar(36)|UNIQUE(`uk_msg_id`), NOT NULL|消息业务 ID（对外唯一标识，UUID 字符串）：应用层 insert 前由 `IIdGenerator` 发号、随行一次写入；跨表引用与对外暴露用它|
+|room_id|varchar(36)|NOT NULL|会话业务键（引用 `room.room_id`）|
 |seq|bigint|NOT NULL|消息序号（`room.last_seq` 取号，会话内从 1 起），`uk_room_seq` 第二列|
-|from_user_id|bigint|NOT NULL|发送者（1v1 无系统消息，恒非空）|
+|from_user_id|varchar(36)|NOT NULL|发送者（1v1 无系统消息，恒非空）|
 |msg_type|varchar(20)|NOT NULL, DEFAULT 'TEXT'|TEXT/IMAGE/CARD 三类定死|
 |content|varchar(1024)|NULL|载荷按类型分：TEXT=裸文本（上限 500 由代码常量收敛，列宽留余量）；IMAGE=JSON{url,width,height}；CARD=恒空|
 |client_msg_id|varchar(36)|NULL|客户端幂等键（UUID，重发复用同键），`uk_room_client` 第二列|
 |ref_type|varchar(20)|NULL|CARD 引用类型 PRODUCT/POST/ERRAND（仅 CARD 非空）|
-|ref_id|bigint|NULL|CARD 引用对象业务 ID（渲染实时查，失效显示「内容已失效」）|
+|ref_id|varchar(36)|NULL|CARD 引用对象业务 ID（POST/PRODUCT/ERRAND 均为 UUID 字符串；渲染实时查，失效显示「内容已失效」）|
 |state|varchar(20)|NOT NULL, DEFAULT 'NORMAL'|NORMAL/RECALLED：撤回占 seq 不回退、计入未读，`content` 库内保留取证、读路径脱敏为「已撤回」空壳|
 |recalled_at|datetime|NULL|撤回时间|
 |recalled_by|varchar(20)|NULL|USER=发送者限时窗口内自撤 / AUDITOR=举报强制撤回|
@@ -102,17 +103,17 @@
 
 ## 注意
 - 撤回条件 UPDATE 带 `state='NORMAL'` 守卫：用户自撤与强制撤回并发先到先得，已撤回行不被覆盖
-- 发消息事务顺序：插 message(biz=0) → 回写 `msg_id=id` → timeline 扇出引用该 `msg_id`
+- 发消息事务顺序：insert 前生成 `msg_id`（`IIdGenerator`）→ 插 message（业务键随行一次写入）→ timeline 扇出引用该 `msg_id`
 
 # timeline（时间线，不可变瘦收件箱）
 
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理自增，禁止当同步游标（id 分配序 ≠ 提交序）|
-|user_id|bigint|NOT NULL, `uk_user_delivery` 首列|收件人|
-|room_id|bigint|NOT NULL|会话业务键（冗余：判重键与消息定位，免回查）|
+|user_id|varchar(36)|NOT NULL, `uk_user_delivery` 首列|收件人|
+|room_id|varchar(36)|NOT NULL|会话业务键（冗余：判重键与消息定位，免回查）|
 |seq|bigint|NOT NULL|消息序号副本|
-|msg_id|bigint|NOT NULL|消息业务 ID（外联 `message.msg_id`，**不是** message 的物理 `id`）|
+|msg_id|varchar(36)|NOT NULL|消息业务 ID（外联 `message.msg_id`，**不是** message 的物理 `id`）|
 |delivery_seq|bigint|NOT NULL|per-user 投递序号（与消息序号是两个序号空间不可混用）|
 |create_time|datetime|NOT NULL|投递时间|
 |update_time|datetime|NOT NULL|更新时间（照全库收尾列；本表只插不改，实际恒等于 create_time）|
@@ -129,7 +130,7 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理主键：仅库内用|
-|user_id|bigint|UNIQUE(`uk_user`), NOT NULL|用户 ID|
+|user_id|varchar(36)|UNIQUE(`uk_user`), NOT NULL|用户 ID|
 |seq|bigint|NOT NULL, DEFAULT 0|计数器（0 基）|
 |create_time|datetime|NOT NULL|创建时间|
 |update_time|datetime|NOT NULL|更新时间|
@@ -145,7 +146,7 @@
 - 被 content_report（target_type=MESSAGE）引用：chat 零审核的举报兜底
 
 ## 谁在写
-- 发消息事务：room.last_seq 取号 + message 插入与 `msg_id` 回写 + timeline 扇出 + user_seq 计数 + room_member 列表副本（`last_seq_copy` GREATEST + 预览三件套）
+- 发消息事务：room.last_seq 取号 + message 插入（`msg_id` insert 前发号一次写入）+ timeline 扇出 + user_seq 计数 + room_member 列表副本（`last_seq_copy` GREATEST + 预览三件套）
 - 撤回事务：message 三件套（state/recalled_at/recalled_by）+ 守卫替换 room_member 双方 `last_msg_preview`
 - 读路径：room_member 水位线推高（推到 `last_seq_copy`）
 
@@ -157,16 +158,16 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理自增，**禁止当已读水位**（分配序 ≠ 提交序，并发跳读）|
-|notification_id|bigint|NOT NULL, UNIQUE `uk_notification_id`|业务 ID（对外唯一标识）；插入写 0 后由 `bindBizId` 回写为 `id`|
-|user_id|bigint|NOT NULL|接收用户|
+|notification_id|varchar(36)|NOT NULL, UNIQUE `uk_notification_id`|业务 ID（对外唯一标识，UUID 字符串）：应用层 insert 前由 `IIdGenerator` 发号、随行一次写入（uuid-biz-id 票 06 起，不再有 bindBizId 回写）|
+|user_id|varchar(36)|NOT NULL|接收用户|
 |scope|varchar(20)|NOT NULL|收件范围：MARKET_ERRAND/MARKET_PRODUCT(预留)/BOTTOM_SYSTEM/INTERACTION_LIKE/INTERACTION_COMMENT；**生产点写入时显式标注，禁止从 (type,refType) 推导**（同一 ORDER_EVENT×ERRAND 发用户=MARKET_ERRAND、发审核员=BOTTOM_SYSTEM）|
 |seq|bigint|NOT NULL|per-(user,scope) 收件序号（notification_seq 写入事务内取号）|
-|sender_id|bigint|NULL|触发者（互动通知：谁赞/评了你；广播类为空）|
+|sender_id|varchar(36)|NULL|触发者（互动通知：谁赞/评了你；广播类为空）|
 |type|varchar(20)|NOT NULL|ANNOUNCEMENT/AUDIT_RESULT/AUDIT_PENDING/REPORT_RESULT/ORDER_EVENT/CREDIT_CHANGE/POST_COMMENTED/COMMENT_REPLIED/POST_LIKED/COMMENT_LIKED/LOTTERY_WON/POINTS_CHANGED|
 |title|varchar(100)|NOT NULL|标题|
 |content|varchar(500)|NOT NULL|内容|
 |ref_type|varchar(20)|NULL|关联类型；营销三类固定 MARKETING（营销票 09）|
-|ref_id|bigint|NULL|关联业务 ID|
+|ref_id|varchar(36)|NULL|关联业务 ID（POST/COMMENT/PRODUCT/ERRAND 均为 UUID 字符串，票 03/05；REPORT=report_id UUID，票 06）|
 |broadcast_msg_id|varchar(64)|NULL|公告广播幂等键|
 |dedup_key|varchar(100)|NULL, UNIQUE `uk_dedup`|互动/系统通知幂等键（同一触发者对同一目标只发一条，取消不撤回）|
 |create_time|datetime|NOT NULL|创建时间|
@@ -187,7 +188,7 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理主键（票 05 起由复合主键改为代理键）|
-|user_id|bigint|NOT NULL|接收用户 ID|
+|user_id|varchar(36)|NOT NULL|接收用户 ID|
 |scope|varchar(20)|NOT NULL|收件范围|
 |seq|bigint|NOT NULL, DEFAULT 0|计数器（首次取号建行 seq=1）|
 |create_time|datetime|NOT NULL|创建时间|
@@ -201,7 +202,7 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理主键（票 05 起由复合主键改为代理键）|
-|user_id|bigint|NOT NULL|接收用户 ID|
+|user_id|varchar(36)|NOT NULL|接收用户 ID|
 |scope|varchar(20)|NOT NULL|收件范围（各范围各推各的水位，互不误清）|
 |last_read_seq|bigint|NOT NULL, DEFAULT 0|已读水位线：seq ≤ 此列全已读；标已读 = 推到当前计数器值（GREATEST 只前进）|
 |create_time|datetime|NOT NULL|创建时间|

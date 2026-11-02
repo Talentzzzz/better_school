@@ -202,6 +202,8 @@ public abstract class CommunityApiTestBase {
         JsonNode response = postJson("/api/user/register", Map.of("phone", phone, "code", code, "nickname", nickname), null);
         assertSuccess(response, "注册");
         JsonNode data = response.path("data");
+        // uuid-biz-id 票 08 收口：注册返回的 userId 必须是可解析的 UUID 字符串（ID 形态断言）
+        assertUuidId(data.path("userInfo").path("userId").asText());
         return new Session(data.path("token").asText(), data.path("userInfo").path("userId").asText());
     }
 

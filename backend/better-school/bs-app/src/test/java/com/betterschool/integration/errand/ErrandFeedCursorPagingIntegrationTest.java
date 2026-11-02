@@ -204,12 +204,14 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
             BigDecimal reward = BigDecimal.valueOf((i % 4) * 5L + 1).setScale(2);
             String type = i % 2 == 0 ? "EXPRESS_PICKUP" : "BUY";
             int viewCount = (i % 3) * 2;
+            // 时间在 Java 侧算好当普通 ? 传：`INTERVAL ?` 占位符会被 ShardingSphere 的 SQL 解析弄丢
+            // （口径同 ErrandPayBeforeReviewIntegrationTest；票 08 全量回归抓出，票 05 残差）
             jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
                             + "pickup_location, delivery_location, reward, time_limit_hours, deadline, state, "
                             + "create_time, update_time) VALUES (?, ?, ?, '大厅游标夹具', '菜鸟驿站', '6号楼', ?, 2, "
                             + "DATE_ADD(NOW(), INTERVAL 2 HOUR), 'PUBLISHED', "
-                            + "DATE_SUB(NOW(), INTERVAL ? MINUTE), NOW())",
-                    orderId, publisher.userId(), type, reward, i);
+                            + "?, NOW())",
+                    orderId, publisher.userId(), type, reward, LocalDateTime.now().minusMinutes(i));
             jdbcTemplate.update("INSERT INTO errand_feed_index (errand_order_id, state, feed_time, create_time, "
                             + "price, view_count, update_time) VALUES (?, 'PUBLISHED', ?, NOW(), ?, ?, NOW())",
                     orderId, LocalDateTime.now().minusMinutes(i % 5), reward, viewCount);
