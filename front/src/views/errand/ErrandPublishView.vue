@@ -33,7 +33,10 @@ const limits: { value: ErrandTimeLimit; label: string }[] = [
   { value: 'HOURS_2', label: '2 小时' },
   { value: 'HOURS_4', label: '4 小时' },
   { value: 'HOURS_12', label: '12 小时' },
-  { value: 'HOURS_24', label: '24 小时' }
+  { value: 'HOURS_24', label: '24 小时' },
+  { value: 'DAYS_7', label: '7 天' },
+  { value: 'DAYS_30', label: '30 天' },
+  { value: 'DAYS_365', label: '一年' }
 ]
 
 onMounted(async () => {

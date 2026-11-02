@@ -4,10 +4,6 @@
 
 ## 1. Maven 模块划分与依赖方向（严格单向）
 
-`backend/` 下是两个互相独立的 Maven project（无 reactor）：单体 `better-school/`（bs-* 七模块）+ 营销 `marketing/`（`marketing-*` 七模块；票 06 并入原 `marketing-asset` 的积分域、票 07 并入原 `marketing-activity` 的抽奖域，两域同工程）。每个工程内部模块划分与依赖方向同下表：
-
-**适用范围**：本文件管 `backend/` 下这两个工程。超时中心已从独立工程内嵌进单体（见 [`docs/architecture/timeout.md`](docs/architecture/timeout.md)），不再是独立 project。
-
 ```
 app → trigger → case → domain → types
 app → trigger → api, types, domain
@@ -44,7 +40,6 @@ types →（无内部依赖）
 
 cn.xxx.domain.<业务域>/
 ├── model/
-│   ├── aggregate/   聚合对象  XxxAggregate
 │   ├── entity/      实体对象  XxxEntity
 │   └── valobj/      值对象    XxxVO（含 XxxEnumVO 枚举）
 ├── service/
@@ -57,8 +52,6 @@ cn.xxx.domain.<业务域>/
 ```
 
 **一域一仓储 / 事务落位**：`adapter/repository/` 下每个业务域**恰有一个** `I<域>Repository`（读写同接口，不再按聚合拆多个仓储）；需要事务的操作由仓储方法自身用编程式事务（`TransactionTemplate`，传播恒 `REQUIRED`）收成一个原子用例，域服务只调一次、**不注入 `TransactionTemplate`**（完整约束见 §1）。
-
-**当领域需要调用infra 对多个entity进行一次事务存储时，将多个entity封装为聚合对象；如果事务内需要的话，聚合对象内也可以有其他属性，来辅助事务**
 
 ## 3. infrastructure 层包结构
 
@@ -95,13 +88,17 @@ cn.xxx.trigger/
 
 Dubbo 对称的两侧：Provider 在 `trigger/rpc/`，Consumer 的 `@DubboReference` 落在
 `infrastructure/adapter/port/<域>/`（实现 `domain/adapter/port/<域>/IXxxPort`），
-**域层与 case 层不认识 Dubbo 注解与对端的 api DTO**，翻译在 infrastructure 完成。
-例外（端口实现落 case 层）：超时域的回调端口 `ITimeoutTaskCallbackPort` 由
-`usecase.timeout.TimeoutTaskCallbackDispatcher` 实现——分发要按 `taskType` 调各域 case，而 infrastructure
-看不到 case 层。端口接口仍定义在 `domain.timeout/adapter/port`，实现落点在 case 层是**显式例外**，
-不要把 case 层依赖反向灌进 infrastructure 来「修正」它。
+trigger层依赖case层，按需注入IXxxCase，通过case层与domain层交互；
 
-## 5. api 层包结构
+## 5. case层包结构
+
+```
+cn.xxx.case/
+├── IXxxCase       接口定义
+└── XxxCaseImpl    实现类（实现类里Resouce按需注入domain的service接口，也就是对多个domain的编排）          
+```
+
+## 6. api 层包结构
 
 ```
 cn.xxx.api/
@@ -110,7 +107,7 @@ cn.xxx.api/
 └── response/      Response<T> {code, info, data}
 ```
 
-## 6. app 层包结构
+## 7. app 层包结构
 
 ```
 cn.xxx/             Application 必须放在根包，才能扫描到其他 module
@@ -118,7 +115,7 @@ cn.xxx/             Application 必须放在根包，才能扫描到其他 modul
 └── config/          Bean 装配（线程池/Redis/MQ/xxljob等配置类）
 ```
 
-## 7. types
+## 8. types
 
 exception包
 
@@ -162,21 +159,7 @@ public class Constants {
 }
 ```
 
-**多域工程的类型落位（票 06 起，营销 `marketing/` 为范例）**：一个工程内有两个以上业务域时，
-`types`（以及 api / domain / infrastructure / trigger 各层）**先按域分段、再按上面三类分**：
-
-- 域专属（如 `Constants`、`PointsReasonType`）→ `types.<域>.*`（`marketing.types.points`）。
-  域自有的常量/枚举放 `common` 会在第二域并入时撞名（lottery 侧各有自己的 `Constants`/枚举）。
-- 跨域公共（框架装配、统一响应、JWT/安全、MyBatis/事务、MQ 容器与虚拟线程、探针）→
-  `types.common` / `<layer>.common.*`，**全工程只留一份**。
-- `AppException` / `ResponseCode` / `OutboxStatus` → `types.common`；跨域 wire 契约（如 `LotteryDrawnMessage`）→ `types.common`。
-- 同名类多时，启动类与 `@MapperScan` 都挂 `FqcnAnnotationBeanNameGenerator`（bean 名改用 FQCN），
-  且 `@MapperScan` **逐域列出**，不能扫它们的伪公共前缀。
-  先例：`marketing/`（票 06 起 points，票 07 加 lottery，两域各占一个域段）。
-
-单域工程不必强行分域段；本仓两个工程都是多域工程（单体按业务域、营销按 points / drawcount / config / raffle / inventory）。
-
-## 8. 硬性约定
+## 9.硬性约定
 
 1. **类名后缀决定分层归属**：Entity / VO / Aggregate / Repository / Port / Dao / PO / Controller / Job / Consumer。
 2. **接口 `I` 前缀、实现去掉 `I`**：domain 定义 `IxxxRepository`，infrastructure 实现 `XxxRepository`。
@@ -184,127 +167,3 @@ public class Constants {
 4. 新加业务域时，在 domain 下建 `model/service/adapter` 三件套，infrastructure 建对应 `adapter/dao` 实现。
 5. 变量命名见名知意，如UserAccount userAccount，不要省略user；各种类的创建要符合DDD规范
 6. **业务 ID 口径（uuid-biz-id 起）**：所有业务对象的对外唯一标识一律是 **UUID 字符串**（36 位连字符规范形，DB 列 `VARCHAR(36)`，Java 实体/PO/DTO/mapper 全链路 `String`）；由统一 `IIdGenerator`（types 模块，默认实现 `UuidIdGenerator` = `UUID.randomUUID()`）在 **insert 前生成、随行一次写入**。物理主键 `id BIGINT AUTO_INCREMENT` 保留为纯内部键：永不对外、永不再与业务键同值、禁止「业务列插 0 同事务回写物理 id」的旧形态（`bindBizId`/`useGeneratedKeys` 回写已全仓退役）。新增表/接口禁止用 `Long`/`bigint` 承载业务 ID；排序同值收敛用「时间 + 业务 ID」复合键，不要拿 UUID 当时间代理；分片/合并路由的哈希输入是业务 ID 字符串本身（`String.hashCode` 折叠），不做数值化假设。
-
-## 9. 维护后端文档
-
-```
-后端文件夹/
-├─ docs/
-│  ├─ README.md        ← 项目一句话说明 + 文档索引
-│  ├─ db/
-│  │  ├─ README.md     ← 库总览：有哪些表、归属哪个业务
-│  │  ├─ user.md       ← 用户相关表
-│  │  ├─ order.md      ← 订单相关表
-│  │  └─ ...
-│  ├─ api/
-│  │  ├─ README.md     ← 接口总览：模块划分
-│  │  ├─ auth.md       ← 登录注册
-│  │  ├─ order.md      ← 订单接口
-│  │  └─ ...
-
-```
-
-工作时维护这些文档
-
-### 数据库文档
-
-把表结构导出后，按业务拆成多个 md，放进 docs/db/。不用长篇大论
-
-| 必写                                         | 建议写                                      |
-| -------------------------------------------- | ------------------------------------------- |
-| 表名、字段名、字段类型、主键/唯一/非空等约束 | 默认值、枚举含义、外键/关联、业务注意点     |
-| **可补充**                                   | **别写成**                                  |
-| 索引、软删规则、谁在写这张表、禁止怎么用     | 大段废话、复制整份 ORM 源码、和代码重复三遍 |
-
-------
-
-```
-# 用户表 user
-
-> 业务：账号与登录；归属模块：auth
-
-|字段|类型|约束|说明|
-|----|----|----|----|
-|id|bigint|PK|主键|
-|mobile|varchar(20)|UNIQUE, NOT NULL|手机号|
-|password_hash|varchar(100)|NOT NULL|密码哈希，禁止明文|
-|status|tinyint|NOT NULL, DEFAULT 1|1正常 0禁用|
-|created_at|datetime|NOT NULL|创建时间|
-|updated_at|datetime|NOT NULL|更新时间|
-
-## 关联
-- 1:N → user_profile（资料）
-- 被 order.user_id 引用
-
-## 注意
-- 查用户请走 mobile / id，不要扫全表
-- 软删除字段若后续加，统一用 deleted_at
-```
-
-### 接口文档
-维护一套「像代码一样短」的 Markdown
-> 每个接口写清：路径、方法、鉴权、关键参数、成功/失败要点。不求漂亮，要求 AI 丢进对话里立刻能对上号。
-```
-# 订单模块接口
-
-## POST /api/orders
-创建订单
-
-- Auth: 需要登录
-- Body:
-  - skuId: string 必填
-  - count: number 必填，>=1
-  - addressId: string 必填
-- 成功: { orderId, status }
-- 失败常见: 库存不足 / 地址无效
-- 流程图（大体流程：例如一次请求到Controller，再到domain，再到infra，经过了哪些关键步骤，比如mysql redis等等）
-```
-
-### 什么时候写
-
-规范不是写一次就完。关键是：**AI 每动一次代码，文档就跟一次。**
-
-改了哪些表 / 字段？同步进 `docs/db/`
-
-新增或变更了哪些接口？同步进 `docs/api/`
-
-## 10. 集成测试环境
-
-集成测试连的是**预先起好的常驻栈，不是自建容器**——测试进程不创建、不销毁任何容器。
-
-**跑测试前必须先起环境**（幂等，可重复执行）。正式入口是 `backend/scripts/dev-stack.ps1`（票 17 引入，Windows PowerShell 5.1；`docker compose up -d` 的容器里本就含测试侧的 `bs-nacos-test` / `bs-rocketmq-namesrv-test`，中间件一套命令全覆盖）：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/dev-stack.ps1 up
-```
-
-`scripts/test-env.sh` 仍是 bash 环境下的参考口径（`up` / `reset-test-db`），但这台机器的 bash/WSL 是坏的，跑不了它——别在 Windows 上试。注意 `dev-stack.ps1 db-reset` 只重建两个**开发**库；重建 `*_test` 库目前没有 PowerShell 等价命令，需要手工 DROP 后重灌 `schema.sql`。
-
-环境没起时测试会直接连接失败——这是刻意的，不要加自动兜底。
-
-**隔离口径**（开发与测试共用 MySQL / Redis / MinIO 容器，靠各自的多租户机制隔离）：
-
-| 项 | 开发 | 测试 |
-| --- | --- | --- |
-| MySQL 库 | `better_school` / `bs_marketing` | `better_school_test` / `bs_marketing_test` |
-| Redis 逻辑库 | `database: 0` | `database: 1` |
-| MinIO 桶 | `bs-files` | `bs-files-it` |
-| Nacos | 8848 | 18848（独立容器） |
-| RocketMQ namesrv | 9876 | 19876（独立容器） |
-
-测试侧地址的唯一事实来源是 `better-school/bs-app/src/test/resources/application-test.yml`，不要在测试代码里另写地址。例外（设计如此，见 yml 头注释）：Nacos 地址与 Dubbo 端口必须早于 config-data 阶段，由 `CommunityApiTestBase` 以 `System.setProperty` 注入。营销服务的测试侧事实来源同理在 `marketing/marketing-app/src/test/resources/application-test.yml`（三个域的测试基类同样经 `System.setProperty` 注入 Nacos/Dubbo）。
-
-**写法**：
-
-- 新增集成测试：继承既有基类（如 `CommunityApiTestBase`），**不自行创建容器**、不写死连接地址
-- 不写增量迁移脚本（票 05 起）：`schema.sql` 是唯一 DDL 来源，改表 = 改 schema.sql + 重建库；`sql/migrations/` 与迁移测试基类已删除
-
-**改动 schema 后必须重建测试库**——常驻容器不会自动跟上 `schema.sql` 的变化，否则测试跑在过期 schema 上出假绿：
-
-```bash
-scripts/test-env.sh reset-test-db        # bash 环境（本机不可用）
-# Windows 本机手工等价：
-#   docker exec bs-mysql mysql -uroot -p<pwd> -e "DROP DATABASE IF EXISTS xxx_test; CREATE DATABASE xxx_test;"
-#   再把对应工程的 schema.sql 灌进去（中文 SQL 走 cmd /c type | docker exec -i … --default-character-set=utf8mb4）
-```
-

@@ -68,7 +68,7 @@ mvn -o test -Dtest=RaffleDrawPipelineIntegrationTest -Dsurefire.failIfNoSpecifie
 | Dubbo | 真 Consumer 打单体 Provider | 用户只读边**换桩**：测试源码里 `@Primary StubUserQueryPort` 覆盖真 Dubbo Consumer（抽奖读侧依赖昵称头像，桩可给确定值）。**兑换边票 13 起不再经 Dubbo**（折成进程内 port），原 `@Primary StubPointsExchangePort` 已删；积分域自己的 Provider Bean（`PointsExchangeDubboService`）仍直接调用测 |
 
 - 建库走 `marketing/sql/init-{dev,test}.sql`（只建 `bs_marketing` / `bs_marketing_test`）+
-  `sql/schema.sql`（**唯一 DDL 主体**，22 张；票 13 起 `schema-legacy.sql` 已删除）。
+  `sql/schema.sql`（**唯一 DDL 主体**，20 张；票 13 起 `schema-legacy.sql` 已删除）。
   `scripts/test-env.sh` 的
   `apply_service_init <工程sql目录> <建库文件> <库名> <DDL文件>` 把 `USE` 插在中间——
   各份 schema 都不含库名，开发库与测试库才能共用一份 DDL。改过 schema 后同样用
@@ -93,6 +93,39 @@ mvn -o test -Dtest=RaffleDrawPipelineIntegrationTest -Dsurefire.failIfNoSpecifie
      可以切成「抛 `BucketUnavailableException`」来表达 redis 挂了。
   3. **断言 redis 桶值前先判 key 是否存在**：`getAtomicLong().get()` 会把不存在的 key 建成 0，
      直接取值就永远看不出「这个桶从没被碰过」（`RaffleApiTestBase` 的 `*BucketValueInRedis` 已内置该判断）。
+
+## 库存合并 · 定时投递真机时延（库存合并换轨票 05）
+
+`InventoryMergeDeliveryLatencyTest` 断的是「合并消息发出 → 消费端把明细合掉」落在 **2.0~3.2s**
+（下界来自 `delay_ms=2000` 的相对延迟，上界是 broker 时间轮按秒槽对齐、槽过完才排空的代价）。
+测试栈只有 namesrv、没有 broker，所以这个类**默认被系统属性关掉**——要跑就临时起一套**专用**的
+namesrv + broker。不要往测试栈的 `19876` 上挂 broker：其余用例的「发送必然失败、outbox 留 PENDING」
+正是建立在「没有 broker」之上，挂上去会让那批断言失效。
+
+```bash
+# 1) 专用 namesrv（9877）+ broker（10921），与测试栈 / 开发栈都不撞名不撞端口
+docker network create rmq-e2e 2>/dev/null || true
+docker run -d --name bs-rmq-e2e-namesrv --network rmq-e2e -p 9877:9876 apache/rocketmq:5.5.0 sh mqnamesrv
+# broker.conf 关键项：listenPort=10921、brokerName=broker-e2e、brokerIP1=127.0.0.1、
+# autoCreateTopicEnable=true、diskMaxUsedRatio=98
+# （宿主机盘用量 >90% 时默认 75 会让 broker 直接拒写：CODE 14，票 02 踩过）
+docker run -d --name bs-rmq-e2e-broker --network rmq-e2e -p 10921:10921 \
+  -e NAMESRV_ADDR=bs-rmq-e2e-namesrv:9876 \
+  -v "$TEMP/rmq-e2e/broker.conf:/home/rocketmq/broker.conf:ro" \
+  apache/rocketmq:5.5.0 sh mqbroker -c /home/rocketmq/broker.conf
+
+# 2) 先建 topic 再起应用：topic 不存在时消费者首次拉取要吃 ~20s 路由退避，会被误读成投递延迟
+docker exec bs-rmq-e2e-broker sh -c "cd /home/rocketmq/rocketmq-5.5.0/bin && \
+  sh mqadmin updateTopic -n bs-rmq-e2e-namesrv:9876 -c DefaultCluster -t bs-inventory-merge"
+
+# 3) 跑（namesrv 地址写在测试类的 @SpringBootTest(properties) 里，开关只有一个系统属性）
+mvn -o test -Dtest=InventoryMergeDeliveryLatencyTest -Dsurefire.failIfNoSpecifiedTests=false \
+  -Dbs.inventory.mq-e2e=true
+```
+
+- 用例先跑一轮「预热投递」（不计时），把首次拉取的路由退避用掉；计时那轮换另一个 `invId`，免得预热合掉的格影响计时。
+- 计时起点取 `preDeduct` 之前：outbox 的异步发送挂在 `afterCommit`，`preDeduct` 返回时消息已经在路上。
+- 跑完把两个 `bs-rmq-e2e-*` 容器和 `rmq-e2e` 网络删掉，别让它长期占着 10921。
 
 ## WS 全链路测试（chat 票 07 建立）
 
