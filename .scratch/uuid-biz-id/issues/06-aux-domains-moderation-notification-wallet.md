@@ -4,10 +4,10 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] moderation/notification/wallet/credit 相关表 DDL 自有业务键改 `VARCHAR(36)`，schema 脚本重写、删库重建
-- [ ] 各域发号走 IdGenerator，应用层随 insert 一次写入
-- [ ] 举报（POST/COMMENT/MESSAGE/MERCHANT）→ 审核队列 → 强制撤回/驳回全链路 String 贯通
-- [ ] 通知下发、广播幂等、已读未读 String 贯通
-- [ ] 定向测试通过；全量测试全绿
+- [x] moderation/notification/wallet/credit 相关表 DDL 自有业务键改 `VARCHAR(36)`，schema 脚本重写、删库重建
+- [x] 各域发号走 IdGenerator，应用层随 insert 一次写入
+- [x] 举报（POST/COMMENT/MESSAGE/MERCHANT）→ 审核队列 → 强制撤回/驳回全链路 String 贯通
+- [x] 通知下发、广播幂等、已读未读 String 贯通
+- [x] 定向测试通过；全量测试全绿（**验收实情**：按用户拍板「不用跑全量测试」豁免——主工程 compile + test-compile 全绿，集成测试语义断言已随新契约对齐但未执行；复跑随票 08 收口）
