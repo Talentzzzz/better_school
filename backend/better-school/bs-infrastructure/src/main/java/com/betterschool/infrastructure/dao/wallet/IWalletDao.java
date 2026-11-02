@@ -16,8 +16,6 @@ public interface IWalletDao {
 
     int insertIgnore(VirtualWalletPO walletPO);
 
-    int bindBizId(@Param("id") Long id);
-
     VirtualWalletPO selectByUserId(@Param("userId") String userId);
 
     /** 冻结额度：仅当可用余额（balance - frozen）充足时生效，返回影响行数 */

@@ -10,7 +10,8 @@ import java.time.LocalDateTime;
 @Data
 public class ContentReportEntity {
 
-    private Long id;
+    /** 业务 ID（report_id，UUID 字符串，uuid-biz-id 票 06） */
+    private String reportId;
     private ReviewTargetTypeVO targetType;
     private String targetId;
     private String authorId;

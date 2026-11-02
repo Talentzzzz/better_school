@@ -19,14 +19,14 @@ public class ReportServiceImpl implements IReportService {
     private final IModerationRepository moderationRepository;
 
     @Override
-    public Long submitReport(String reporterId, ReviewTargetTypeVO targetType, String targetId, String authorId,
-                             String reason, String contentSnapshot) {
+    public String submitReport(String reporterId, ReviewTargetTypeVO targetType, String targetId, String authorId,
+                               String reason, String contentSnapshot) {
         return moderationRepository.insertIgnoreReport(
                 ContentReportEntity.create(targetType, targetId, authorId, reporterId, reason, contentSnapshot));
     }
 
     @Override
-    public ReportProcessResult processReport(Long reportId, ReportStatusVO targetStatus, String handlerId) {
+    public ReportProcessResult processReport(String reportId, ReportStatusVO targetStatus, String handlerId) {
         ContentReportEntity report = moderationRepository.findReportById(reportId);
         if (report == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "举报单不存在");

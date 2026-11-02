@@ -8,7 +8,8 @@ import java.time.LocalDateTime;
 @Data
 public class VirtualWalletEntity {
 
-    private Long id;
+    /** 业务 ID（wallet_id，UUID 字符串，uuid-biz-id 票 06） */
+    private String walletId;
     private String userId;
     private BigDecimal balance;
     private BigDecimal frozenAmount;

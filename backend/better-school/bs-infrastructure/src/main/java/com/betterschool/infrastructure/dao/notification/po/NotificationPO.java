@@ -8,8 +8,8 @@ import java.time.LocalDateTime;
 public class NotificationPO {
 
     private Long id;
-    /** 业务 ID（对外唯一标识；与物理自增同值，插入后同事务回写） */
-    private Long notificationId;
+    /** 业务 ID（对外唯一标识，UUID 字符串；uuid-biz-id 票 06：IIdGenerator 随 insert 一次写入，物理自增 id 保留纯内部键） */
+    private String notificationId;
     private String userId;
     private String scope;
     private Long seq;

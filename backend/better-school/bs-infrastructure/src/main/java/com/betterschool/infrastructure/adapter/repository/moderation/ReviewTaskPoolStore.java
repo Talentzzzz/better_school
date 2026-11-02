@@ -8,6 +8,7 @@ import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
 import com.betterschool.infrastructure.dao.moderation.IModerationDao;
 import com.betterschool.infrastructure.dao.moderation.po.ReviewTaskPO;
 import com.betterschool.types.common.Constants;
+import com.betterschool.types.id.IIdGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -45,6 +46,8 @@ public class ReviewTaskPoolStore {
     private final ITimeoutRepository timeoutRepository;
     private final TransactionTemplate transactionTemplate;
     private final IReviewDispatchMetricsPort reviewDispatchMetrics;
+    /** 业务 ID 发号器（task_id UUID，uuid-biz-id 票 06） */
+    private final IIdGenerator idGenerator;
     /**
      * 派单信号端口走惰性解析（ObjectProvider）：信号实现在 trigger 层、其依赖链回到本仓
      * （pushService → ReviewService → ModerationRepository → 本类），构造器直注入会成环；
@@ -68,6 +71,8 @@ public class ReviewTaskPoolStore {
         // 同轮重提＝新轮次＝新工单行：先关旧轮遗留（业务行已在待审，旧工单必是遗留），再开新单
         moderationDao.closeStaleRoundTasks(targetType.name(), targetId, reviewRound);
         ReviewTaskPO taskPO = new ReviewTaskPO();
+        // 业务 ID 随 insert 一次写入（uuid-biz-id 票 06）；撞 uk_target_round 被 IGNORE 时本行未落库，发号作废无害
+        taskPO.setTaskId(idGenerator.nextId());
         taskPO.setTargetType(targetType.name());
         taskPO.setTargetId(targetId);
         taskPO.setReviewRound(reviewRound);
@@ -145,7 +150,7 @@ public class ReviewTaskPoolStore {
                             escalatedInPool);
                 }
             }
-            Long taskId = moderationDao.selectClaimCandidateId(targetType);
+            String taskId = moderationDao.selectClaimCandidateId(targetType);
             if (taskId == null) {
                 return null; // 池空
             }
@@ -153,7 +158,8 @@ public class ReviewTaskPoolStore {
                 // 并发败者：候选被他人抢先（spec §5.3 影响行数 1 者赢）；不重选取下一条（一次只取一条，spec 无重试环）
                 return null;
             }
-            // 复合 bizId 取「本次领单后的轮次」：同事务内读，读到的就是本次 claim_seq+1 的值（同跑腿锁单先例）
+            // 复合 bizId 取「本次领单后的轮次」：同事务内读，读到的就是本次 claim_seq+1 的值（同跑腿锁单先例）；
+            // taskId 是 UUID 字符串（uuid-biz-id 票 06），与 claimSeq 冒号拼接不受影响（UUID 无冒号）
             int claimSeq = moderationDao.selectClaimSeqById(taskId);
             // 租约超时注册与抢占同事务直插 timeout_task（内嵌超时中心）：回滚即无行，无幽灵租约
             timeoutRepository.register(TimeoutTaskEntity.newWaiting(Constants.REVIEW_LEASE_TIMEOUT,
@@ -175,7 +181,7 @@ public class ReviewTaskPoolStore {
      * 命中 0 行（已裁决/已放回/已按新轮次重领）＝幂等成功零副作用（返回 false，调用方不当失败）。
      * 达升级阈值置 escalated 标记（SQL 内）并告警日志。
      */
-    public boolean recycleByRound(long taskId, int claimSeq) {
+    public boolean recycleByRound(String taskId, int claimSeq) {
         Boolean recycled = transactionTemplate.execute(status -> {
             if (moderationDao.recycleByRound(taskId, claimSeq) == 0) {
                 return false;
@@ -194,7 +200,7 @@ public class ReviewTaskPoolStore {
      * 主动放回（持有人守卫）：审不了退池，CLAIMED→PENDING、recycle_count+1（spec §5.2 状态机两条
      * 回 PENDING 的边都计回收）；命中 0 行返回 false（非持有人/已裁决/已回收，调用方转冲突错误）。
      */
-    public boolean releaseByClaimer(long taskId, String claimerId) {
+    public boolean releaseByClaimer(String taskId, String claimerId) {
         Boolean released = transactionTemplate.execute(status -> {
             if (moderationDao.releaseByClaimer(taskId, claimerId) == 0) {
                 return false;
@@ -206,7 +212,7 @@ public class ReviewTaskPoolStore {
     }
 
     /** 回收次数达阈值置 escalated 后告警（spec §5.2「≥3 置需人工干预标记并告警」，沿用 WARN 日志告警先例） */
-    private void alertIfEscalated(long taskId, String action) {
+    private void alertIfEscalated(String taskId, String action) {
         ReviewTaskPO taskPO = moderationDao.selectTaskById(taskId);
         if (taskPO != null && taskPO.getRecycleCount() != null
                 && taskPO.getRecycleCount() >= ESCALATE_RECYCLE_THRESHOLD) {

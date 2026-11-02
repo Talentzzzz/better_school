@@ -12,7 +12,8 @@ import java.time.LocalDateTime;
 @Data
 public class ReviewHistoryItemResponseDTO {
 
-    private Long reviewId;
+    /** 审核记录业务 ID（UUID 字符串，uuid-biz-id 票 06） */
+    private String reviewId;
     private String targetType;
     private String targetId;
     /** 审核轮次（同一目标第 N 次进入待审） */

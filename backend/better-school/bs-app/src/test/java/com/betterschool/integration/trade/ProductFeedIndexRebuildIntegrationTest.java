@@ -175,10 +175,10 @@ class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     private void approve(String productId) {
         assertThat(tradeRepository.reviewApproveById(productId)).as("待审商品通过").isTrue();
         LocalDateTime feedTime = queryFeedTime(productId);
-        jdbcTemplate.update("INSERT INTO content_review (target_type, target_id, author_id, review_round, "
+        jdbcTemplate.update("INSERT INTO content_review (review_id, target_type, target_id, author_id, review_round, "
                         + "action, operator_id, create_time, update_time) "
-                        + "VALUES ('PRODUCT', ?, 999, 1, 'APPROVE', 1, ?, ?)",
-                productId, Timestamp.valueOf(feedTime), Timestamp.valueOf(feedTime));
+                        + "VALUES (?, 'PRODUCT', ?, 999, 1, 'APPROVE', 1, ?, ?)",
+                java.util.UUID.randomUUID().toString(), productId, Timestamp.valueOf(feedTime), Timestamp.valueOf(feedTime));
     }
 
     /** 一组浏览落库（同步合并，等价于合并窗口过后的三步 + 索引旁路） */

@@ -8,7 +8,8 @@ import java.time.LocalDateTime;
 @Data
 public class ReviewTaskPO {
 
-    private Long id;
+    /** 业务 ID（UUID 字符串；uuid-biz-id 票 06：IIdGenerator 随 insert 一次写入，物理自增 id 保留纯内部键） */
+    private String taskId;
     /** 内容类型 POST/COMMENT/PRODUCT/ERRAND */
     private String targetType;
     private String targetId;

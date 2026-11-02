@@ -53,8 +53,9 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         LocalDateTime claimedAt = LocalDateTime.now();
 
         JsonNode claimed = claim(auditor, null);
-        assertThat(claimed.path("data").path("taskId").asLong()).as("领到一条工单").isPositive();
-        long taskId = claimed.path("data").path("taskId").asLong();
+        assertThat(claimed.path("data").path("taskId").asText()).as("领到一条工单").isNotEmpty();
+        assertUuidId(claimed.path("data").path("taskId").asText());
+        String taskId = claimed.path("data").path("taskId").asText();
         assertThat(claimed.path("data").path("targetType").asText()).isEqualTo("ERRAND");
         assertThat(claimed.path("data").path("targetId").asText()).isEqualTo(orderId);
         assertThat(claimed.path("data").path("claimState").asText()).isEqualTo("CLAIMED");
@@ -128,7 +129,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         assertThat(winners).as("并发下恰好一人领到").isEqualTo(1);
 
         JsonNode winnerResponse = responses.stream().filter(r -> !r.path("data").isNull()).findFirst().orElseThrow();
-        long taskId = winnerResponse.path("data").path("taskId").asLong();
+        String taskId = winnerResponse.path("data").path("taskId").asText();
         Map<String, Object> row = taskRow(taskId);
         assertThat(row.get("claim_state")).isEqualTo("CLAIMED");
         // 持有人必是两审核员之一，且 claim_seq 恒 1（败者的条件 UPDATE 落空，没把轮次推走）
@@ -150,7 +151,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         String orderId = createPaidOrder(author);
 
         JsonNode firstClaim = claim(auditorA, null);
-        long taskId = firstClaim.path("data").path("taskId").asLong();
+        String taskId = firstClaim.path("data").path("taskId").asText();
         LocalDateTime enteredAt = enteredAtOf("ERRAND", orderId);
 
         // 到点回调：回 PENDING、清持单人、recycle_count+1
@@ -172,7 +173,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
 
         // 重领：新轮次 seq=2，注册行是**新键**（不被旧键幂等复位）
         JsonNode secondClaim = claim(auditorB, null);
-        assertThat(secondClaim.path("data").path("taskId").asLong()).isEqualTo(taskId);
+        assertThat(secondClaim.path("data").path("taskId").asText()).isEqualTo(taskId);
         assertThat(secondClaim.path("data").path("claimSeq").asInt()).isEqualTo(2);
         assertThat(registerRowCount(taskId)).as("两次领单两行独立注册").isEqualTo(2);
 
@@ -202,16 +203,16 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         String orderId = createPaidOrder(author);
 
         JsonNode firstClaim = claim(auditorA, null);
-        long taskId = firstClaim.path("data").path("taskId").asLong();
+        String taskId = firstClaim.path("data").path("taskId").asText();
 
         // 模拟中心回调丢失：租约已过期但工单仍卡 CLAIMED
-        jdbcTemplate.update("UPDATE review_task SET lease_expire_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE id = ?",
+        jdbcTemplate.update("UPDATE review_task SET lease_expire_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE task_id = ?",
                 taskId);
         assertThat(taskRow(taskId).get("claim_state")).isEqualTo("CLAIMED");
 
         // 下一人领单：领单事务内的惰性回收先把过期租约放回池，紧接着本轮 FIFO 又领到同一条
         JsonNode secondClaim = claim(auditorB, null);
-        assertThat(secondClaim.path("data").path("taskId").asLong())
+        assertThat(secondClaim.path("data").path("taskId").asText())
                 .as("过期租约被惰性放回后被重新领走").isEqualTo(taskId);
         assertThat(secondClaim.path("data").path("claimSeq").asInt()).isEqualTo(2);
 
@@ -234,7 +235,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         String orderId = createPaidOrder(author);
 
         JsonNode claimResponse = claim(auditorA, null);
-        long taskId = claimResponse.path("data").path("taskId").asLong();
+        String taskId = claimResponse.path("data").path("taskId").asText();
         LocalDateTime enteredAt = enteredAtOf("ERRAND", orderId);
 
         // 持有人放回（带原因）：CLAIMED→PENDING、recycle_count+1
@@ -256,7 +257,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
 
         // 放回后工单回池可再领
         JsonNode reclame = claim(auditorB, null);
-        assertThat(reclame.path("data").path("taskId").asLong()).isEqualTo(taskId);
+        assertThat(reclame.path("data").path("taskId").asText()).isEqualTo(taskId);
         assertThat(reclame.path("data").path("claimSeq").asInt()).isEqualTo(2);
     }
 
@@ -268,7 +269,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
         Session auditor = auditorSession("13900008011");
         String orderId = createPaidOrder(author);
 
-        long taskId = claim(auditor, null).path("data").path("taskId").asLong();
+        String taskId = claim(auditor, null).path("data").path("taskId").asText();
         for (int round = 1; round <= 3; round++) {
             assertCallbackSuccess(callback(leaseTask(taskId, round)));
             if (round < 3) {
@@ -282,7 +283,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
                 .as("recycle_count≥3 置需人工干预标记").isEqualTo(1);
         // 标记不改状态机：任务仍在池中可被领走
         assertThat(row.get("claim_state")).isEqualTo("PENDING");
-        assertThat(claim(auditor, null).path("data").path("taskId").asLong()).isEqualTo(taskId);
+        assertThat(claim(auditor, null).path("data").path("taskId").asText()).isEqualTo(taskId);
     }
 
     // ---------- 用例夹具 ----------
@@ -333,7 +334,7 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 回调工具 ----------
 
-    private static TimeoutTaskEntity leaseTask(long taskId, int claimSeq) {
+    private static TimeoutTaskEntity leaseTask(String taskId, int claimSeq) {
         return TimeoutCallbackFixture.dueTask(Constants.REVIEW_LEASE_TIMEOUT, taskId + ":" + claimSeq, 5);
     }
 
@@ -347,11 +348,11 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 可观察状态 ----------
 
-    private Map<String, Object> taskRow(long taskId) {
+    private Map<String, Object> taskRow(String taskId) {
         // escalated 是 TINYINT(1)，驱动按 Boolean 返回——+0 转数值便于统一断言
         return jdbcTemplate.queryForMap(
                 "SELECT claim_state, claim_by, claim_seq, lease_expire_at, recycle_count, escalated + 0 AS escalated, "
-                        + "entered_at, target_type, target_id FROM review_task WHERE id = ?", taskId);
+                        + "entered_at, target_type, target_id FROM review_task WHERE task_id = ?", taskId);
     }
 
     private LocalDateTime enteredAtOf(String targetType, String targetId) {
@@ -360,13 +361,13 @@ class ReviewTaskLeaseIntegrationTest extends CommunityApiTestBase {
                 LocalDateTime.class, targetType, targetId);
     }
 
-    private Map<String, Object> registerRowOf(long taskId, int claimSeq) {
+    private Map<String, Object> registerRowOf(String taskId, int claimSeq) {
         return jdbcTemplate.queryForMap(
                 "SELECT action_time, status FROM timeout_task WHERE task_type = ? AND biz_id = ?",
                 Constants.REVIEW_LEASE_TIMEOUT, taskId + ":" + claimSeq);
     }
 
-    private int registerRowCount(long taskId) {
+    private int registerRowCount(String taskId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM timeout_task WHERE task_type = ? AND biz_id LIKE ?",
                 Integer.class, Constants.REVIEW_LEASE_TIMEOUT, taskId + ":%");

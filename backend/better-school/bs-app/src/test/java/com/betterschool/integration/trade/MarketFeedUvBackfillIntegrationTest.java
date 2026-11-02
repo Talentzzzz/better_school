@@ -167,10 +167,10 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
 
     /** 直插一条审核通过流水（重放存量审批历史，造多轮时间差用） */
     private void insertApproveReview(String targetType, String targetId, String operatorId, int round, Timestamp at) {
-        jdbcTemplate.update("INSERT INTO content_review (target_type, target_id, author_id, review_round, "
+        jdbcTemplate.update("INSERT INTO content_review (review_id, target_type, target_id, author_id, review_round, "
                         + "action, operator_id, create_time, update_time) "
-                        + "VALUES (?, ?, ?, ?, 'APPROVE', ?, ?, ?)",
-                targetType, targetId, operatorId, round, operatorId, at, at);
+                        + "VALUES (?, ?, ?, ?, ?, 'APPROVE', ?, ?, ?)",
+                java.util.UUID.randomUUID().toString(), targetType, targetId, operatorId, round, operatorId, at, at);
     }
 
     private Timestamp ts(double hoursAgo) {

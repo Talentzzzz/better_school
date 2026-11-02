@@ -167,7 +167,7 @@ public class ReviewDispatchSignalIntegrationTest extends CommunityApiTestBase {
         Session auditor = auditorSession("13800011010", "审核员");
 
         String orderId1 = createPaidOrder(author);
-        long taskId1 = claimTaskOf(auditor, "ERRAND", orderId1);
+        String taskId1 = claimTaskOf(auditor, "ERRAND", orderId1);
         assertThat(claimCounter()).as("领单成功应计 1 次").isEqualTo(1);
         assertThat(timeoutCounter()).as("未回收时租约超时计数为 0").isZero();
 
@@ -181,7 +181,7 @@ public class ReviewDispatchSignalIntegrationTest extends CommunityApiTestBase {
         createPaidOrder(author);
         JsonNode claimed = postJson("/api/moderation/tasks/claim", Map.of("targetType", "ERRAND"), auditor);
         assertSuccess(claimed, "第二次领单");
-        long claimedTaskId = claimed.path("data").path("taskId").asLong();
+        String claimedTaskId = claimed.path("data").path("taskId").asText();
         assertThat(claimed.path("data").path("claimState").asText()).isEqualTo("CLAIMED");
         assertThat(claimCounter()).as("第二次领单累计 2 次").isEqualTo(2);
         assertSuccess(postJson("/api/moderation/tasks/" + claimedTaskId + "/release",
@@ -333,9 +333,9 @@ public class ReviewDispatchSignalIntegrationTest extends CommunityApiTestBase {
         return count == null ? 0 : count;
     }
 
-    private int claimSeqOf(long taskId) {
+    private int claimSeqOf(String taskId) {
         Integer seq = jdbcTemplate.queryForObject(
-                "SELECT claim_seq FROM review_task WHERE id = ?", Integer.class, taskId);
+                "SELECT claim_seq FROM review_task WHERE task_id = ?", Integer.class, taskId);
         return seq == null ? -1 : seq;
     }
 

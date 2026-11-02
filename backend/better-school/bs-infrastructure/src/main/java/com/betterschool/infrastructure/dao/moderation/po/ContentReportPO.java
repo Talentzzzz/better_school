@@ -8,7 +8,8 @@ import java.time.LocalDateTime;
 @Data
 public class ContentReportPO {
 
-    private Long id;
+    /** 业务 ID（UUID 字符串；uuid-biz-id 票 06：IIdGenerator 随 insert 一次写入，物理自增 id 保留纯内部键） */
+    private String reportId;
     private String targetType;
     private String targetId;
     private String authorId;

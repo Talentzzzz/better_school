@@ -179,10 +179,10 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     private void approve(String orderId) {
         assertThat(errandRepository.reviewApproveById(orderId, "auditor-1")).as("待审订单通过").isTrue();
         LocalDateTime feedTime = queryFeedTime(orderId);
-        jdbcTemplate.update("INSERT INTO content_review (target_type, target_id, author_id, review_round, "
+        jdbcTemplate.update("INSERT INTO content_review (review_id, target_type, target_id, author_id, review_round, "
                         + "action, operator_id, create_time, update_time) "
-                        + "VALUES ('ERRAND', ?, ?, 1, 'APPROVE', 1, ?, ?)",
-                orderId, PUBLISHER_ID, Timestamp.valueOf(feedTime), Timestamp.valueOf(feedTime));
+                        + "VALUES (?, 'ERRAND', ?, ?, 1, 'APPROVE', 1, ?, ?)",
+                java.util.UUID.randomUUID().toString(), orderId, PUBLISHER_ID, Timestamp.valueOf(feedTime), Timestamp.valueOf(feedTime));
     }
 
     /** 一组浏览落库（同步合并，等价于合并窗口过后的三步 + 索引旁路） */

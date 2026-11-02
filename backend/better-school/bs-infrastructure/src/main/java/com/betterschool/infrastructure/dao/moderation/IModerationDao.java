@@ -32,18 +32,18 @@ public interface IModerationDao {
     /** 关单：该目标全部在途工单（PENDING/CLAIMED）停 DONE（裁决/退出待审出池，幂等） */
     int closeOpenTasks(@Param("targetType") String targetType, @Param("targetId") String targetId);
 
-    /** 领单候选：池内最早待审工单 id（FIFO；targetType 为 null = 跨类型；无候选返回 null） */
-    Long selectClaimCandidateId(@Param("targetType") String targetType);
+    /** 领单候选：池内最早待审工单业务键 task_id（FIFO；targetType 为 null = 跨类型；无候选返回 null） */
+    String selectClaimCandidateId(@Param("targetType") String targetType);
 
     /**
      * 条件 UPDATE 抢占（spec §5.3 影响行数 1 者赢，并发下仅一人成功）：
      * claim_by/claim_seq+1/租约到期时刻一起落；WHERE claim_state='PENDING' 是唯一守卫
      */
-    int claimById(@Param("taskId") Long taskId, @Param("claimBy") String claimBy,
+    int claimById(@Param("taskId") String taskId, @Param("claimBy") String claimBy,
                   @Param("leaseMinutes") int leaseMinutes);
 
     /** 领单后同事务读回领单轮次（复合 bizId {taskId}:{claimSeq} 的另一半） */
-    Integer selectClaimSeqById(@Param("taskId") Long taskId);
+    Integer selectClaimSeqById(@Param("taskId") String taskId);
 
     /**
      * 惰性兜底（spec §5.3 claim 前顺带一行）：租约已过期仍处 CLAIMED 的行放回池
@@ -52,10 +52,10 @@ public interface IModerationDao {
     int recycleExpiredLeases();
 
     /** 回调回收（轮次守卫）：CLAIMED→PENDING、清持单人、recycle_count+1；命中 0 行＝陈旧轮次/已裁决，幂等 */
-    int recycleByRound(@Param("taskId") Long taskId, @Param("claimSeq") int claimSeq);
+    int recycleByRound(@Param("taskId") String taskId, @Param("claimSeq") int claimSeq);
 
     /** 主动放回（持有人守卫）：CLAIMED→PENDING、recycle_count+1；命中 0 行＝非持有人/已离开 CLAIMED */
-    int releaseByClaimer(@Param("taskId") Long taskId, @Param("claimBy") String claimBy);
+    int releaseByClaimer(@Param("taskId") String taskId, @Param("claimBy") String claimBy);
 
     /** 池内已置需人工干预标记的在池工单数（惰性兜底批量回收后告警用） */
     int countEscalatedPending();
@@ -63,13 +63,13 @@ public interface IModerationDao {
     /** INSERT IGNORE：uk_reporter_target 冲突 = 重复举报（幂等），返回影响行数 */
     int insertIgnoreReport(ContentReportPO reportPO);
 
-    /** 核实：PENDING → PROCESSED，返回影响行数（1=本次刚核实） */
-    int processById(@Param("reportId") Long reportId, @Param("handlerId") String handlerId);
+    /** 核实：PENDING → PROCESSED，返回影响行数（1=本次刚核实；按业务键 report_id 定位） */
+    int processById(@Param("reportId") String reportId, @Param("handlerId") String handlerId);
 
     /** 忽略：PENDING → IGNORED，返回影响行数 */
-    int ignoreById(@Param("reportId") Long reportId, @Param("handlerId") String handlerId);
+    int ignoreById(@Param("reportId") String reportId, @Param("handlerId") String handlerId);
 
-    ContentReportPO selectReportById(@Param("reportId") Long reportId);
+    ContentReportPO selectReportById(@Param("reportId") String reportId);
 
     /** 同 target 举报单是否已有 REPORT_CONFIRMED 流水（直查 user_credit_detail 子查询，一内容一罚判定） */
     int existsProcessedCreditLog(@Param("authorId") String authorId, @Param("targetType") String targetType,
@@ -92,8 +92,8 @@ public interface IModerationDao {
 
     ReviewQueueItemPO selectReviewDetail(@Param("targetType") String targetType, @Param("targetId") String targetId);
 
-    /** 工单按 id 定位（详情聚合入口） */
-    ReviewTaskPO selectTaskById(@Param("taskId") long taskId);
+    /** 工单按业务键定位（详情聚合入口） */
+    ReviewTaskPO selectTaskById(@Param("taskId") String taskId);
 
     /** 反查审核员持有的在途工单（遗留审核入口收口用：claim_by=我 且 claim_state='CLAIMED'；未持有返回 null） */
     ReviewTaskPO selectHeldTaskByTarget(@Param("targetType") String targetType, @Param("targetId") String targetId,
@@ -103,7 +103,7 @@ public interface IModerationDao {
      * 持有人守卫关单（spec §5.2 裁决收口 ③）：本工单 CLAIMED→DONE + decided_at，
      * 双守卫 id + claim_by（重放已 DONE / 租约已回收 / 非持有人均命中 0 行＝幂等）
      */
-    int closeByHolder(@Param("taskId") Long taskId, @Param("claimBy") String claimBy);
+    int closeByHolder(@Param("taskId") String taskId, @Param("claimBy") String claimBy);
 
     /** 工单内容素材按类型分支直查（通用列 + 类型专属上下文；不筛业务行状态，DONE 工单也要能看） */
     ReviewTaskTargetPO selectTaskTargetDetail(@Param("targetType") String targetType, @Param("targetId") String targetId);

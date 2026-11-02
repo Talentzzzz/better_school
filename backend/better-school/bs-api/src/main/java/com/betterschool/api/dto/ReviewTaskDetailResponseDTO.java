@@ -17,7 +17,8 @@ import java.util.List;
 @Data
 public class ReviewTaskDetailResponseDTO {
 
-    private Long taskId;
+    /** 工单业务 ID（UUID 字符串，uuid-biz-id 票 06） */
+    private String taskId;
     private String targetType;
     private String targetId;
     /** 审核轮次（COMMENT/ERRAND 恒 1；POST/PRODUCT 重提递增） */

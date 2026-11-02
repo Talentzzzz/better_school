@@ -40,12 +40,12 @@ class FeedIndexUvBackfillIntegrationTest extends CommunityApiTestBase {
 
         // 多轮审核的帖子：第一轮三天前通过、第二轮一小时前重提再通过——feed_time 应取最近一次
         String reapprovedPostId = insertPost(author.userId(), "NORMAL");
-        jdbcTemplate.update("INSERT INTO content_review (target_type, target_id, author_id, review_round, action, "
-                        + "operator_id, create_time, update_time) VALUES ('POST', ?, ?, 1, 'APPROVE', ?, ?, ?)",
-                reapprovedPostId, author.userId(), author.userId(), ts(-3 * 24), ts(-3 * 24));
-        jdbcTemplate.update("INSERT INTO content_review (target_type, target_id, author_id, review_round, action, "
-                        + "operator_id, create_time, update_time) VALUES ('POST', ?, ?, 2, 'APPROVE', ?, ?, ?)",
-                reapprovedPostId, author.userId(), author.userId(), ts(-1), ts(-1));
+        jdbcTemplate.update("INSERT INTO content_review (review_id, target_type, target_id, author_id, review_round, action, "
+                        + "operator_id, create_time, update_time) VALUES (?, 'POST', ?, ?, 1, 'APPROVE', ?, ?, ?)",
+                java.util.UUID.randomUUID().toString(), reapprovedPostId, author.userId(), author.userId(), ts(-3 * 24), ts(-3 * 24));
+        jdbcTemplate.update("INSERT INTO content_review (review_id, target_type, target_id, author_id, review_round, action, "
+                        + "operator_id, create_time, update_time) VALUES (?, 'POST', ?, ?, 2, 'APPROVE', ?, ?, ?)",
+                java.util.UUID.randomUUID().toString(), reapprovedPostId, author.userId(), author.userId(), ts(-1), ts(-1));
 
         // 非 NORMAL 帖不进索引（被拒）
         String rejectedPostId = insertPost(author.userId(), "REJECTED");

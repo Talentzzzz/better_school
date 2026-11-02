@@ -671,7 +671,7 @@ CREATE TABLE IF NOT EXISTS user_seq (
 
 CREATE TABLE IF NOT EXISTS notification (
     id               BIGINT       NOT NULL AUTO_INCREMENT,
-    notification_id  BIGINT       NOT NULL COMMENT '业务 ID（对外唯一标识）',
+    notification_id  VARCHAR(36)  NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入，物理自增 id 保留纯内部键）',
     user_id          VARCHAR(36)       NOT NULL COMMENT '接收用户',
     scope            VARCHAR(20)  NOT NULL COMMENT '收件范围（写入时由生产点显式标注，禁止从 (type,refType) 推导——同一 ORDER_EVENT×ERRAND 发用户=MARKET_ERRAND、发审核员=BOTTOM_SYSTEM）：MARKET_ERRAND/MARKET_PRODUCT(预留,当前无生产方)/BOTTOM_SYSTEM/INTERACTION_LIKE/INTERACTION_COMMENT',
     seq              BIGINT       NOT NULL COMMENT 'per-(user,scope) 收件序号（notification_seq 计数器写入事务内取号，从 1 起递增）：已读态 = seq ≤ 该范围水位；水位只用本列，禁用 id——分配序≠提交序',
@@ -680,7 +680,7 @@ CREATE TABLE IF NOT EXISTS notification (
     title            VARCHAR(100) NOT NULL COMMENT '标题',
     content          VARCHAR(500) NOT NULL COMMENT '内容',
     ref_type         VARCHAR(20)  NULL COMMENT '关联类型',
-    ref_id           VARCHAR(36)  NULL COMMENT '关联业务 ID（POST/COMMENT=UUID 字符串；REF/订单/营销等仍为数值 id 的字符串形）',
+    ref_id           VARCHAR(36)  NULL COMMENT '关联业务 ID（POST/COMMENT/PRODUCT/ERRAND 订单均为 UUID 字符串，票 03/05；REPORT=report_id UUID，票 06）',
     broadcast_msg_id VARCHAR(64)  NULL COMMENT '广播消息 msg_id（公告落库幂等键）',
     dedup_key        VARCHAR(100) NULL COMMENT '互动通知幂等键（type+目标+sender）；同一触发者对同一目标只发一条，取消动作不撤回',
     create_time      DATETIME     NOT NULL COMMENT '创建时间',
@@ -801,7 +801,7 @@ CREATE TABLE IF NOT EXISTS product_order_event (
 
 CREATE TABLE IF NOT EXISTS virtual_wallet (
     id            BIGINT        NOT NULL AUTO_INCREMENT,
-    wallet_id     BIGINT        NOT NULL COMMENT '业务 ID（对外唯一标识）',
+    wallet_id     VARCHAR(36)   NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入）',
     user_id       VARCHAR(36)        NOT NULL COMMENT '用户 ID',
     balance       DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '余额',
     frozen_amount DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '冻结金额（托管中）',
@@ -814,7 +814,7 @@ CREATE TABLE IF NOT EXISTS virtual_wallet (
 
 CREATE TABLE IF NOT EXISTS wallet_detail (
     id          BIGINT        NOT NULL AUTO_INCREMENT,
-    wallet_id   BIGINT        NOT NULL COMMENT '钱包 ID',
+    wallet_id   VARCHAR(36)   NOT NULL COMMENT '钱包业务 ID（引用 virtual_wallet.wallet_id，UUID 字符串）',
     user_id     VARCHAR(36)        NOT NULL COMMENT '用户 ID（钱包所有者；INCOME 为收款方）',
     type        VARCHAR(20)   NOT NULL COMMENT '类型 RECHARGE/FROZEN/UNFROZEN/INCOME/PRODUCT_FROZEN/PRODUCT_UNFROZEN/PRODUCT_INCOME',
     amount      DECIMAL(10,2) NOT NULL COMMENT '变动金额',
@@ -852,8 +852,9 @@ CREATE TABLE IF NOT EXISTS sensitive_word (
 
 CREATE TABLE IF NOT EXISTS content_review (
     id            BIGINT       NOT NULL AUTO_INCREMENT,
+    review_id     VARCHAR(36)  NOT NULL COMMENT '审核记录业务 ID（UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入；物理自增 id 保留纯内部键）',
     target_type   VARCHAR(20)  NOT NULL COMMENT '审核对象 POST/COMMENT/ERRAND/PRODUCT',
-    target_id     VARCHAR(36)  NOT NULL COMMENT '审核对象业务 ID（POST/COMMENT=UUID 字符串；PRODUCT/ERRAND 过渡期仍为数值 id 的字符串形）',
+    target_id     VARCHAR(36)  NOT NULL COMMENT '审核对象业务 ID（POST/COMMENT/PRODUCT/ERRAND 均为 UUID 字符串，票 03/05）',
     author_id     VARCHAR(36)       NOT NULL COMMENT '作者用户 ID（冗余；对齐 content_report.author_id，按作者聚合历史裁决免反查业务表）',
     review_round  INT          NOT NULL DEFAULT 1 COMMENT '审核轮次（同一目标第 N 次进入待审，取自业务表的 review_round；COMMENT/ERRAND 恒为 1），重放裁决撞 uk 即幂等跳过',
     action        VARCHAR(20)  NOT NULL COMMENT '动作 APPROVE/REJECT',
@@ -864,6 +865,7 @@ CREATE TABLE IF NOT EXISTS content_review (
     create_time   DATETIME     NOT NULL COMMENT '创建时间',
     update_time   DATETIME     NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
+    UNIQUE KEY uk_review_id (review_id),
     UNIQUE KEY uk_target_action_round (target_type, target_id, action, review_round),
     KEY idx_create (create_time)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '审核动作记录表（只插入）';
@@ -875,8 +877,9 @@ CREATE TABLE IF NOT EXISTS content_review (
 -- POST/PRODUCT 直取业务表 review_entered_at，COMMENT 取发布时刻、ERRAND 取支付成功时刻）
 CREATE TABLE IF NOT EXISTS review_task (
     id              BIGINT       NOT NULL AUTO_INCREMENT,
+    task_id         VARCHAR(36)  NOT NULL COMMENT '工单业务 ID（UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入；物理自增 id 保留纯内部键，FIFO 同刻 tie-break 用）',
     target_type     VARCHAR(20)  NOT NULL COMMENT '内容类型 POST/COMMENT/PRODUCT/ERRAND（ReviewTargetTypeVO 可审值）',
-    target_id       VARCHAR(36)  NOT NULL COMMENT '内容业务 ID（post_id/comment_id=UUID 字符串；product_id/errand_order_id 过渡期仍为数值 id 的字符串形）',
+    target_id       VARCHAR(36)  NOT NULL COMMENT '内容业务 ID（POST/COMMENT/PRODUCT/ERRAND 均为 UUID 字符串，票 03/05）',
     review_round    INT          NOT NULL DEFAULT 1 COMMENT '审核轮次，与 content_review.review_round 同源（COMMENT/ERRAND 恒 1）',
     author_id       VARCHAR(36)       NOT NULL COMMENT '作者用户 ID（冗余，工单详情/历史聚合免 join）',
     source          VARCHAR(20)  NOT NULL DEFAULT 'MANUAL' COMMENT '入池来源 MANUAL/KEYWORD/RANDOM（ReviewSourceVO）',
@@ -891,6 +894,7 @@ CREATE TABLE IF NOT EXISTS review_task (
     create_time     DATETIME     NOT NULL COMMENT '创建时间',
     update_time     DATETIME     NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
+    UNIQUE KEY uk_task_id (task_id),
     UNIQUE KEY uk_target_round (target_type, target_id, review_round),
     KEY idx_queue (claim_state, entered_at),
     KEY idx_queue_type (claim_state, target_type, entered_at),
@@ -899,8 +903,9 @@ CREATE TABLE IF NOT EXISTS review_task (
 
 CREATE TABLE IF NOT EXISTS content_report (
     id               BIGINT        NOT NULL AUTO_INCREMENT,
+    report_id        VARCHAR(36)   NOT NULL COMMENT '举报单业务 ID（UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入；信用分 REPORT_CONFIRMED 流水 ref_id 引用本列，物理自增 id 保留纯内部键）',
     target_type      VARCHAR(20)   NOT NULL COMMENT '举报对象 POST/COMMENT/USER/MESSAGE（1v1 会话零审核的举报兜底）',
-    target_id        VARCHAR(36)       NOT NULL COMMENT '举报对象业务 ID（USER=UUID user_id；POST/COMMENT=UUID 内容 id；MESSAGE 数值 id 字符串化承载）',
+    target_id        VARCHAR(36)       NOT NULL COMMENT '举报对象业务 ID（USER/POST/COMMENT=UUID user_id/内容 id；MESSAGE=msg_id UUID 字符串，uuid-biz-id 票 04）',
     author_id        VARCHAR(36)        NOT NULL COMMENT '被举报人用户 ID（冗余）',
     reporter_id      VARCHAR(36)        NOT NULL COMMENT '举报人用户 ID',
     reason           VARCHAR(200)  NOT NULL COMMENT '举报理由',
@@ -911,6 +916,7 @@ CREATE TABLE IF NOT EXISTS content_report (
     create_time      DATETIME      NOT NULL COMMENT '创建时间',
     update_time      DATETIME      NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
+    UNIQUE KEY uk_report_id (report_id),
     UNIQUE KEY uk_reporter_target (reporter_id, target_type, target_id),
     KEY idx_status (status, create_time),
     KEY idx_target (target_type, target_id)

@@ -75,7 +75,7 @@ public class ReviewCase {
      * → 判定为本人已裁决的重放 → 继续走幂等内核（域方法命中 0 行、审核记录撞 uk 跳过、退款流水 uk 防重），
      * 整体幂等成功、零副作用；若关单 0 行时工单已不是本人的（租约恰在本事务前被回收）→ 抛错整体回滚，业务行零改动
      */
-    public void decideTask(long taskId, boolean approve, String reasonCode, String supplement, String operatorId) {
+    public void decideTask(String taskId, boolean approve, String reasonCode, String supplement, String operatorId) {
         ReviewTaskEntity task = reviewService.findTask(taskId);
         if (task == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "审核工单不存在");
@@ -96,7 +96,7 @@ public class ReviewCase {
     }
 
     /** 重放判定：工单已 DONE 且持有人快照仍是本人 = 本人已裁决后的重试（关单 0 行属幂等，不报错） */
-    private boolean decidedBySelf(long taskId, String operatorId) {
+    private boolean decidedBySelf(String taskId, String operatorId) {
         ReviewTaskEntity current = reviewService.findTask(taskId);
         return current != null && "DONE".equals(current.getClaimState())
                 && operatorId.equals(current.getClaimBy());
@@ -114,7 +114,7 @@ public class ReviewCase {
         if (held == null) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "请先领单");
         }
-        decideTask(held.getId(), action == ReviewActionVO.APPROVE, reasonCode, supplement, operatorId);
+        decideTask(held.getTaskId(), action == ReviewActionVO.APPROVE, reasonCode, supplement, operatorId);
     }
 
     /** 裁决分发：approve/reject 各按类型走既有分支（域状态流转 + 审核记录 + 跨域资金动作 + 通知），供两个入口共用 */

@@ -43,7 +43,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         String orderId = createPaidOrder(author);
         Session auditor = auditorSession("13900009001", "13900009001");
 
-        long taskId = latestTaskIdOf("ERRAND", orderId);
+        String taskId = latestTaskIdOf("ERRAND", orderId);
         assertThat(taskState(taskId)).as("前置：工单在池").isEqualTo("PENDING");
 
         // 未领单直接对工单裁决：403，业务行/审核记录/工单全零改动
@@ -78,7 +78,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         String orderId = createPaidOrder(postAuthor);
 
         // POST 通过：业务行 NORMAL + 审核记录 + 工单 DONE 同事务
-        long postTaskId = claimTaskOf(auditor, "POST", postId);
+        String postTaskId = claimTaskOf(auditor, "POST", postId);
         assertSuccess(postJson("/api/moderation/tasks/" + postTaskId + "/decide",
                 Map.of("action", "APPROVE"), auditor), "帖子裁决");
         assertThat(postState(postId)).isEqualTo("NORMAL");
@@ -86,7 +86,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         assertThat(reviewRowCount("POST", postId)).isEqualTo(1);
 
         // COMMENT 通过：评论 NORMAL + 通过才发的互动通知（帖被评通知帖主）；帖主与评作者不同人
-        long commentTaskId = claimTaskOf(auditor, "COMMENT", commentId);
+        String commentTaskId = claimTaskOf(auditor, "COMMENT", commentId);
         assertSuccess(postJson("/api/moderation/tasks/" + commentTaskId + "/decide",
                 Map.of("action", "APPROVE"), auditor), "评论裁决");
         assertThat(commentStatusOf(commentId)).isEqualTo("NORMAL");
@@ -97,7 +97,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         assertThat(interactions).as("评论通过才发互动通知").anyMatch(content -> content.contains("新评论"));
 
         // PRODUCT 拒绝：REJECTED + 拒绝理由落枚举格式（无资金环节）
-        long productTaskId = claimTaskOf(auditor, "PRODUCT", productId);
+        String productTaskId = claimTaskOf(auditor, "PRODUCT", productId);
         assertSuccess(postJson("/api/moderation/tasks/" + productTaskId + "/decide",
                 Map.of("action", "REJECT", "reasonCode", "OTHER", "supplement", "图片与实物不符"), auditor), "商品裁决");
         assertThat(productStatus(productId)).isEqualTo("REJECTED");
@@ -105,7 +105,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         assertThat(rejectReasonOf("PRODUCT", productId)).isEqualTo("其他：图片与实物不符");
 
         // ERRAND 拒绝：REJECTED + 解冻退款（跨域资金动作）
-        long errandTaskId = claimTaskOf(auditor, "ERRAND", orderId);
+        String errandTaskId = claimTaskOf(auditor, "ERRAND", orderId);
         assertSuccess(postJson("/api/moderation/tasks/" + errandTaskId + "/decide",
                 Map.of("action", "REJECT", "reasonCode", "OTHER", "supplement", "描述不清"), auditor), "跑腿裁决");
         assertThat(orderState(orderId)).isEqualTo("REJECTED");
@@ -124,7 +124,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         String orderId = createPaidOrder(author);
         Session auditor = auditorSession("13900009003", "13900009003");
 
-        long taskId = claimTaskOf(auditor, "ERRAND", orderId);
+        String taskId = claimTaskOf(auditor, "ERRAND", orderId);
         Map<String, Object> rejectBody = Map.of("action", "REJECT",
                 "reasonCode", "OTHER", "supplement", "描述不清");
         assertSuccess(postJson("/api/moderation/tasks/" + taskId + "/decide", rejectBody, auditor), "首次拒绝");
@@ -157,7 +157,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         Session auditorA = auditorSession("13900009004", "13900009004");
         Session auditorB = auditorSession("13900009005", "13900009005");
 
-        long taskId = claimTaskOf(auditorA, "ERRAND", orderId);
+        String taskId = claimTaskOf(auditorA, "ERRAND", orderId);
 
         // 非持有人裁决：403，工单租约不动、业务行零改动
         JsonNode wrongDecider = postJson("/api/moderation/tasks/" + taskId + "/decide",
@@ -178,7 +178,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         assertThat(recycled.path("code").asText()).as("被回收后裁决应被拒：%s", recycled).isEqualTo("403");
         assertThat(orderState(orderId)).as("业务行零改动").isEqualTo("PENDING_REVIEW");
         assertThat(reviewRowCount("ERRAND", orderId)).isZero();
-        assertThat(claimTaskOf(auditorB, "ERRAND", orderId)).as("回池后可被他人领走").isPositive();
+        assertThat(claimTaskOf(auditorB, "ERRAND", orderId)).as("回池后可被他人领走").isNotEmpty();
     }
 
     // ---------- 遗留入口收口：反查我持有的在途工单 → 裁决 ----------
@@ -191,7 +191,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
         Session auditorB = auditorSession("13900009007", "13900009007");
 
         // 领单后遗留入口可裁：按「类型 + 内容 id + 当前登录用户」反查持有的在途工单，命中转强绑定裁决
-        long taskId = claimTaskOf(auditorA, "POST", postId);
+        String taskId = claimTaskOf(auditorA, "POST", postId);
         assertSuccess(postJson("/api/moderation/review",
                 Map.of("targetType", "POST", "targetId", postId, "action", "APPROVE"), auditorA), "遗留入口裁决");
         assertThat(postState(postId)).isEqualTo("NORMAL");
@@ -199,7 +199,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
 
         // 他人持有：反查不到（claim_by=别人）→ 403，杜绝代裁
         String postId2 = publishPendingPost(author);
-        long taskId2 = claimTaskOf(auditorB, "POST", postId2);
+        String taskId2 = claimTaskOf(auditorB, "POST", postId2);
         JsonNode hijack = postJson("/api/moderation/review",
                 Map.of("targetType", "POST", "targetId", postId2, "action", "APPROVE"), auditorA);
         assertThat(hijack.path("code").asText()).as("他人持有的工单反查不到：%s", hijack).isEqualTo("403");
@@ -263,7 +263,7 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 回调工具（租约回收，真实形状同票 08） ----------
 
-    private static TimeoutTaskEntity leaseTask(long taskId, int claimSeq) {
+    private static TimeoutTaskEntity leaseTask(String taskId, int claimSeq) {
         return TimeoutCallbackFixture.dueTask(Constants.REVIEW_LEASE_TIMEOUT, taskId + ":" + claimSeq, 5);
     }
 
@@ -277,30 +277,30 @@ class ReviewTaskDecideIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 可观察状态 ----------
 
-    private long latestTaskIdOf(String targetType, String targetId) {
+    private String latestTaskIdOf(String targetType, String targetId) {
         return jdbcTemplate.queryForObject(
-                "SELECT id FROM review_task WHERE target_type = ? AND target_id = ? ORDER BY review_round DESC LIMIT 1",
-                Long.class, targetType, targetId);
+                "SELECT task_id FROM review_task WHERE target_type = ? AND target_id = ? ORDER BY review_round DESC LIMIT 1",
+                String.class, targetType, targetId);
     }
 
-    private String taskState(long taskId) {
-        return jdbcTemplate.queryForObject("SELECT claim_state FROM review_task WHERE id = ?", String.class, taskId);
+    private String taskState(String taskId) {
+        return jdbcTemplate.queryForObject("SELECT claim_state FROM review_task WHERE task_id = ?", String.class, taskId);
     }
 
-    private String claimByOf(long taskId) {
+    private String claimByOf(String taskId) {
         return jdbcTemplate.queryForObject(
-                "SELECT claim_by FROM review_task WHERE id = ?", String.class, taskId);
+                "SELECT claim_by FROM review_task WHERE task_id = ?", String.class, taskId);
     }
 
-    private LocalDateTime decidedAtOf(long taskId) {
+    private LocalDateTime decidedAtOf(String taskId) {
         return jdbcTemplate.queryForObject(
-                "SELECT decided_at FROM review_task WHERE id = ?", LocalDateTime.class, taskId);
+                "SELECT decided_at FROM review_task WHERE task_id = ?", LocalDateTime.class, taskId);
     }
 
     /** 工单裁决收口断言：DONE + 裁决时刻已写 + 持有人快照保留 */
-    private void assertTaskDone(long taskId, Session auditor) {
+    private void assertTaskDone(String taskId, Session auditor) {
         Map<String, Object> row = jdbcTemplate.queryForMap(
-                "SELECT claim_state, claim_by, decided_at FROM review_task WHERE id = ?", taskId);
+                "SELECT claim_state, claim_by, decided_at FROM review_task WHERE task_id = ?", taskId);
         assertThat(row.get("claim_state")).as("工单应停 DONE").isEqualTo("DONE");
         assertThat((String) row.get("claim_by")).as("持有人快照保留").isEqualTo(auditor.userId());
         assertThat(row.get("decided_at")).as("裁决时刻已写").isNotNull();

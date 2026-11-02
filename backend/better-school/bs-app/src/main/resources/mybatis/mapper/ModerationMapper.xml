@@ -4,20 +4,20 @@
 
     <!-- 审核动作记录：uk_target_action_round(target_type,target_id,action,review_round) 冲突 = 该轮已记录过
          （INSERT IGNORE 幂等，审计只插一次；review_round 取业务表当前的审核轮次（= 第 N 次进入待审），
-         重放裁决同轮次撞 uk 自然幂等跳过；author_id 冗余作者列，spec §5.1） -->
-    <insert id="insertIgnoreReview" parameterType="com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO"
-            useGeneratedKeys="true" keyProperty="id">
-        INSERT IGNORE INTO content_review (target_type, target_id, author_id, review_round, action, source, operator_id, reason, reason_code, create_time, update_time)
-        VALUES (#{targetType}, #{targetId}, #{authorId}, #{reviewRound}, #{action}, #{source}, #{operatorId}, #{reason}, #{reasonCode}, #{createTime}, #{updateTime})
+         重放裁决同轮次撞 uk 自然幂等跳过；author_id 冗余作者列，spec §5.1；
+         review_id 业务 ID UUID 由应用层 IIdGenerator 随 insert 一次写入，uuid-biz-id 票 06） -->
+    <insert id="insertIgnoreReview" parameterType="com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO">
+        INSERT IGNORE INTO content_review (review_id, target_type, target_id, author_id, review_round, action, source, operator_id, reason, reason_code, create_time, update_time)
+        VALUES (#{reviewId}, #{targetType}, #{targetId}, #{authorId}, #{reviewRound}, #{action}, #{source}, #{operatorId}, #{reason}, #{reasonCode}, #{createTime}, #{updateTime})
     </insert>
 
     <!-- 审核工单入池：uk_target_round(target_type,target_id,review_round) 冲突 = 同轮已开单
-         （INSERT IGNORE 幂等，0 行不报错；工单态恒 PENDING，claim/租约列走默认值） -->
-    <insert id="insertIgnoreTask" parameterType="com.betterschool.infrastructure.dao.moderation.po.ReviewTaskPO"
-            useGeneratedKeys="true" keyProperty="id">
+         （INSERT IGNORE 幂等，0 行不报错；工单态恒 PENDING，claim/租约列走默认值；
+         task_id 业务 ID UUID 由应用层 IIdGenerator 随 insert 一次写入，uuid-biz-id 票 06） -->
+    <insert id="insertIgnoreTask" parameterType="com.betterschool.infrastructure.dao.moderation.po.ReviewTaskPO">
         INSERT IGNORE INTO review_task
-            (target_type, target_id, review_round, author_id, source, claim_state, entered_at, create_time, update_time)
-        VALUES (#{targetType}, #{targetId}, #{reviewRound}, #{authorId}, #{source}, 'PENDING',
+            (task_id, target_type, target_id, review_round, author_id, source, claim_state, entered_at, create_time, update_time)
+        VALUES (#{taskId}, #{targetType}, #{targetId}, #{reviewRound}, #{authorId}, #{source}, 'PENDING',
                 #{enteredAt}, #{createTime}, #{updateTime})
     </insert>
 
@@ -41,9 +41,10 @@
     </update>
 
     <!-- 领单候选（spec §5.3 ①）：池内最早待审工单（FIFO），类型只作过滤器不做优先级插队；
-         id ASC 定 entered_at 同刻的稳定次序。单类型走 idx_queue_type，跨类型走 idx_queue -->
-    <select id="selectClaimCandidateId" resultType="java.lang.Long">
-        SELECT id
+         物理自增 id ASC 定 entered_at 同刻的稳定次序（task_id 已 UUID 化不再代表入池先后，
+         uuid-biz-id 票 06：与票 03 队列 tie-break 改口径同源）。单类型走 idx_queue_type，跨类型走 idx_queue -->
+    <select id="selectClaimCandidateId" resultType="java.lang.String">
+        SELECT task_id
         FROM review_task
         WHERE claim_state = 'PENDING'
         <if test="targetType != null">
@@ -53,14 +54,14 @@
         LIMIT 1
     </select>
 
-    <!-- 领单抢占（spec §5.3 ②）：条件 UPDATE 命中 PK，影响行数 1 者赢，并发下仅一人成功
+    <!-- 领单抢占（spec §5.3 ②）：条件 UPDATE 命中业务键，影响行数 1 者赢，并发下仅一人成功
          （败者的 UPDATE 在行锁上等提交后重判 claim_state，0 行落空）。
          租约 5min 从领单时刻起算；entered_at 不动（回收不改，等待时长继续累加） -->
     <update id="claimById">
         UPDATE review_task
         SET claim_by = #{claimBy}, claim_state = 'CLAIMED', claim_seq = claim_seq + 1,
             lease_expire_at = DATE_ADD(NOW(), INTERVAL #{leaseMinutes} MINUTE), update_time = NOW()
-        WHERE id = #{taskId}
+        WHERE task_id = #{taskId}
           AND claim_state = 'PENDING'
     </update>
 
@@ -68,7 +69,7 @@
     <select id="selectClaimSeqById" resultType="int">
         SELECT claim_seq
         FROM review_task
-        WHERE id = #{taskId}
+        WHERE task_id = #{taskId}
     </select>
 
     <!-- 三条回收路径（惰性兜底/超时回调/主动放回）共用的放回 SET 块：口径统一「清持单人/租约、recycle_count+1、
@@ -95,7 +96,7 @@
     <update id="recycleByRound">
         UPDATE review_task
         <include refid="recycleSet"/>
-        WHERE id = #{taskId}
+        WHERE task_id = #{taskId}
           AND claim_state = 'CLAIMED'
           AND claim_seq = #{claimSeq}
     </update>
@@ -105,7 +106,7 @@
     <update id="releaseByClaimer">
         UPDATE review_task
         <include refid="recycleSet"/>
-        WHERE id = #{taskId}
+        WHERE task_id = #{taskId}
           AND claim_state = 'CLAIMED'
           AND claim_by = #{claimBy}
     </update>
@@ -118,18 +119,18 @@
           AND claim_state = 'PENDING'
     </select>
 
-    <!-- 举报单：uk_reporter_target(reporter_id,target_type,target_id) 冲突 = 重复举报（INSERT IGNORE 幂等） -->
-    <insert id="insertIgnoreReport" parameterType="com.betterschool.infrastructure.dao.moderation.po.ContentReportPO"
-            useGeneratedKeys="true" keyProperty="id">
-        INSERT IGNORE INTO content_report (target_type, target_id, author_id, reporter_id, reason, content_snapshot, status, create_time, update_time)
-        VALUES (#{targetType}, #{targetId}, #{authorId}, #{reporterId}, #{reason}, #{contentSnapshot}, 'PENDING', #{createTime}, #{updateTime})
+    <!-- 举报单：uk_reporter_target(reporter_id,target_type,target_id) 冲突 = 重复举报（INSERT IGNORE 幂等）；
+         report_id 业务 ID UUID 由应用层 IIdGenerator 随 insert 一次写入（uuid-biz-id 票 06） -->
+    <insert id="insertIgnoreReport" parameterType="com.betterschool.infrastructure.dao.moderation.po.ContentReportPO">
+        INSERT IGNORE INTO content_report (report_id, target_type, target_id, author_id, reporter_id, reason, content_snapshot, status, create_time, update_time)
+        VALUES (#{reportId}, #{targetType}, #{targetId}, #{authorId}, #{reporterId}, #{reason}, #{contentSnapshot}, 'PENDING', #{createTime}, #{updateTime})
     </insert>
 
-    <!-- 核实：PENDING → PROCESSED（条件 UPDATE，影响行数 1 = 本次刚核实） -->
+    <!-- 核实：PENDING → PROCESSED（条件 UPDATE，影响行数 1 = 本次刚核实；按业务键 report_id 定位） -->
     <update id="processById">
         UPDATE content_report
         SET status = 'PROCESSED', handler_id = #{handlerId}, handled_at = NOW(), update_time = NOW()
-        WHERE id = #{reportId}
+        WHERE report_id = #{reportId}
           AND status = 'PENDING'
     </update>
 
@@ -137,24 +138,25 @@
     <update id="ignoreById">
         UPDATE content_report
         SET status = 'IGNORED', handler_id = #{handlerId}, handled_at = NOW(), update_time = NOW()
-        WHERE id = #{reportId}
+        WHERE report_id = #{reportId}
           AND status = 'PENDING'
     </update>
 
     <select id="selectReportById" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReportPO">
-        SELECT id, target_type, target_id, author_id, reporter_id, reason, content_snapshot,
+        SELECT report_id, target_type, target_id, author_id, reporter_id, reason, content_snapshot,
                status, handler_id, handled_at, create_time, update_time
         FROM content_report
-        WHERE id = #{reportId}
+        WHERE report_id = #{reportId}
     </select>
 
-    <!-- 一内容一罚判定：同 target 举报单是否已有 REPORT_CONFIRMED 流水（直查 user_credit_detail） -->
+    <!-- 一内容一罚判定：同 target 举报单是否已有 REPORT_CONFIRMED 流水（直查 user_credit_detail；
+         ref_id 引用 content_report.report_id 业务键，uuid-biz-id 票 06） -->
     <select id="existsProcessedCreditLog" resultType="int">
         SELECT COUNT(1)
         FROM user_credit_detail
         WHERE user_id = #{authorId}
           AND reason_type = 'REPORT_CONFIRMED'
-          AND ref_id IN (SELECT id
+          AND ref_id IN (SELECT report_id
                          FROM content_report
                          WHERE target_type = #{targetType}
                            AND target_id = #{targetId})
@@ -165,7 +167,7 @@
          targetType 为空 = 跨类型取候选（UNION ALL 后按 entered_at 全局 FIFO）。
          索引：单类型走 idx_queue_type(claim_state,target_type,entered_at)，跨类型走 idx_queue(claim_state,entered_at) -->
     <sql id="queuePost">
-        SELECT 'POST' AS target_type, rt.id AS task_id, rt.target_id, rt.review_round,
+        SELECT 'POST' AS target_type, rt.task_id AS task_id, rt.id AS task_num, rt.target_id, rt.review_round,
                rt.author_id, u.nickname AS author_nickname,
                CONCAT(COALESCE(p.title, ''), p.content) AS content,
                NULL AS reward, p.images, p.state AS status, p.create_time,
@@ -178,7 +180,7 @@
           AND p.state = 'PENDING_REVIEW'
     </sql>
     <sql id="queueComment">
-        SELECT 'COMMENT' AS target_type, rt.id AS task_id, rt.target_id, rt.review_round,
+        SELECT 'COMMENT' AS target_type, rt.task_id AS task_id, rt.id AS task_num, rt.target_id, rt.review_round,
                rt.author_id, u.nickname AS author_nickname,
                c.content AS content, NULL AS reward, NULL AS images, c.state AS status, c.create_time,
                rt.entered_at
@@ -190,7 +192,7 @@
           AND c.state = 'PENDING_REVIEW'
     </sql>
     <sql id="queueProduct">
-        SELECT 'PRODUCT' AS target_type, rt.id AS task_id, rt.target_id, rt.review_round,
+        SELECT 'PRODUCT' AS target_type, rt.task_id AS task_id, rt.id AS task_num, rt.target_id, rt.review_round,
                rt.author_id, u.nickname AS author_nickname,
                CONCAT(COALESCE(p.title, ''), p.description) AS content,
                p.price AS reward, p.images, p.state AS status, p.create_time,
@@ -203,7 +205,7 @@
           AND p.state = 'PENDING_REVIEW'
     </sql>
     <sql id="queueErrand">
-        SELECT 'ERRAND' AS target_type, rt.id AS task_id, rt.target_id, rt.review_round,
+        SELECT 'ERRAND' AS target_type, rt.task_id AS task_id, rt.id AS task_num, rt.target_id, rt.review_round,
                rt.author_id, u.nickname AS author_nickname,
                e.description AS content, e.reward, e.images, e.state AS status, e.create_time,
                rt.entered_at
@@ -219,19 +221,19 @@
         <choose>
             <when test="targetType == 'POST'">
                 <include refid="queuePost"/>
-                ORDER BY entered_at ASC, task_id ASC
+                ORDER BY entered_at ASC, task_num ASC
             </when>
             <when test="targetType == 'COMMENT'">
                 <include refid="queueComment"/>
-                ORDER BY entered_at ASC, task_id ASC
+                ORDER BY entered_at ASC, task_num ASC
             </when>
             <when test="targetType == 'PRODUCT'">
                 <include refid="queueProduct"/>
-                ORDER BY entered_at ASC, task_id ASC
+                ORDER BY entered_at ASC, task_num ASC
             </when>
             <when test="targetType == 'ERRAND'">
                 <include refid="queueErrand"/>
-                ORDER BY entered_at ASC, task_id ASC
+                ORDER BY entered_at ASC, task_num ASC
             </when>
             <otherwise>
                 SELECT * FROM (
@@ -243,7 +245,7 @@
                     UNION ALL
                     <include refid="queueErrand"/>
                 ) t
-                ORDER BY t.entered_at ASC, t.task_id ASC
+                ORDER BY t.entered_at ASC, t.task_num ASC
             </otherwise>
         </choose>
         LIMIT #{offset}, #{limit}
@@ -318,18 +320,18 @@
         </choose>
     </select>
 
-    <!-- 工单按 id 定位（详情聚合入口） -->
+    <!-- 工单按业务键定位（详情聚合入口） -->
     <select id="selectTaskById" resultType="com.betterschool.infrastructure.dao.moderation.po.ReviewTaskPO">
-        SELECT id, target_type, target_id, review_round, author_id, source, claim_state, claim_by, claim_seq,
+        SELECT task_id, target_type, target_id, review_round, author_id, source, claim_state, claim_by, claim_seq,
                lease_expire_at, recycle_count, escalated, entered_at, decided_at, create_time, update_time
         FROM review_task
-        WHERE id = #{taskId}
+        WHERE task_id = #{taskId}
     </select>
 
     <!-- 反查审核员持有的在途工单（spec §5.2 遗留入口收口）：claim_by=我 且 claim_state='CLAIMED'。
-         uk_target_round 保证同轮一行，正常至多一张在途；id DESC 取最新轮兜底 -->
+         uk_target_round 保证同轮一行，正常至多一张在途；物理自增 id DESC 取最新轮兜底（task_id 已 UUID 化不代表入池先后） -->
     <select id="selectHeldTaskByTarget" resultType="com.betterschool.infrastructure.dao.moderation.po.ReviewTaskPO">
-        SELECT id, target_type, target_id, review_round, author_id, source, claim_state, claim_by, claim_seq,
+        SELECT task_id, target_type, target_id, review_round, author_id, source, claim_state, claim_by, claim_seq,
                lease_expire_at, recycle_count, escalated, entered_at, decided_at, create_time, update_time
         FROM review_task
         WHERE target_type = #{targetType}
@@ -346,7 +348,7 @@
     <update id="closeByHolder">
         UPDATE review_task
         SET claim_state = 'DONE', decided_at = NOW(), update_time = NOW()
-        WHERE id = #{taskId}
+        WHERE task_id = #{taskId}
           AND claim_state = 'CLAIMED'
           AND claim_by = #{claimBy}
     </update>
@@ -422,7 +424,7 @@
     <!-- 同一内容历轮裁决：重提前后各轮各自的结论与拒绝理由（review_round 升序；
          轮次受业务表 review_round 有界（uk_target_action_round 同轮至多一行），不加 LIMIT -->
     <select id="selectReviewsByTarget" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO">
-        SELECT id, target_type, target_id, author_id, review_round, action, source, operator_id,
+        SELECT review_id, target_type, target_id, author_id, review_round, action, source, operator_id,
                reason, reason_code, create_time, update_time
         FROM content_review
         WHERE target_type = #{targetType}
@@ -432,7 +434,7 @@
 
     <!-- 同一作者历史裁决：author_id 冗余列使按作者聚合单表可查、免 join 工单表（spec §5.1） -->
     <select id="selectReviewsByAuthor" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO">
-        SELECT id, target_type, target_id, author_id, review_round, action, source, operator_id,
+        SELECT review_id, target_type, target_id, author_id, review_round, action, source, operator_id,
                reason, reason_code, create_time, update_time
         FROM content_review
         WHERE author_id = #{authorId}
@@ -468,9 +470,9 @@
         ) latest ON latest.max_id = cr.id
     </select>
 
-    <!-- 举报列表（可按状态过滤） -->
+    <!-- 举报列表（可按状态过滤）；物理自增 id DESC 定稳定序（report_id 已 UUID 化不代表插入先后） -->
     <select id="selectReports" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReportPO">
-        SELECT r.id, r.target_type, r.target_id, r.author_id, r.reporter_id, r.reason,
+        SELECT r.report_id, r.target_type, r.target_id, r.author_id, r.reporter_id, r.reason,
                r.content_snapshot, r.status, r.handler_id, r.handled_at, r.create_time, r.update_time,
                ru.nickname AS reporter_nickname, au.nickname AS author_nickname
         FROM content_report r

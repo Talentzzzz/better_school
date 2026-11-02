@@ -144,7 +144,8 @@ class CommentDeleteSemanticsIntegrationTest extends CommunityApiTestBase {
         JsonNode reportResponse = postJson("/api/moderation/reports",
                 Map.of("targetType", "COMMENT", "targetId", rootId, "reason", "违规内容"), reporter);
         assertSuccess(reportResponse, "提交举报");
-        long reportId = reportResponse.path("data").asLong();
+        String reportId = reportResponse.path("data").asText();
+        assertUuidId(reportId);
 
         assertSuccess(postJson("/api/moderation/reports/" + reportId + "/process",
                 Map.of("action", "PROCESSED"), auditorSession()), "审核员核实下架");

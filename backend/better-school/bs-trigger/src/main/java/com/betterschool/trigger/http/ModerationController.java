@@ -80,15 +80,15 @@ public class ModerationController implements IModerationService {
 
     @Override
     @PostMapping("/reports")
-    public Response<Long> submitReport(@Valid @RequestBody ReportSubmitRequestDTO request) {
-        Long reportId = reportCase.submitReport(SecurityUtils.currentUserId(), request.getTargetType(),
+    public Response<String> submitReport(@Valid @RequestBody ReportSubmitRequestDTO request) {
+        String reportId = reportCase.submitReport(SecurityUtils.currentUserId(), request.getTargetType(),
                 request.getTargetId(), request.getReason());
         return Response.ok(reportId);
     }
 
     @Override
     @PostMapping("/reports/{reportId}/process")
-    public Response<Void> processReport(@PathVariable Long reportId,
+    public Response<Void> processReport(@PathVariable String reportId,
                                         @Valid @RequestBody ReportProcessRequestDTO request) {
         requireAuditor();
         reportCase.processReport(reportId, request.getAction(), SecurityUtils.currentUserId());
@@ -153,7 +153,7 @@ public class ModerationController implements IModerationService {
 
     @Override
     @PostMapping("/tasks/{taskId}/release")
-    public Response<Void> releaseTask(@PathVariable Long taskId,
+    public Response<Void> releaseTask(@PathVariable String taskId,
                                       @RequestBody(required = false) ReviewTaskReleaseRequestDTO request) {
         requireAuditor();
         String reason = request == null ? null : request.getReason();
@@ -163,7 +163,7 @@ public class ModerationController implements IModerationService {
 
     @Override
     @PostMapping("/tasks/{taskId}/decide")
-    public Response<Void> decideTask(@PathVariable Long taskId,
+    public Response<Void> decideTask(@PathVariable String taskId,
                                      @Valid @RequestBody ReviewTaskDecideRequestDTO request) {
         requireAuditor();
         // 动作走既有枚举解析（非法动作 PARAM_ERROR），与遗留审核入口同口径
@@ -175,7 +175,7 @@ public class ModerationController implements IModerationService {
 
     @Override
     @GetMapping("/tasks/{taskId}")
-    public Response<ReviewTaskDetailResponseDTO> reviewTaskDetail(@PathVariable Long taskId) {
+    public Response<ReviewTaskDetailResponseDTO> reviewTaskDetail(@PathVariable String taskId) {
         requireAuditor();
         return Response.ok(toTaskDetailResponseDTO(reviewService.reviewTaskDetail(taskId)));
     }
@@ -285,7 +285,7 @@ public class ModerationController implements IModerationService {
     /** 领单结果 DTO 装配：工单定位 + 租约/轮次派单态（内容素材前端再走 GET /tasks/{taskId}） */
     private ReviewTaskClaimResponseDTO toClaimResponseDTO(ReviewTaskEntity taskEntity) {
         ReviewTaskClaimResponseDTO dto = new ReviewTaskClaimResponseDTO();
-        dto.setTaskId(taskEntity.getId());
+        dto.setTaskId(taskEntity.getTaskId());
         dto.setTargetType(taskEntity.getTargetType().name());
         dto.setTargetId(taskEntity.getTargetId());
         dto.setReviewRound(taskEntity.getReviewRound());
@@ -301,7 +301,7 @@ public class ModerationController implements IModerationService {
     /** 工单详情聚合 DTO 装配：工单态 + 素材（通用列/类型专属上下文）+ 两路历史裁决 */
     private ReviewTaskDetailResponseDTO toTaskDetailResponseDTO(ReviewTaskDetailEntity detailEntity) {
         ReviewTaskDetailResponseDTO dto = new ReviewTaskDetailResponseDTO();
-        dto.setTaskId(detailEntity.getTask().getId());
+        dto.setTaskId(detailEntity.getTask().getTaskId());
         dto.setTargetType(detailEntity.getTask().getTargetType().name());
         dto.setTargetId(detailEntity.getTask().getTargetId());
         dto.setReviewRound(detailEntity.getTask().getReviewRound());
@@ -326,7 +326,7 @@ public class ModerationController implements IModerationService {
 
     private ReviewHistoryItemResponseDTO toHistoryItemDTO(ContentReviewEntity reviewEntity) {
         ReviewHistoryItemResponseDTO dto = new ReviewHistoryItemResponseDTO();
-        dto.setReviewId(reviewEntity.getId());
+        dto.setReviewId(reviewEntity.getReviewId());
         dto.setTargetType(reviewEntity.getTargetType() == null ? null : reviewEntity.getTargetType().name());
         dto.setTargetId(reviewEntity.getTargetId());
         dto.setReviewRound(reviewEntity.getReviewRound());
@@ -340,7 +340,7 @@ public class ModerationController implements IModerationService {
 
     private ReportResponseDTO toReportResponseDTO(ContentReportEntity reportEntity) {
         ReportResponseDTO dto = new ReportResponseDTO();
-        dto.setId(reportEntity.getId());
+        dto.setId(reportEntity.getReportId());
         dto.setTargetType(reportEntity.getTargetType().name());
         dto.setTargetId(reportEntity.getTargetId());
         dto.setAuthorId(reportEntity.getAuthorId());

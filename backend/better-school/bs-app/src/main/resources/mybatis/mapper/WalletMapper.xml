@@ -2,16 +2,11 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.betterschool.infrastructure.dao.wallet.IWalletDao">
 
-    <insert id="insertIgnore" parameterType="com.betterschool.infrastructure.dao.wallet.po.VirtualWalletPO"
-            useGeneratedKeys="true" keyProperty="id">
+    <!-- wallet_id 业务 ID（UUID 字符串）由应用层 IIdGenerator 随 insert 一次写入（uuid-biz-id 票 06） -->
+    <insert id="insertIgnore" parameterType="com.betterschool.infrastructure.dao.wallet.po.VirtualWalletPO">
         INSERT IGNORE INTO virtual_wallet (wallet_id, user_id, balance, frozen_amount, create_time, update_time)
-        VALUES (0, #{userId}, #{balance}, #{frozenAmount}, #{createTime}, #{updateTime})
+        VALUES (#{walletId}, #{userId}, #{balance}, #{frozenAmount}, #{createTime}, #{updateTime})
     </insert>
-
-    <!-- 业务 ID 回写：wallet_id = id（同事务，见 sql.md 主键口径） -->
-    <update id="bindBizId">
-        UPDATE virtual_wallet SET wallet_id = id WHERE id = #{id} AND wallet_id = 0
-    </update>
 
     <select id="selectByUserId" resultType="com.betterschool.infrastructure.dao.wallet.po.VirtualWalletPO">
         SELECT id, wallet_id, user_id, balance, frozen_amount, create_time, update_time
@@ -43,8 +38,7 @@
 
     <!-- 流水先行：uk_order_type(order_id, type, biz_round, user_id) 冲突 → INSERT IGNORE 影响 0 行 = 该操作已执行过（幂等跳过）；
          biz_round 支撑同一订单同类型多轮合法资金操作（预留），当前业务恒 0 -->
-    <insert id="insertIgnoreDetail" parameterType="com.betterschool.infrastructure.dao.wallet.po.WalletDetailPO"
-            useGeneratedKeys="true" keyProperty="id">
+    <insert id="insertIgnoreDetail" parameterType="com.betterschool.infrastructure.dao.wallet.po.WalletDetailPO">
         INSERT IGNORE INTO wallet_detail (wallet_id, user_id, type, amount, order_id, biz_round, create_time, update_time)
         SELECT wallet_id, user_id, #{type}, #{amount}, #{orderId}, #{bizRound}, #{createTime}, #{updateTime}
         FROM virtual_wallet

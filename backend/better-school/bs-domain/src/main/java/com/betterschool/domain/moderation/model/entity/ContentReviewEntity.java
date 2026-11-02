@@ -11,7 +11,8 @@ import java.time.LocalDateTime;
 @Data
 public class ContentReviewEntity {
 
-    private Long id;
+    /** 业务 ID（review_id，UUID 字符串，uuid-biz-id 票 06） */
+    private String reviewId;
     private ReviewTargetTypeVO targetType;
     private String targetId;
     /** 作者用户 ID（冗余；对齐 content_report.author_id，按作者聚合历史裁决免反查业务表） */

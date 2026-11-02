@@ -10,6 +10,7 @@ import com.betterschool.infrastructure.dao.notification.INotificationDao;
 import com.betterschool.infrastructure.dao.notification.po.NotificationPO;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
 import com.betterschool.types.common.Constants;
+import com.betterschool.types.id.IIdGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -25,6 +26,8 @@ public class NotificationRepository implements INotificationRepository {
     private final OutboxMessageStore outboxMessageStore;
     private final IBroadcastRecipientPort broadcastRecipientPort;
     private final TransactionTemplate transactionTemplate;
+    /** 业务 ID 发号器（notification_id UUID，uuid-biz-id 票 06） */
+    private final IIdGenerator idGenerator;
 
     @Override
     public List<NotificationEntity> pageList(String userId, NotificationScopeVO scope, int offset, int limit) {
@@ -100,16 +103,16 @@ public class NotificationRepository implements INotificationRepository {
         notificationDao.upsertIncreaseSeq(notificationEntity.getUserId(), scope);
         notificationEntity.setSeq(notificationDao.selectSeq(notificationEntity.getUserId(), scope));
         NotificationPO notificationPO = toPO(notificationEntity);
+        if (notificationPO.getNotificationId() == null) {
+            // 业务 ID 随 insert 一次写入（uuid-biz-id 票 06）；撞 uk_dedup 被 IGNORE 时本行未落库，发号作废无害
+            notificationPO.setNotificationId(idGenerator.nextId());
+        }
         if (notificationEntity.getDedupKey() != null) {
             notificationDao.insertIgnore(notificationPO);
         } else {
             notificationDao.insert(notificationPO);
         }
-        // 业务 ID 与物理自增同值：同事务回写（撞 uk_dedup 被 IGNORE 时无生成键，实体保持未落库态）
-        if (notificationPO.getId() != null) {
-            notificationDao.bindBizId(notificationPO.getId());
-            notificationEntity.setId(notificationPO.getId());
-        }
+        notificationEntity.setNotificationId(notificationPO.getNotificationId());
     }
 
     private NotificationPO toPO(NotificationEntity notificationEntity) {
@@ -133,7 +136,7 @@ public class NotificationRepository implements INotificationRepository {
 
     private NotificationEntity toEntity(NotificationPO notificationPO) {
         NotificationEntity notificationEntity = new NotificationEntity();
-        notificationEntity.setId(notificationPO.getNotificationId());
+        notificationEntity.setNotificationId(notificationPO.getNotificationId());
         notificationEntity.setUserId(notificationPO.getUserId());
         notificationEntity.setScope(NotificationScopeVO.valueOf(notificationPO.getScope()));
         notificationEntity.setSeq(notificationPO.getSeq());

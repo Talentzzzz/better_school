@@ -9,7 +9,8 @@ import java.time.LocalDateTime;
 public class WalletDetailPO {
 
     private Long id;
-    private Long walletId;
+    /** 钱包业务 ID（UUID 字符串，uuid-biz-id 票 06） */
+    private String walletId;
     private String userId;
     private String type;
     private BigDecimal amount;

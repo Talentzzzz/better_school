@@ -8,7 +8,8 @@ import java.time.LocalDateTime;
 @Data
 public class ReportResponseDTO {
 
-    private Long id;
+    /** 举报单业务 ID（UUID 字符串，uuid-biz-id 票 06） */
+    private String id;
     /** 举报对象 POST/COMMENT/USER */
     private String targetType;
     private String targetId;

@@ -115,10 +115,10 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
         assertSuccess(postJson("/api/moderation/review",
                 Map.of("targetType", "PRODUCT", "targetId", productId, "action", "REJECT",
                         "reasonCode", "OTHER", "supplement", "图片与实物不符"), admin), "轮1拒绝");
-        long round1TaskId = taskIdOf("PRODUCT", productId);
+        String round1TaskId = taskIdOf("PRODUCT", productId);
         assertSuccess(postJson("/api/trade/products/" + productId + "/to-draft", null, author), "被拒转草稿");
         assertSuccess(postJson("/api/trade/products/" + productId + "/submit", null, author), "重提");
-        long round2TaskId = taskIdOf("PRODUCT", productId);
+        String round2TaskId = taskIdOf("PRODUCT", productId);
         assertThat(round2TaskId).as("重提 = 新轮次 = 新工单行").isNotEqualTo(round1TaskId);
 
         // 轮 2 在途时详情：历轮已有轮 1 的拒绝记录
@@ -177,7 +177,7 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
 
         // 用真实存在的工单验证越权：作者自己发的跑腿单的工单 id
         String orderId = createPaidOrder(author);
-        long taskId = taskIdOf("ERRAND", orderId);
+        String taskId = taskIdOf("ERRAND", orderId);
         JsonNode forbidden = getJson("/api/moderation/tasks/" + taskId, author);
         assertThat(forbidden.path("code").asText()).as("普通用户不可读工单详情").isEqualTo("403");
     }
@@ -185,17 +185,17 @@ class ReviewTaskDetailIntegrationTest extends CommunityApiTestBase {
     // ---------- 工具 ----------
 
     /** 详情取数入口：GET /api/moderation/tasks/{taskId} */
-    private JsonNode taskDetail(Session admin, long taskId) {
+    private JsonNode taskDetail(Session admin, String taskId) {
         JsonNode response = getJson("/api/moderation/tasks/" + taskId, admin);
         assertSuccess(response, "工单详情");
         return response.path("data");
     }
 
-    /** 按类型 + 内容定位最新一轮工单 id */
-    private long taskIdOf(String targetType, String targetId) {
-        Long taskId = jdbcTemplate.queryForObject(
-                "SELECT id FROM review_task WHERE target_type = ? AND target_id = ? " +
-                        "ORDER BY review_round DESC LIMIT 1", Long.class, targetType, targetId);
+    /** 按类型 + 内容定位最新一轮工单业务键 task_id（UUID 字符串，uuid-biz-id 票 06） */
+    private String taskIdOf(String targetType, String targetId) {
+        String taskId = jdbcTemplate.queryForObject(
+                "SELECT task_id FROM review_task WHERE target_type = ? AND target_id = ? " +
+                        "ORDER BY review_round DESC LIMIT 1", String.class, targetType, targetId);
         assertThat(taskId).as("%s/%s 应已开单", targetType, targetId).isNotNull();
         return taskId;
     }

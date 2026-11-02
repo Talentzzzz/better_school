@@ -302,15 +302,15 @@ public abstract class CommunityApiTestBase {
 
     /**
      * 按类型领单并断言领到的正是目标内容的在途工单（票 08/09 审核流程夹具：裁决前必须先领单——
-     * 遗留入口已收口为反查持有人在途工单），返回 taskId
+     * 遗留入口已收口为反查持有人在途工单），返回工单业务键 taskId（UUID 字符串，uuid-biz-id 票 06）
      */
-    protected long claimTaskOf(Session auditor, String targetType, String targetId) {
+    protected String claimTaskOf(Session auditor, String targetType, String targetId) {
         JsonNode claimed = postJson("/api/moderation/tasks/claim", Map.of("targetType", targetType), auditor);
         assertSuccess(claimed, "领单");
         assertThat(claimed.path("data").path("targetType").asText()).isEqualTo(targetType);
         assertThat(claimed.path("data").path("targetId").asText()).isEqualTo(targetId);
         assertThat(claimed.path("data").path("claimState").asText()).isEqualTo("CLAIMED");
-        return claimed.path("data").path("taskId").asLong();
+        return claimed.path("data").path("taskId").asText();
     }
 
     /** 统一裁决 operatorId 哨兵（评论由人工裁决，测试放一把通过/拒绝不校验具体审核员） */

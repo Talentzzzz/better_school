@@ -95,11 +95,12 @@ public class ChatRecallReportIntegrationTest extends CommunityApiTestBase {
         JsonNode submit = postJson("/api/moderation/reports",
                 Map.of("targetType", "MESSAGE", "targetId", messageId, "reason", "涉嫌诈骗导流"), sessionB);
         assertSuccess(submit, "举报消息");
-        long reportId = submit.path("data").asLong();
+        String reportId = submit.path("data").asText();
+        assertUuidId(reportId);
 
-        assertThat(queryString("SELECT target_type FROM content_report WHERE id = " + reportId)).isEqualTo("MESSAGE");
-        assertThat(queryString("SELECT author_id FROM content_report WHERE id = " + reportId)).isEqualTo(sessionA.userId());
-        assertThat(queryString("SELECT content_snapshot FROM content_report WHERE id = " + reportId)).isEqualTo("加我微信拉你进群");
+        assertThat(queryString("SELECT target_type FROM content_report WHERE report_id = '" + reportId + "'")).isEqualTo("MESSAGE");
+        assertThat(queryString("SELECT author_id FROM content_report WHERE report_id = '" + reportId + "'")).isEqualTo(sessionA.userId());
+        assertThat(queryString("SELECT content_snapshot FROM content_report WHERE report_id = '" + reportId + "'")).isEqualTo("加我微信拉你进群");
 
         // 一人一消息一单（uk_reporter_target INSERT IGNORE）
         assertSuccess(postJson("/api/moderation/reports",
@@ -147,7 +148,7 @@ public class ChatRecallReportIntegrationTest extends CommunityApiTestBase {
         JsonNode submit = postJson("/api/moderation/reports",
                 Map.of("targetType", "MESSAGE", "targetId", messageId, "reason", "虚假卡片"), sessionB);
         assertSuccess(submit, "举报卡片消息");
-        assertThat(queryString("SELECT content_snapshot FROM content_report WHERE id = " + submit.path("data").asText()))
+        assertThat(queryString("SELECT content_snapshot FROM content_report WHERE report_id = '" + submit.path("data").asText() + "'"))
                 .as("CARD 存 ref 标识").isEqualTo("CARD:POST#" + postId);
     }
 
@@ -160,7 +161,7 @@ public class ChatRecallReportIntegrationTest extends CommunityApiTestBase {
         assertSuccess(postJson("/api/chat/rooms/" + roomId + "/messages/1/recall", Map.of(), sessionA), "自行撤回");
         JsonNode submit = postJson("/api/moderation/reports",
                 Map.of("targetType", "MESSAGE", "targetId", messageId, "reason", "撤回也追责"), sessionB);
-        long reportId = submit.path("data").asLong();
+        String reportId = submit.path("data").asText();
 
         Session auditor = auditorLogin("13800003004", "审核员乙");
         assertSuccess(postJson("/api/moderation/reports/" + reportId + "/process", Map.of("action", "PROCESSED"), auditor), "处理已撤回消息");

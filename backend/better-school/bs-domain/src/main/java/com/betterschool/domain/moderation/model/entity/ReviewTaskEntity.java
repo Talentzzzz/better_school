@@ -13,7 +13,8 @@ import java.time.LocalDateTime;
 @Data
 public class ReviewTaskEntity {
 
-    private Long id;
+    /** 业务 ID（task_id，UUID 字符串，uuid-biz-id 票 06） */
+    private String taskId;
     /** 内容类型 POST/COMMENT/PRODUCT/ERRAND（ReviewTargetTypeVO 可审值） */
     private ReviewTargetTypeVO targetType;
     private String targetId;
@@ -27,7 +28,7 @@ public class ReviewTaskEntity {
     private String claimState;
     /** 当前持单人（审核员用户 ID，PENDING/DONE 为空） */
     private String claimBy;
-    /** 领单轮次（每次 claim +1；租约复合 bizId {id}:{claimSeq} 与回调守卫） */
+    /** 领单轮次（每次 claim +1；租约复合 bizId {taskId}:{claimSeq} 与回调守卫） */
     private Integer claimSeq;
     private LocalDateTime leaseExpireAt;
     /** 回收次数（≥3 置 escalated + 告警） */

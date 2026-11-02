@@ -4,7 +4,7 @@
 
     <!-- 已读态照抄 chat 的「序号 + 水位线」读模型（营销票 02）：seq 由 notification_seq 计数器写入事务内取号，
          水位在 notification_read；is_read 不再是表列，读态 = seq ≤ 该范围水位。
-         列口径（sql.md）：id 物理自增，notification_id 业务 ID（对外唯一标识），create_time/update_time 收尾 -->
+         列口径（sql.md）：id 物理自增，notification_id 业务 ID（UUID 字符串，应用层发号随 insert 一次写入，uuid-biz-id 票 06） -->
     <sql id="baseColumns">
         n.id, n.notification_id, n.user_id, n.scope, n.seq, n.sender_id, n.type, n.title, n.content,
         n.ref_type, n.ref_id, n.broadcast_msg_id, n.dedup_key, n.create_time, n.update_time
@@ -38,26 +38,19 @@
 
     <!-- ===== 落库 ===== -->
 
-    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.notification.po.NotificationPO"
-            useGeneratedKeys="true" keyProperty="id">
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.notification.po.NotificationPO">
         INSERT INTO notification (notification_id, user_id, scope, seq, sender_id, type, title, content,
                                   ref_type, ref_id, broadcast_msg_id, create_time, update_time)
-        VALUES (0, #{userId}, #{scope}, #{seq}, #{senderId}, #{type}, #{title}, #{content},
+        VALUES (#{notificationId}, #{userId}, #{scope}, #{seq}, #{senderId}, #{type}, #{title}, #{content},
                 #{refType}, #{refId}, #{broadcastMsgId}, #{createTime}, #{updateTime})
     </insert>
 
-    <insert id="insertIgnore" parameterType="com.betterschool.infrastructure.dao.notification.po.NotificationPO"
-            useGeneratedKeys="true" keyProperty="id">
+    <insert id="insertIgnore" parameterType="com.betterschool.infrastructure.dao.notification.po.NotificationPO">
         INSERT IGNORE INTO notification (notification_id, user_id, scope, seq, sender_id, type, title, content,
                                          ref_type, ref_id, dedup_key, create_time, update_time)
-        VALUES (0, #{userId}, #{scope}, #{seq}, #{senderId}, #{type}, #{title}, #{content},
+        VALUES (#{notificationId}, #{userId}, #{scope}, #{seq}, #{senderId}, #{type}, #{title}, #{content},
                 #{refType}, #{refId}, #{dedupKey}, #{createTime}, #{updateTime})
     </insert>
-
-    <!-- 业务 ID 回写：notification_id = id（同事务，见 sql.md 主键口径） -->
-    <update id="bindBizId">
-        UPDATE notification SET notification_id = id WHERE id = #{id} AND notification_id = 0
-    </update>
 
     <!-- ===== 读路径 ===== -->
 

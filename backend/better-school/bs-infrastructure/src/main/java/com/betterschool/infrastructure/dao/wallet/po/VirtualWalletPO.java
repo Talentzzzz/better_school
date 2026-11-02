@@ -9,7 +9,8 @@ import java.time.LocalDateTime;
 public class VirtualWalletPO {
 
     private Long id;
-    private Long walletId;
+    /** 业务 ID（UUID 字符串；uuid-biz-id 票 06：IIdGenerator 随 insert 一次写入） */
+    private String walletId;
     private String userId;
     private BigDecimal balance;
     private BigDecimal frozenAmount;

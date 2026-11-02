@@ -100,14 +100,14 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
         Session author = registerAndLogin("13800009006", "端到端作者");
         Session auditor = auditorSession("13900009001");
         createPaidOrder(author);
-        long taskId = claim(auditor, null).path("data").path("taskId").asLong();
+        String taskId = claim(auditor, null).path("data").path("taskId").asText();
         String bizId = taskId + ":1";
 
         makeDue(Constants.REVIEW_LEASE_TIMEOUT, bizId);
         scanAll();
 
         Map<String, Object> row = jdbcTemplate.queryForMap(
-                "SELECT claim_state, claim_by, recycle_count FROM review_task WHERE id = ?", taskId);
+                "SELECT claim_state, claim_by, recycle_count FROM review_task WHERE task_id = ?", taskId);
         assertThat(row.get("claim_state")).as("到点回收回池").isEqualTo("PENDING");
         assertThat(row.get("claim_by")).isNull();
         assertThat(((Number) row.get("recycle_count")).intValue()).isEqualTo(1);

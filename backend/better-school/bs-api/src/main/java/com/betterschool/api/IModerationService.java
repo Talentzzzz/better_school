@@ -31,11 +31,11 @@ public interface IModerationService {
      */
     Response<WsTicketResponseDTO> createWsTicket();
 
-    /** 用户举报（帖子/评论/用户；重复举报幂等返回 null） */
-    Response<Long> submitReport(ReportSubmitRequestDTO request);
+    /** 用户举报（帖子/评论/用户；重复举报幂等返回 null）。返回举报单业务 ID（UUID 字符串，uuid-biz-id 票 06） */
+    Response<String> submitReport(ReportSubmitRequestDTO request);
 
-    /** 审核员处理举报（核实 → 下架 + 扣分 + 通知；忽略 → 通知举报人） */
-    Response<Void> processReport(Long reportId, ReportProcessRequestDTO request);
+    /** 审核员处理举报（核实 → 下架 + 扣分 + 通知；忽略 → 通知举报人）。reportId 为举报单业务 ID UUID 字符串 */
+    Response<Void> processReport(String reportId, ReportProcessRequestDTO request);
 
     /**
      * 审核员审核动作（通过/驳回，遗留入口，spec §5.2 收口）：按「类型 + 内容 id + 当前登录用户」反查
@@ -59,19 +59,19 @@ public interface IModerationService {
     Response<ReviewTaskClaimResponseDTO> claimTask(ReviewTaskClaimRequestDTO request);
 
     /** 主动放回（spec §5.2/§5.3：审不了退池 CLAIMED→PENDING，计一次回收；非持有人/已离开 CLAIMED 报错） */
-    Response<Void> releaseTask(Long taskId, ReviewTaskReleaseRequestDTO request);
+    Response<Void> releaseTask(String taskId, ReviewTaskReleaseRequestDTO request);
 
     /**
      * 工单裁决（spec §5.2 强绑定）：仅持有人在租约内可裁——非持有人/工单已被回收 403；
      * 业务行状态流转 + 审核记录落行 + 工单置 DONE 同一事务原子；已 DONE 的重放整体幂等成功、零副作用
      */
-    Response<Void> decideTask(Long taskId, ReviewTaskDecideRequestDTO request);
+    Response<Void> decideTask(String taskId, ReviewTaskDecideRequestDTO request);
 
     /**
      * 工单详情聚合（spec §5.1：内容/配图/作者/进入待审时刻/审核轮次通用列 + 类型专属上下文
      * + 同一内容历轮裁决 + 同一作者历史裁决；纯只读，不改变任何业务行对外可见性）
      */
-    Response<ReviewTaskDetailResponseDTO> reviewTaskDetail(Long taskId);
+    Response<ReviewTaskDetailResponseDTO> reviewTaskDetail(String taskId);
 
     /** 审核对象详情（审核员看全文） */
     Response<ReviewQueueItemResponseDTO> reviewDetail(String targetType, String targetId);

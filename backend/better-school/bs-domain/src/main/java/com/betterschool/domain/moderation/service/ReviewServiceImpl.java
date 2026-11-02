@@ -74,13 +74,13 @@ public class ReviewServiceImpl implements IReviewService {
     }
 
     @Override
-    public void handleLeaseTimeout(long taskId, int claimSeq) {
+    public void handleLeaseTimeout(String taskId, int claimSeq) {
         // 轮次守卫未命中（已裁决/已放回/已按新轮次重领）＝幂等成功零副作用，不报错（同 handlePayTimeout 口径）
         moderationRepository.recycleTaskByRound(taskId, claimSeq);
     }
 
     @Override
-    public void releaseTask(long taskId, String auditorId, String reason) {
+    public void releaseTask(String taskId, String auditorId, String reason) {
         if (!moderationRepository.releaseTask(taskId, auditorId)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "工单已被回收或已裁决，请刷新");
         }
@@ -90,7 +90,7 @@ public class ReviewServiceImpl implements IReviewService {
     }
 
     @Override
-    public ReviewTaskEntity findTask(long taskId) {
+    public ReviewTaskEntity findTask(String taskId) {
         return moderationRepository.findTaskById(taskId);
     }
 
@@ -100,7 +100,7 @@ public class ReviewServiceImpl implements IReviewService {
     }
 
     @Override
-    public boolean closeHeldTask(long taskId, String auditorId) {
+    public boolean closeHeldTask(String taskId, String auditorId) {
         return moderationRepository.closeTaskByHolder(taskId, auditorId);
     }
 
@@ -128,7 +128,7 @@ public class ReviewServiceImpl implements IReviewService {
     }
 
     @Override
-    public ReviewTaskDetailEntity reviewTaskDetail(long taskId) {
+    public ReviewTaskDetailEntity reviewTaskDetail(String taskId) {
         ReviewTaskEntity task = moderationRepository.findTaskById(taskId);
         if (task == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "审核工单不存在");

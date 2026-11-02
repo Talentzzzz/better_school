@@ -20,6 +20,7 @@ import com.betterschool.infrastructure.dao.moderation.po.ReviewTaskPO;
 import com.betterschool.infrastructure.dao.moderation.po.ReviewTaskTargetPO;
 import com.betterschool.infrastructure.dao.moderation.po.SensitiveWordPO;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.betterschool.types.id.IIdGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
@@ -36,6 +37,8 @@ public class ModerationRepository implements IModerationRepository {
     private final IModerationDao moderationDao;
     private final ReviewTaskPoolStore reviewTaskPoolStore;
     private final ObjectMapper objectMapper;
+    /** 业务 ID 发号器（review_id UUID，uuid-biz-id 票 06） */
+    private final IIdGenerator idGenerator;
 
     @Override
     public void saveReview(ContentReviewEntity reviewEntity) {
@@ -54,12 +57,12 @@ public class ModerationRepository implements IModerationRepository {
     }
 
     @Override
-    public boolean recycleTaskByRound(long taskId, int claimSeq) {
+    public boolean recycleTaskByRound(String taskId, int claimSeq) {
         return reviewTaskPoolStore.recycleByRound(taskId, claimSeq);
     }
 
     @Override
-    public boolean releaseTask(long taskId, String claimerId) {
+    public boolean releaseTask(String taskId, String claimerId) {
         return reviewTaskPoolStore.releaseByClaimer(taskId, claimerId);
     }
 
@@ -85,23 +88,25 @@ public class ModerationRepository implements IModerationRepository {
     }
 
     @Override
-    public Long insertIgnoreReport(ContentReportEntity reportEntity) {
+    public String insertIgnoreReport(ContentReportEntity reportEntity) {
         ContentReportPO reportPO = toReportPO(reportEntity);
-        return moderationDao.insertIgnoreReport(reportPO) == 1 ? reportPO.getId() : null;
+        // 业务 ID 随 insert 一次写入（uuid-biz-id 票 06）；撞 uk_reporter_target 被 IGNORE 时本行未落库，发号作废无害
+        reportPO.setReportId(idGenerator.nextId());
+        return moderationDao.insertIgnoreReport(reportPO) == 1 ? reportPO.getReportId() : null;
     }
 
     @Override
-    public boolean processById(Long reportId, String handlerId) {
+    public boolean processById(String reportId, String handlerId) {
         return moderationDao.processById(reportId, handlerId) == 1;
     }
 
     @Override
-    public boolean ignoreById(Long reportId, String handlerId) {
+    public boolean ignoreById(String reportId, String handlerId) {
         return moderationDao.ignoreById(reportId, handlerId) == 1;
     }
 
     @Override
-    public ContentReportEntity findReportById(Long reportId) {
+    public ContentReportEntity findReportById(String reportId) {
         return toReportEntity(moderationDao.selectReportById(reportId));
     }
 
@@ -127,7 +132,7 @@ public class ModerationRepository implements IModerationRepository {
     }
 
     @Override
-    public ReviewTaskEntity findTaskById(long taskId) {
+    public ReviewTaskEntity findTaskById(String taskId) {
         return toTaskEntity(moderationDao.selectTaskById(taskId));
     }
 
@@ -137,7 +142,7 @@ public class ModerationRepository implements IModerationRepository {
     }
 
     @Override
-    public boolean closeTaskByHolder(long taskId, String claimBy) {
+    public boolean closeTaskByHolder(String taskId, String claimBy) {
         return moderationDao.closeByHolder(taskId, claimBy) == 1;
     }
 
@@ -225,7 +230,7 @@ public class ModerationRepository implements IModerationRepository {
 
     private ContentReviewPO toReviewPO(ContentReviewEntity reviewEntity) {
         ContentReviewPO reviewPO = new ContentReviewPO();
-        reviewPO.setId(reviewEntity.getId());
+        reviewPO.setReviewId(idGenerator.nextId());
         reviewPO.setTargetType(reviewEntity.getTargetType().name());
         reviewPO.setTargetId(reviewEntity.getTargetId());
         reviewPO.setAuthorId(reviewEntity.getAuthorId());
@@ -242,7 +247,7 @@ public class ModerationRepository implements IModerationRepository {
 
     private ContentReportPO toReportPO(ContentReportEntity reportEntity) {
         ContentReportPO reportPO = new ContentReportPO();
-        reportPO.setId(reportEntity.getId());
+        reportPO.setReportId(reportEntity.getReportId());
         reportPO.setTargetType(reportEntity.getTargetType().name());
         reportPO.setTargetId(reportEntity.getTargetId());
         reportPO.setAuthorId(reportEntity.getAuthorId());
@@ -260,7 +265,7 @@ public class ModerationRepository implements IModerationRepository {
             return null;
         }
         ContentReportEntity reportEntity = new ContentReportEntity();
-        reportEntity.setId(reportPO.getId());
+        reportEntity.setReportId(reportPO.getReportId());
         reportEntity.setTargetType(ReviewTargetTypeVO.from(reportPO.getTargetType()));
         reportEntity.setTargetId(reportPO.getTargetId());
         reportEntity.setAuthorId(reportPO.getAuthorId());
@@ -314,7 +319,7 @@ public class ModerationRepository implements IModerationRepository {
             return null;
         }
         ReviewTaskEntity taskEntity = new ReviewTaskEntity();
-        taskEntity.setId(taskPO.getId());
+        taskEntity.setTaskId(taskPO.getTaskId());
         taskEntity.setTargetType(ReviewTargetTypeVO.from(taskPO.getTargetType()));
         taskEntity.setTargetId(taskPO.getTargetId());
         taskEntity.setReviewRound(taskPO.getReviewRound() == null ? 1 : taskPO.getReviewRound());
@@ -359,7 +364,7 @@ public class ModerationRepository implements IModerationRepository {
             return null;
         }
         ContentReviewEntity reviewEntity = new ContentReviewEntity();
-        reviewEntity.setId(reviewPO.getId());
+        reviewEntity.setReviewId(reviewPO.getReviewId());
         reviewEntity.setTargetType(ReviewTargetTypeVO.from(reviewPO.getTargetType()));
         reviewEntity.setTargetId(reviewPO.getTargetId());
         reviewEntity.setAuthorId(reviewPO.getAuthorId());

@@ -52,18 +52,18 @@ public interface IReviewService {
      * 租约超时回调回收（spec §5.3）：按 claimSeq 轮次守卫条件 UPDATE 回 PENDING、清持单人、recycle_count+1；
      * 命中 0 行（已裁决/已放回/已按新轮次重领）＝幂等成功零副作用（不报错）；达阈值置 escalated 并告警
      */
-    void handleLeaseTimeout(long taskId, int claimSeq);
+    void handleLeaseTimeout(String taskId, int claimSeq);
 
     /**
      * 主动放回（spec §5.2/§5.3）：审不了退池 CLAIMED→PENDING、recycle_count+1（与租约回收同口径计数）；
      * 非持有人/已裁决/已回收抛 BUSINESS_ERROR。reason 为审核员填的放回原因（可空，仅记录日志不落库）
      */
-    void releaseTask(long taskId, String auditorId, String reason);
+    void releaseTask(String taskId, String auditorId, String reason);
 
     /**
-     * 工单按 id 载入（裁决用例断言入口；不存在返回 null）
+     * 工单按业务键 task_id 载入（裁决用例断言入口；不存在返回 null）
      */
-    ReviewTaskEntity findTask(long taskId);
+    ReviewTaskEntity findTask(String taskId);
 
     /**
      * 反查当前审核员持有的在途工单（spec §5.2 遗留入口收口）：按「类型 + 内容 id + 持有人」取
@@ -72,10 +72,10 @@ public interface IReviewService {
     ReviewTaskEntity findHeldTask(ReviewTargetTypeVO targetType, String targetId, String auditorId);
 
     /**
-     * 持有人守卫关单（spec §5.2 裁决收口 ③）：本工单 CLAIMED→DONE + 写裁决时刻，双守卫 id + claim_by；
+     * 持有人守卫关单（spec §5.2 裁决收口 ③）：本工单 CLAIMED→DONE + 写裁决时刻，双守卫 task_id + claim_by；
      * 命中 0 行（租约已回收/已按他人手裁决/非持有人）返回 false，由调用方分流幂等与冲突
      */
-    boolean closeHeldTask(long taskId, String auditorId);
+    boolean closeHeldTask(String taskId, String auditorId);
 
     /** 审核队列：读 review_task 工单池（claim_state=PENDING + 类型过滤 + entered_at FIFO；targetType null = 跨类型） */
     List<ReviewQueueItemEntity> listReviewQueue(ReviewTargetTypeVO targetType, int page, int pageSize);
@@ -91,7 +91,7 @@ public interface IReviewService {
      * 纯只读聚合，不改变任何业务行状态与对外可见性（工单不承载可见性）；
      * 工单不存在或内容已不存在抛 NOT_FOUND
      */
-    ReviewTaskDetailEntity reviewTaskDetail(long taskId);
+    ReviewTaskDetailEntity reviewTaskDetail(String taskId);
 
     /** 拒绝理由（content_review.action=REJECT 的 reason，无记录返回 null） */
     String rejectReason(ReviewTargetTypeVO targetType, String targetId);

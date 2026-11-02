@@ -39,7 +39,7 @@ public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
     /**
      * {@code taskType → 到期动作}。{@code bizId} 的形状**按 taskType 各自解析**：
      * 支付超时是 UUID 字符串订单业务 id（直传，uuid-biz-id 票 05），
-     * 锁单/租约超时是复合键 {@code {uuid}:{seq}}（锁单）与 {@code {taskId}:{claimSeq}}（租约，物理自增）。
+     * 锁单/租约超时是复合键 {@code {uuid}:{seq}}（锁单）与 {@code {taskId}:{claimSeq}}（租约，taskId 亦 UUID 字符串，uuid-biz-id 票 06）。
      */
     @Override
     public void callback(TimeoutTaskEntity task) {
@@ -53,7 +53,7 @@ public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
             case Constants.REVIEW_LEASE_TIMEOUT -> {
                 // 审核租约回收：轮次守卫条件 UPDATE，未命中（已裁决/已放回/已按新轮次重领）＝幂等成功零副作用
                 CompositeBizId leaseBizId = parseCompositeBizId(task, "{taskId}:{claimSeq}");
-                reviewService.handleLeaseTimeout(Long.parseLong(leaseBizId.id()), leaseBizId.seq());
+                reviewService.handleLeaseTimeout(leaseBizId.id(), leaseBizId.seq());
             }
             // 业务侧不认识这个 taskType = 注册与消费的代码不一致（如改了 Constants 取值），
             // 按失败重投直到进死信，在管理面显式暴露，不静默吞掉
@@ -61,7 +61,7 @@ public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
         }
     }
 
-    /** 复合 bizId：{id}:{seq}（锁单超时 = orderId:lockSeq，orderId 是 UUID 字符串；审核租约超时 = taskId:claimSeq，taskId 是物理自增） */
+    /** 复合 bizId：{id}:{seq}（锁单超时 = orderId:lockSeq，审核租约超时 = taskId:claimSeq；两段 id 均为 UUID 字符串，uuid-biz-id 票 05/06，UUID 无冒号不影响拆分） */
     private record CompositeBizId(String id, int seq) {
     }
 

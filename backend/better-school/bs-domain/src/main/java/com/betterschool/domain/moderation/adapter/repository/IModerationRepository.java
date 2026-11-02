@@ -31,10 +31,10 @@ public interface IModerationRepository {
     ReviewTaskEntity claimTask(String targetType, String claimerId, int leaseMinutes);
 
     /** 租约超时回调回收（claimSeq 轮次守卫）：回 PENDING 清持单人 recycle_count+1；0 行＝幂等，返回 false */
-    boolean recycleTaskByRound(long taskId, int claimSeq);
+    boolean recycleTaskByRound(String taskId, int claimSeq);
 
     /** 主动放回（持有人守卫）：CLAIMED→PENDING recycle_count+1；0 行＝非持有人/已离开 CLAIMED，返回 false */
-    boolean releaseTask(long taskId, String claimerId);
+    boolean releaseTask(String taskId, String claimerId);
 
     /** 各类型积压计数（review_task claim_state=PENDING 按类型分组；key=类型名） */
     Map<String, Long> countBacklogByType();
@@ -42,16 +42,16 @@ public interface IModerationRepository {
     /** 待审等待统计（票 11 可观测）：PENDING 行数 / 平均等待秒 / 最老等待秒（池空全 0） */
     ReviewPendingWaitStats pendingWaitStats();
 
-    /** 举报单（uk(reporter,target) 幂等）：返回单 id，重复举报返回 null */
-    Long insertIgnoreReport(ContentReportEntity reportEntity);
+    /** 举报单（uk(reporter,target) 幂等）：返回举报单业务 ID（UUID 字符串），重复举报返回 null */
+    String insertIgnoreReport(ContentReportEntity reportEntity);
 
     /** 核实：PENDING → PROCESSED，返回影响行数（1=本次刚核实） */
-    boolean processById(Long reportId, String handlerId);
+    boolean processById(String reportId, String handlerId);
 
     /** 忽略：PENDING → IGNORED，返回影响行数 */
-    boolean ignoreById(Long reportId, String handlerId);
+    boolean ignoreById(String reportId, String handlerId);
 
-    ContentReportEntity findReportById(Long reportId);
+    ContentReportEntity findReportById(String reportId);
 
     /** 同 target 所有举报单是否已产生过 REPORT_CONFIRMED 流水（直查 user_credit_detail，一内容一罚判定） */
     boolean existsProcessedCreditLog(String authorId, String targetType, String targetId);
@@ -62,8 +62,8 @@ public interface IModerationRepository {
 
     ReviewQueueItemEntity findReviewDetail(String targetType, String targetId);
 
-    /** 工单按 id 定位（详情聚合入口；不存在返回 null） */
-    ReviewTaskEntity findTaskById(long taskId);
+    /** 工单按业务键定位（详情聚合入口；不存在返回 null） */
+    ReviewTaskEntity findTaskById(String taskId);
 
     /** 反查审核员持有的在途工单（claim_by=我 且 claim_state='CLAIMED'；未持有返回 null） */
     ReviewTaskEntity findHeldTaskByTarget(String targetType, String targetId, String claimBy);
@@ -72,7 +72,7 @@ public interface IModerationRepository {
      * 持有人守卫关单（裁决收口）：本工单 CLAIMED→DONE + decided_at，双守卫 id + claim_by；
      * 命中 0 行（租约已回收/非持有人）返回 false
      */
-    boolean closeTaskByHolder(long taskId, String claimBy);
+    boolean closeTaskByHolder(String taskId, String claimBy);
 
     /** 工单内容素材按类型分支直查（通用列 + 类型专属上下文；业务行已删/不存在返回 null） */
     ReviewTargetDetailEntity findTargetDetail(String targetType, String targetId);

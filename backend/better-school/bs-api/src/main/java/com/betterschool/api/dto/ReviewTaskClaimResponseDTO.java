@@ -13,7 +13,8 @@ import java.time.LocalDateTime;
 @Data
 public class ReviewTaskClaimResponseDTO {
 
-    private Long taskId;
+    /** 工单业务 ID（UUID 字符串，uuid-biz-id 票 06） */
+    private String taskId;
 
     /** 内容类型 POST/COMMENT/PRODUCT/ERRAND */
     private String targetType;

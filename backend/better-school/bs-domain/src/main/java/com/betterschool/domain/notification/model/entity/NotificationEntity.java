@@ -9,7 +9,8 @@ import java.time.LocalDateTime;
 @Data
 public class NotificationEntity {
 
-    private Long id;
+    /** 业务 ID（notification_id，UUID 字符串，uuid-biz-id 票 06） */
+    private String notificationId;
     private String userId;
     /** 收件范围（生产点显式标注，见 NotificationScopeVO） */
     private NotificationScopeVO scope;
