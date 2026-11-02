@@ -8,25 +8,23 @@ Blocked by: 02
 
 23 个消费者（约 460 条平台线程）最终采用什么线程模型？待[票 02](02-research-rocketmq-consumer-executor.md) 调研定案后 grilling 拍板：
 
-1. **整体换池 vs 只修孤例**：把并发消费线程池整体换成虚拟线程（按票 02 给出的可替换点），还是只把 `AgentReviewDispatchConsumer` 那 120s 阻塞从消费线程上挪走？两者的收益与代价对齐
+1. **整体换池 vs 只修孤例**：把并发消费线程池整体换成虚拟线程（按票 02 给出的可替换点），还是只把一个同步阻塞型消费者那 120s 阻塞从消费线程上挪走？两者的收益与代价对齐
 2. **若整体换**：怎么落地（自研容器 / SPI / 配置）、`consumeThreadNumber` 的语义怎么收场、ack 与重试语义是否不变
 3. **若不换**：写清理由（是「不满足选点规则」还是「代价不成比例」），并给出**可回收的触发条件**
-4. **孤例热点的具体改法**（无论整体换不换都要定）：`AgentReviewDispatchConsumer` 的阻塞怎么消——消费者内开虚拟线程 fan-out / 按耗时分层 topic / 改拉取型
+4. **孤例热点的具体改法**（无论整体换不换都要定）：一个同步阻塞型消费者的阻塞怎么消——消费者内开虚拟线程 fan-out / 按耗时分层 topic / 改拉取型
 5. **长连接类消费者**（4 个走 WS 发送的：`ChatPushConsumer` / `ChatReadPushConsumer` / `ChatRecallPushConsumer` / `NotificationBroadcastConsumer`）与[票 09](09-grill-websocket-fanout.md) 的裁决对齐，避免两处打架
 
 结论落 spec 的「消息消费」节。
 
 ## Answer
 
-**一句话：23 个消费者的消费线程池整体换成虚拟线程（4 工程统一，自己接线——同包子类覆写 `submitConsumeRequest`）；并发上限不再由 `consumeThreadNumber` 表达，改由 client 自己的 `pullThresholdForQueue` 表达；孤例 `AgentReviewDispatchConsumer` 不再单列；WS 扇出口径整体归[票 09](09-grill-websocket-fanout.md)。**
+**一句话：23 个消费者的消费线程池整体换成虚拟线程（4 工程统一，自己接线——同包子类覆写 `submitConsumeRequest`）；并发上限不再由 `consumeThreadNumber` 表达，改由 client 自己的 `pullThresholdForQueue` 表达；孤例（一个同步阻塞型消费者）不再单列；WS 扇出口径整体归[票 09](09-grill-websocket-fanout.md)。**
 
-### 事实自核：票面与研究稿的三处前提修正
+### 事实自核：票面与研究稿的前提修正
 
 | # | 票面/研究稿的写法 | 实测 | 出处 |
 | --- | --- | --- | --- |
 | 1 | 「4 个走 WS 发送的消费者」（票面 ⑤、[研究 §1](../research/02-rocketmq-consumer-executor.md)、票 09 问 ④） | **3 个**：`ChatPushConsumer` / `ChatReadPushConsumer` / `ChatRecallPushConsumer`。`NotificationBroadcastConsumer` **不走 WS**——它只调 `notificationRepository.insertBroadcast`，在**一个事务里对全量用户逐行 insert**（`NotificationRepository.java:82-97`） | `ChatWsPushService.broadcast`（`ChatWsPushService.java:59-72`）是唯一 WS 扇出点，只有三个 chat 消费者引用它 |
-| 2 | 孤例按「最长 120s 阻塞」描述 | 120s 只是**读超时上限**，实际阻塞时长 = LLM 真实裁决耗时（⚠️ **本仓无实测值**；ADR-0005 的选型为 Qwen3-VL/GLM-4.6V + LangGraph 多步图编排 ⇒ 不可能是毫秒级，但量级未测）——`POST /review-task` 是**同步裁决** | `.scratch/agent-review/spec.md:30`「Java 消费者：组装作者档案 → POST Python /review-task（同步等待，带超时）」、`:55`「端点：`POST /review-task`（同步裁决，超时约 120s）、`GET /health`。」、`application.yml:66`「同步裁决超时（超时视为本次失败交 MQ 重试，耗尽转人工）」 |
-| 3 | [研究 §7](../research/02-rocketmq-consumer-executor.md) 方案 B「消费者内 VT fan-out」 | **当前参数下没有对象**：`consumeMessageBatchMaxSize=1`（注解默认）⇒ 每个 `ConsumeRequest` 只带一条消息，fan-out 出不了并发。要生效必须调大 batch，代价是**整批 ACK 耦合**（容器的并发监听器对整批只返回一个 `ConsumeConcurrentlyStatus`） | 研究 §2.2 注解默认值表 + `submitConsumeRequest` 源码 :187-224 |
 
 ### 票面 ① 整体换 vs 只修孤例：**整体换**
 
@@ -43,7 +41,7 @@ Blocked by: 02
 | 方案 | 判定 |
 | --- | --- |
 | 升级 client 到含 `setConsumeExecutor` 的版本 | ❌ 该能力只在 develop（PR #11090）；最新**发布**版 5.5.1 无此字段（本轮复核 `repo1.maven.org` 元数据），本仓引 `5.6.0-SNAPSHOT` 不划算 |
-| 自研整个 `ConsumeMessageService` | ❌ 要改写整个服务实现（`ConsumeRequest` + submit + `processConsumeResult` + 发回 + 超时阀门 + stats，合计 ~300 行，纯风险）。注：研究 §3.3/§7 说的「抄 70 行」只指其中 `processConsumeResult` 一段，与本行的 ~300 行不矛盾 |
+| 自研整个 `ConsumeMessageService` | ❌ 要改写整个服务实现（`ConsumeRequest` + submit + `processConsumeResult` + 发回 + 超时阀门 + stats，合计 ~300 行，纯风险）。注：研究 §3.3 说的「抄 70 行」只指其中 `processConsumeResult` 一段，与本行的 ~300 行不矛盾 |
 | **同包子类 + 覆写 `submitConsumeRequest`** | ✅ **采用** |
 
 **采用方案的机理（全部一手源码核对）**：executor 是 `private final ThreadPoolExecutor consumeExecutor`（`ConsumeMessageConcurrentlyService.java:57`）⇒ 反射与 setter 都够不着（JDK 21 对 final 实例字段 `Field.set` 抛 `IllegalAccessException`），只能**换整个服务**。而：
@@ -64,13 +62,13 @@ Blocked by: 02
 **并发上限（有界 vs 无界）**：**无界 `Executors.newVirtualThreadPerTaskExecutor()`**（与 `TimeoutTaskScanCase.java:71` 同款）+ **不加信号量**。
 
 - 上限改用 client 自己的流控：`container.getConsumer().setPullThresholdForQueue(N)`（同一个容器 seam 里设），超限走 client 自带的 50ms 延迟重拉，**不阻塞任何线程**。这与票 05 的裁决口径一致（票 05 原文：「连接池是唯一真并发上限，`connection-timeout` 决定慢失败时延」，不加新的 Web 层信号量）。
-- ⚠️ **本票只定"用这个旋钮"，不定 N 的值**（对齐票 05 → 票 07 的分工方式）：默认值 1000 **比 Hikari 池（10）大两个数量级**，换池后必然偏大；N 的具体值落地时按池与下游配额定（锚点是 Hikari 10 与 sidecar 配额，不是"与池同量级"这种说法——那需要算，不是拍）。
+- ⚠️ **本票只定"用这个旋钮"，不定 N 的值**（对齐票 05 → 票 07 的分工方式）：默认值 1000 **比 Hikari 池（10）大两个数量级**，换池后必然偏大；N 的具体值落地时按池与下游配额定（锚点是 Hikari 10 与下游服务配额，不是"与池同量级"这种说法——那需要算，不是拍）。
 - **不用有界的理由（不只是口径一致性）**：有界要自己造拒绝路径——client 的 `submitConsumeRequestLater(ConsumeRequest)` 是 **private 且投回 base 池**（:346-356），无界 executor 则永不 `RejectedExecutionException`、现成路径直接复用；且阻塞式 `acquire` 会卡住整实例唯一的 `PullMessageService`（危险）。
 - **`consumeThreadNumber` 语义收场 = 死参数**：spec 明写「消费并发上限不由它表达，要限流调 `pullThresholdForQueue`」。
 
 ### 票面 ③ 不换的理由与触发条件：**本问因 ① 反转为「换」而作废**
 
-反向留档（供将来回看）：按图绘期选点规则本应判「不换」——20/23 个消费者被 Hikari 池兜死；唯一「若口子存在就该换」的是 `AgentReviewDispatchConsumer`（它的**长阻塞主体是 HTTP 调用**——LLM 裁决，`reviewService.reviewDetail` / `loadAuthorProfile` 两处 DB 读只是毫秒级前置，不构成上限；并发上限真在 20 个槽位）。本票的实际裁决依据是用户口径（开发阶段、能上就上、架构展示面）。
+反向留档（供将来回看）：按图绘期选点规则本应判「不换」——20/23 个消费者被 Hikari 池兜死；唯一「若口子存在就该换」的是一个同步阻塞型消费者（它的**长阻塞主体是 HTTP 调用**，`reviewService.reviewDetail` / `loadAuthorProfile` 两处 DB 读只是毫秒级前置，不构成上限；并发上限真在 20 个槽位）。本票的实际裁决依据是用户口径（开发阶段、能上就上、架构展示面）。
 
 **回退触发条件**（票面 ③ 要求的"可回收"这一面，方向反转后仍成立）：① 若 `pullThresholdForQueue` 收窄后仍实测出现**成批 `SQLTransientConnectionException`→`RECONSUME_LATER` 的池饥饿式重试风暴** ⇒ 把 VT executor 换回固定平台池（接线点不变，改一行）；② 上游发布后按票面 ② 的可回收触发条件收编官方 API。
 
@@ -78,8 +76,7 @@ Blocked by: 02
 
 - **已顺手解决**：20 个槽位不再是并发上限（120s 阻塞在虚拟线程上不 pin，研究 §6），票面说的"占 1/20 槽位"消失。
 - **未解决、且写清不解决**：**位点钉住 120s 是模型固有**（`ProcessQueue.removeMessage` 返回最小未确认 offset，研究 §5.1）——不 ack 就还钉着，虚拟线程化不改善。
-- **专属限流**：该消费者下游是 LLM sidecar（**无池兜底**），无界 VT 会把它打爆 ⇒ 用票面 ② 的 `pullThresholdForQueue` 收到更小值，这是那个旋钮最有用的一处。
-- 排除项：B（batch=1 无对象，见事实自核 3）、C（该 group 只有一个 topic、工作同质、位点不外溢）、D（`DefaultLitePullConsumer` 代价最大且丢注解模型）。
+- **专属限流**：该消费者下游是一个 HTTP 服务（**无池兜底**），无界 VT 会把它打爆 ⇒ 用票面 ② 的 `pullThresholdForQueue` 收到更小值，这是那个旋钮最有用的一处。
 
 ### 票面 ⑤ 长连接类消费者与票 09 对齐
 
@@ -93,7 +90,7 @@ Blocked by: 02
 
 ### 已知风险与两条待办口径（研究 §4/§5 明确要求本票给出）
 
-- **在飞并发抬高后的失败规模**（研究 §4「对票 06 的意义」）：在飞消息数从 ≈20 抬到 `pullThresholdForQueue` 的深度，下游抖动时会**成批同时失败**进入重试阶梯。口径：**两个 client 参数保持默认不动**（`maxReconsumeTimes = -1` ⇒ 并发模式 16 次；重试延迟 `3 + reconsumeTimes` ⇒ 10s→30s→1m→2m→…→2h 递增）。若抖动长于阶梯覆盖的窗口，成批进 `%DLQ%{group}` 是**预期的 at-least-once 行为**（今天 20 并发同样会失败，只是规模小），不是本票引入的新故障模式。⚠️ 例外：`AgentReviewDispatchConsumer` 自己转人工、**不进 DLQ**（研究 §7 附注）。
+- **在飞并发抬高后的失败规模**（研究 §4「对票 06 的意义」）：在飞消息数从 ≈20 抬到 `pullThresholdForQueue` 的深度，下游抖动时会**成批同时失败**进入重试阶梯。口径：**两个 client 参数保持默认不动**（`maxReconsumeTimes = -1` ⇒ 并发模式 16 次；重试延迟 `3 + reconsumeTimes` ⇒ 10s→30s→1m→2m→…→2h 递增）。若抖动长于阶梯覆盖的窗口，成批进 `%DLQ%{group}` 是**预期的 at-least-once 行为**（今天 20 并发同样会失败，只是规模小），不是本票引入的新故障模式。
 - **本 effort 不新增死信监控设施**；spec 记一条「`%DLQ%{group}` 只是 broker 上的 topic、无人看」→ 是否纳入可观测口径由[票 10](10-grill-observability-and-acceptance.md) 定（本票只负责说清"它是既有缺口，不是换虚拟线程引入的"）。
 - **收窄在飞的旋钮**（研究 §4 的另一半：流控会成为新天花板）：按票面 ② 用 `pullThresholdForQueue` 收窄即可，**不动 `pullThresholdSizeForQueue`（100MiB）/ `consumeConcurrentlyMaxSpan`（2000）**——它们与新线程模型无关。
 

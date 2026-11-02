@@ -4,7 +4,7 @@ Blocked by: 02
 
 # 03: 统一裁决用例 decide()——通过发布 / 拒绝打回退款
 
-**What to build:** 抽出 case 层独立裁决用例 `decide(targetType, targetId, approve, reason, operatorId)`，人工（管理员登录态）与未来 agent（系统账号 operatorId）共用同一签名，本次不实现 agent。跑腿订单裁决：通过 → 条件 UPDATE 转 PUBLISHED（幂等，复用既有 recordReview + uk 防重）+ `AUDIT_RESULT` 通知作者；拒绝 → reason 必填，转 REJECTED 终态 + 解冻退款（流水幂等）+ 通知作者（含不通过理由）+ 审核记录落 `content_review.reason`。现有 `ReviewCase` 三类内容（POST/COMMENT/ERRAND）的裁决收敛走此用例或转发，管理端既有审核接口行为不变。
+**What to build:** 抽出 case 层独立裁决用例 `decide(targetType, targetId, approve, reason, operatorId)`，由管理员登录态调用。跑腿订单裁决：通过 → 条件 UPDATE 转 PUBLISHED（幂等，复用既有 recordReview + uk 防重）+ `AUDIT_RESULT` 通知作者；拒绝 → reason 必填，转 REJECTED 终态 + 解冻退款（流水幂等）+ 通知作者（含不通过理由）+ 审核记录落 `content_review.reason`。现有 `ReviewCase` 三类内容（POST/COMMENT/ERRAND）的裁决收敛走此用例或转发，管理端既有审核接口行为不变。
 
 **Status:** done
 
@@ -13,5 +13,5 @@ Blocked by: 02
 - [x] 通过：PENDING_REVIEW → PUBLISHED，对外可见，作者收到通知
 - [x] 拒绝：无 reason 被拒；有 reason 时 → REJECTED + 解冻流水 + 通知含理由
 - [x] 重复裁决幂等（状态条件翻转 + uk 防重），退款不重复
-- [x] 非管理员调用被拒；operatorId 传系统账号可走通（为 agent 预留的约定生效）
+- [x] 非管理员调用被拒
 - [x] 既有 POST/COMMENT 人工审核行为无回归

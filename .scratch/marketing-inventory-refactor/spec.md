@@ -593,15 +593,20 @@ ledger.issued_qty                      == SUM(quantity) WHERE state = 1         
 
 ## 13 落地票索引
 
-拆票口径：**按「能独立验收的一步」切**，不在票里重开设计讨论；依赖是线性的（上一票绿了才动下一票）。
+拆票口径：**按「能独立验收的一步」切，且每张票的落地预算 ≤ 200k token（一个新鲜上下文）**；
+不在票里重开设计讨论。依赖是一条主链 + 两个支票（04 只被 01 门禁，09 只被 04 / 05 门禁），
+推荐顺序 `01…12`（上一票绿了才动下一票）。
+逐票正文（含预算、止损线、验收项）见
+[`marketing-inventory-refactor-impl/issues/`](../marketing-inventory-refactor-impl/issues/)，依赖图见
+[impl/map.md](../marketing-inventory-refactor-impl/map.md)。
 
-| 票 | 标题 | 依赖 | 一句话 |
+| 阶段 | 票 | 依赖 | 一句话 |
 | --- | --- | --- | --- |
-| [01](../marketing-inventory-refactor-impl/issues/01-schema-and-rebuild.md) | schema 收口 + 重建库 + 机械改名 | — | 只改 DDL 与名字：删两张、改三张名、明细加列/唯一键/索引、outbox 加 `delay_level`；重建两个库让测试真绿 |
-| [02](../marketing-inventory-refactor-impl/issues/02-merge-twins-into-one-path.md) | 孪生合一（行为不变） | 01 | 两个 service / 仓储半 / warmup / audit 合成一条 `segment` 参数化路径；测试类合并 |
-| [03](../marketing-inventory-refactor-impl/issues/03-time-cell-merge-and-delay-message.md) | 时间格合并 + 1 秒延迟消息（核心） | 02 | Lua 去重、明细 biz 列、outbox `delay_level`、`bs-inventory-merge` 生产/消费、`mergeKey` 排干、删每秒 job、加 60 秒兜底 |
-| [04](../marketing-inventory-refactor-impl/issues/04-async-claim-confirm.md) | 兑换确认异步化（`type=2`） | 03 | 确认 = 落 `type=2` 明细 + 每条发消息；转移进合并；删 4312 与同步转移 |
-| [05](../marketing-inventory-refactor-impl/issues/05-docs-and-full-regression.md) | 文档收口 + 全量回归 | 04 | 上表 §11 全部落点 + ADR-0011 + 全量测试与重建库复核 |
+| A schema 收口 | 01 → 02 → 03 | — | 删进出库台账、虚拟三表改名、明细加业务键/唯一键/两条索引；每次改表都重建两个库 |
+| B 共享件 | 04 | 01 | outbox 加 `delay_level`：扫描重发也按列走，points / raffle 行为不变 |
+| C 孪生合一 | 05 → 06 → 07 | 03 | 一条 `segment` 路径 + 预热/对账收口 + 两个集成测试合并参数化 |
+| D 触发与合并 | 08 → 09 → 10 | 05 · 04 | 时间格合并引擎（仍每秒驱动）→ 预扣发消息 → 消费 + 60s 兜底 + 续命 |
+| E 确认与收尾 | 11 → 12 | 10 | 兑换确认异步化（`type=2`、4312 退休）→ 文档收口 + 全量回归 |
 
 验收基线：落地后 `backend/marketing/` 全量集成测试绿，且「重建 `bs_marketing_test` 再跑」仍绿
 （不重建就跑出来的绿不算）。

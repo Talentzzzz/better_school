@@ -507,7 +507,7 @@ spec §7 原文口径：「**不用 Dubbo 原生异步**（future 异常不接�
 | better-school → timeout-center `ITimeoutTaskRegister` | 下单/发布的 outbox | **虚拟线程**（`TimeoutRegisterOutboxSender:65/90/148`） | 已在 VT 上；单次 2s 超时 |
 | timeout-center → 业务 `ITimeoutTaskCallback` | 扫描 fan-out | **虚拟线程**（`TimeoutTaskScanCase:71` 槽位执行器 / 批内组间并行 `:102`） | **唯一可能把 provider 池打满的边**：一个 tick 内「16 槽 × 每槽循环拉批 200 行 × 批内按 group 并行」→ 对同一业务应用可瞬时打出远大于个位数的并发回调，每组 2s 超时 |
 
-**判读**：前三条边的并发上限由 **Web 并发 / 下单量**决定，量级本来就是个位到数十，远达不到 200 —— 按选点规则「并发上限由平台线程数决定」的先决条件不成立。**只有第四条边（超时中心回调）存在「Dubbo provider 池是真实瓶颈」的形态**，且它的形态与 map 里 `AgentReviewDispatchConsumer` 那类「单个消费者同步阻塞数十秒」不同：这里是**短调用 × 高扇出**。
+**判读**：前三条边的并发上限由 **Web 并发 / 下单量**决定，量级本来就是个位到数十，远达不到 200 —— 按选点规则「并发上限由平台线程数决定」的先决条件不成立。**只有第四条边（超时中心回调）存在「Dubbo provider 池是真实瓶颈」的形态**，且它的形态与「单个消费者同步阻塞数十秒」那一类不同：这里是**短调用 × 高扇出**。
 
 > 但也要注意：timeout-center 的回调边是**中心 → 业务**，被 VT 化的是**业务侧的 provider 池**；而中心侧发起方**已经是 VT**。所以票价在于「业务侧 provider 池的 200 上限在突发扇出下会不会成为拒绝源」——这需要 §7.3 的实测，不是纸面推理能定论的。
 

@@ -90,7 +90,7 @@ Blocked by: 03
 
 - 每个服务**自带**一份 `JwtAuthenticationFilter` + `JwtService`（照 `bs-infrastructure/.../security/` 的形状，读同一个由 Nacos 下发的 `jwt.secret`）—— 不复用 `bs-infrastructure`（独立 project，无 reactor）。
 - 各自 `SecurityConfig` 照单体白名单写法：`.requestMatchers(HttpMethod.GET, "/api/<svc>/**").permitAll()`。~~**具体哪些路径免登录归票 06 ④**（活动信息 / 奖品目录）~~ **票 06 已定**：白名单只 `GET /api/lottery/activity` + `GET /api/lottery/prizes`（见 [票 06 §7](06-marketing-api-contract.md)），本票只定机制。
-- **Dubbo 不走 HTTP ⇒ 不需要 `X-Service-Token`**（那是 `bs-api` 的 `/api/internal/**` HTTP 通道给 Python sidecar 用）。
+- **Dubbo 不走 HTTP ⇒ 不需要 `X-Service-Token`**（那是 `bs-api` 的 `/api/internal/**` HTTP 通道的鉴权）。
 - **已知取舍**：Dubbo tri 端口是本机明文暴露，本地开发可接受，生产需内网隔离（记录，不在本期做）。
 
 ### 7. 本地开发与构建
@@ -130,7 +130,7 @@ Blocked by: 03
 
 ### 9. 落在哪里
 
-- 本票结论进 **spec 的「营销域」节**（节名与索引行对齐；票面 §⑨ 原写「营销服务」，已统一为「营销域」），**节内带一个指向 [research-cloud-stack.md](../research-cloud-stack.md) 的指针**（票 03「转下游 ④」明写的要求，照 `.scratch/agent-review/spec.md` §11 先例）。表结构 / 接口口径 ~~分别待票 05 / 06 追加~~ **已分别由票 05 / 06 追加**。
+- 本票结论进 **spec 的「营销域」节**（节名与索引行对齐；票面 §⑨ 原写「营销服务」，已统一为「营销域」），**节内带一个指向 [research-cloud-stack.md](../research-cloud-stack.md) 的指针**（票 03「转下游 ④」明写的要求）。表结构 / 接口口径 ~~分别待票 05 / 06 追加~~ **已分别由票 05 / 06 追加**。
 - `backend/docs/` 的架构说明页：**内容**（本票决策）进 spec；**落到 `backend/docs/` 的动作归落地票** —— 本 effort 只产决策与 spec（map 明写「不落地代码」），此处若先写文档即是在描述尚不存在的代码。**落地面**＝`backend/docs/architecture/marketing-services.md`（照 `backend/CLAUDE.md` §9「像代码一样短」），五节：① 四个 JVM 与端口表 ② Nacos（1 个共享 dataId + 注册）③ Dubbo 契约（`IUserQueryService` / `IPointsExchangeService`，谁提供谁消费）④ 三条事件边（topic / 事件体 / 消费组 / outbox / 幂等键）⑤ 本地启动与「改契约先装 jar」纪律；`backend/docs/README.md` 索引加一行。
 
 ### 决策依据（事实自核，三处修正票面前提）

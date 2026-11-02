@@ -82,7 +82,7 @@ Blocked by:
 | RocketMQ producer group | `better-school-producer` | `points-producer` | `lottery-producer` | `referral-producer` |
 | xxl-job executor 端口 / appname | 9999 / `better-school-executor` | 9998 / `better-school-points-executor` | 9997 / `better-school-lottery-executor` | 9996 / `better-school-referral-executor` |
 | Nacos | 同一 dataId `better-school-shared.yml`（jwt.secret / jwt.expire-days），四 app 共享，server-addr 留本地 | 同 | 同 | 同 |
-| 独有配置 | multipart / jackson / ES 9200 / MinIO / `agent.review`（sidecar） | — | `lottery.bucket.degrade-cooldown-millis`（redis 桶降级） | `referral.activity-config-table: bs_lottery.lottery_activity` |
+| 独有配置 | multipart / jackson / ES 9200 / MinIO | — | `lottery.bucket.degrade-cooldown-millis`（redis 桶降级） | `referral.activity-config-table: bs_lottery.lottery_activity` |
 | 日志配置 | **四 app 均无独立日志配置**（无 logback*.xml / logging.file），走 Spring Boot 默认 + yml 的 `logging.level`；xxl 执行器日志经各 yml 的 `xxl.job.executor.log-path` 写 `./logs/xxl-job*`（收敛后 log-path 随执行器合并） | 同 | 同 | 同 |
 | 测试 profile | `application-test.yml`（测试连接唯一事实来源） | 各自一份 `application-test.yml`（13306/逻辑库 1/19876，Nacos+Dubbo 由测试基类 `System.setProperty` 注入） | 同 | 同 |
 

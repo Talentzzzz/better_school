@@ -11,7 +11,7 @@ Labels: wayfinder:map
 ## Notes
 
 - 需求问题一律查 spec 对应章节；本 effort 不再重开设计讨论，发现 spec 缺口回 chat-refactor 补票。
-- 后端模块布局：bs-api（DTO/接口）/ bs-case / bs-domain / bs-infrastructure / bs-trigger（http/listener）。outbox→MQ 消费者骨架同构参照 agent-review 既有实现。
+- 后端模块布局：bs-api（DTO/接口）/ bs-case / bs-domain / bs-infrastructure / bs-trigger（http/listener）。outbox→MQ 消费者骨架同构参照既有实现。
 - 测试基类事实：RocketMQ namesrv 必须有、broker 刻意不启；WS 测试用真客户端直连 RANDOM_PORT + 直调 ChatPushConsumer（spec §9）。
 - chat 全路径零审核（只拆 MessageSendCase 敏感词一处）；通知域一行不动。
 

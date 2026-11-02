@@ -5,9 +5,9 @@ spec: `.scratch/errand-order-review/spec.md`；ADR: `docs/adr/0003-errand-pay-be
 ## Notes
 
 - 状态机反转：`PENDING_PAYMENT → PENDING_REVIEW(已付款待审) → PUBLISHED / REJECTED`；动机是审核资源只花在已付款订单上（ADR-0003）。
-- 支付事务内直接转待审 + outbox 只承担通知与未来 agent 接入点，不用消息承载状态迁移（避免卡死态）。
+- 支付事务内直接转待审 + outbox 只承担通知，不用消息承载状态迁移（避免卡死态）。
 - 同步初筛硬拦截不落库，只覆盖标题+描述；配图仅人工看图裁决。
-- 裁决收敛为 decide() 用例，agent 以系统账号身份复用，升级路径：agent 先裁、人工兜底（未实现）。
+- 裁决收敛为统一的 decide() 用例。
 
 ## Decisions-so-far
 

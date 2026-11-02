@@ -168,7 +168,16 @@
   （0 行 → `log.error` + 整格回滚、不续命；`type = 2` 不进桶递减）；`ResponseCode` 删 `4312`，
   抽奖侧六处注释去掉「4312 / 同步转移」口径。全量 **114 tests 绿**（111 + 4 新 − 1 改写）。
   文档仍留 12。
-- 待填：12 的 `## 实现要点`。
+- 2026-10-18 **票 12 已落地**（[票 12](issues/12-docs-and-full-regression.md) resolved；**07 仍未落地**）——
+  文档全部收口：`inventory.md` 重写成现状档（6 张表、明细新列/唯一键/两索引、`segment` 一条路径、
+  触发 = 1 秒延迟消息 + 60 秒兜底、合并四条约束、两段恒等式、Redis 桶 key + `merge:` 去重 key、
+  `state` 两态、确认异步化）；`README` / `draw.md` / `lottery.md`（定时任务、事件、重投口径、4312 退休、JOIN 表名）/
+  `timeout.md`（两处 `inventoryMerge`、表数）同步；`backend/docs` 三处 **22 → 20 张** + 两处旧表名；
+  `CONTEXT.md` 改 3 条、新增「库存配额」「时间格合并」；ADR `0005` 加 front matter 标 superseded
+  （点明反转的是 Considered Options 第 2 条与第 4 条的升级路径，原文保留）、新建 `0011-inventory-merge-delay-message.md`
+  （7 条决策 / 6 条被否 / 7 条 consequences，不抄 SQL）；`sql.md` §2 两段过期说明改写；比对脚本 20 张逐表逐列全等。
+  回归：重建 `bs_marketing_test` 后 **114 tests 绿**（02:30），不重建再跑 **仍 114 绿**（01:48）；
+  三条 grep 在源码/文档/SQL 上全 0（`mergeOnce` 只剩 gitignore 的运行时日志栈）。
 
 ## Not yet specified
 

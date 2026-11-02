@@ -225,7 +225,7 @@ backend/
 | `评论/`（3 张 png） | 归档 → `docs/archive/评论/` |
 | `实现方案3.md` | 归档 → `docs/archive/实现方案3.md` |
 | `front/vite-ticket01.log`、根目录 `vite-ticket07.log`、`vite-ticket08.log` | 删除（后两者被 `.gitignore` 全局 `*.log` 覆盖，故不出现在 git status；无需新增规则——Notes 决策 8 "加 .gitignore" 经核实已存在） |
-| `CLAUDE.md`、`CONTEXT.md`、`docs/`、`.scratch/`、`front/`、`agent/`、`.claude/` | 不动 |
+| `CLAUDE.md`、`CONTEXT.md`、`docs/`、`.scratch/`、`front/`、`.claude/` | 不动 |
 
 ## 6. 验收标准
 

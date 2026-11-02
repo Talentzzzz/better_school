@@ -87,14 +87,14 @@ _Status: final（票 05–10 全 resolved，2026-09-21 收口）_
 
 ### 4.1 消息消费（票 06）
 
-**裁决：23 个消费者的消费线程池整体换虚拟线程（4 工程统一）；并发上限不由 `consumeThreadNumber` 表达，改由 client 自己的 `pullThresholdForQueue` 表达；孤例 `AgentReviewDispatchConsumer` 不再单列；ack/重试/DLQ 语义逐行不变。**
+**裁决：23 个消费者的消费线程池整体换虚拟线程（4 工程统一）；并发上限不由 `consumeThreadNumber` 表达，改由 client 自己的 `pullThresholdForQueue` 表达；孤例（一个同步阻塞型消费者）不再单列；ack/重试/DLQ 语义逐行不变。**
 
 - **落地路径（裁决级）**：官方低成本口子不存在（`setConsumeExecutor` 只在 develop 未进发布版）⇒ 采用**同包子类覆写 `submitConsumeRequest`** + 覆写容器注册器接线的方案；`processConsumeResult`、ack 时机、重试阶梯（`delayLevel=3+reconsumeTimes`）、`%DLQ%`、15min 过期阀门**全部原样继承**；base 池懒创建 ⇒ 不投它就一条平台线程都不产生，**460 条 `ConsumeMessageThread_*` 归零**。实现步骤归落地票。
-- **上限口径**：无界 `newVirtualThreadPerTaskExecutor` + **不加信号量**；用 `container.getConsumer().setPullThresholdForQueue(N)` 表达上限（超限走 client 自带 50ms 延迟重拉，不阻塞线程）。⚠️ 本 spec 只定「用这个旋钮」，**N 的值落地时按池与下游配额定**（锚点：Hikari 10 与 LLM sidecar 配额）。有界池被否的两个硬理由：client 的私有补投路径投回 base 池；阻塞式 `acquire` 会卡死全实例唯一的 `PullMessageService`。
+- **上限口径**：无界 `newVirtualThreadPerTaskExecutor` + **不加信号量**；用 `container.getConsumer().setPullThresholdForQueue(N)` 表达上限（超限走 client 自带 50ms 延迟重拉，不阻塞线程）。⚠️ 本 spec 只定「用这个旋钮」，**N 的值落地时按池与下游配额定**（锚点：Hikari 10 与下游服务配额）。有界池被否的两个硬理由：client 的私有补投路径投回 base 池；阻塞式 `acquire` 会卡死全实例唯一的 `PullMessageService`。
 - **`consumeThreadNumber` = 死参数**（`consumeThreadMax` 本来就是死的）：spec 明写「消费并发上限不由它表达，要限流调 `pullThresholdForQueue`」。
-- **孤例 `AgentReviewDispatchConsumer`**（LLM 同步裁决，120s 只是读超时上限、实际耗时未实测）：并入整体换——20 槽位不再是上限、HTTP 阻塞读不 pin；**位点钉住是模型固有、不改善**（不 ack 就钉着）；它是 `pullThresholdForQueue` 收窄**最有用的一处**（下游 LLM sidecar 无池兜底，无界会打爆）。
+- **孤例（一个同步阻塞型消费者）**（下游一次 HTTP 调用，120s 只是读超时上限、实际耗时未实测）：并入整体换——20 槽位不再是上限、HTTP 阻塞读不 pin；**位点钉住是模型固有、不改善**（不 ack 就钉着）；它是 `pullThresholdForQueue` 收窄**最有用的一处**（下游服务无池兜底，无界会打爆）。
 - **WS 消费者**：3 个（`ChatPushConsumer` / `ChatReadPushConsumer` / `ChatRecallPushConsumer`），线程模型并入整体换，扇出口径归 §4.4。
-- **失败规模口径**：在飞从 ≈20 抬到 `pullThresholdForQueue` 深度后，下游抖动会成批失败进重试阶梯。两个 client 参数保持默认（并发模式 16 次、延迟 10s→30s→1m→…→2h 递增）；抖动长于阶梯覆盖窗口时成批进 DLQ 是**预期的 at-least-once 行为**，不是新故障模式（例外：`AgentReviewDispatchConsumer` 自己转人工、不进 DLQ）。`pullThresholdSizeForQueue`（100MiB）与 `consumeConcurrentlyMaxSpan`（2000）不动。
+- **失败规模口径**：在飞从 ≈20 抬到 `pullThresholdForQueue` 深度后，下游抖动会成批失败进重试阶梯。两个 client 参数保持默认（并发模式 16 次、延迟 10s→30s→1m→…→2h 递增）；抖动长于阶梯覆盖窗口时成批进 DLQ 是**预期的 at-least-once 行为**，不是新故障模式。`pullThresholdSizeForQueue`（100MiB）与 `consumeConcurrentlyMaxSpan`（2000）不动。
 
 ### 4.2 RPC（票 07）
 

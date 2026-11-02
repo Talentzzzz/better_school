@@ -10,7 +10,7 @@ spec: `.scratch/trade-review/spec.md`；词汇：`CONTEXT.md` 闲置商品一节
 - 编辑语义：待审不可编辑；商品改价生效、改内容回待审；求购改内容回待审（不重新支付）、改预算不支持；改内容重审期间对他人隐藏（不做内容版本化）。
 - OFF_SHELF 废弃并入 DRAFT（存量迁移）；存量 ON_SALE / NORMAL 保持可见不回审。
 - 通知：裁决结果（AUDIT_RESULT）+ 24h 超时提醒；求购支付后发"进入审核"通知（对齐跑腿），商品不发。
-- agent 审核仅预留 decide() 接入位置；不做限流、不做图片同步初筛。
+- 不做限流、不做图片同步初筛。
 
 ## Decisions-so-far
 

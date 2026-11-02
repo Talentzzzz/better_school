@@ -26,10 +26,9 @@ _调研日期：2026-09-19。所有结论均从一手源码逐行核对，版本
 | 版本 | starter **2.3.6**（四工程同版本） / broker 镜像 `apache/rocketmq:5.5.0` | `backend/better-school/pom.xml:37`、`backend/docker-compose.yml:104,123` |
 | JDK | 21（无 JDK 24） | `map.md` Notes |
 
-孤例热点（票面已列，本次确认细节）：
-- `AgentReviewDispatchConsumer`：`@RocketMQMessageListener(topic=AGENT_REVIEW_TOPIC, consumerGroup="bs-agent-review-group", maxReconsumeTimes=3)`，`onMessage` 同步调 `AgentReviewDispatchCase.dispatch` → `IAgentReviewPort`。端口实现 `AgentReviewPort` 用 `RestClient` + `SimpleClientHttpRequestFactory`，`connectTimeout=5s`、`readTimeout=properties.getTimeoutSeconds()*1000`（=120s），另有独立的 3s `/health` 探活 client。文件：`backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/adapter/port/moderation/AgentReviewPort.java`。
+现场细节确认（本次实测）：
 - ~~4 个 WS 消费者：`ChatPushConsumer` / `ChatReadPushConsumer` / `ChatRecallPushConsumer` / `NotificationBroadcastConsumer`~~，落地侧 `ChatWsPusher` 用 `ConcurrentWebSocketSessionDecorator(session, SEND_TIME_LIMIT_MS=5000, BUFFER_SIZE_LIMIT=512*1024)`。
-  > ⚠️ **2026-09-20 回填修正（[票 06](../issues/06-grill-rocketmq-consumer-model.md)）**：上面这句有两个错。①**WS 消费者是 3 个不是 4 个**：`NotificationBroadcastConsumer` 只调 `notificationRepository.insertBroadcast`，在一个事务里对全量用户逐行 insert（`NotificationRepository.java:82-97`），**不走 WS**；WS 扇出点唯一（`ChatWsPushService.broadcast`，`ChatWsPushService.java:59-72`），只有三个 chat 消费者引用它。②「同步阻塞最长 120s」应读作**读超时上限**，`POST /review-task` 是同步裁决（`.scratch/agent-review/spec.md:30,55`），实际阻塞时长 = LLM 裁决耗时（本仓无实测值）。
+  > ⚠️ **2026-09-20 回填修正（[票 06](../issues/06-grill-rocketmq-consumer-model.md)）**：上面这句有错。**WS 消费者是 3 个不是 4 个**：`NotificationBroadcastConsumer` 只调 `notificationRepository.insertBroadcast`，在一个事务里对全量用户逐行 insert（`NotificationRepository.java:82-97`），**不走 WS**；WS 扇出点唯一（`ChatWsPushService.broadcast`，`ChatWsPushService.java:59-72`），只有三个 chat 消费者引用它。
 
 ---
 
@@ -173,7 +172,7 @@ this.consumeExecutor = new ThreadPoolExecutor(
 
 （`PullMessageService.java:105` 定义 50ms；`DefaultMQPushConsumer.java:176,182,197` 定义默认值。suspend 场景用的是 `PULL_TIME_DELAY_MILLS_WHEN_SUSPEND=1000ms`。）
 
-**对票 06 的意义**：把 20 条平台线程换成虚拟线程后，单队列在飞消息数会从「≈20」抬到「≈min(1000, 2000/…, 下游容量)」，**天花板立刻变成 Hikari 连接池 / Python sidecar 并发 / 下游 Dubbo 提供方**。本 effort 的既立判据（同目录 spec：Hikari 池 ≥ 并行度）在这里会反向咬人：线程先涨、池不变 → 表现为 `SQLTransientConnectionException` 之类超时 → 消息 `RECONSUME_LATER` → 重试拥塞。**虚拟线程化必须与连接池/下游配额一起定，不能只改线程。**
+**对票 06 的意义**：把 20 条平台线程换成虚拟线程后，单队列在飞消息数会从「≈20」抬到「≈min(1000, 2000/…, 下游容量)」，**天花板立刻变成 Hikari 连接池 / 下游 HTTP 服务并发 / 下游 Dubbo 提供方**。本 effort 的既立判据（同目录 spec：Hikari 池 ≥ 并行度）在这里会反向咬人：线程先涨、池不变 → 表现为 `SQLTransientConnectionException` 之类超时 → 消息 `RECONSUME_LATER` → 重试拥塞。**虚拟线程化必须与连接池/下游配额一起定，不能只改线程。**
 
 另外两条与「批量」有关的实参：`pullBatchSize=32`（一次拉 32 条）、`consumeMessageBatchMaxSize=1`（每条一个 `ConsumeRequest` 提交给 executor）→ 一个 1000 条深的队列理论上会给 executor 排 1000 个任务，靠 20 个 worker 慢慢啃。
 
@@ -187,7 +186,7 @@ this.consumeExecutor = new ThreadPoolExecutor(
 
 `ProcessQueue.removeMessage`（`ProcessQueue.java:187-223`）在写锁内把已处理消息从 `msgTreeMap` 移除，**返回 `msgTreeMap.firstKey()`**——即「最小未确认 offset」，而不是 `max+1`。
 
-**推论（与本 effort 直接相关）**：并发模式下**一条卡住的消息会把该队列的消费位点钉住**，直到它返回（或 `consumeTimeout` 兜底把它送回去）。`AgentReviewDispatchConsumer` 最长 120s → 该队列位点最长停滞 120s，重启后会重投这 120s 的消息窗。**虚拟线程化不改变这条性质**（同一条代码路径），要改善只能把长阻塞从「消费线程 + 位点前排」挪走（拆 topic / 异步化不解决位点，因为不 ack 就还是钉住）。
+**推论（与本 effort 直接相关）**：并发模式下**一条卡住的消息会把该队列的消费位点钉住**，直到它返回（或 `consumeTimeout` 兜底把它送回去）。一个同步阻塞型消费者最长 120s → 该队列位点最长停滞 120s，重启后会重投这 120s 的消息窗。**虚拟线程化不改变这条性质**（同一条代码路径），要改善只能把长阻塞从「消费线程 + 位点前排」挪走（拆 topic / 异步化不解决位点，因为不 ack 就还是钉住）。
 
 ### 5.2 重试与 DLQ：逐行核对
 
@@ -221,7 +220,7 @@ synchronized (objLock) {      // ← :434-435，listener 调用在这个 monitor
 ### 5.4 `consumeTimeout` 兜底阀门（120s 为什么现在"没事"）
 
 `ProcessQueue.cleanExpiredMsg`（`ProcessQueue.java:75-...`）由每消费者一条 `CleanExpireMsgScheduledThread_*` 每 `consumeTimeout`(=15) 分钟跑一次：取 `msgTreeMap.firstEntry()`，若其 `CONSUME_START_TIME` 距今 > `consumeTimeout*60*1000`，则 `sendMessageBack(msg, delayLevel=3)` 并移出树 → **位点得以前进**。一次最多处理 16 条（`Math.min(msgTreeMap.size(), 16)`）。
-→ 120s < 15min，所以 `AgentReviewDispatchConsumer` 的 120s 阻塞**永远触发不了这个阀门**；换句话说，**现在这套 20 线程模型的"安全"是靠 consumeTimeout 兜底 + 20 个槽位**，而不是靠任何针对性的隔离。
+→ 120s < 15min，所以那个同步阻塞型消费者的 120s 阻塞**永远触发不了这个阀门**；换句话说，**现在这套 20 线程模型的"安全"是靠 consumeTimeout 兜底 + 20 个槽位**，而不是靠任何针对性的隔离。
 
 ---
 
@@ -247,23 +246,7 @@ JDK 21 的 pin 来源：monitor（`synchronized` 块/方法里阻塞）、native
 
 ---
 
-## 7. 孤例热点（`AgentReviewDispatchConsumer` 的 120s）的替代路径面
-
-只列做法与代价（选型留票 06）。前提事实：该消费者在 consumer group `bs-agent-review-group` 内独占一个自己的 20 线程池；一条 120s 的消息占 1/20 槽位，并把该队列位点钉 120s；`maxReconsumeTimes=3`；`consumeTimeout` 阀门在 15min 之外够不着。
-
-| 方案 | 做法 | 代价 / 风险 |
-|---|---|---|
-| **A. 把该消费者的 executor 换成虚拟线程** | client 升级到含 `setConsumeExecutor` 的版本（develop 快照）→ `consumer.setConsumeExecutor(Executors.newVirtualThreadPerTaskExecutor())`；或自研 `ConsumeMessageService` 塞进 `setConsumeMessageService` | 依赖未发布版本 / 自研 70 行 client 逻辑 + final 字段泄漏；收益：120s 不再吃 20 个槽位中的 1 个。**仍是"单消费者单线程池"模型，位点照样钉** |
-| **B. 消费者内 fan-out（VT 逐条异步，但等结果再 ack）** | `onMessage` 里把 sidecar 调用丢给虚拟线程，同步 join 后返回 → **ack 语义不变**；等价于"自己造一个无限并发的 executor" | 必须自带信号量做背压（否则无限并发打爆 sidecar/Hikari）；语义与 A 相同但不动依赖；形态上是"线程池里再开线程"，README 得解释 |
-| **C. 按耗时分层拆 topic / 拆 consumer group** | 长耗时任务独立 topic + 独立 group（用户拍板代价小、展示面清晰） | 多一套 topic/group 的运维面；不改 ack 语义；位点钉住只影响它自己那条队列 |
-| **D. 改拉取型（`DefaultLitePullConsumer`）自控线程与背压** | 完全自己 `poll()` + 自己 executor + 手动 ack | 代价最大：重写消费装配、丢注解模型；只有"要展示自建消费框架"才值得 |
-| **E. 不做（维持现状）** | 20 槽位里最多 20 条 120s，位点最长钉 120s；有 15min `consumeTimeout` 兜底 | 唯一代价是"队列位点滞后 120s + 重投递窗口"；若 sidecar 长期不可用则是 20×120s 的排队（顺序消费进同一队列时才可怕） |
-
-（附：`AgentReviewDispatchConsumer.onMessage` 里对 `message.getReconsumeTimes() >= 3` 做"转人工 + 确认消费"，所以它**实际上不会走到 DLQ**；DLQ 只对其它 22 个消费者有效。）
-
----
-
-## 8. 线程账（量级）
+## 7. 线程账（量级）
 
 **当前（默认值，实测推导）**
 
@@ -282,7 +265,7 @@ JDK 21 的 pin 来源：monitor（`synchronized` 块/方法里阻塞）、native
 
 ---
 
-## 9. 一手来源清单
+## 8. 一手来源清单
 
 **rocketmq-spring（tag `rocketmq-spring-all-2.3.6`）**
 - 依赖版本：<https://github.com/apache/rocketmq-spring/blob/rocketmq-spring-all-2.3.6/rocketmq-spring-boot-parent/pom.xml>
@@ -315,12 +298,11 @@ JDK 21 的 pin 来源：monitor（`synchronized` 块/方法里阻塞）、native
 
 **本仓库**
 - `backend/better-school/bs-trigger/src/main/java/com/betterschool/trigger/listener/`（21 个消费者）、`backend/better-school/bs-trigger/src/main/java/com/betterschool/trigger/ws/ChatWsPusher.java`
-- `backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/adapter/port/moderation/AgentReviewPort.java`
 - `backend/better-school/pom.xml:37`、`backend/better-school/bs-app/src/main/resources/application.yml:40`、`backend/docker-compose.yml:104,123`
 
 ---
 
-## 10. 给票 06 的"事实清单"（供裁决直接引用）
+## 9. 给票 06 的"事实清单"（供裁决直接引用）
 
 1. **要换 executor，唯一现实的两条路**：等 client 拿到 `setConsumeExecutor`（未发布）／自研 `ConsumeMessageService` + 换容器注册器（`RocketMQMessageListenerContainerRegistrar`，可自定义 Bean）。**没有 `consumeThreadNumber` 之外的配置口子。**
 2. **当前 460 条消费线程是 `consumeThreadMin=20` 定的，`consumeThreadMax=64` 永不生效**（无界队列）——"只调线程数"连现有模型都调不动。

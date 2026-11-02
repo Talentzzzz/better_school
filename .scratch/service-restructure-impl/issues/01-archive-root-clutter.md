@@ -12,7 +12,7 @@
 - [x] `评论/`（3 张 png）整目录归档到 `docs/archive/评论/`
 - [x] `实现方案3.md` 归档到 `docs/archive/实现方案3.md`
 - [x] 删除 `front/vite-ticket01.log` 与根目录 `vite-ticket07.log`、`vite-ticket08.log`（后两者被 `.gitignore` 全局 `*.log` 覆盖，git status 看不到，但文件在盘上）
-- [x] **不动**：`CLAUDE.md`、`CONTEXT.md`、`docs/` 其余内容、`.scratch/`、`front/`、`agent/`、`.claude/`
+- [x] **不动**：`CLAUDE.md`、`CONTEXT.md`、`docs/` 其余内容、`.scratch/`、`front/`、`.claude/`
 - [x] 收尾后仓库根除上述保留项与 `backend/` 外无散落文件；`git status` 无意外未跟踪产物
 
 ## 实现要点（票 01）

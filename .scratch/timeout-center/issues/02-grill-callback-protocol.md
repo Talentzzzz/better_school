@@ -9,7 +9,7 @@ Blocked by: 01
 超时中心扫出到期任务后，以什么方式调用业务服务完成关单？候选（待调研票 01 结论回来后 grilling 拍板）：
 
 - Dubbo RPC 直调
-- internal REST（类似 agent sidecar 回调 Java 的既有先例）
+- internal REST
 - 发 MQ 消息由业务方消费
 - 混合（MQ 为主 + 扫描重试）
 

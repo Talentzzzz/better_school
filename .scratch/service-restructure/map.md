@@ -17,7 +17,7 @@
   5. **包名**：营销侧重命名，方案 A——活动服务包根 `com.betterschool.activity`（如 `activity.domain.lottery.*`、`activity.api.ILotteryService`），资产服务包根 `com.betterschool.asset`（如 `asset.domain.points.*`、`asset.api.IPointsExchangeService`）。（⚠️ 票 02 细化：lottery/referral 同名类冲突，activity 合并后**全五层带域子包**，api 示例相应为 `activity.api.lottery.ILotteryService`，见票 02 Answer）
   6. **依赖方向（现状已单向，重构后保持）**：activity → asset-api + bs-api（用户查询）；asset → bs-api；bs-* 对营销零依赖。跨服务 api 引用随包名联改（如 activity 侧 `PointsExchangePort` 改引 `com.betterschool.asset.api.*`）。Dubbo 接口 FQN 随包名变化，无生产流量、无过渡需求，直接切换；前端走 HTTP，Controller 的 URL 映射字符串不变。
   7. **公共物**：docker-compose、跨服务脚本留 `backend/` 根；sql / docs / 配置按服务拆进各工程；`backend/CLAUDE.md` 留根；`logs/` 清理。明细见票 01 产出。
-  8. **仓库根杂物**：根目录图片（`*.jpg`/`*.png`）、`实现方案3.md`、`评论/` 归档进 `docs/`；`vite-*.log` 删除并加 .gitignore；根 `CLAUDE.md`、`CONTEXT.md`、`docs/`、`.scratch/`、`front/`、`agent/` 不动。（⚠️ 票 02 核实：全局 `*.log` 已在 .gitignore，无需新增，只删文件）
+  8. **仓库根杂物**：根目录图片（`*.jpg`/`*.png`）、`实现方案3.md`、`评论/` 归档进 `docs/`；`vite-*.log` 删除并加 .gitignore；根 `CLAUDE.md`、`CONTEXT.md`、`docs/`、`.scratch/`、`front/` 不动。（⚠️ 票 02 核实：全局 `*.log` 已在 .gitignore，无需新增，只删文件）
 - spec 必须覆盖的补充决策（起草时定，不必单独开票）：三个服务的端口分配；activity 两个 app 的 application.yml / nacos / xxl-job 配置合并方案。
 - 工作流偏好：本用户固化 grilling→spec→tickets 流程；spec 定稿后由 to-tickets 另起 effort，本 map 不产出执行票。
 

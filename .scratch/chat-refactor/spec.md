@@ -133,7 +133,7 @@ REST 统一 `/api/chat` 前缀，替代现有 threads 端点（旧 `/threads` �
 
 ## 6. 审核与举报（票 05/06）
 
-- **chat 全路径零审核**：只拆 `MessageSendCase` 敏感词初筛一处，图片也不过审；帖/评/商品/跑腿审核与 agent-review 全部不动。
+- **chat 全路径零审核**：只拆 `MessageSendCase` 敏感词初筛一处，图片也不过审；帖/评/商品/跑腿审核全部不动。
 - **兜底=举报**：`content_report` 扩 `target_type=MESSAGE`；一人一消息一单（复用 `uk_reporter_target`）；已撤回消息可举报（追责留痕，处理时幂等）；`content_snapshot` 存消息 content（CARD 存 ref 标识如 `CARD:PRODUCT#123`）。
 - **AUDITOR 处理=强制撤回**：走 chat 系统侧内部撤回 API（`recalled_by=AUDITOR`，无窗口限制）；消息已自行撤回则只落处理结论；不走扣分流水（chat 消息无下架概念）；举报人/被举报人通知沿用既有 `REPORT_RESULT`。
 
@@ -166,7 +166,7 @@ REST 统一 `/api/chat` 前缀，替代现有 threads 端点（旧 `/threads` �
 
 ## 9. 测试策略（票 07）
 
-- **WS 集成测试**：真 WS 客户端（`StandardWebSocketClient` 直连 `ws://localhost:{RANDOM_PORT}/ws/chat?ticket=`）+ 直接调用 `ChatPushConsumer` 模拟 outbox 消费（不经过 MQ）。依据测试基类既有事实：namesrv 必须有（否则消费者 bean 炸上下文）、broker 刻意不启（出站失败被 OutboxMessageSender catch）；不 mock 内部 Bean，MQ→消费者一跳由 outbox 骨架背书（agent-review 同构已验证）。覆盖：握手 401、票据一次性、互踢 close(4001)、心跳判死、MSG 排除发送者+判重、断线补拉合流吸收重复段。
+- **WS 集成测试**：真 WS 客户端（`StandardWebSocketClient` 直连 `ws://localhost:{RANDOM_PORT}/ws/chat?ticket=`）+ 直接调用 `ChatPushConsumer` 模拟 outbox 消费（不经过 MQ）。依据测试基类既有事实：namesrv 必须有（否则消费者 bean 炸上下文）、broker 刻意不启（出站失败被 OutboxMessageSender catch）；不 mock 内部 Bean，MQ→消费者一跳由 outbox 骨架背书（既有 outbox→MQ 消费者骨架已验证）。覆盖：握手 401、票据一次性、互踢 close(4001)、心跳判死、MSG 排除发送者+判重、断线补拉合流吸收重复段。
 - 发送幂等（撞 uk 返回原消息）、水位线幂等（重复打开不推 READ）、扇出与 hidden_at 清空、撤回窗口与脱敏、补拉分页口径：常规集成测试。
 - 群聊 UI 验收靠后端造数（系统群无用户入口）。
 

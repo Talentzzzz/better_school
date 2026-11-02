@@ -43,7 +43,7 @@ Blocked by: 01, 04
 | Q1 | 发送确认与重复提交 | **client_msg_id 幂等键**：message 加 `client_msg_id` 列 + `uk(room_id, client_msg_id)`（SYSTEM 消息 NULL 不受约束）。客户端每条待发消息生成 UUID，乐观上屏 pending 态；HTTP 200 转正（服务端回 roomId+seq+完整消息体）；明确失败（4xx/5xx 到达）与超时无响应均置失败态。重发为**手动**（首版不做自动重试），复用同一 client_msg_id：服务端已落库则撞 uk 捕获重复键、回查返回原消息（同 seq 无重复），未落库则正常新建。DDL 变更并入 init.sql effort（票 02 原型随之补一列一索引） |
 | Q2 | 补拉的量与追平口径 | `afterDeliverySeq` + `limit`（默认 200），返回条数 < limit 即追平，客户端循环拉取；服务端 limit 硬顶 500。timeline 只插不改永不删除（票 01）→ 游标永远有效，「超窗降级全量」当前唯一触发场景 = 游标 0（新设备/首次登录，天然全量）；归档机制属演进口（票 09 估算时一并固化） |
 | Q3 | 已读回执写入时序 | ① 打开会话**立即**推水位线到 room.last_seq，不等补拉完成（未读数清零与渲染解耦，微信「打开即已读」行为）；② 仅当 `last_read_seq < room.last_seq` 才 UPDATE + 提交后推 READ（幂等水位线，重复打开已追平会话不产生 READ 噪音）；③ READ 推送范围 = 会话内其他**在线**成员，群聊不节流——推送是 O(在线成员) 非 O(成员)，且系统群按单建群规模小（票 05），为它做节流是过度设计 |
-| Q4 | WS 集成测试策略 | **真 WS 客户端 + 直接调用推送消费者**：测试用 `StandardWebSocketClient` 直连 `ws://localhost:{RANDOM_PORT}/ws/chat?ticket=…`，推送触发不经过 MQ、直接调用 `ChatPushConsumer` 模拟 outbox 消费。依据：测试基类既有决策——namesrv 必须有（消费者 bean 连不上会炸上下文）、broker 刻意不启（出站失败被 OutboxMessageSender catch，无测试依赖真 MQ）；与「不 mock 内部 Bean、单一 seam」约定兼容，MQ→消费者一跳由 outbox 骨架背书（agent-review 同构已验证），chat 测试不重复背书。覆盖面：握手 401、票据一次性、互踢 close(4001)、心跳判死、MSG 排除发送者+判重、断线补拉合流吸收重复段 |
+| Q4 | WS 集成测试策略 | **真 WS 客户端 + 直接调用推送消费者**：测试用 `StandardWebSocketClient` 直连 `ws://localhost:{RANDOM_PORT}/ws/chat?ticket=…`，推送触发不经过 MQ、直接调用 `ChatPushConsumer` 模拟 outbox 消费。依据：测试基类既有决策——namesrv 必须有（消费者 bean 连不上会炸上下文）、broker 刻意不启（出站失败被 OutboxMessageSender catch，无测试依赖真 MQ）；与「不 mock 内部 Bean、单一 seam」约定兼容，MQ→消费者一跳由 outbox 骨架背书（既有 outbox→MQ 消费者骨架已验证），chat 测试不重复背书。覆盖面：握手 401、票据一次性、互踢 close(4001)、心跳判死、MSG 排除发送者+判重、断线补拉合流吸收重复段 |
 
 ### 一条消息从发送到多端可见（完整时序）
 
