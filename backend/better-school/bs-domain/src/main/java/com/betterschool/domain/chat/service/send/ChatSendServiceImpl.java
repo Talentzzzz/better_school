@@ -80,7 +80,7 @@ public class ChatSendServiceImpl implements IChatSendService {
         if (room == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "会话不存在");
         }
-        if (chatRepository.findRoomMember(roomId, userId) == null) {
+        if (chatRepository.findUserRoom(roomId, userId) == null) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "非会话成员");
         }
 

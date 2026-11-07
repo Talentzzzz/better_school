@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * chat 发送主链路集成测试（落地票 02）：单一 seam = REST 两端点 + 外部可观察状态（五表 + outbox）。
- * 覆盖：建/取 1v1 幂等、发送五表落地、撞 uk 两时序收敛、hidden_at 弹回、列表预览三件套（room_member 副本）、非成员/载荷校验拒绝
+ * 覆盖：建/取 1v1 幂等、发送五表落地、撞 uk 两时序收敛、hidden_at 弹回、列表预览三件套（user_room 副本）、非成员/载荷校验拒绝
  */
 public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
 
@@ -52,12 +52,13 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         assertSuccess(repeat, "A 重复建会话");
         assertThat(reverse.path("data").path("roomId").asText()).as("反向建返回同一 room").isEqualTo(roomId);
         assertThat(repeat.path("data").path("roomId").asText()).as("重复建返回同一 room").isEqualTo(roomId);
-        assertThat(queryLong("SELECT COUNT(1) FROM room_member m1 JOIN room_member m2 ON m1.room_id = m2.room_id"
+        assertThat(queryLong("SELECT COUNT(1) FROM user_room m1 JOIN user_room m2 ON m1.room_id = m2.room_id"
                 + " WHERE m1.user_id = '" + (userA.userId().compareTo(userB.userId()) < 0 ? userA.userId() : userB.userId()) + "'"
                 + " AND m2.user_id = '" + (userA.userId().compareTo(userB.userId()) < 0 ? userB.userId() : userA.userId()) + "'")).as("同人唯一会话").isEqualTo(1);
 
-        // 双方成员行就位
+        // 双方名册行与用户行就位
         assertThat(queryLong("SELECT COUNT(1) FROM room_member WHERE room_id = '" + roomId + "'")).isEqualTo(2);
+        assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'")).isEqualTo(2);
 
         // 不能和自己建会话
         JsonNode self = postJson("/api/chat/rooms/direct", Map.of("targetUserId", userA.userId()), userA);
@@ -83,11 +84,11 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         assertThat(data.path("clientMsgId").asText()).isEqualTo("cmid-1");
         assertThat(data.path("msgType").asText()).isEqualTo("TEXT");
 
-        // room：水位推进；列表副本（水位 + 预览三件套）落用户维度 room_member
+        // room：水位推进；列表副本（水位 + 预览三件套）落用户维度 user_room
         assertThat(queryLong("SELECT last_seq FROM room WHERE room_id = '" + roomId + "'")).isEqualTo(1);
-        assertThat(queryLong("SELECT COUNT(1) FROM room_member WHERE room_id = '" + roomId + "'"
+        assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'"
                 + " AND last_msg_type = 'TEXT' AND last_msg_preview = '同学你好，帖子还在吗？'"
-                + " AND last_msg_at IS NOT NULL")).isEqualTo(2);
+                + " AND last_msg_time IS NOT NULL")).isEqualTo(2);
 
         // message：内容中心一行
         assertThat(queryLong("SELECT COUNT(1) FROM message WHERE room_id = '" + roomId + "'")).isEqualTo(1);
@@ -182,12 +183,12 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
     @Test
     void newMessagePopsHiddenRoomBackToList() {
         String roomId = createDirectRoomViaApi();
-        jdbcTemplate.update("UPDATE room_member SET hidden_at = NOW() WHERE room_id = '" + roomId + "' AND user_id = '" + sessionB.userId() + "'");
+        jdbcTemplate.update("UPDATE user_room SET hidden_at = NOW() WHERE room_id = '" + roomId + "' AND user_id = '" + sessionB.userId() + "'");
 
         postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
                 "clientMsgId", "cmid-pop", "msgType", "TEXT", "content", "在吗"), sessionA);
 
-        Object hiddenAt = query("SELECT hidden_at FROM room_member WHERE room_id = '" + roomId + "' AND user_id = '" + sessionB.userId() + "'");
+        Object hiddenAt = query("SELECT hidden_at FROM user_room WHERE room_id = '" + roomId + "' AND user_id = '" + sessionB.userId() + "'");
         assertThat(hiddenAt).as("新消息清空扇出目标 hidden_at 弹回").isNull();
         // 未隐藏的一方不受影响（本来就为空）
     }
@@ -200,7 +201,7 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         JsonNode imageResp = postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
                 "clientMsgId", "cmid-img", "msgType", "IMAGE", "content", imageContent), sessionA);
         assertSuccess(imageResp, "发送图片消息");
-        assertThat(queryLong("SELECT COUNT(1) FROM room_member WHERE room_id = '" + roomId + "'"
+        assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'"
                 + " AND last_msg_preview = '[图片]'")).isEqualTo(2);
 
         String postId = publishPost(sessionA, "出闲置书");
@@ -208,7 +209,7 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
                 "clientMsgId", "cmid-card", "msgType", "CARD", "refType", "POST", "refId", postId), sessionA);
         assertSuccess(cardResp, "发送卡片消息");
         assertThat(cardResp.path("data").path("content").isNull()).as("CARD content 恒空").isTrue();
-        assertThat(queryLong("SELECT COUNT(1) FROM room_member WHERE room_id = '" + roomId + "'"
+        assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'"
                 + " AND last_msg_preview = '[帖子]'")).isEqualTo(2);
         assertThat(queryString("SELECT ref_type FROM message WHERE room_id = '" + roomId + "' AND client_msg_id = 'cmid-card'")).isEqualTo("POST");
 

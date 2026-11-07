@@ -4,6 +4,7 @@ import com.betterschool.domain.chat.adapter.port.IUserQueryPort;
 import com.betterschool.domain.chat.adapter.repository.IChatRepository;
 import com.betterschool.domain.chat.model.entity.MessageEntity;
 import com.betterschool.domain.chat.model.entity.RoomMemberEntity;
+import com.betterschool.domain.chat.model.entity.UserRoomEntity;
 import com.betterschool.domain.chat.model.valobj.ChatUserVO;
 import com.betterschool.domain.chat.model.valobj.RoomMemberVO;
 import com.betterschool.domain.chat.model.valobj.RoomPeerRoleVO;
@@ -43,7 +44,7 @@ public class ChatQueryServiceImpl implements IChatQueryService {
     @Override
     public List<RoomListItemVO> listRooms(String userId, int page, int pageSize) {
         List<RoomListItemVO> rooms = chatRepository.listRoomItems(userId, (page - 1) * pageSize, pageSize);
-        // 1v1 拼对方资料（page ≤ 100，批量反查一次）；对家 user_id 由列表 SQL 自连 room_member 直出
+        // 1v1 拼对方资料（page ≤ 100，批量反查一次）；对家 user_id 由名册回查（selectPeerMembers）直出
         List<String> peerIds = rooms.stream()
                 .map(RoomListItemVO::getPeerUserId)
                 .toList();
@@ -122,15 +123,20 @@ public class ChatQueryServiceImpl implements IChatQueryService {
     @Override
     public List<RoomMemberVO> listMembers(String roomId, String userId) {
         requireMembership(roomId, userId);
+        // 成员页两段查（SQL 层零 JOIN）：名册给定成员集（「这个会话有谁」只从名册取）→
+        // user_room 行批量回查拼 per-user 已读水位线
         List<RoomMemberEntity> members = chatRepository.listRoomMembers(roomId);
-        Map<String, ChatUserVO> users = userQueryPort.listByIds(
-                        members.stream().map(RoomMemberEntity::getUserId).toList()).stream()
+        List<String> memberIds = members.stream().map(RoomMemberEntity::getUserId).toList();
+        Map<String, UserRoomEntity> userRooms = chatRepository.listUserRooms(roomId, memberIds).stream()
+                .collect(Collectors.toMap(UserRoomEntity::getUserId, Function.identity(), (a, b) -> a));
+        Map<String, ChatUserVO> users = userQueryPort.listByIds(memberIds).stream()
                 .collect(Collectors.toMap(ChatUserVO::getUserId, Function.identity()));
         List<RoomMemberVO> result = new ArrayList<>(members.size());
         for (RoomMemberEntity member : members) {
             RoomMemberVO vo = new RoomMemberVO();
             vo.setUserId(member.getUserId());
-            vo.setLastReadSeq(member.getLastReadSeq());
+            UserRoomEntity userRoom = userRooms.get(member.getUserId());
+            vo.setReadSeq(userRoom == null ? 0L : userRoom.getReadSeq());
             ChatUserVO user = users.get(member.getUserId());
             vo.setNickname(user == null ? null : user.getNickname());
             vo.setAvatar(user == null ? null : user.getAvatar());
@@ -142,7 +148,7 @@ public class ChatQueryServiceImpl implements IChatQueryService {
     // ===== 校验 =====
 
     private void requireMembership(String roomId, String userId) {
-        if (chatRepository.findRoomMember(roomId, userId) == null) {
+        if (chatRepository.findUserRoom(roomId, userId) == null) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "非会话成员");
         }
     }

@@ -5,8 +5,8 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 会话列表项（服务端拼装展示字段）：unread = room.last_seq − last_read_seq（服务端拼装，
- * 都在用户维度成员行上就地可算）；服务端拼对方 userId+昵称+头像。
+ * 会话列表项（服务端拼装展示字段）：unread = room.last_seq − read_seq（服务端拼装，
+ * 都在用户维度 user_room 行上就地可算）；服务端拼对方 userId+昵称+头像（对家 id 由名册回查）。
  * source / peerRole 供市集消息页按域筛与出角色标签（peerRole 按请求者现算，不落库）
  */
 @Data
@@ -37,5 +37,5 @@ public class RoomListItemVO {
 
     private String lastMsgPreview;
 
-    private LocalDateTime lastMsgAt;
+    private LocalDateTime lastMsgTime;
 }

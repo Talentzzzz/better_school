@@ -2,7 +2,7 @@ package com.betterschool.usecase.moderation;
 
 import com.betterschool.domain.chat.adapter.repository.IChatRepository;
 import com.betterschool.domain.chat.model.entity.MessageEntity;
-import com.betterschool.domain.chat.model.entity.RoomMemberEntity;
+import com.betterschool.domain.chat.model.entity.UserRoomEntity;
 import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
@@ -124,7 +124,7 @@ public class ReportCase {
         if (reporterId.equals(message.getFromUserId())) {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "不能举报自己的消息");
         }
-        RoomMemberEntity membership = chatRepository.findRoomMember(message.getRoomId(), reporterId);
+        UserRoomEntity membership = chatRepository.findUserRoom(message.getRoomId(), reporterId);
         if (membership == null) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "仅会话成员可举报消息");
         }

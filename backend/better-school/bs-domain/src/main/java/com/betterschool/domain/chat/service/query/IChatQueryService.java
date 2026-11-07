@@ -13,7 +13,7 @@ import java.util.List;
 public interface IChatQueryService {
 
     /**
-     * 会话列表：排除 hidden_at 非空，按 last_msg_at 倒序分页；
+     * 会话列表：排除 hidden_at 非空，按 last_msg_time 倒序分页；
      * 拼对方 userId+昵称+头像；unread = room.last_seq − 水位线（服务端拼装，不落副本）
      */
     List<RoomListItemVO> listRooms(String userId, int page, int pageSize);
@@ -33,7 +33,7 @@ public interface IChatQueryService {
     List<TimelineItemVO> pullTimeline(String userId, Long afterDeliverySeq, Integer limit);
 
     /**
-     * 成员列表：含 last_read_seq（详情页已读头像推导 + 成员页同源）；
+     * 成员列表：含 read_seq（详情页已读头像推导 + 成员页同源，user_room 行回查拼装）；
      * 非成员拒绝
      */
     List<RoomMemberVO> listMembers(String roomId, String userId);

@@ -24,7 +24,7 @@ public class ChatRecallReportIntegrationTest extends CommunityApiTestBase {
 
         // 撤回非最后一条：成员行列表预览不受影响
         postJson("/api/chat/rooms/" + roomId + "/messages/1/recall", Map.of(), sessionA);
-        assertThat(queryLong("SELECT COUNT(1) FROM room_member WHERE room_id = '" + roomId + "'"
+        assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'"
                 + " AND last_msg_preview = '第二条，最新的'")).isEqualTo(2);
 
         // 幂等：重复撤回静默成功，不重复写 RECALL 事件
@@ -33,10 +33,10 @@ public class ChatRecallReportIntegrationTest extends CommunityApiTestBase {
 
         // 撤回最后一条：预览替换 [已撤回]，占 seq 不回退、不动水位线（计入未读）
         assertSuccess(postJson("/api/chat/rooms/" + roomId + "/messages/2/recall", Map.of(), sessionA), "撤回最新消息");
-        assertThat(queryLong("SELECT COUNT(1) FROM room_member WHERE room_id = '" + roomId + "'"
-                + " AND last_msg_preview = '[已撤回]'")).as("双方成员行预览替换").isEqualTo(2);
+        assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'"
+                + " AND last_msg_preview = '[已撤回]'")).as("双方用户行预览替换").isEqualTo(2);
         assertThat(queryLong("SELECT last_seq FROM room WHERE room_id = '" + roomId + "'")).as("撤回占 seq 不回退").isEqualTo(2);
-        assertThat(queryLong("SELECT last_read_seq FROM room_member WHERE room_id = '" + roomId + "'"
+        assertThat(queryLong("SELECT read_seq FROM user_room WHERE room_id = '" + roomId + "'"
                 + " AND user_id = '" + sessionB.userId() + "'" )).as("不动已读水位线").isEqualTo(0);
 
         // 三件套：status/recalled_at/recalled_by=USER；content 库内保留取证

@@ -166,7 +166,7 @@ public abstract class CommunityApiTestBase {
                         "content_review", "content_report", "review_task",
                         "errand_order", "errand_order_event",
                         "product", "product_favorite", "product_order", "product_order_event",
-                        "room", "user_pair_room", "room_member", "message", "timeline", "user_seq",
+                        "room", "user_pair_room", "user_room", "room_member", "message", "timeline", "user_seq",
                         "notification_seq", "notification_read")
                 .forEach(table -> jdbcTemplate.execute("TRUNCATE TABLE " + table));
         // 超时分表不在上面的清单里：TRUNCATE 逻辑表经 SS 的路由不可靠（hint 分表无 TRUNCATE 直通），

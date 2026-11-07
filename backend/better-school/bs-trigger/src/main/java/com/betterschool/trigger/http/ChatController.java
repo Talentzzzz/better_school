@@ -206,7 +206,9 @@ public class ChatController implements IChatService {
         dto.setUnread(room.getUnread());
         dto.setLastMsgType(room.getLastMsgType() == null ? null : room.getLastMsgType().name());
         dto.setLastMsgPreview(room.getLastMsgPreview());
-        dto.setLastMsgAt(room.getLastMsgAt());
+        // JSON 字段名 lastMsgAt/lastReadSeq 是对外契约（chat-member-table-refactor 票 01：接口契约零变化），
+        // 内部实体列名已随表翻成 lastMsgTime/readSeq，仅在装配处收敛
+        dto.setLastMsgAt(room.getLastMsgTime());
         return dto;
     }
 
@@ -215,7 +217,7 @@ public class ChatController implements IChatService {
         dto.setUserId(member.getUserId());
         dto.setNickname(member.getNickname());
         dto.setAvatar(member.getAvatar());
-        dto.setLastReadSeq(member.getLastReadSeq());
+        dto.setLastReadSeq(member.getReadSeq());
         return dto;
     }
 

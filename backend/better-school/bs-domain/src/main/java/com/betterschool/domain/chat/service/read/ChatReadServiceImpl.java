@@ -2,7 +2,7 @@ package com.betterschool.domain.chat.service.read;
 
 import com.betterschool.domain.chat.adapter.repository.IChatRepository;
 import com.betterschool.domain.chat.model.entity.RoomEntity;
-import com.betterschool.domain.chat.model.entity.RoomMemberEntity;
+import com.betterschool.domain.chat.model.entity.UserRoomEntity;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -23,7 +23,7 @@ public class ChatReadServiceImpl implements IChatReadService {
 
     @Override
     public long markRead(String roomId, String userId) {
-        RoomMemberEntity self = chatRepository.findRoomMember(roomId, userId);
+        UserRoomEntity self = chatRepository.findUserRoom(roomId, userId);
         if (self == null) {
             // 成员行不存在 = 会话不存在或非成员，两种对外口径不变（先查 room 保 404 语义）
             if (chatRepository.findRoomById(roomId) == null) {
@@ -32,9 +32,9 @@ public class ChatReadServiceImpl implements IChatReadService {
             throw new BusinessException(ResponseCode.FORBIDDEN, "非会话成员");
         }
         long readSeq = chatRepository.findRoomById(roomId).getLastSeq();
-        if (self.getLastReadSeq() >= readSeq) {
+        if (self.getReadSeq() >= readSeq) {
             // 已追平：连守卫 UPDATE 都省了，无事件无写放大
-            return self.getLastReadSeq();
+            return self.getReadSeq();
         }
         chatRepository.advanceReadWatermark(roomId, userId, readSeq);
         return readSeq;
@@ -45,7 +45,7 @@ public class ChatReadServiceImpl implements IChatReadService {
         if (chatRepository.findRoomById(roomId) == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "会话不存在");
         }
-        RoomMemberEntity self = chatRepository.findRoomMember(roomId, userId);
+        UserRoomEntity self = chatRepository.findUserRoom(roomId, userId);
         if (self == null) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "非会话成员");
         }

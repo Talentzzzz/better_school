@@ -8,6 +8,7 @@ import com.betterschool.infrastructure.dao.chat.po.RoomMemberPO;
 import com.betterschool.infrastructure.dao.chat.po.RoomPeerRowPO;
 import com.betterschool.infrastructure.dao.chat.po.TimelineDeliveryRowPO;
 import com.betterschool.infrastructure.dao.chat.po.TimelinePO;
+import com.betterschool.infrastructure.dao.chat.po.UserRoomPO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -15,7 +16,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * chat Mapper：SQL 定义在 app 模块 resources/mybatis/mapper/ChatMapper.xml
+ * chat Mapper：SQL 定义在 app 模块 resources/mybatis/mapper/ChatMapper.xml。
+ * 双维度拆分后的查询面：user_room（用户维度，贴 user_id 片键）只做 user_id 前缀查询，
+ * 「这个会话有谁」一律走 room_member 名册（会话维度，贴 room_id 片键）
  */
 @Mapper
 public interface IChatDao {
@@ -30,20 +33,17 @@ public interface IChatDao {
 
     Long selectLastSeq(@Param("roomId") String roomId);
 
-    int updateMemberPreview(@Param("roomId") String roomId, @Param("msgType") String msgType,
-                            @Param("preview") String preview, @Param("lastMsgAt") LocalDateTime lastMsgAt);
-
     /**
-     * 会话列表三段查之①（room_member 单表）：本人成员行分页（排除隐藏，last_msg_at 倒序），
+     * 会话列表三段查之①（user_room.idx_user_msg 主路径）：本人用户行分页（排除隐藏，last_msg_time 倒序），
      * 只带列表三件套列；room 真相与对家 user_id 由仓储按 room_id 集回查拼装（SQL 层零 JOIN）
      */
-    List<RoomListItemPO> selectRoomMemberPage(@Param("userId") String userId,
-                                              @Param("offset") int offset, @Param("limit") int limit);
+    List<RoomListItemPO> selectUserRoomPage(@Param("userId") String userId,
+                                            @Param("offset") int offset, @Param("limit") int limit);
 
     /** 会话列表三段查之②：按 room_id 集批量回查会话行（lastSeq 未读数真源 + source/initiator_id） */
     List<RoomPO> selectRoomsByIds(@Param("roomIds") List<String> roomIds);
 
-    /** 会话列表三段查之③：本批会话里的对家成员行（1v1 恒两行成员，每会话恰出一行对家） */
+    /** 会话列表三段查之③：本批会话的对家名册行（1v1 恒两行名册，每会话恰出一行对家） */
     List<RoomPeerRowPO> selectPeerMembers(@Param("roomIds") List<String> roomIds,
                                           @Param("userId") String userId);
 
@@ -56,23 +56,40 @@ public interface IChatDao {
 
     String selectUserPairRoomId(@Param("userMin") String userMin, @Param("userMax") String userMax);
 
-    // ===== room_member（成员状态，每会话恒两行） =====
+    // ===== room_member（会话维度名册，「这个会话有谁」，每会话恒两行） =====
 
     int insertRoomMembers(@Param("members") List<RoomMemberPO> members);
-
-    RoomMemberPO selectRoomMember(@Param("roomId") String roomId, @Param("userId") String userId);
 
     List<RoomMemberPO> listRoomMembers(@Param("roomId") String roomId);
 
     long countRoomMembers(@Param("roomId") String roomId);
 
-    int updateLastReadSeq(@Param("roomId") String roomId, @Param("userId") String userId,
-                          @Param("lastReadSeq") long lastReadSeq);
+    // ===== user_room（用户维度会话状态，每用户每会话一行） =====
 
-    int clearHidden(@Param("roomId") String roomId);
+    int insertUserRooms(@Param("userRooms") List<UserRoomPO> userRooms);
 
-    int updateHiddenAt(@Param("roomId") String roomId, @Param("userId") String userId,
-                       @Param("hiddenAt") LocalDateTime hiddenAt);
+    UserRoomPO selectUserRoom(@Param("roomId") String roomId, @Param("userId") String userId);
+
+    /** 成员页两段查之②：名册给定成员集的用户行批量回查（水位线拼装，SQL 层零 JOIN） */
+    List<UserRoomPO> selectUserRooms(@Param("roomId") String roomId, @Param("userIds") List<String> userIds);
+
+    int updateUserRoomReadSeq(@Param("roomId") String roomId, @Param("userId") String userId,
+                              @Param("readSeq") long readSeq);
+
+    int updateUserRoomHiddenAt(@Param("roomId") String roomId, @Param("userId") String userId,
+                               @Param("hiddenAt") LocalDateTime hiddenAt);
+
+    /** 新消息扇出时清空单个成员的隐藏位（删除的会话弹回；成员集由名册给定，逐用户执行） */
+    int clearUserRoomHidden(@Param("roomId") String roomId, @Param("userId") String userId);
+
+    /** 发送扇出时刷单个成员的列表副本（预览三件套；成员集由名册给定，逐用户执行） */
+    int updateUserRoomPreview(@Param("roomId") String roomId, @Param("userId") String userId,
+                              @Param("msgType") String msgType, @Param("preview") String preview,
+                              @Param("lastMsgTime") LocalDateTime lastMsgTime);
+
+    /** 撤回后替换单个成员的预览副本（room.last_seq 守卫；成员集由名册给定，逐用户执行） */
+    int markUserRoomLastMsgRecalled(@Param("roomId") String roomId, @Param("userId") String userId,
+                                    @Param("seq") Long seq, @Param("preview") String preview);
 
     // ===== message =====
 
@@ -86,9 +103,6 @@ public interface IChatDao {
                       @Param("recalledAt") LocalDateTime recalledAt, @Param("recalledBy") String recalledBy);
 
     MessagePO selectMessageById(@Param("messageId") String messageId);
-
-    /** 撤回后替换预览，last_seq 守卫防覆盖并发新消息 */
-    int markLastMsgRecalled(@Param("roomId") String roomId, @Param("seq") Long seq, @Param("preview") String preview);
 
     List<MessagePO> selectMessagesBefore(@Param("roomId") String roomId, @Param("beforeSeq") Long beforeSeq,
                                          @Param("limit") int limit);

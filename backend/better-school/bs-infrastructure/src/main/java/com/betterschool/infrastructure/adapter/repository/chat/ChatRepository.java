@@ -5,6 +5,7 @@ import com.betterschool.domain.chat.model.entity.MessageEntity;
 import com.betterschool.domain.chat.model.entity.RoomEntity;
 import com.betterschool.domain.chat.model.entity.RoomMemberEntity;
 import com.betterschool.domain.chat.model.entity.TimelineEntity;
+import com.betterschool.domain.chat.model.entity.UserRoomEntity;
 import com.betterschool.domain.chat.model.valobj.CardRefTypeVO;
 import com.betterschool.domain.chat.model.valobj.DirectRoomPairVO;
 import com.betterschool.domain.chat.model.valobj.ChatMessagePushMessage;
@@ -25,6 +26,7 @@ import com.betterschool.infrastructure.dao.chat.po.RoomMemberPO;
 import com.betterschool.infrastructure.dao.chat.po.RoomPeerRowPO;
 import com.betterschool.infrastructure.dao.chat.po.TimelineDeliveryRowPO;
 import com.betterschool.infrastructure.dao.chat.po.TimelinePO;
+import com.betterschool.infrastructure.dao.chat.po.UserRoomPO;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
 import com.betterschool.types.common.Constants;
 import com.betterschool.types.id.IIdGenerator;
@@ -39,6 +41,10 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * chat 仓储实现。双维度拆分口径：「这个会话有谁」一律走 room_member 名册（成员扇出/对家回查/
+ * 逐用户写路径的成员集来源），user_room 只装 per-user 状态、只做 user_id 前缀查询
+ */
 @Repository
 @RequiredArgsConstructor
 public class ChatRepository implements IChatRepository {
@@ -54,16 +60,24 @@ public class ChatRepository implements IChatRepository {
     public RoomEntity createDirectRoom(RoomEntity room, String targetUserId) {
         return transactionTemplate.execute(status -> {
             insertRoom(room);
-            RoomMemberEntity self = new RoomMemberEntity();
+            LocalDateTime now = LocalDateTime.now();
+            // 名册与用户状态成对写入：1v1 恒两行名册（join_seq=0 入群水位）+ 两行 user_room（read_seq=0）
+            RoomMemberEntity selfMember = new RoomMemberEntity();
+            selfMember.setRoomId(room.getRoomId());
+            selfMember.setUserId(room.getInitiatorId());
+            RoomMemberEntity targetMember = new RoomMemberEntity();
+            targetMember.setRoomId(room.getRoomId());
+            targetMember.setUserId(targetUserId);
+            insertRoomMembers(List.of(selfMember, targetMember));
+            UserRoomEntity self = new UserRoomEntity();
             self.setRoomId(room.getRoomId());
             self.setUserId(room.getInitiatorId());
-            RoomMemberEntity target = new RoomMemberEntity();
+            UserRoomEntity target = new UserRoomEntity();
             target.setRoomId(room.getRoomId());
             target.setUserId(targetUserId);
-            insertRoomMembers(List.of(self, target));
+            insertUserRooms(List.of(self, target));
             // 配对行收尾闸门：撞 uk_pair（同一对人恒一行）即整事务回滚，
             // 服务层捕获 DuplicateKeyException 后经 pair 表幂等回读既有会话
-            LocalDateTime now = LocalDateTime.now();
             UserPairRoomPO pair = new UserPairRoomPO();
             // user_id 是 UUID 字符串，配对键按字符串字典序取规范序（计算收敛在 DirectRoomPairVO，与查重同口径）
             DirectRoomPairVO pairKey = DirectRoomPairVO.canonicalOf(room.getInitiatorId(), targetUserId);
@@ -84,24 +98,25 @@ public class ChatRepository implements IChatRepository {
             message.setSeq(seq);
             insertMessage(message);
 
-            // 扇出：在会话成员各一行 timeline，per-user delivery_seq 取号（被移除成员停止扇出）
-            List<RoomMemberEntity> members = listRoomMembers(message.getRoomId());
-            List<TimelineEntity> timelines = new ArrayList<>(members.size());
-            for (RoomMemberEntity member : members) {
+            // 扇出：按名册逐成员一行 timeline，per-user delivery_seq 取号（被移除成员停止扇出）
+            List<String> memberIds = chatDao.listRoomMembers(message.getRoomId()).stream()
+                    .map(RoomMemberPO::getUserId).toList();
+            List<TimelineEntity> timelines = new ArrayList<>(memberIds.size());
+            for (String memberId : memberIds) {
                 TimelineEntity timeline = new TimelineEntity();
-                timeline.setUserId(member.getUserId());
+                timeline.setUserId(memberId);
                 timeline.setRoomId(message.getRoomId());
                 timeline.setSeq(seq);
                 timeline.setMsgId(message.getMessageId());
-                timeline.setDeliverySeq(increaseUserSeq(member.getUserId(), 1));
+                timeline.setDeliverySeq(increaseUserSeq(memberId, 1));
                 timelines.add(timeline);
             }
             insertTimelines(timelines);
-            // 新消息清空成员隐藏位：删除的会话弹回列表顶部（微信行为）
+            // 新消息清空成员隐藏位：删除的会话弹回列表顶部（微信行为；名册给定成员集，逐用户执行）
             clearHidden(message.getRoomId());
 
-            // 列表预览落用户维度成员行（本票过渡：与取号同事务；票 02 起归扩散消费端单一写入方）
-            updateMemberPreview(message.getRoomId(), message.getMsgType(), preview, message.getCreatedAt());
+            // 列表预览落用户维度 user_room 行（本票过渡：与取号同事务；票 02 起归扩散消费端单一写入方）
+            updateUserRoomPreview(message.getRoomId(), message.getMsgType(), preview, message.getCreatedAt());
 
             // 推送载荷的事务内生成字段（序号/主键/时间）在这里补齐后与业务同事务落 outbox
             pushMessage.setSeq(seq);
@@ -115,7 +130,7 @@ public class ChatRepository implements IChatRepository {
     @Override
     public void advanceReadWatermark(String roomId, String userId, long readSeq) {
         transactionTemplate.executeWithoutResult(status -> {
-            boolean advanced = updateLastReadSeq(roomId, userId, readSeq);
+            boolean advanced = updateUserReadSeq(roomId, userId, readSeq);
             if (advanced) {
                 saveReadMessage(ChatReadPushMessage.builder()
                         .roomId(roomId)
@@ -185,15 +200,17 @@ public class ChatRepository implements IChatRepository {
     }
 
     @Override
-    public void updateMemberPreview(String roomId, MsgTypeVO msgType, String preview, LocalDateTime lastMsgAt) {
-        chatDao.updateMemberPreview(roomId, msgType.name(), preview, lastMsgAt);
+    public void updateUserRoomPreview(String roomId, MsgTypeVO msgType, String preview, LocalDateTime lastMsgTime) {
+        for (String memberId : rosterMemberIds(roomId)) {
+            chatDao.updateUserRoomPreview(roomId, memberId, msgType.name(), preview, lastMsgTime);
+        }
     }
 
     @Override
     public List<RoomListItemVO> listRoomItems(String userId, int offset, int limit) {
-        // 会话列表三段查（SQL 层零 JOIN）：①本人成员行分页 → ②room 行批量回查 → ③对家成员行回查，
+        // 会话列表三段查（SQL 层零 JOIN）：①本人 user_room 行分页 → ②room 行批量回查 → ③名册回查对家，
         // Java 按会话拼装。room 行或对家行缺失 = 原 INNER JOIN 语义，该会话不出现
-        List<RoomListItemPO> rows = chatDao.selectRoomMemberPage(userId, offset, limit);
+        List<RoomListItemPO> rows = chatDao.selectUserRoomPage(userId, offset, limit);
         if (rows.isEmpty()) {
             return List.of();
         }
@@ -223,7 +240,7 @@ public class ChatRepository implements IChatRepository {
         return chatDao.countRoomsForUser(userId);
     }
 
-    // ===== room_member（成员状态，每会话恒两行） =====
+    // ===== room_member（会话维度名册：「这个会话有谁」） =====
 
     @Override
     public void insertRoomMembers(List<RoomMemberEntity> members) {
@@ -237,17 +254,10 @@ public class ChatRepository implements IChatRepository {
             return memberPO;
         }).toList();
         chatDao.insertRoomMembers(memberPOs);
-        for (int i = 0; i < memberPOs.size(); i++) {
-            RoomMemberEntity member = members.get(i);
-            member.setId(memberPOs.get(i).getId());
-            member.setLastReadSeq(0L);
-            member.setCreatedAt(now);
+        for (int i = 0; i < members.size(); i++) {
+            members.get(i).setJoinSeq(0L);
+            members.get(i).setCreatedAt(now);
         }
-    }
-
-    @Override
-    public RoomMemberEntity findRoomMember(String roomId, String userId) {
-        return toRoomMemberEntity(chatDao.selectRoomMember(roomId, userId));
     }
 
     @Override
@@ -260,19 +270,59 @@ public class ChatRepository implements IChatRepository {
         return chatDao.countRoomMembers(roomId);
     }
 
+    // ===== user_room（用户维度会话状态） =====
+
     @Override
-    public boolean updateLastReadSeq(String roomId, String userId, long lastReadSeq) {
-        return chatDao.updateLastReadSeq(roomId, userId, lastReadSeq) > 0;
+    public void insertUserRooms(List<UserRoomEntity> userRooms) {
+        LocalDateTime now = LocalDateTime.now();
+        List<UserRoomPO> userRoomPOs = userRooms.stream().map(userRoom -> {
+            UserRoomPO userRoomPO = new UserRoomPO();
+            userRoomPO.setRoomId(userRoom.getRoomId());
+            userRoomPO.setUserId(userRoom.getUserId());
+            userRoomPO.setCreateTime(now);
+            userRoomPO.setUpdateTime(now);
+            return userRoomPO;
+        }).toList();
+        chatDao.insertUserRooms(userRoomPOs);
+        for (UserRoomEntity userRoom : userRooms) {
+            userRoom.setReadSeq(0L);
+            userRoom.setCreatedAt(now);
+        }
+    }
+
+    @Override
+    public UserRoomEntity findUserRoom(String roomId, String userId) {
+        return toUserRoomEntity(chatDao.selectUserRoom(roomId, userId));
+    }
+
+    @Override
+    public List<UserRoomEntity> listUserRooms(String roomId, List<String> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            return List.of();
+        }
+        return chatDao.selectUserRooms(roomId, userIds).stream().map(this::toUserRoomEntity).toList();
+    }
+
+    @Override
+    public boolean updateUserReadSeq(String roomId, String userId, long readSeq) {
+        return chatDao.updateUserRoomReadSeq(roomId, userId, readSeq) > 0;
     }
 
     @Override
     public void clearHidden(String roomId) {
-        chatDao.clearHidden(roomId);
+        for (String memberId : rosterMemberIds(roomId)) {
+            chatDao.clearUserRoomHidden(roomId, memberId);
+        }
     }
 
     @Override
     public void hideRoom(String roomId, String userId, LocalDateTime hiddenAt) {
-        chatDao.updateHiddenAt(roomId, userId, hiddenAt);
+        chatDao.updateUserRoomHiddenAt(roomId, userId, hiddenAt);
+    }
+
+    /** 名册成员集：会话级批量写的驱动来源（「这个会话有谁」只从名册取） */
+    private List<String> rosterMemberIds(String roomId) {
+        return chatDao.listRoomMembers(roomId).stream().map(RoomMemberPO::getUserId).toList();
     }
 
     // ===== message =====
@@ -322,7 +372,9 @@ public class ChatRepository implements IChatRepository {
 
     @Override
     public void markLastMsgRecalled(String roomId, long seq, String preview) {
-        chatDao.markLastMsgRecalled(roomId, seq, preview);
+        for (String memberId : rosterMemberIds(roomId)) {
+            chatDao.markUserRoomLastMsgRecalled(roomId, memberId, seq, preview);
+        }
     }
 
     @Override
@@ -415,8 +467,8 @@ public class ChatRepository implements IChatRepository {
         vo.setInitiatorId(po.getInitiatorId());
         vo.setLastMsgType(po.getLastMsgType() == null ? null : MsgTypeVO.valueOf(po.getLastMsgType()));
         vo.setLastMsgPreview(po.getLastMsgPreview());
-        vo.setLastMsgAt(po.getLastMsgAt());
-        vo.setUnread(po.getLastSeq() - po.getLastReadSeq());
+        vo.setLastMsgTime(po.getLastMsgTime());
+        vo.setUnread(po.getLastSeq() - po.getReadSeq());
         return vo;
     }
 
@@ -433,18 +485,31 @@ public class ChatRepository implements IChatRepository {
         return room;
     }
 
-    private RoomMemberEntity toRoomMemberEntity(RoomMemberPO roomMemberPO) {
-        if (roomMemberPO == null) {
+    private RoomMemberEntity toRoomMemberEntity(RoomMemberPO memberPO) {
+        if (memberPO == null) {
             return null;
         }
-        RoomMemberEntity roomMember = new RoomMemberEntity();
-        roomMember.setId(roomMemberPO.getId());
-        roomMember.setRoomId(roomMemberPO.getRoomId());
-        roomMember.setUserId(roomMemberPO.getUserId());
-        roomMember.setLastReadSeq(roomMemberPO.getLastReadSeq());
-        roomMember.setHiddenAt(roomMemberPO.getHiddenAt());
-        roomMember.setCreatedAt(roomMemberPO.getCreateTime());
-        return roomMember;
+        RoomMemberEntity member = new RoomMemberEntity();
+        member.setId(memberPO.getId());
+        member.setRoomId(memberPO.getRoomId());
+        member.setUserId(memberPO.getUserId());
+        member.setJoinSeq(memberPO.getJoinSeq());
+        member.setCreatedAt(memberPO.getCreateTime());
+        return member;
+    }
+
+    private UserRoomEntity toUserRoomEntity(UserRoomPO userRoomPO) {
+        if (userRoomPO == null) {
+            return null;
+        }
+        UserRoomEntity userRoom = new UserRoomEntity();
+        userRoom.setId(userRoomPO.getId());
+        userRoom.setRoomId(userRoomPO.getRoomId());
+        userRoom.setUserId(userRoomPO.getUserId());
+        userRoom.setReadSeq(userRoomPO.getReadSeq());
+        userRoom.setHiddenAt(userRoomPO.getHiddenAt());
+        userRoom.setCreatedAt(userRoomPO.getCreateTime());
+        return userRoom;
     }
 
     private MessageEntity toMessageEntity(MessagePO messagePO) {

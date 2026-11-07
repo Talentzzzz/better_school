@@ -4,6 +4,7 @@ import com.betterschool.domain.chat.model.entity.MessageEntity;
 import com.betterschool.domain.chat.model.entity.RoomEntity;
 import com.betterschool.domain.chat.model.entity.RoomMemberEntity;
 import com.betterschool.domain.chat.model.entity.TimelineEntity;
+import com.betterschool.domain.chat.model.entity.UserRoomEntity;
 import com.betterschool.domain.chat.model.valobj.ChatMessagePushMessage;
 import com.betterschool.domain.chat.model.valobj.ChatReadPushMessage;
 import com.betterschool.domain.chat.model.valobj.ChatRecallPushMessage;
@@ -16,18 +17,23 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * chat 仓储（room/message/timeline 模型）：读路径原语 + 写路径原子用例。
+ * chat 仓储（room/user_room/room_member 名册/message/timeline 模型）：读路径原语 + 写路径原子用例。
  * <p>
  * 「原子用例」= 一次操作内的多次读改写，实现内以编程式事务（PROPAGATION_REQUIRED）收成一个方法，
  * 与调用方既有事务合流；域服务只构造实体与参数后调一次，不再自持事务。
  * 取号（increaseLastSeq/increaseUserSeq）与消息、时间线写入必须同事务，回滚即无号无痕。
+ * <p>
+ * 双维度拆分口径：user_room（用户维度，贴 user_id 片键）只装 per-user 状态；
+ * 「这个会话有谁」一律走 room_member 名册（会话维度，贴 room_id 片键）——成员枚举/对家回查从名册走，
+ * user_room 的会话级批量写随之改为「名册给定成员集、逐用户执行」
  */
 public interface IChatRepository {
 
     // ===== 原子用例（仓储内事务） =====
 
     /**
-     * 建 1v1 会话 + 两名成员 + 配对行（一个原子用例）：成员 = 首建发起人（room.initiatorId）+ 对家；
+     * 建 1v1 会话 + 两行名册 + 两行用户状态 + 配对行（一个原子用例）：成员 = 首建发起人（room.initiatorId）+ 对家；
+     * 名册行（join_seq=0）与 user_room 行（read_seq=0）同事务成对写入；
      * 配对行（user_pair_room.uk_pair）是事务收尾闸门，同一对人并发建会话时后到者整事务回滚
      * room_id 由 insertRoom 在实现内应用层发号，成员行在实现内构造
      *
@@ -36,8 +42,8 @@ public interface IChatRepository {
     RoomEntity createDirectRoom(RoomEntity room, String targetUserId);
 
     /**
-     * 发送落库段（一个原子用例）：取号 → 落消息 → 扇出时间线（per-user delivery_seq 取号）
-     * → 清 hidden 弹回 → 刷 room_member 列表副本（水位 + 预览三件套）→ 写 MSG 推送事件。
+     * 发送落库段（一个原子用例）：取号 → 落消息 → 按名册扇出时间线（per-user delivery_seq 取号）
+     * → 逐用户清 hidden 弹回 → 逐用户刷 user_room 列表副本（水位 + 预览三件套）→ 写 MSG 推送事件。
      * 预览文案与推送载荷（发送者昵称头像等）由调用方备好，实现内只补事务中生成的消息 ID/序号/时间
      *
      * @return 落库后的完整消息体（含 roomId/seq/messageId/createdAt）
@@ -69,16 +75,16 @@ public interface IChatRepository {
     long increaseLastSeq(String roomId);
 
     /**
-     * 发送事务内刷成员行列表副本（本票过渡：与取号同事务，扩散消费端单一写入方归票 02）：
-     * 预览三件套整行刷新（恒两行成员，一次覆盖双方）；未读数不落副本，由 room.last_seq 现算
+     * 发送事务内刷用户行列表副本（本票过渡：与取号同事务，扩散消费端单一写入方归票 02）：
+     * 预览三件套按名册成员集逐用户刷新（1v1 恒两行）；未读数不落副本，由 room.last_seq 现算
      */
-    void updateMemberPreview(String roomId, MsgTypeVO msgType, String preview, LocalDateTime lastMsgAt);
+    void updateUserRoomPreview(String roomId, MsgTypeVO msgType, String preview, LocalDateTime lastMsgTime);
 
     /**
      * 会话列表查询（idx_user_msg 主路径，用户维度单行可算）：排除 hidden_at 非空，
-     * 按 last_msg_at 倒序分页；unread = lastSeq − last_read_seq 由调用方拼装（lastSeq 随 JOIN room 投影带出）
+     * 按 last_msg_time 倒序分页；unread = lastSeq − readSeq 由调用方拼装（lastSeq 由 room 行回查带出）
      *
-     * @return 按 last_msg_at 倒序的会话概要（含本人在会话的水位线）
+     * @return 按 last_msg_time 倒序的会话概要（含本人在会话的水位线）
      */
     List<RoomListItemVO> listRoomItems(String userId, int offset, int limit);
 
@@ -89,28 +95,38 @@ public interface IChatRepository {
 
     /**
      * 增量补拉（timeline.uk_user_delivery 主路径）：delivery_seq &gt; afterDeliverySeq 升序取 limit 条，
-     * JOIN message 取消息全量。timeline 永不删除，游标永远有效
+     * 按 msg_id 集回查 message 取消息全量。timeline 永不删除，游标永远有效
      */
     List<TimelineItemVO> listTimelineAfter(String userId, long afterDeliverySeq, int limit);
 
-    // ===== room_member（成员状态） =====
+    // ===== room_member（会话维度名册：「这个会话有谁」） =====
 
+    /** 多值 INSERT 名册扇出（1v1 恒两行，join_seq=0 入群水位）；与两行 user_room 同事务成对写入 */
     void insertRoomMembers(List<RoomMemberEntity> members);
 
-    RoomMemberEntity findRoomMember(String roomId, String userId);
-
+    /** 名册枚举（成员扇出/对家回查/成员页的成员集来源，room_id 片键单分片查询面） */
     List<RoomMemberEntity> listRoomMembers(String roomId);
 
     long countRoomMembers(String roomId);
 
+    // ===== user_room（用户维度会话状态） =====
+
+    void insertUserRooms(List<UserRoomEntity> userRooms);
+
+    /** 本人用户行点查（成员资格判据：行不存在 = 非成员） */
+    UserRoomEntity findUserRoom(String roomId, String userId);
+
+    /** 成员页两段查之②：名册给定成员集的用户行批量回查（水位线拼装，SQL 层零 JOIN） */
+    List<UserRoomEntity> listUserRooms(String roomId, List<String> userIds);
+
     /**
-     * 已读水位线只前进不回退（last_read_seq &lt; 目标才更新，幂等）。
+     * 已读水位线只前进不回退（read_seq &lt; 目标才更新，幂等）。
      *
      * @return 是否实际推进（0 = 水位线已不低于目标，调用方据此决定是否投递 READ 事件防噪音）
      */
-    boolean updateLastReadSeq(String roomId, String userId, long lastReadSeq);
+    boolean updateUserReadSeq(String roomId, String userId, long readSeq);
 
-    /** 新消息扇出时清空该会话全部成员的隐藏位（删除的会话弹回，微信行为） */
+    /** 新消息扇出时按名册成员集清空隐藏位（删除的会话弹回，微信行为；逐用户执行） */
     void clearHidden(String roomId);
 
     /** 用户侧隐藏会话（置 hidden_at）；新消息 clearHidden 弹回 */
@@ -137,8 +153,8 @@ public interface IChatRepository {
     MessageEntity findMessageById(String messageId);
 
     /**
-     * 撤回后替换会话列表预览（用户维度成员行）：仅当该消息仍是会话最后一条（room.last_seq 守卫）才替换，
-     * 并发新消息到达时守卫落空，不覆盖新消息预览
+     * 撤回后按名册成员集逐用户替换会话列表预览（用户维度 user_room 行）：仅当该消息仍是会话最后一条
+     * （room.last_seq 守卫）才替换，并发新消息到达时守卫落空，不覆盖新消息预览
      */
     void markLastMsgRecalled(String roomId, long seq, String preview);
 

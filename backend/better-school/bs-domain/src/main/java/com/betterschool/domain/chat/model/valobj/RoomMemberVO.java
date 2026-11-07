@@ -14,5 +14,5 @@ public class RoomMemberVO {
 
     private String avatar;
 
-    private long lastReadSeq;
+    private long readSeq;
 }

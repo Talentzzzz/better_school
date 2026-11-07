@@ -13,7 +13,7 @@ import org.springframework.stereotype.Service;
 /**
  * 消息扇出核心（发送链路的组装段）：只构造消息实体、裁会话列表预览、备推送载荷，
  * 落库与扇出的原子性交给 {@link IChatRepository#deliverMessage}（仓储内事务：
- * 取号 → 落消息 → timeline 逐成员扇出 → 清 hidden 弹回 → 刷成员行列表副本 → outbox）。
+ * 取号 → 落消息 → 按名册逐成员扇出 timeline → 逐用户清 hidden 弹回 → 逐用户刷 user_room 列表副本 → outbox）。
  * 只做组装不做校验（成员/载荷校验属各用例）
  */
 @Service

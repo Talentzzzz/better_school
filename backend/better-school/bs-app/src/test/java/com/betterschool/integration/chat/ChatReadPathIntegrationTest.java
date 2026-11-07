@@ -71,7 +71,7 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
 
         List<String> roomIds = listRooms(userA).path("list").findValues("roomId").stream()
                 .map(JsonNode::asText).toList();
-        assertThat(roomIds).as("last_msg_at 倒序：最近发言的 room2 在前").containsExactly(room2, room1);
+        assertThat(roomIds).as("last_msg_time 倒序：最近发言的 room2 在前").containsExactly(room2, room1);
     }
 
     @Test
@@ -186,7 +186,7 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
         JsonNode readResp = postJson("/api/chat/rooms/" + roomId + "/read", Map.of(), userB);
         assertSuccess(readResp, "推水位线");
         assertThat(readResp.path("data").asLong()).isEqualTo(2);
-        assertThat(queryLong("SELECT last_read_seq FROM room_member WHERE room_id = '" + roomId + "'"
+        assertThat(queryLong("SELECT read_seq FROM user_room WHERE room_id = '" + roomId + "'"
                 + " AND user_id = '" + userB.userId() + "'" )).isEqualTo(2);
 
         assertThat(readEventCount()).as("首次打开恰好一个 READ 事件").isEqualTo(1);
@@ -200,14 +200,14 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
         postJson("/api/chat/rooms/" + roomId + "/read", Map.of(), userB);
         postJson("/api/chat/rooms/" + roomId + "/read", Map.of(), userB);
         assertThat(readEventCount()).as("重复打开不产生 READ 事件").isEqualTo(1);
-        assertThat(queryLong("SELECT last_read_seq FROM room_member WHERE room_id = '" + roomId + "'"
+        assertThat(queryLong("SELECT read_seq FROM user_room WHERE room_id = '" + roomId + "'"
                 + " AND user_id = '" + userB.userId() + "'" )).isEqualTo(2);
 
         // 落后目标（水位线已高）同样不回退不产事件：B 水位线=2，手动压低后重读只前进
-        jdbcTemplate.update("UPDATE room_member SET last_read_seq = 1 WHERE room_id = '" + roomId + "' AND user_id = '" + userB.userId() + "'");
+        jdbcTemplate.update("UPDATE user_room SET read_seq = 1 WHERE room_id = '" + roomId + "' AND user_id = '" + userB.userId() + "'");
         postJson("/api/chat/rooms/" + roomId + "/read", Map.of(), userB);
         assertThat(readEventCount()).isEqualTo(2);
-        assertThat(queryLong("SELECT last_read_seq FROM room_member WHERE room_id = '" + roomId + "'"
+        assertThat(queryLong("SELECT read_seq FROM user_room WHERE room_id = '" + roomId + "'"
                 + " AND user_id = '" + userB.userId() + "'" )).as("只前进不回退").isEqualTo(2);
 
         // 非成员拒绝
