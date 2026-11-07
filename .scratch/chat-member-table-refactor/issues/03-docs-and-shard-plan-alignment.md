@@ -4,10 +4,10 @@
 
 **Blocked by:** 02（代码终形定稿后文档才不会写两遍）
 
-**Status:** ready-for-agent
+**Status:** resolved（纯文档票，无编译闸门；script 校验 sql.md 七张 chat DDL 与 schema.sql 逐字一致；验收 grep 达成——余下命中均为注记性提及/Avoid 词条/notification_read 同名列；捎带清扫 docs/api/chat.md 旧口径与 docs/db README 表数 40→42 历史漏登）
 
-- [ ] sql.md chat 段按 schema.sql 终形逐字重排（user_room / room_member 名册 / user_pair_room / message 预览注记）
-- [ ] docs/db/chat.md 重写两表条目 + message 段渲染规则迁注 + 索引/未读算式更新；docs/db README 口径核对
-- [ ] CONTEXT.md 词条对齐（未读数算式、已读回执、会话列表查询面）
-- [ ] chat-shard-ready 票 06 预案按上述口径改写（片键表/读路径/建会话形态/作废项注记）
-- [ ] 纯文档票：无编译闸门，验收 = 文档间互相引用无残留旧名（room_member 旧语义、last_read_seq、last_msg_at、peer_read_seq 列、peer_id 盖章）
+- [x] sql.md chat 段按 schema.sql 终形逐字重排（user_room / room_member 名册 / user_pair_room / message 预览注记）
+- [x] docs/db/chat.md 重写两表条目 + message 段渲染规则迁注 + 索引/未读算式更新；docs/db README 口径核对
+- [x] CONTEXT.md 词条对齐（未读数算式、已读回执、会话列表查询面）
+- [x] chat-shard-ready 票 06 预案按上述口径改写（片键表/读路径/建会话形态/作废项注记）
+- [x] 纯文档票：无编译闸门，验收 = 文档间互相引用无残留旧名（room_member 旧语义、last_read_seq、last_msg_at、peer_read_seq 列、peer_id 盖章）
