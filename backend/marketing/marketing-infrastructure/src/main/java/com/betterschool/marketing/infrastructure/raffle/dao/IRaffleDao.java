@@ -1,7 +1,6 @@
 package com.betterschool.marketing.infrastructure.raffle.dao;
 
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawActivityPO;
-import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawPrizeViewPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordDetailPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordViewPO;
@@ -9,6 +8,9 @@ import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyAward
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyWeightPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawUserPrizeViewPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.ExchangeDetailRowPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.PhysicalQuotaRowPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.VirtualQuotaRowPO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -56,21 +58,32 @@ public interface IRaffleDao {
     /** 今日已抽数 = draw_record 该用户当日行数 */
     int countTodayDrawn(@Param("userId") String userId);
 
-    /** 奖品目录视图：奖品位 LEFT JOIN 两段库存台账（remaining/total 展示口径） */
-    List<DrawPrizeViewPO> selectPrizeCatalog(@Param("strategyId") String strategyId);
+    /** 奖品目录三段查之②：虚拟台账按 inv_id 集批量回查（pointsAmount/remaining/total 拼装源） */
+    List<VirtualQuotaRowPO> selectVirtualQuotasByInvIds(@Param("invIds") List<String> invIds);
+
+    /** 奖品目录三段查之③：实物台账按 inv_id 集批量回查（remaining/total 拼装源） */
+    List<PhysicalQuotaRowPO> selectPhysicalQuotasByInvIds(@Param("invIds") List<String> invIds);
 
     /** 我的中奖记录（恒过滤 THANKS，create_time DESC） */
     int countDrawRecords(@Param("userId") String userId);
 
-    List<DrawRecordViewPO> selectDrawRecordViews(@Param("userId") String userId,
-                                                 @Param("offset") int offset, @Param("limit") int limit);
+    /** 我的中奖记录主查：draw_record 单表分页（面额由仓储按 inv_id 集回查积分台账拼装，SQL 层零 JOIN） */
+    List<DrawRecordViewPO> selectDrawRecordRows(@Param("userId") String userId,
+                                                @Param("offset") int offset, @Param("limit") int limit);
+
+    /** 积分面额批量读：仅 type=POINTS 的虚拟台账行（invId → value） */
+    List<VirtualQuotaRowPO> selectPointValuesByInvIds(@Param("invIds") List<String> invIds);
 
     /** 我的奖品（award_type != THANKS，states 空 = 全部） */
     int countMyPrizes(@Param("userId") String userId, @Param("states") List<String> states);
 
-    List<DrawUserPrizeViewPO> selectMyPrizeViews(@Param("userId") String userId,
-                                                 @Param("states") List<String> states,
-                                                 @Param("offset") int offset, @Param("limit") int limit);
+    /** 我的奖品主查：draw_record 单表分页（claimedAt 由仓储按 record_id 集回查 EXCHANGE 明细拼装） */
+    List<DrawUserPrizeViewPO> selectMyPrizeRows(@Param("userId") String userId,
+                                                @Param("states") List<String> states,
+                                                @Param("offset") int offset, @Param("limit") int limit);
+
+    /** 兑换动作明细批量读：draw_record_detail 单表（type=EXCHANGE，recordId → createTime） */
+    List<ExchangeDetailRowPO> selectExchangeDetailsByRecordIds(@Param("recordIds") List<String> recordIds);
 
     // ---- 发货状态机写面（票 14）----
 

@@ -1,0 +1,5 @@
+# 注意：不要在这里排除 target/ —— Dockerfile.runtime 需要把 target/inventory-loadtest.jar 拷进镜像。
+# 多阶段构建的 Dockerfile 只 COPY pom.xml 和 src，多传几十 MB 不影响正确性。
+.idea/
+*.iml
+*.log

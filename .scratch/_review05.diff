@@ -1,0 +1,2334 @@
+﻿diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/InventoryFaultIntegrationTest.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/InventoryFaultIntegrationTest.java
+index b61ae22..6a05b0a 100644
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/InventoryFaultIntegrationTest.java
++++ b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/InventoryFaultIntegrationTest.java
+@@ -2,10 +2,12 @@ package com.betterschool.marketing.integration.inventory;
+ 
+ import com.betterschool.marketing.domain.inventory.service.IInventoryAuditService;
+ import com.betterschool.marketing.domain.inventory.service.IInventoryMergeService;
++import com.betterschool.marketing.domain.inventory.service.IInventoryQuotaService;
+ import com.betterschool.marketing.domain.inventory.service.IInventoryWarmupService;
+-import com.betterschool.marketing.domain.inventory.service.IVirtualInventoryService;
+ import com.betterschool.marketing.integration.support.SwitchableInventoryBucketPort;
+ import com.betterschool.marketing.integration.support.TestingEnvironment;
++import com.betterschool.marketing.types.inventory.InventoryBizTypes;
++import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+ import com.betterschool.marketing.types.inventory.exception.BucketUnavailableException;
+ import org.junit.jupiter.api.AfterEach;
+ import org.junit.jupiter.api.BeforeAll;
+@@ -26,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
+ /**
+  * 库存故障收敛 / 对账用例（票 12 验收 4）：
+  * 「redis 挂了」用桩抛 BucketUnavailableException 表达，「合并停跑」用不调 mergeOnce 表达——
+- * 断言 DB 台账全程可对账、恢复后可收敛。
++ * 断言 DB 台账全程可对账、恢复后可收敛。票 05 起走合一的 {@code IInventoryQuotaService}。
+  */
+ @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+ @ActiveProfiles("test")
+@@ -48,7 +50,7 @@ class InventoryFaultIntegrationTest extends TestingEnvironment {
+     @Autowired
+     private RedissonClient redissonClient;
+     @Autowired
+-    private IVirtualInventoryService virtualInventoryService;
++    private IInventoryQuotaService inventoryQuotaService;
+     @Autowired
+     private IInventoryMergeService inventoryMergeService;
+     @Autowired
+@@ -81,6 +83,11 @@ class InventoryFaultIntegrationTest extends TestingEnvironment {
+         switchableInventoryBucketPort.resetTestState();
+     }
+ 
++    private boolean preDeduct(long quantity, long recordId) {
++        return inventoryQuotaService.preDeduct(InventorySegmentVO.VIRTUAL, INV_ID, quantity,
++                InventoryBizTypes.LOTTERY_DRAW, recordId);
++    }
++
+     private long pendingQty() {
+         var count = jdbcTemplate.queryForObject(
+                 "SELECT COALESCE(SUM(quantity), 0) FROM virtual_inventory_quota_detail WHERE state = 0", Long.class);
+@@ -94,7 +101,7 @@ class InventoryFaultIntegrationTest extends TestingEnvironment {
+         inventoryWarmupService.warmupVirtual(INV_ID);
+         switchableInventoryBucketPort.switchToUnavailable();
+ 
+-        assertThatThrownBy(() -> virtualInventoryService.preDeduct(INV_ID, 3, RECORD_ID))
++        assertThatThrownBy(() -> preDeduct(3, RECORD_ID))
+                 .isInstanceOf(BucketUnavailableException.class);
+ 
+         assertThat(pendingQty()).as("预扣没发生，无未合并明细").isZero();
+@@ -112,8 +119,8 @@ class InventoryFaultIntegrationTest extends TestingEnvironment {
+     void mergeResume_convergesLedger_evenWithRedisDown() {
+         inventoryWarmupService.warmupVirtual(INV_ID);
+         // 模拟合并任务停跑：两次预扣只进 Redis + 明细，不跑 merge
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, 3, RECORD_ID)).isTrue();
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, 5, RECORD_ID + 1)).isTrue();
++        assertThat(preDeduct(3, RECORD_ID)).isTrue();
++        assertThat(preDeduct(5, RECORD_ID + 1)).isTrue();
+ 
+         var stalled = inventoryAuditService.auditVirtual(INV_ID);
+         assertThat(stalled.getPendingQty()).as("停跑期间 pending 累积到 8").isEqualTo(8L);
+diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/PhysicalQuotaIntegrationTest.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/PhysicalQuotaIntegrationTest.java
+index 749ea9b..e36a284 100644
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/PhysicalQuotaIntegrationTest.java
++++ b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/PhysicalQuotaIntegrationTest.java
+@@ -1,11 +1,14 @@
+ package com.betterschool.marketing.integration.inventory;
+ 
++import com.betterschool.marketing.domain.inventory.model.valobj.DeductOutcomeVO;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductRequestVO;
+ import com.betterschool.marketing.domain.inventory.service.IInventoryMergeService;
++import com.betterschool.marketing.domain.inventory.service.IInventoryQuotaService;
+ import com.betterschool.marketing.domain.inventory.service.IInventoryWarmupService;
+-import com.betterschool.marketing.domain.inventory.service.IPhysicalQuotaService;
+-import com.betterschool.marketing.domain.inventory.model.valobj.DeductOutcomeVO;
+ import com.betterschool.marketing.integration.support.TestingEnvironment;
+ import com.betterschool.marketing.types.inventory.Constants;
++import com.betterschool.marketing.types.inventory.InventoryBizTypes;
++import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+ import org.junit.jupiter.api.BeforeAll;
+ import org.junit.jupiter.api.BeforeEach;
+ import org.junit.jupiter.api.DisplayName;
+@@ -24,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
+ /**
+  * 实物营销配额两段式集成用例：预扣 → waiting → 兑换确认 issued（票 12 验收 3），
+  * 以及配额不足落兜底奖品（验收 3 第三例）。复用与虚拟段同一套合并 / 预热骨架。
++ * 票 05 起走合一的 {@code IInventoryQuotaService}（主档 = QUOTA、兜底 = VIRTUAL），参数化合并留票 07。
+  */
+ @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+ @ActiveProfiles("test")
+@@ -48,7 +52,7 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+     @Autowired
+     private RedissonClient redissonClient;
+     @Autowired
+-    private IPhysicalQuotaService physicalQuotaService;
++    private IInventoryQuotaService inventoryQuotaService;
+     @Autowired
+     private IInventoryMergeService inventoryMergeService;
+     @Autowired
+@@ -76,6 +80,20 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+         insertVirtualBucket(FALLBACK_INV_ID, 0, FALLBACK_BUCKET_QTY);
+     }
+ 
++    private boolean preDeduct(long quantity, long recordId) {
++        return inventoryQuotaService.preDeduct(InventorySegmentVO.QUOTA, QUOTA_INV_ID, quantity,
++                InventoryBizTypes.LOTTERY_DRAW, recordId);
++    }
++
++    private DeductOutcomeVO preDeductWithFallback(Long fallbackInvId, long quantity, long recordId) {
++        InventoryDeductRequestVO primary = new InventoryDeductRequestVO(InventorySegmentVO.QUOTA, QUOTA_INV_ID,
++                quantity, InventoryBizTypes.LOTTERY_DRAW, recordId);
++        InventoryDeductRequestVO fallback = fallbackInvId == null ? null
++                : new InventoryDeductRequestVO(InventorySegmentVO.VIRTUAL, fallbackInvId, quantity,
++                InventoryBizTypes.LOTTERY_DRAW, recordId);
++        return inventoryQuotaService.preDeductWithFallback(primary, fallback);
++    }
++
+     private void insertQuotaBucket(long invId, int bucketId, long redisQty) {
+         jdbcTemplate.update("""
+                         INSERT INTO physical_marketing_quota_bucket (inv_id, bucket_id, redis_qty, create_time, update_time)
+@@ -107,18 +125,18 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+     }
+ 
+     private long quotaRedisBalance(int bucketId) {
+-        return redissonClient.getAtomicLong(Constants.quotaBucketKey(QUOTA_INV_ID, bucketId)).get();
++        return redissonClient.getAtomicLong(Constants.bucketKey(InventorySegmentVO.QUOTA, QUOTA_INV_ID, bucketId)).get();
+     }
+ 
+     private long fallbackRedisBalance() {
+-        return redissonClient.getAtomicLong(Constants.virtualBucketKey(FALLBACK_INV_ID, 0)).get();
++        return redissonClient.getAtomicLong(Constants.bucketKey(InventorySegmentVO.VIRTUAL, FALLBACK_INV_ID, 0)).get();
+     }
+ 
+     @Test
+     @DisplayName("预扣 → 合并：预扣后台账三处未变，合并后 waiting 增 / surplus 减 / 明细 state=1")
+     void preDeduct_thenMerge_movesSurplusIntoWaiting() {
+         inventoryWarmupService.warmupPhysical(QUOTA_INV_ID);
+-        assertThat(physicalQuotaService.preDeduct(QUOTA_INV_ID, 3, RECORD_ID)).isTrue();
++        assertThat(preDeduct(3, RECORD_ID)).isTrue();
+ 
+         // 预扣阶段：与虚拟段同构——Redis 桶减了、明细 state=0，台账（含 waiting）未动
+         assertThat(quotaRedisBalance(0)).isEqualTo(QUOTA_BUCKET_QTY - 3);
+@@ -146,8 +164,8 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+     void preDeduct_sameRecordId_replaysWithoutSecondDeduction() {
+         inventoryWarmupService.warmupPhysical(QUOTA_INV_ID);
+ 
+-        assertThat(physicalQuotaService.preDeduct(QUOTA_INV_ID, 3, RECORD_ID)).isTrue();
+-        assertThat(physicalQuotaService.preDeduct(QUOTA_INV_ID, 3, RECORD_ID))
++        assertThat(preDeduct(3, RECORD_ID)).isTrue();
++        assertThat(preDeduct(3, RECORD_ID))
+                 .as("第二次撞业务唯一键，按成功回放").isTrue();
+ 
+         assertThat(detailCount("physical_marketing_quota_detail", "inv_id", QUOTA_INV_ID, 0))
+@@ -163,11 +181,11 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+         inventoryWarmupService.warmupPhysical(QUOTA_INV_ID);
+         inventoryWarmupService.warmupVirtual(FALLBACK_INV_ID);
+ 
+-        assertThat(physicalQuotaService.preDeductWithFallback(QUOTA_INV_ID, FALLBACK_INV_ID, 1, RECORD_ID))
++        assertThat(preDeductWithFallback(FALLBACK_INV_ID, 1, RECORD_ID))
+                 .isEqualTo(DeductOutcomeVO.DEDUCTED);
+         assertThat(quotaRedisBalance(0)).isZero();
+ 
+-        assertThat(physicalQuotaService.preDeductWithFallback(QUOTA_INV_ID, FALLBACK_INV_ID, 1, RECORD_ID))
++        assertThat(preDeductWithFallback(FALLBACK_INV_ID, 1, RECORD_ID))
+                 .as("桶已扣空，失败路径按业务键回放，不能把同一笔再扣到兜底段")
+                 .isEqualTo(DeductOutcomeVO.DEDUCTED);
+ 
+@@ -181,10 +199,10 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+     @DisplayName("台账 exhausted 后重试同一 recordId：state 检查不吞掉重放")
+     void preDeduct_sameRecordId_afterExhausted_replays() {
+         inventoryWarmupService.warmupPhysical(QUOTA_INV_ID);
+-        assertThat(physicalQuotaService.preDeduct(QUOTA_INV_ID, 3, RECORD_ID)).isTrue();
++        assertThat(preDeduct(3, RECORD_ID)).isTrue();
+         jdbcTemplate.update("UPDATE physical_marketing_quota SET state = 'exhausted' WHERE inv_id = ?", QUOTA_INV_ID);
+ 
+-        assertThat(physicalQuotaService.preDeduct(QUOTA_INV_ID, 3, RECORD_ID))
++        assertThat(preDeduct(3, RECORD_ID))
+                 .as("台账非 open 但明细已存在 → 成功回放").isTrue();
+ 
+         assertThat(detailCount("physical_marketing_quota_detail", "inv_id", QUOTA_INV_ID, 0)).isEqualTo(1);
+@@ -198,9 +216,9 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+         inventoryWarmupService.warmupPhysical(QUOTA_INV_ID);
+         inventoryWarmupService.warmupVirtual(FALLBACK_INV_ID);
+ 
+-        assertThat(physicalQuotaService.preDeductWithFallback(QUOTA_INV_ID, FALLBACK_INV_ID, 1, RECORD_ID))
++        assertThat(preDeductWithFallback(FALLBACK_INV_ID, 1, RECORD_ID))
+                 .isEqualTo(DeductOutcomeVO.FALLBACK);
+-        assertThat(physicalQuotaService.preDeductWithFallback(QUOTA_INV_ID, FALLBACK_INV_ID, 1, RECORD_ID))
++        assertThat(preDeductWithFallback(FALLBACK_INV_ID, 1, RECORD_ID))
+                 .as("兜底段明细已存在，主段扣不出时直接回放").isEqualTo(DeductOutcomeVO.FALLBACK);
+ 
+         assertThat(fallbackRedisBalance()).as("兜底段只扣一次").isEqualTo(FALLBACK_BUCKET_QTY - 1);
+@@ -212,11 +230,11 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+     @DisplayName("兑换确认：waiting 减 / issued 增，台账总量不变（纯转移，不再双扣 surplus）")
+     void confirmIssued_transfersWaitingToIssued() {
+         inventoryWarmupService.warmupPhysical(QUOTA_INV_ID);
+-        assertThat(physicalQuotaService.preDeduct(QUOTA_INV_ID, 3, RECORD_ID)).isTrue();
++        assertThat(preDeduct(3, RECORD_ID)).isTrue();
+         inventoryMergeService.mergeOnce();
+         assertThat(((Number) quotaRow().get("waiting_qty")).longValue()).isEqualTo(3L);
+ 
+-        physicalQuotaService.confirmIssued(QUOTA_INV_ID, RECORD_ID, 3);
++        inventoryQuotaService.confirmIssued(QUOTA_INV_ID, InventoryBizTypes.LOTTERY_CLAIM, RECORD_ID, 3);
+ 
+         Map<String, Object> quota = quotaRow();
+         assertThat(((Number) quota.get("waiting_qty")).longValue()).as("等待确认量转走").isZero();
+@@ -231,8 +249,7 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+         inventoryWarmupService.warmupPhysical(QUOTA_INV_ID);
+         inventoryWarmupService.warmupVirtual(FALLBACK_INV_ID);
+ 
+-        var outcome = physicalQuotaService.preDeductWithFallback(QUOTA_INV_ID, FALLBACK_INV_ID,
+-                QUOTA_BUCKET_QTY + 5, RECORD_ID);
++        var outcome = preDeductWithFallback(FALLBACK_INV_ID, QUOTA_BUCKET_QTY + 5, RECORD_ID);
+ 
+         assertThat(outcome).isEqualTo(DeductOutcomeVO.FALLBACK);
+         assertThat(fallbackRedisBalance()).as("兜底桶扣了 25").isEqualTo(FALLBACK_BUCKET_QTY - (QUOTA_BUCKET_QTY + 5));
+@@ -251,7 +268,7 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+         inventoryWarmupService.warmupPhysical(QUOTA_INV_ID);
+         inventoryWarmupService.warmupVirtual(FALLBACK_INV_ID);
+ 
+-        var outcome = physicalQuotaService.preDeductWithFallback(QUOTA_INV_ID, FALLBACK_INV_ID, 3, RECORD_ID);
++        var outcome = preDeductWithFallback(FALLBACK_INV_ID, 3, RECORD_ID);
+ 
+         assertThat(outcome).isEqualTo(DeductOutcomeVO.DEDUCTED);
+         assertThat(detailCount("physical_marketing_quota_detail", "inv_id", QUOTA_INV_ID, 0)).isEqualTo(1);
+@@ -265,8 +282,7 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+         inventoryWarmupService.warmupPhysical(QUOTA_INV_ID);
+         inventoryWarmupService.warmupVirtual(FALLBACK_INV_ID);
+ 
+-        var outcome = physicalQuotaService.preDeductWithFallback(QUOTA_INV_ID, FALLBACK_INV_ID,
+-                FALLBACK_BUCKET_QTY + 1, RECORD_ID);
++        var outcome = preDeductWithFallback(FALLBACK_INV_ID, FALLBACK_BUCKET_QTY + 1, RECORD_ID);
+ 
+         assertThat(outcome).isEqualTo(DeductOutcomeVO.FAILED);
+         assertThat(detailCount("physical_marketing_quota_detail", "inv_id", QUOTA_INV_ID, 0)).isZero();
+diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/VirtualInventoryIntegrationTest.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/VirtualInventoryIntegrationTest.java
+index 838f437..b5b0a0d 100644
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/VirtualInventoryIntegrationTest.java
++++ b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/VirtualInventoryIntegrationTest.java
+@@ -2,10 +2,12 @@ package com.betterschool.marketing.integration.inventory;
+ 
+ import com.betterschool.marketing.domain.inventory.service.IInventoryAuditService;
+ import com.betterschool.marketing.domain.inventory.service.IInventoryMergeService;
++import com.betterschool.marketing.domain.inventory.service.IInventoryQuotaService;
+ import com.betterschool.marketing.domain.inventory.service.IInventoryWarmupService;
+-import com.betterschool.marketing.domain.inventory.service.IVirtualInventoryService;
+ import com.betterschool.marketing.integration.support.TestingEnvironment;
+ import com.betterschool.marketing.types.inventory.Constants;
++import com.betterschool.marketing.types.inventory.InventoryBizTypes;
++import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+ import org.junit.jupiter.api.BeforeAll;
+ import org.junit.jupiter.api.BeforeEach;
+ import org.junit.jupiter.api.DisplayName;
+@@ -24,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
+ /**
+  * 虚拟权益池（积分 / 抽奖次数）两段式集成用例：预扣 → 合并 → 台账收敛（票 12 验收 2）。
+  * 本域在票 12 只建能力，抽奖主链路接入归票 13，所以走域服务 seam。
++ * 票 05 起走合一的 {@code IInventoryQuotaService}（段 = VIRTUAL），参数化合并留票 07。
+  */
+ @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+ @ActiveProfiles("test")
+@@ -46,7 +49,7 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
+     @Autowired
+     private RedissonClient redissonClient;
+     @Autowired
+-    private IVirtualInventoryService virtualInventoryService;
++    private IInventoryQuotaService inventoryQuotaService;
+     @Autowired
+     private IInventoryMergeService inventoryMergeService;
+     @Autowired
+@@ -63,6 +66,11 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
+         insertVirtualBucket(INV_ID, 0, BUCKET0_QTY);
+     }
+ 
++    private boolean preDeduct(long quantity, long recordId) {
++        return inventoryQuotaService.preDeduct(InventorySegmentVO.VIRTUAL, INV_ID, quantity,
++                InventoryBizTypes.LOTTERY_DRAW, recordId);
++    }
++
+     private void insertVirtualInventory(long invId, String name, String type, int value,
+                                         long surplusQty, long issuedQty, String state) {
+         jdbcTemplate.update("""
+@@ -99,7 +107,7 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
+     }
+ 
+     private long redisBalance(int bucketId) {
+-        return redissonClient.getAtomicLong(Constants.virtualBucketKey(INV_ID, bucketId)).get();
++        return redissonClient.getAtomicLong(Constants.bucketKey(InventorySegmentVO.VIRTUAL, INV_ID, bucketId)).get();
+     }
+ 
+     @Test
+@@ -108,7 +116,7 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
+         inventoryWarmupService.warmupVirtual(INV_ID);
+         assertThat(redisBalance(0)).isEqualTo(BUCKET0_QTY);
+ 
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, 3, RECORD_ID)).isTrue();
++        assertThat(preDeduct(3, RECORD_ID)).isTrue();
+ 
+         assertThat(redisBalance(0)).as("Redis 桶已原子递减").isEqualTo(BUCKET0_QTY - 3);
+         assertThat(detailCount(0)).as("未合并明细一行").isEqualTo(1);
+@@ -132,8 +140,8 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
+     void preDeduct_sameRecordId_replaysWithoutSecondDeduction() {
+         inventoryWarmupService.warmupVirtual(INV_ID);
+ 
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, 3, RECORD_ID)).isTrue();
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, 3, RECORD_ID))
++        assertThat(preDeduct(3, RECORD_ID)).isTrue();
++        assertThat(preDeduct(3, RECORD_ID))
+                 .as("第二次撞业务唯一键，按成功回放").isTrue();
+ 
+         assertThat(detailCount(0)).as("明细只有一行").isEqualTo(1);
+@@ -145,10 +153,10 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
+     @DisplayName("桶被上一笔扣空后重试同一 recordId：走不到 INSERT，失败路径按业务键回放")
+     void preDeduct_sameRecordId_afterBucketDrained_replays() {
+         inventoryWarmupService.warmupVirtual(INV_ID);
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, BUCKET0_QTY, RECORD_ID)).isTrue();
++        assertThat(preDeduct(BUCKET0_QTY, RECORD_ID)).isTrue();
+         assertThat(redisBalance(0)).isZero();
+ 
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, BUCKET0_QTY, RECORD_ID))
++        assertThat(preDeduct(BUCKET0_QTY, RECORD_ID))
+                 .as("桶已扣空、扣不出，但明细已存在 → 成功回放").isTrue();
+ 
+         assertThat(detailCount(0)).as("明细仍只有一行").isEqualTo(1);
+@@ -159,10 +167,10 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
+     @DisplayName("台账已 exhausted 后重试同一 recordId：state 检查不吞掉重放")
+     void preDeduct_sameRecordId_afterExhausted_replays() {
+         inventoryWarmupService.warmupVirtual(INV_ID);
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, 3, RECORD_ID)).isTrue();
++        assertThat(preDeduct(3, RECORD_ID)).isTrue();
+         jdbcTemplate.update("UPDATE virtual_inventory_quota SET state = 'exhausted' WHERE inv_id = ?", INV_ID);
+ 
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, 3, RECORD_ID))
++        assertThat(preDeduct(3, RECORD_ID))
+                 .as("台账非 open 但明细已存在 → 成功回放").isTrue();
+ 
+         assertThat(detailCount(0)).isEqualTo(1);
+@@ -173,8 +181,8 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
+     @DisplayName("合并一轮：redis_qty / surplus_qty / issued_qty 三处自洽，明细翻 state=1，Redis 不被合并动")
+     void mergeOnce_settlesLedgerConsistently() {
+         inventoryWarmupService.warmupVirtual(INV_ID);
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, 3, RECORD_ID)).isTrue();
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, 5, RECORD_ID + 1)).isTrue();
++        assertThat(preDeduct(3, RECORD_ID)).isTrue();
++        assertThat(preDeduct(5, RECORD_ID + 1)).isTrue();
+ 
+         var result = inventoryMergeService.mergeOnce();
+ 
+@@ -197,7 +205,7 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
+     @DisplayName("合并幂等：同批明细重复跑合并不重复扣减，台账数值不变")
+     void mergeOnce_isIdempotent() {
+         inventoryWarmupService.warmupVirtual(INV_ID);
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, 3, RECORD_ID)).isTrue();
++        assertThat(preDeduct(3, RECORD_ID)).isTrue();
+         inventoryMergeService.mergeOnce();
+         var settled = inventoryRow();
+         long redisQtyAfterFirst = ((Number) bucketRow(0).get("redis_qty")).longValue();
+@@ -215,7 +223,7 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
+     void preDeduct_insufficient_isSideEffectFree() {
+         inventoryWarmupService.warmupVirtual(INV_ID);
+ 
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, BUCKET0_QTY + 1, RECORD_ID)).isFalse();
++        assertThat(preDeduct(BUCKET0_QTY + 1, RECORD_ID)).isFalse();
+ 
+         assertThat(detailCount(0)).isZero();
+         assertThat(redisBalance(0)).isEqualTo(BUCKET0_QTY);
+@@ -227,12 +235,12 @@ class VirtualInventoryIntegrationTest extends TestingEnvironment {
+     void mergeOnce_exhaustsLimitedInventory() {
+         jdbcTemplate.update("UPDATE virtual_inventory_quota SET surplus_qty = 8 WHERE inv_id = ?", INV_ID);
+         inventoryWarmupService.warmupVirtual(INV_ID);
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, 8, RECORD_ID)).isTrue();
++        assertThat(preDeduct(8, RECORD_ID)).isTrue();
+ 
+         inventoryMergeService.mergeOnce();
+ 
+         assertThat(inventoryRow().get("state")).as("surplus 恰好扣空 → exhausted").isEqualTo("exhausted");
+-        assertThat(virtualInventoryService.preDeduct(INV_ID, 1, RECORD_ID + 1))
++        assertThat(preDeduct(1, RECORD_ID + 1))
+                 .as("exhausted 台账不可再预扣（Redis 桶虽有余额也不发）").isFalse();
+     }
+ }
+diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/RaffleApiTestBase.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/RaffleApiTestBase.java
+index bd609ce..a9fc973 100644
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/RaffleApiTestBase.java
++++ b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/RaffleApiTestBase.java
+@@ -7,6 +7,7 @@ import com.betterschool.marketing.domain.raffle.service.warmup.IRaffleWarmupServ
+ import com.betterschool.marketing.infrastructure.common.outbox.OutboxMessageSender;
+ import com.betterschool.marketing.trigger.raffle.listener.LotteryShippingConsumer;
+ import com.betterschool.marketing.types.inventory.Constants;
++import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+ import com.fasterxml.jackson.databind.JsonNode;
+ import com.fasterxml.jackson.databind.ObjectMapper;
+ import org.junit.jupiter.api.BeforeAll;
+@@ -413,7 +414,7 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
+ 
+     /** Redis 库存桶当前值（先判存在：get 会把不存在的 key 建成 0） */
+     protected Long virtualBucketValueInRedis(long invId, int bucketId) {
+-        String key = Constants.virtualBucketKey(invId, bucketId);
++        String key = Constants.bucketKey(InventorySegmentVO.VIRTUAL, invId, bucketId);
+         if (!redissonClient.getBucket(key).isExists()) {
+             return null;
+         }
+@@ -421,7 +422,7 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
+     }
+ 
+     protected Long quotaBucketValueInRedis(long invId, int bucketId) {
+-        String key = Constants.quotaBucketKey(invId, bucketId);
++        String key = Constants.bucketKey(InventorySegmentVO.QUOTA, invId, bucketId);
+         if (!redissonClient.getBucket(key).isExists()) {
+             return null;
+         }
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/adapter/repository/IInventoryRepository.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/adapter/repository/IInventoryRepository.java
+index 694335b..3c09e46 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/adapter/repository/IInventoryRepository.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/adapter/repository/IInventoryRepository.java
+@@ -1,141 +1,82 @@
+ package com.betterschool.marketing.domain.inventory.adapter.repository;
+ 
+-import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaBucketEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaDetailEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.VirtualInventoryQuotaBucketEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.VirtualInventoryQuotaDetailEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.VirtualInventoryQuotaEntity;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryBucketVO;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductDetailVO;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryLedgerVO;
+ import com.betterschool.marketing.domain.inventory.model.valobj.UnmergedDetailVO;
++import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+ 
+ import java.util.List;
+ 
+ /**
+- * 库存域唯一仓储（一域一仓储）：虚拟权益池（virtual_inventory_quota 三张表）与实物营销配额
+- * （physical_marketing_quota 三张表）两段合成一个接口。
+- * 两段同构（预扣 / 合并 / 预热 / 对账），分叉只在 waiting_qty 与兑换确认——分叉语义留在域服务里，
+- * 本接口只呈现数据访问面。
++ * 库存域唯一仓储（一域一仓储）：两段（虚拟库存配额 / 实物营销配额）共用**一套方法**，
++ * 每个方法都带 {@link InventorySegmentVO}，实现按段分派到两个 DAO。
+  * <p>
+- * 虚拟侧方法带 {@code Virtual} 限定（与实物侧同名语义区分，如
+- * {@link #queryVirtualInventory} / {@link #queryQuota}）；实物侧沿用既有的 {@code Quota} 限定。
++ * 为什么不是两个仓储：两段的表不同，但数据访问面同构——查询、预扣落明细、业务幂等预检、合并、
++ * 对账汇总一一对应。合成一个接口后方法数减半，域服务里也不会再出现「虚拟版 + 实物版」两份调用。
++ * <b>PO / DAO / mapper XML 仍是两套</b>（表就是两张，合了只会把 SQL 变成动态表名），分派只发生在这里。
+  * <p>
+- * 事务：合并骨架「一组一事务」的写面（{@link #settleVirtualInventory} /
+- * {@link #markVirtualDetailsMerged} 与实物孪生）与兑换确认的守卫转移（{@link #confirmIssued}）
+- * 由仓储自己用 {@code TransactionTemplate}（REQUIRED）收成一个原子用例；其余单步方法是
+- * 单条 SQL，无需开启事务。
++ * 事务：合并一组（{@link #mergeBucketGroup}）与兑换确认（{@link #confirmIssued}）是「一次操作的原子边界」，
++ * 由实现类用 {@code TransactionTemplate}（REQUIRED）包住；其余方法是单条 SQL，不额外开事务。
++ * 域服务只调一次仓储方法，不注入模板。
+  */
+ public interface IInventoryRepository {
+ 
+-    // ---- 虚拟权益池：预扣路径 ----
++    // ---- 台账 / 分桶 ----
+ 
+-    /** 虚拟库存行（不限 state，state 校验由域服务做）；不存在返回 null */
+-    VirtualInventoryQuotaEntity queryVirtualInventory(Long invId);
++    /** 台账行（不限 state，open 与否由域服务判）；该段不存在这个 inv 时返回 null */
++    InventoryLedgerVO queryLedger(InventorySegmentVO segment, Long invId);
+ 
+-    /** 该虚拟库存的分桶列表（按 bucket_id 升序）：预扣时逐桶尝试 Lua 扣减 */
+-    List<VirtualInventoryQuotaBucketEntity> listVirtualBuckets(Long invId);
++    /** 该台账的分桶列表（按 bucket_id 升序）：预扣逐桶尝试、预热逐桶 SET、对账逐桶比 */
++    List<InventoryBucketVO> listBuckets(InventorySegmentVO segment, Long invId);
+ 
+-    /** 落一行虚拟预扣明细（state=0）：Redis 已扣成功后写；失败由域服务补偿回补 Redis。时间列由 DB NOW() 写 */
+-    void insertVirtualDetail(VirtualInventoryQuotaDetailEntity detail);
++    /** 该段全部 open 的台账（预热入口） */
++    List<InventoryLedgerVO> listOpenLedgers(InventorySegmentVO segment);
+ 
+-    /**
+-     * 虚拟预扣明细是否已存在（业务幂等预检）：只在本段扣不出时调用，
+-     * 用于区分「真余量不足」与「这场流转在本 inv 上已落过、只是这一笔没得扣」（重放）。
+-     */
+-    boolean existsVirtualDeductDetail(Long invId, String bizType, long bizId);
+-
+-    // ---- 虚拟权益池：合并路径（事务内，由仓储开启） ----
+-
+-    /** 扫全部未合并虚拟明细（state=0，无 LIMIT），投影成两段公共形状：合并骨架的扫描入口 */
+-    List<UnmergedDetailVO> listUnmergedVirtualDetailRows();
+-
+-    /** 虚拟桶对账副本递减（带 redis_qty >= qty 守卫）：返回 0 行 = 台账不变量被破坏，调用方跳过该组留对账 */
+-    int deductVirtualBucketRedisQty(Long invId, Integer bucketId, long quantity);
+-
+-    /** 虚拟台账结算：+issued_qty；surplus_qty 不是 -1（限量）时同步递减，减到 0 置 exhausted */
+-    int settleVirtualInventory(Long invId, long quantity);
+-
+-    /** 本批虚拟明细置 state=1：只按合并组携带的 id 翻转，绝不 WHERE state=0（防误翻并发新明细） */
+-    int markVirtualDetailsMerged(List<Long> detailIds);
++    // ---- 预扣路径 ----
+ 
+     /**
+-     * 一个虚拟桶组的合并，**同一事务**内完成：桶对账副本递减（守卫）→ 台账结算 → 明细按携带 id 翻转。
+-     * 守卫递减 0 行即整组回滚并返回 false，留 state=0 给对账口径暴露。
+-     *
+-     * @return true = 本组真的合并了；false = 守卫不过（台账不变量被破坏）
++     * 落一行预扣明细（{@code state = 0}）：Redis 已扣成功后写；失败由域服务补偿回补 Redis。
++     * 时间列由 INSERT 的 DB {@code NOW()} 写（时间格键），实物段由仓储补 {@code type = 1}。
+      */
+-    boolean mergeVirtualBucketGroup(Long invId, Integer bucketId, long totalQty, List<Long> detailIds);
+-
+-    // ---- 虚拟权益池：预热 / 对账 ----
+-
+-    /** 全部 open 的虚拟库存（预热入口） */
+-    List<VirtualInventoryQuotaEntity> listOpenVirtualInventories();
+-
+-    /** 虚拟未合并明细总量（SUM(quantity) WHERE state=0，对账口径 pendingQty） */
+-    long sumUnmergedVirtualQty(Long invId);
+-
+-    /** 虚拟已合并明细总量（SUM(quantity) WHERE state=1，对账口径 mergedQty） */
+-    long sumMergedVirtualQty(Long invId);
+-
+-    // ---- 实物营销配额：预扣路径（与虚拟段同构） ----
+-
+-    /** 配额行（不限 state，state 校验由域服务做）；不存在返回 null */
+-    PhysicalMarketingQuotaEntity queryQuota(Long invId);
+-
+-    /** 该配额的分桶列表（按 bucket_id 升序）：预扣时逐桶尝试 Lua 扣减 */
+-    List<PhysicalMarketingQuotaBucketEntity> listQuotaBuckets(Long invId);
+-
+-    /** 落一行预扣明细（state=0）：Redis 已扣成功后写；失败由域服务补偿回补 Redis。时间列由 DB NOW() 写 */
+-    void insertQuotaDetail(PhysicalMarketingQuotaDetailEntity detail);
++    void insertDeductDetail(InventorySegmentVO segment, InventoryDeductDetailVO detail);
+ 
+     /**
+-     * 实物预扣明细（{@code type = 1}）是否已存在（业务幂等预检）：只在本段扣不出时调用，
+-     * 用于区分「真余量不足 / 台账已 exhausted」与「这场流转在本 inv 上已落过」（重放）。
++     * 预扣明细是否已存在（业务幂等预检）：只在本段扣不出时调用，用于区分
++     * 「真余量不足」与「这场流转在本 inv 上已落过」（重放）。实物段只查 {@code type = 1} 的预扣行。
+      */
+-    boolean existsQuotaDeductDetail(Long invId, String bizType, long bizId);
++    boolean existsDeductDetail(InventorySegmentVO segment, Long invId, String bizType, long bizId);
+ 
+-    // ---- 实物营销配额：合并路径（事务内，由仓储开启；与虚拟段唯一分叉：进 waiting_qty） ----
++    // ---- 合并路径（事务内，由仓储开启） ----
+ 
+-    /** 扫全部未合并实物明细（state=0，无 LIMIT），投影成两段公共形状：合并骨架的扫描入口 */
+-    List<UnmergedDetailVO> listUnmergedQuotaDetailRows();
+-
+-    /** 实物桶对账副本递减（带 redis_qty >= qty 守卫）：返回 0 行 = 台账不变量被破坏，调用方跳过该组留对账 */
+-    int deductQuotaBucketRedisQty(Long invId, Integer bucketId, long quantity);
+-
+-    /** 实物台账结算：+waiting_qty（预扣占用，兑换确认时再转 issued）；surplus_qty 不是 -1 时同步递减，减到 0 置 exhausted */
+-    int settleQuota(Long invId, long quantity);
+-
+-    /** 本批实物明细置 state=1：只按合并组携带的 id 翻转，绝不 WHERE state=0（防误翻并发新明细） */
+-    int markQuotaDetailsMerged(List<Long> detailIds);
++    /** 扫该段全部未合并明细（{@code state = 0}，无 LIMIT），投影成两段公共形状：合并骨架的扫描入口 */
++    List<UnmergedDetailVO> listUnmergedDetailRows(InventorySegmentVO segment);
+ 
+     /**
+-     * 一个实物桶组的合并，**同一事务**内完成：桶对账副本递减（守卫）→ 台账结算（进 waiting_qty）→
+-     * 明细按携带 id 翻转。守卫递减 0 行即整组回滚并返回 false，留 state=0 给对账口径暴露。
++     * 该段一个桶组的合并，**同一事务**内完成：桶对账副本递减（守卫）→ 台账结算 → 明细按携带 id 翻转。
++     * 守卫递减 0 行即整组回滚并返回 false，留 {@code state = 0} 给对账口径暴露。
+      *
+      * @return true = 本组真的合并了；false = 守卫不过（台账不变量被破坏）
+      */
+-    boolean mergeQuotaBucketGroup(Long invId, Integer bucketId, long totalQty, List<Long> detailIds);
++    boolean mergeBucketGroup(InventorySegmentVO segment, Long invId, Integer bucketId,
++                             long totalQty, List<Long> detailIds);
+ 
+-    // ---- 实物营销配额：兑换确认（waiting_qty → issued_qty，发货成功后调用） ----
++    // ---- 兑换确认（仅实物段有第二段流转） ----
+ 
+     /**
+      * 兑换确认：{@code waiting_qty ≥ qty} 守卫下做一次转移（waiting 减、issued 加）。
+      * 0 行 = 没有足够的悬挂预扣可确认，抛 {@code INVENTORY_WAITING_SHORTAGE}。
+      *
+-     * @param recordId 抽奖记录 id（= draw_record.record_id），进异常信息便于按记录排查
++     * @param segment 只接受 {@link InventorySegmentVO#QUOTA}：虚拟段没有等待态，传 VIRTUAL 是调用方错误
++     * @param bizId   抽奖记录 id（{@code draw_record.record_id}），只进异常信息便于按记录排查
+      */
+-    void confirmIssued(Long invId, Long recordId, long quantity);
+-
+-    /** waiting_qty >= qty 的行上做转移（waiting 减、issued 加）；返回 0 行 = 没有足够的悬挂预扣 */
+-    int transferWaitingToIssued(Long invId, long quantity);
+-
+-    // ---- 实物营销配额：预热 / 对账 ----
++    void confirmIssued(InventorySegmentVO segment, Long invId, long bizId, long quantity);
+ 
+-    /** 全部 open 的实物配额（预热入口） */
+-    List<PhysicalMarketingQuotaEntity> listOpenQuotas();
++    // ---- 对账口径 ----
+ 
+-    /** 实物未合并明细总量（SUM(quantity) WHERE state=0，对账口径 pendingQty） */
+-    long sumUnmergedQuotaQty(Long invId);
++    /** 该段未合并明细总量（{@code SUM(quantity) WHERE state = 0}） */
++    long sumUnmergedQty(InventorySegmentVO segment, Long invId);
+ 
+-    /** 实物已合并明细总量（SUM(quantity) WHERE state=1，对账口径 mergedQty） */
+-    long sumMergedQuotaQty(Long invId);
++    /** 该段已合并明细总量（{@code SUM(quantity) WHERE state = 1}） */
++    long sumMergedQty(InventorySegmentVO segment, Long invId);
+ }
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalMarketingQuotaBucketEntity.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalMarketingQuotaBucketEntity.java
+deleted file mode 100644
+index b5693f0..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalMarketingQuotaBucketEntity.java
++++ /dev/null
+@@ -1,19 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.model.entity;
+-
+-import lombok.Data;
+-
+-import java.time.LocalDateTime;
+-
+-/** 实物营销配额分桶行（physical_marketing_quota_bucket）：Redis 桶 → DB 对账副本 */
+-@Data
+-public class PhysicalMarketingQuotaBucketEntity {
+-
+-    private Long id;
+-    private Long invId;
+-    /** Redis 分桶编号（0 起），桶内数量以 Redis 为权威 */
+-    private Integer bucketId;
+-    /** 该桶在 Redis 中的剩余数量（对账副本，合并任务落账） */
+-    private Long redisQty;
+-    private LocalDateTime createTime;
+-    private LocalDateTime updateTime;
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalMarketingQuotaDetailEntity.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalMarketingQuotaDetailEntity.java
+deleted file mode 100644
+index 080f13b..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalMarketingQuotaDetailEntity.java
++++ /dev/null
+@@ -1,28 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.model.entity;
+-
+-import lombok.Data;
+-
+-import java.time.LocalDateTime;
+-
+-/** 实物营销配额流转明细行（physical_marketing_quota_detail）：Redis 桶 → 时间格合并的台账 */
+-@Data
+-public class PhysicalMarketingQuotaDetailEntity {
+-
+-    private Long id;
+-    private Long invId;
+-    private Integer bucketId;
+-    /** 本次流转数量（未合并前 state=0） */
+-    private Long quantity;
+-    /** 1-预扣结转（进 waiting）2-兑换确认（waiting → issued） */
+-    private Integer type;
+-    /** 业务类型：LOTTERY_DRAW（预扣）/ LOTTERY_CLAIM（兑换确认） */
+-    private String bizType;
+-    /** 业务 ID：draw_record.record_id（预扣与确认同值，靠 type 区分） */
+-    private Long bizId;
+-    /** 0-未合并 1-已合并 */
+-    private Integer state;
+-    /** 插入时间由 INSERT 的 DB NOW() 写（合并的时间格键），应用不传 */
+-    private LocalDateTime createTime;
+-    /** 更新时间由 SQL 的 DB NOW() 写，应用不传 */
+-    private LocalDateTime updateTime;
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalMarketingQuotaEntity.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalMarketingQuotaEntity.java
+deleted file mode 100644
+index 7972cd3..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalMarketingQuotaEntity.java
++++ /dev/null
+@@ -1,25 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.model.entity;
+-
+-import lombok.Data;
+-
+-import java.time.LocalDateTime;
+-
+-/** 实物营销配额行（physical_marketing_quota）：预扣 → 占用的两段式库存台账 */
+-@Data
+-public class PhysicalMarketingQuotaEntity {
+-
+-    private Long id;
+-    private Long invId;
+-    private String name;
+-    private String decr;
+-    /** 剩余可发份数，-1=不限量 */
+-    private Long surplusQty;
+-    /** 预扣数量（Redis 桶已扣、用户尚未兑换的部分） */
+-    private Long waitingQty;
+-    /** 已占用数量（用户已兑换、正式出库的部分） */
+-    private Long issuedQty;
+-    /** open/closed/exhausted */
+-    private String state;
+-    private LocalDateTime createTime;
+-    private LocalDateTime updateTime;
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/VirtualInventoryQuotaBucketEntity.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/VirtualInventoryQuotaBucketEntity.java
+deleted file mode 100644
+index 0e67d51..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/VirtualInventoryQuotaBucketEntity.java
++++ /dev/null
+@@ -1,19 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.model.entity;
+-
+-import lombok.Data;
+-
+-import java.time.LocalDateTime;
+-
+-/** 虚拟库存分桶行（virtual_inventory_quota_bucket）：Redis 桶 → DB 对账副本 */
+-@Data
+-public class VirtualInventoryQuotaBucketEntity {
+-
+-    private Long id;
+-    private Long invId;
+-    /** Redis 分桶编号（0 起），桶内数量以 Redis 为权威 */
+-    private Integer bucketId;
+-    /** 该桶在 Redis 中的剩余数量（对账副本，合并任务落账） */
+-    private Long redisQty;
+-    private LocalDateTime createTime;
+-    private LocalDateTime updateTime;
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/VirtualInventoryQuotaDetailEntity.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/VirtualInventoryQuotaDetailEntity.java
+deleted file mode 100644
+index 819685d..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/VirtualInventoryQuotaDetailEntity.java
++++ /dev/null
+@@ -1,26 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.model.entity;
+-
+-import lombok.Data;
+-
+-import java.time.LocalDateTime;
+-
+-/** 虚拟库存配额扣减明细行（virtual_inventory_quota_detail）：Redis 桶 → 时间格合并的台账 */
+-@Data
+-public class VirtualInventoryQuotaDetailEntity {
+-
+-    private Long id;
+-    private Long invId;
+-    private Integer bucketId;
+-    /** 本次预扣数量（未合并前 state=0） */
+-    private Long quantity;
+-    /** 业务类型：LOTTERY_DRAW（抽奖预扣） */
+-    private String bizType;
+-    /** 业务 ID：draw_record.record_id */
+-    private Long bizId;
+-    /** 0-未合并 1-已合并 */
+-    private Integer state;
+-    /** 插入时间由 INSERT 的 DB NOW() 写（合并的时间格键），应用不传 */
+-    private LocalDateTime createTime;
+-    /** 更新时间由 SQL 的 DB NOW() 写，应用不传 */
+-    private LocalDateTime updateTime;
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/VirtualInventoryQuotaEntity.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/VirtualInventoryQuotaEntity.java
+deleted file mode 100644
+index a7f78c9..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/VirtualInventoryQuotaEntity.java
++++ /dev/null
+@@ -1,26 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.model.entity;
+-
+-import lombok.Data;
+-
+-import java.time.LocalDateTime;
+-
+-/** 虚拟库存行（virtual_inventory_quota）：积分 / 抽奖次数权益池台账 */
+-@Data
+-public class VirtualInventoryQuotaEntity {
+-
+-    private Long id;
+-    private Long invId;
+-    private String name;
+-    /** 虚拟资产类型：POINTS(积分) / DRAW_COUNT(抽奖次数) */
+-    private String type;
+-    /** 单次发放面额，如 50 积分、1 次抽奖机会 */
+-    private Integer value;
+-    /** 剩余可发份数，-1=不限量 */
+-    private Long surplusQty;
+-    /** 累计已发放份数（对账/预算） */
+-    private Long issuedQty;
+-    /** open/closed/exhausted */
+-    private String state;
+-    private LocalDateTime createTime;
+-    private LocalDateTime updateTime;
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryBucketVO.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryBucketVO.java
+new file mode 100644
+index 0000000..1e26192
+--- /dev/null
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryBucketVO.java
+@@ -0,0 +1,8 @@
++package com.betterschool.marketing.domain.inventory.model.valobj;
++
++/**
++ * 分桶行的公共形状：两段 bucket 表的列完全相同，预扣 / 预热 / 对账只用到
++ * {@code bucketId}（拼 Redis key）与 {@code redisQty}（对账副本、预热值）。
++ */
++public record InventoryBucketVO(Integer bucketId, Long redisQty) {
++}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryDeductDetailVO.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryDeductDetailVO.java
+new file mode 100644
+index 0000000..d6dffed
+--- /dev/null
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryDeductDetailVO.java
+@@ -0,0 +1,12 @@
++package com.betterschool.marketing.domain.inventory.model.valobj;
++
++/**
++ * 一行待落的预扣明细：只装两张明细表**共有的**列，{@code state = 0} 与实物多出来的
++ * {@code type = 1}（预扣结转）由仓储按段补——域服务不需要知道「哪张表多一列」。
++ */
++public record InventoryDeductDetailVO(Long invId,
++                                      Integer bucketId,
++                                      Long quantity,
++                                      String bizType,
++                                      Long bizId) {
++}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryDeductRequestVO.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryDeductRequestVO.java
+new file mode 100644
+index 0000000..7b3054f
+--- /dev/null
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryDeductRequestVO.java
+@@ -0,0 +1,17 @@
++package com.betterschool.marketing.domain.inventory.model.valobj;
++
++import com.betterschool.marketing.types.inventory.InventorySegmentVO;
++
++/**
++ * 一次预扣请求：把 {@code (segment, invId, quantity, bizType, bizId)} 五个散参收成一个值对象
++ * （spec §7.1），让「主档 + 兜底」两次预扣可以并排传参、也让段可以不同（实物配额 → 虚拟权益）。
++ *
++ * @param bizType {@code InventoryBizTypes} 的取值（抽奖域不认识库存列，由库存侧端口实现填）
++ * @param bizId   业务 ID（抽奖 = {@code draw_record.record_id}）：明细唯一键的去重锚点
++ */
++public record InventoryDeductRequestVO(InventorySegmentVO segment,
++                                       long invId,
++                                       long quantity,
++                                       String bizType,
++                                       long bizId) {
++}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryLedgerVO.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryLedgerVO.java
+new file mode 100644
+index 0000000..6dc7615
+--- /dev/null
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryLedgerVO.java
+@@ -0,0 +1,21 @@
++package com.betterschool.marketing.domain.inventory.model.valobj;
++
++/**
++ * 库存台账行的公共形状：两段 ledger 表（{@code virtual_inventory_quota} /
++ * {@code physical_marketing_quota}）的差异字段（虚拟的 {@code type} / {@code value}、实物的 {@code decr}）
++ * 都不进这里——域服务只关心「在不在、开不开、账上多少」这三件事。
++ * <p>
++ * {@code waitingQty} 在虚拟段恒 0（虚拟没有兑换确认，合成就直接进 {@code issued_qty}）；
++ * 实物段对账口径 {@code waiting + issued} 因此在两段是同一个表达（spec §8）。
++ */
++public record InventoryLedgerVO(Long invId,
++                                Long surplusQty,
++                                Long waitingQty,
++                                Long issuedQty,
++                                String state) {
++
++    /** 台账是否可预扣：只有 {@code open} 能扣（{@code exhausted} / {@code closed} 都拒绝） */
++    public boolean isOpen() {
++        return "open".equals(state);
++    }
++}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryMergeService.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryMergeService.java
+index 8468a80..4b99099 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryMergeService.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryMergeService.java
+@@ -3,14 +3,14 @@ package com.betterschool.marketing.domain.inventory.service;
+ import com.betterschool.marketing.domain.inventory.model.valobj.MergeResultVO;
+ 
+ /**
+- * 库存合并（XXL-Job 每秒）：把 Redis 桶已扣、明细 state=0 的量异步结算进 DB 台账（票面 L898 / L989）。
+- * **一套骨架挂两个目标**：扫描、分组、事务内落账、按携带 id 翻转全共享，分叉只在结算列
++ * 库存合并（XXL-Job 每秒）：把 Redis 桶已扣、明细 state=0 的量异步结算进 DB 台账。
++ * **一套骨架挂两个段**：扫描、分组、事务内落账、按携带 id 翻转全共享，分叉只在结算列
+  * （虚拟 → issued_qty，实物 → waiting_qty）。
+  */
+ public interface IInventoryMergeService {
+ 
+     /**
+-     * 跑一轮合并。幂等可重入：明细翻转与台账落账同一事务，重复跑只会看到 state=0 越来越少。
++     * 跑一轮合并（一次扫两段）。幂等可重入：明细翻转与台账落账同一事务，重复跑只会看到 state=0 越来越少。
+      * 桶组台账守卫不过（redis_qty 不足）时跳过该组留待对账，不阻断其余组。
+      */
+     MergeResultVO mergeOnce();
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryQuotaService.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryQuotaService.java
+new file mode 100644
+index 0000000..0cd1369
+--- /dev/null
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryQuotaService.java
+@@ -0,0 +1,55 @@
++package com.betterschool.marketing.domain.inventory.service;
++
++import com.betterschool.marketing.domain.inventory.model.valobj.DeductOutcomeVO;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductRequestVO;
++import com.betterschool.marketing.types.inventory.InventorySegmentVO;
++
++/**
++ * 库存配额服务：两段（虚拟库存配额 / 实物营销配额）**一条路径**，段由 {@link InventorySegmentVO} 选。
++ * <p>
++ * 扣减路径 = 校验台账 → 逐桶 Lua 原子递减 Redis（桶内数量以 Redis 为权威）→ 落明细 {@code state = 0}。
++ * 同一步**不碰 DB 台账**——台账由合并任务按时间格异步结算（spec §5）。
++ * <p>
++ * 两段唯一的分叉在兑换确认：实物 {@code surplus → waiting → issued}（用户兑换后才转 issued），
++ * 虚拟 {@code surplus → issued}（没有等待态，也没有确认动作）。
++ * <p>
++ * 业务身份：明细带 {@code bizType} 与 {@code bizId}（抽奖 = {@code draw_record.record_id}），
++ * 唯一键保证同一笔业务只落一行。**撞键不是错误**——撞键 = 这条流转已落过（同 token 并发双击的第二笔），
++ * 回补本次 Redis 扣减后按「成功回放」返回 true；其它异常仍是回补后抛出。
++ * 撞键之外还有一条更窄的重放窗口（桶被上一笔扣空 / 台账已 exhausted，根本走不到 INSERT），
++ * 因此**扣不出时会再做一次业务幂等预检**，命中即按成功回放。
++ */
++public interface IInventoryQuotaService {
++
++    /**
++     * 预扣 quantity 份，并把业务身份 {@code (bizType, bizId)} 写进明细。
++     *
++     * @param segment 目标段：QUOTA = 实物营销配额，VIRTUAL = 虚拟库存配额
++     * @param bizType {@code InventoryBizTypes} 的取值（抽奖域不认识库存列，由库存侧端口实现填）
++     * @param bizId   业务 ID（抽奖 = {@code draw_record.record_id}）：明细唯一键的去重锚点
++     * @return true = 已扣或这笔预扣已落过（撞业务唯一键 = 成功回放）；
++     *         false = 台账不可用状态或所有桶余量不足（业务事实，调用方走兜底奖品）
++     * @throws com.betterschool.marketing.types.common.AppException           inv_id 查无此库存
++     * @throws com.betterschool.marketing.types.inventory.exception.BucketUnavailableException redis 故障
++     */
++    boolean preDeduct(InventorySegmentVO segment, long invId, long quantity, String bizType, long bizId);
++
++    /**
++     * 带兜底的预扣（spec §7.2）：主档扣不出 → 换个 inv_id（可换段）再扣；两段都扣不出 = FAILED。
++     * 配额段零写入由「兜底路径根本不碰配额仓储」保证——主档一旦扣不出就没有任何配额副作用。
++     *
++     * @param primary  主档请求（抽奖 = 实物营销配额）
++     * @param fallback 兜底请求（抽奖 = 兜底奖品的虚拟权益池）；null = 没有可扣的兜底库存
++     */
++    DeductOutcomeVO preDeductWithFallback(InventoryDeductRequestVO primary, InventoryDeductRequestVO fallback);
++
++    /**
++     * 兑换确认（仅实物段）：{@code waiting_qty → issued_qty} 守卫转移。
++     * 调用方只需保证「真的推进了发货状态的那一次」才来确认——库存侧按数量转移，不做单号去重。
++     *
++     * @param bizType {@code InventoryBizTypes.LOTTERY_CLAIM}
++     * @param bizId   抽奖记录 id（= {@code draw_record.record_id}），不是独立兑换单号
++     * @throws com.betterschool.marketing.types.common.AppException 配额不存在或 waiting_qty 不足本次确认量
++     */
++    void confirmIssued(long invId, String bizType, long bizId, long quantity);
++}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IPhysicalQuotaService.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IPhysicalQuotaService.java
+deleted file mode 100644
+index 0b65d62..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IPhysicalQuotaService.java
++++ /dev/null
+@@ -1,39 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.service;
+-
+-import com.betterschool.marketing.domain.inventory.model.valobj.DeductOutcomeVO;
+-
+-/**
+- * 实物营销配额两段式（预扣 → 占用）：预扣 / 合并与虚拟段同构，分叉在
+- * waiting_qty（合并先进预扣占用）与兑换确认（用户真正兑换后 waiting → issued）。
+- * 调用方：票 13 的抽奖责任链（预扣面）、票 14 的发货消费（确认面）。
+- */
+-public interface IPhysicalQuotaService {
+-
+-    /**
+-     * 预扣 quantity 份配额（语义同虚拟段），并把业务身份 {@code (LOTTERY_DRAW, recordId)} 写进明细
+-     * （实物明细另带 {@code type = 1} 预扣结转）。
+-     *
+-     * @param recordId 业务 ID（抽奖 = {@code draw_record.record_id}）：明细 {@code biz_id}，唯一键去重锚点
+-     * @return true = 已扣或这笔预扣已落过（撞业务唯一键 = 成功回放）；false = 配额不可用状态或所有桶余量不足
+-     *         （业务事实，调用方走兜底奖品）
+-     * @throws com.betterschool.marketing.types.common.AppException           inv_id 查无此配额
+-     * @throws com.betterschool.marketing.types.inventory.exception.BucketUnavailableException redis 故障
+-     */
+-    boolean preDeduct(Long invId, long quantity, long recordId);
+-
+-    /**
+-     * 带兜底的预扣（参考 rafflex 抽奖的兜底分支）：配额桶不足时改扣兜底虚拟权益
+-     * （fallbackInvId = virtual_inventory_quota 的 inv_id），**配额段零写入**（不产生悬挂 waiting_qty、
+-     * 不落配额明细）；兜底也扣不出来则整体失败。
+-     */
+-    DeductOutcomeVO preDeductWithFallback(Long invId, Long fallbackInvId, long quantity, long recordId);
+-
+-    /**
+-     * 兑换确认：waiting_qty → issued_qty（票 14 发货成功后调用）。幂等边界 = 兑换记录由调用方保证
+-     * 只确认一次（本方法按数量转移，不做单号去重——去重点是票 14 的发货消费幂等键）。
+-     *
+-     * @param recordId 抽奖记录 id（= {@code draw_record.record_id}），不是独立兑换单号
+-     * @throws com.betterschool.marketing.types.common.AppException 配额不存在或 waiting_qty 不足本次确认量
+-     */
+-    void confirmIssued(Long invId, Long recordId, long quantity);
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IVirtualInventoryService.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IVirtualInventoryService.java
+deleted file mode 100644
+index 535d612..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IVirtualInventoryService.java
++++ /dev/null
+@@ -1,20 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.service;
+-
+-/**
+- * 虚拟权益池预扣（POINTS / DRAW_COUNT）：扣减路径 = 校验桶余量 → Lua 原子递减 Redis 桶 →
+- * 落 {@code virtual_inventory_quota_detail(state=0)}。同一步**不碰 DB 台账总量**——台账由合并任务按
+- * 时间格异步结算。调用方：票 13 的抽奖责任链（发放面）。
+- */
+-public interface IVirtualInventoryService {
+-
+-    /**
+-     * 预扣 quantity 份，并把业务身份 {@code (LOTTERY_DRAW, recordId)} 写进明细。
+-     *
+-     * @param recordId 业务 ID（抽奖 = {@code draw_record.record_id}）：明细 {@code biz_id}，唯一键去重锚点
+-     * @return true = 已扣（Redis 桶减了、明细落了 state=0）或这笔预扣已落过（撞业务唯一键 = 成功回放）；
+-     *         false = 库存不可用状态（closed/exhausted）或所有桶余量不足（业务事实，调用方走兜底奖品）
+-     * @throws com.betterschool.marketing.types.common.AppException           inv_id 查无此库存
+-     * @throws com.betterschool.marketing.types.inventory.exception.BucketUnavailableException redis 故障
+-     */
+-    boolean preDeduct(Long invId, long quantity, long recordId);
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryAuditServiceImpl.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryAuditServiceImpl.java
+index 51842f5..332ef12 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryAuditServiceImpl.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryAuditServiceImpl.java
+@@ -3,10 +3,13 @@ package com.betterschool.marketing.domain.inventory.service;
+ import com.betterschool.marketing.domain.inventory.adapter.port.IInventoryBucketPort;
+ import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
+ import com.betterschool.marketing.domain.inventory.model.valobj.InventoryAuditVO;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryBucketVO;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryLedgerVO;
+ import com.betterschool.marketing.domain.inventory.model.valobj.UnmergedDetailVO;
+ import com.betterschool.marketing.types.common.AppException;
+ import com.betterschool.marketing.types.common.ResponseCode;
+ import com.betterschool.marketing.types.inventory.Constants;
++import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+ import com.betterschool.marketing.types.inventory.exception.BucketUnavailableException;
+ import lombok.RequiredArgsConstructor;
+ import lombok.extern.slf4j.Slf4j;
+@@ -18,9 +21,12 @@ import java.util.Map;
+ import java.util.function.Function;
+ 
+ /**
+- * 库存对账实现：两段同一套口径（见 {@link IInventoryAuditService}），只换仓储方法与桶 key。
++ * 库存对账实现：两段同一套口径（见 {@link IInventoryAuditService}），只换仓储分派与 key 里的段名。
+  * Redis 恒等式只在 Redis 可读时给结论（false/true），不可读（{@link BucketUnavailableException}）
+  * 给 null——DB 侧恒等式不受影响，永远可查。
++ * <p>
++ * 对外仍是 {@code auditVirtual / auditPhysical} 两个孪生入口（收成 {@code audit(segment, invId)}
++ * 与统一恒等式在票 06）。
+  */
+ @Slf4j
+ @Service
+@@ -32,40 +38,33 @@ public class InventoryAuditServiceImpl implements IInventoryAuditService {
+ 
+     @Override
+     public InventoryAuditVO auditVirtual(Long invId) {
+-        var inventory = inventoryRepository.queryVirtualInventory(invId);
+-        if (inventory == null) {
+-            throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(), "虚拟库存不存在 invId=" + invId);
+-        }
+-        long ledgerIssued = inventory.getIssuedQty();
+-        Map<Integer, Long> redisQtyByBucket = new HashMap<>();
+-        inventoryRepository.listVirtualBuckets(invId)
+-                .forEach(bucket -> redisQtyByBucket.put(bucket.getBucketId(), bucket.getRedisQty()));
+-        return auditCore(invId,
+-                inventoryRepository.sumUnmergedVirtualQty(invId),
+-                inventoryRepository.sumMergedVirtualQty(invId),
+-                ledgerIssued,
+-                inventoryRepository.listUnmergedVirtualDetailRows(),
+-                redisQtyByBucket,
+-                bucketId -> Constants.virtualBucketKey(invId, bucketId));
++        return auditSegment(InventorySegmentVO.VIRTUAL, invId);
+     }
+ 
+     @Override
+     public InventoryAuditVO auditPhysical(Long invId) {
+-        var quota = inventoryRepository.queryQuota(invId);
+-        if (quota == null) {
+-            throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(), "实物营销配额不存在 invId=" + invId);
++        return auditSegment(InventorySegmentVO.QUOTA, invId);
++    }
++
++    private InventoryAuditVO auditSegment(InventorySegmentVO segment, Long invId) {
++        InventoryLedgerVO ledger = inventoryRepository.queryLedger(segment, invId);
++        if (ledger == null) {
++            throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),
++                    "库存不存在 segment=" + segment.getCode() + " invId=" + invId);
+         }
+-        long ledgerIssued = quota.getWaitingQty() + quota.getIssuedQty();
++        // 虚拟段 waiting 恒 0，所以 waiting + issued 就是两段同一条台账恒等式的左端
++        long ledgerIssued = ledger.waitingQty() + ledger.issuedQty();
+         Map<Integer, Long> redisQtyByBucket = new HashMap<>();
+-        inventoryRepository.listQuotaBuckets(invId)
+-                .forEach(bucket -> redisQtyByBucket.put(bucket.getBucketId(), bucket.getRedisQty()));
++        for (InventoryBucketVO bucket : inventoryRepository.listBuckets(segment, invId)) {
++            redisQtyByBucket.put(bucket.bucketId(), bucket.redisQty());
++        }
+         return auditCore(invId,
+-                inventoryRepository.sumUnmergedQuotaQty(invId),
+-                inventoryRepository.sumMergedQuotaQty(invId),
++                inventoryRepository.sumUnmergedQty(segment, invId),
++                inventoryRepository.sumMergedQty(segment, invId),
+                 ledgerIssued,
+-                inventoryRepository.listUnmergedQuotaDetailRows(),
++                inventoryRepository.listUnmergedDetailRows(segment),
+                 redisQtyByBucket,
+-                bucketId -> Constants.quotaBucketKey(invId, bucketId));
++                bucketId -> Constants.bucketKey(segment, invId, bucketId));
+     }
+ 
+     // ---- 两段共享口径 ----
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryMergeServiceImpl.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryMergeServiceImpl.java
+index ce5a356..74f3c26 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryMergeServiceImpl.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryMergeServiceImpl.java
+@@ -4,6 +4,7 @@ import com.betterschool.marketing.domain.inventory.adapter.repository.IInventory
+ import com.betterschool.marketing.domain.inventory.model.valobj.MergeGroupVO;
+ import com.betterschool.marketing.domain.inventory.model.valobj.MergeResultVO;
+ import com.betterschool.marketing.domain.inventory.model.valobj.UnmergedDetailVO;
++import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+ import lombok.RequiredArgsConstructor;
+ import lombok.extern.slf4j.Slf4j;
+ import org.springframework.stereotype.Service;
+@@ -15,17 +16,19 @@ import java.util.Map;
+ import java.util.function.BooleanSupplier;
+ 
+ /**
+- * 库存合并实现：**一套骨架挂两个目标**（票 12 核心复用点）。
++ * 库存合并实现：**一套骨架挂两个段**，段只决定仓储分派与日志里的段名。
+  * <pre>
+  * 共享：扫描 state=0（无 LIMIT）→ 按 (inv_id, bucket_id) 内存分组（公共形状 {@link UnmergedDetailVO}）
+  *       → 逐组一个事务：桶对账副本递减 → 台账结算 → 明细按携带 id 翻 state=1
+- * 分叉：台账结算列——虚拟 +issued_qty（L898），实物 +waiting_qty（L989）；兑换确认是实物段独立路径。
++ * 分叉：台账结算列——虚拟 +issued_qty，实物 +waiting_qty（兑换确认是实物段独立路径）。
+  * </pre>
+  * 幂等：翻转只按本组携带的明细 id（绝不 WHERE state=0），且与落账同事务——重复跑同一批明细
+  * 不会二次扣减；中途崩溃整组回滚，下一轮重来。
+  * 守卫（redis_qty &gt;= 汇总量）不过 = 台账不变量被破坏：跳组留 state=0 给对账口径暴露，不阻断其余组。
+  * <p>
+- * 事务落位：一组一事务由仓储的 {@code merge*BucketGroup} 承担（REQUIRED），域服务只逐组调一次。
++ * 事务落位：一组一事务由仓储的 {@code mergeBucketGroup} 承担（REQUIRED），域服务只逐组调一次。
++ * </p>
++ * 本票只做形态收口：仍是「每秒全表扫 + 内存分组」，时间格合并引擎在票 08。
+  */
+ @Slf4j
+ @Service
+@@ -36,25 +39,27 @@ public class InventoryMergeServiceImpl implements IInventoryMergeService {
+ 
+     @Override
+     public MergeResultVO mergeOnce() {
+-        List<MergeGroupVO> virtualGroups = groupByBucket(inventoryRepository.listUnmergedVirtualDetailRows());
+-        List<MergeGroupVO> physicalGroups = groupByBucket(inventoryRepository.listUnmergedQuotaDetailRows());
+-
+-        long virtualMerged = 0;
+-        for (MergeGroupVO group : virtualGroups) {
+-            virtualMerged += applyGroup("虚拟", group, () -> inventoryRepository.mergeVirtualBucketGroup(
+-                    group.getInvId(), group.getBucketId(), group.getTotalQty(), group.getDetailIds()));
+-        }
++        SegmentMergeResult virtual = mergeSegment(InventorySegmentVO.VIRTUAL);
++        SegmentMergeResult physical = mergeSegment(InventorySegmentVO.QUOTA);
++        return new MergeResultVO(virtual.groups(), virtual.details(), physical.groups(), physical.details());
++    }
+ 
+-        long physicalMerged = 0;
+-        for (MergeGroupVO group : physicalGroups) {
+-            physicalMerged += applyGroup("实物", group, () -> inventoryRepository.mergeQuotaBucketGroup(
+-                    group.getInvId(), group.getBucketId(), group.getTotalQty(), group.getDetailIds()));
+-        }
++    // ---- 共享骨架 ----
+ 
+-        return new MergeResultVO(virtualGroups.size(), virtualMerged, physicalGroups.size(), physicalMerged);
++    /** 一段的合并结果：组数在合并前按同一份扫描口径取（合并会翻转 state=0） */
++    private record SegmentMergeResult(int groups, long details) {
+     }
+ 
+-    // ---- 共享骨架 ----
++    /** 扫一段的未合并明细，按桶组逐组合并 */
++    private SegmentMergeResult mergeSegment(InventorySegmentVO segment) {
++        List<MergeGroupVO> groups = groupByBucket(inventoryRepository.listUnmergedDetailRows(segment));
++        long merged = 0;
++        for (MergeGroupVO group : groups) {
++            merged += applyGroup(segment, group, () -> inventoryRepository.mergeBucketGroup(
++                    segment, group.getInvId(), group.getBucketId(), group.getTotalQty(), group.getDetailIds()));
++        }
++        return new SegmentMergeResult(groups.size(), merged);
++    }
+ 
+     /** 两段公共形状按 (invId, bucketId) 分组汇总；LinkedHashMap 保持扫描序 */
+     private List<MergeGroupVO> groupByBucket(List<UnmergedDetailVO> details) {
+@@ -79,14 +84,15 @@ public class InventoryMergeServiceImpl implements IInventoryMergeService {
+      *
+      * @return 本组合并的明细行数（0 = 跳过）
+      */
+-    private long applyGroup(String segment, MergeGroupVO group, BooleanSupplier mergeGroup) {
++    private long applyGroup(InventorySegmentVO segment, MergeGroupVO group, BooleanSupplier mergeGroup) {
+         if (!mergeGroup.getAsBoolean()) {
+             log.warn("合并跳过桶组（redis_qty 守卫不过，留待对账） segment={} invId={} bucketId={} totalQty={}",
+-                    segment, group.getInvId(), group.getBucketId(), group.getTotalQty());
++                    segment.getCode(), group.getInvId(), group.getBucketId(), group.getTotalQty());
+             return 0;
+         }
+         log.info("合并桶组完成 segment={} invId={} bucketId={} totalQty={} details={}",
+-                segment, group.getInvId(), group.getBucketId(), group.getTotalQty(), group.getDetailIds().size());
++                segment.getCode(), group.getInvId(), group.getBucketId(), group.getTotalQty(),
++                group.getDetailIds().size());
+         return group.getDetailIds().size();
+     }
+ }
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryQuotaServiceImpl.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryQuotaServiceImpl.java
+new file mode 100644
+index 0000000..2e3c797
+--- /dev/null
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryQuotaServiceImpl.java
+@@ -0,0 +1,146 @@
++package com.betterschool.marketing.domain.inventory.service;
++
++import com.betterschool.marketing.domain.inventory.adapter.port.IInventoryBucketPort;
++import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
++import com.betterschool.marketing.domain.inventory.model.valobj.DeductOutcomeVO;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryBucketVO;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductDetailVO;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductRequestVO;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryLedgerVO;
++import com.betterschool.marketing.types.common.AppException;
++import com.betterschool.marketing.types.common.ResponseCode;
++import com.betterschool.marketing.types.inventory.Constants;
++import com.betterschool.marketing.types.inventory.InventorySegmentVO;
++import lombok.RequiredArgsConstructor;
++import lombok.extern.slf4j.Slf4j;
++import org.springframework.dao.DuplicateKeyException;
++import org.springframework.stereotype.Service;
++
++import java.util.List;
++
++/**
++ * 库存配额实现：两段共用一套骨架，唯一的段相关差异都在仓储里（目标表 / 桶 key / 明细多一列 {@code type}）。
++ * <pre>
++ * 预扣：查台账（不存在 → INVENTORY_PARAM_ERROR；非 open → 走重放预检）→ 逐桶 Lua（扣 + 落明细）
++ * 兜底：主档扣不出 → 换个 inv_id（可换段）再扣一次，两段都扣不出 = FAILED
++ * 确认：仅实物段，仓储里的 waiting → issued 守卫转移（一个域内事务）
++ * </pre>
++ * 业务身份：明细带 {@code bizType} 与 {@code bizId = recordId}，唯一键保证同一笔业务只落一行。
++ * **撞键不是错误**——撞键 = 这条流转已落过（同 token 并发双击的第二笔），回补本次 Redis 扣减后按
++ * 「成功回放」返回 true；其它异常仍是回补后抛出。
++ * <p>
++ * 撞键之外还有一条更窄的重放窗口：同 token 的下一笔晚到、桶已被上一笔扣空（或台账已非 open）时，
++ * 根本走不到 INSERT。因此**扣不出时会再做一次业务幂等预检**，命中即按成功回放。兜底段同样查一次，
++ * 避免同一 {@code bizId} 在主档与兜底两张表各扣一份（跨表唯一键拦不住）。
++ */
++@Slf4j
++@Service
++@RequiredArgsConstructor
++public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
++
++    private final IInventoryRepository inventoryRepository;
++    private final IInventoryBucketPort inventoryBucketPort;
++
++    @Override
++    public boolean preDeduct(InventorySegmentVO segment, long invId, long quantity, String bizType, long bizId) {
++        InventoryLedgerVO ledger = inventoryRepository.queryLedger(segment, invId);
++        if (ledger == null) {
++            throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),
++                    "库存不存在 segment=" + segment.getCode() + " invId=" + invId);
++        }
++        if (!ledger.isOpen()) {
++            return replayed(segment, invId, bizType, bizId);
++        }
++        List<Integer> bucketIds = inventoryRepository.listBuckets(segment, invId).stream()
++                .map(InventoryBucketVO::bucketId)
++                .toList();
++        for (Integer bucketId : bucketIds) {
++            String bucketKey = Constants.bucketKey(segment, invId, bucketId);
++            if (!inventoryBucketPort.tryDeduct(bucketKey, quantity)) {
++                continue;
++            }
++            try {
++                inventoryRepository.insertDeductDetail(segment,
++                        new InventoryDeductDetailVO(invId, bucketId, quantity, bizType, bizId));
++                log.info("库存预扣成功 segment={} invId={} bucketId={} quantity={} bizType={} bizId={}",
++                        segment.getCode(), invId, bucketId, quantity, bizType, bizId);
++                return true;
++            } catch (DuplicateKeyException e) {
++                // 撞业务唯一键 = 同一笔预扣已落过（并发双击的第二笔）：回补本次 Redis 扣减，按成功回放
++                inventoryBucketPort.release(bucketKey, quantity);
++                log.info("库存预扣撞业务唯一键，回补 Redis 后按成功回放 segment={} invId={} bucketId={}"
++                                + " quantity={} bizType={} bizId={}",
++                        segment.getCode(), invId, bucketId, quantity, bizType, bizId);
++                return true;
++            } catch (RuntimeException e) {
++                // 明细没落上：Redis 已扣的部分回补，保持「Redis 余额 == redis_qty − 未合并明细和」可对账
++                inventoryBucketPort.release(bucketKey, quantity);
++                throw e;
++            }
++        }
++        if (replayed(segment, invId, bizType, bizId)) {
++            return true;
++        }
++        log.info("库存预扣余量不足 segment={} invId={} quantity={} buckets={} bizType={} bizId={}",
++                segment.getCode(), invId, quantity, bucketIds.size(), bizType, bizId);
++        return false;
++    }
++
++    @Override
++    public DeductOutcomeVO preDeductWithFallback(InventoryDeductRequestVO primary,
++                                                 InventoryDeductRequestVO fallback) {
++        if (preDeduct(primary.segment(), primary.invId(), primary.quantity(), primary.bizType(), primary.bizId())) {
++            return DeductOutcomeVO.DEDUCTED;
++        }
++        if (fallback == null) {
++            return DeductOutcomeVO.FAILED;
++        }
++        // 主段扣不出：若上一笔同业务走的是兜底段，按 FALLBACK 回放，不再扣第二次。
++        // 这一步是跨表补的：两张明细表的业务唯一键各管一张表，主档与兜底之间不会互相撞键。
++        if (replayed(fallback.segment(), fallback.invId(), fallback.bizType(), fallback.bizId())) {
++            log.info("主档扣不出，但兜底段明细已存在，按成功回放 segment={} invId={} bizId={}",
++                    fallback.segment().getCode(), fallback.invId(), fallback.bizId());
++            return DeductOutcomeVO.FALLBACK;
++        }
++        // 主档不足（业务事实）：改落兜底段，配额段从这一行起零写入
++        if (preDeduct(fallback.segment(), fallback.invId(), fallback.quantity(),
++                fallback.bizType(), fallback.bizId())) {
++            log.info("主档不足，已落兜底 segment={} invId={} fallbackSegment={} fallbackInvId={}"
++                            + " quantity={} bizId={}",
++                    primary.segment().getCode(), primary.invId(), fallback.segment().getCode(),
++                    fallback.invId(), fallback.quantity(), fallback.bizId());
++            return DeductOutcomeVO.FALLBACK;
++        }
++        log.warn("主档与兜底均不足 segment={} invId={} fallbackSegment={} fallbackInvId={}"
++                        + " quantity={} bizId={}",
++                primary.segment().getCode(), primary.invId(), fallback.segment().getCode(),
++                fallback.invId(), fallback.quantity(), fallback.bizId());
++        return DeductOutcomeVO.FAILED;
++    }
++
++    @Override
++    public void confirmIssued(long invId, String bizType, long bizId, long quantity) {
++        InventoryLedgerVO ledger = inventoryRepository.queryLedger(InventorySegmentVO.QUOTA, invId);
++        if (ledger == null) {
++            throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),
++                    "实物营销配额不存在 invId=" + invId);
++        }
++        // 守卫转移一个域内事务（仓储方法内 REQUIRED）：0 行 = 没有足够的悬挂预扣，抛 4312 整笔回滚
++        inventoryRepository.confirmIssued(InventorySegmentVO.QUOTA, invId, bizId, quantity);
++        log.info("兑换确认转移 invId={} bizType={} bizId={} quantity={}", invId, bizType, bizId, quantity);
++    }
++
++    /**
++     * 本段扣不出时的业务幂等预检：这场流转在本 inv 上已经落过明细（含已被合并的）= 重放，按成功回放。
++     * 只在失败路径调用（成功路径靠唯一键撞键，不多付一次查询）——这条补丁覆盖
++     * 「同 token 的下一笔晚到，桶已被上一笔扣空 / 台账已被合并置 exhausted，压根走不到 INSERT」的窗口。
++     */
++    private boolean replayed(InventorySegmentVO segment, long invId, String bizType, long bizId) {
++        if (!inventoryRepository.existsDeductDetail(segment, invId, bizType, bizId)) {
++            return false;
++        }
++        log.info("库存预扣扣不出，但本 inv 的业务明细已存在，按成功回放 segment={} invId={} bizType={} bizId={}",
++                segment.getCode(), invId, bizType, bizId);
++        return true;
++    }
++}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryWarmupServiceImpl.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryWarmupServiceImpl.java
+index c4e1917..fe52fb8 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryWarmupServiceImpl.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryWarmupServiceImpl.java
+@@ -2,16 +2,22 @@ package com.betterschool.marketing.domain.inventory.service;
+ 
+ import com.betterschool.marketing.domain.inventory.adapter.port.IInventoryBucketPort;
+ import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryBucketVO;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryLedgerVO;
+ import com.betterschool.marketing.types.common.AppException;
+ import com.betterschool.marketing.types.common.ResponseCode;
+ import com.betterschool.marketing.types.inventory.Constants;
++import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+ import lombok.RequiredArgsConstructor;
+ import lombok.extern.slf4j.Slf4j;
+ import org.springframework.stereotype.Service;
+ 
+ /**
+  * 库存桶预热实现：DB 台账（redis_qty 列）是配置事实，Redis 桶是快速扣减面；
+- * 预热 = 逐桶 SET 对齐（幂等，重跑即生效）。两段同一套循环，只换仓储方法与桶 key。
++ * 预热 = 逐桶 SET 对齐（幂等，重跑即生效）。两段共用一套循环，段只决定仓储分派与 key 里的段名。
++ * <p>
++ * 对外仍是 {@code warmupVirtual / warmupPhysical} 两个孪生入口（收成 {@code warmup(segment, invId)}
++ * 在票 06）。
+  */
+ @Slf4j
+ @Service
+@@ -23,37 +29,34 @@ public class InventoryWarmupServiceImpl implements IInventoryWarmupService {
+ 
+     @Override
+     public void warmupVirtual(Long invId) {
+-        if (inventoryRepository.queryVirtualInventory(invId) == null) {
+-            throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(), "虚拟库存不存在 invId=" + invId);
+-        }
+-        int warmed = 0;
+-        for (var bucket : inventoryRepository.listVirtualBuckets(invId)) {
+-            inventoryBucketPort.warmup(Constants.virtualBucketKey(invId, bucket.getBucketId()), bucket.getRedisQty());
+-            warmed++;
+-        }
+-        log.info("虚拟权益桶预热完成 invId={} buckets={}", invId, warmed);
++        warmupSegment(InventorySegmentVO.VIRTUAL, invId);
+     }
+ 
+     @Override
+     public void warmupPhysical(Long invId) {
+-        if (inventoryRepository.queryQuota(invId) == null) {
+-            throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(), "实物营销配额不存在 invId=" + invId);
+-        }
+-        int warmed = 0;
+-        for (var bucket : inventoryRepository.listQuotaBuckets(invId)) {
+-            inventoryBucketPort.warmup(Constants.quotaBucketKey(invId, bucket.getBucketId()), bucket.getRedisQty());
+-            warmed++;
+-        }
+-        log.info("实物配额桶预热完成 invId={} buckets={}", invId, warmed);
++        warmupSegment(InventorySegmentVO.QUOTA, invId);
+     }
+ 
+     @Override
+     public void warmupAll() {
+-        for (var inventory : inventoryRepository.listOpenVirtualInventories()) {
+-            warmupVirtual(inventory.getInvId());
++        for (InventoryLedgerVO ledger : inventoryRepository.listOpenLedgers(InventorySegmentVO.VIRTUAL)) {
++            warmupSegment(InventorySegmentVO.VIRTUAL, ledger.invId());
++        }
++        for (InventoryLedgerVO ledger : inventoryRepository.listOpenLedgers(InventorySegmentVO.QUOTA)) {
++            warmupSegment(InventorySegmentVO.QUOTA, ledger.invId());
+         }
+-        for (var quota : inventoryRepository.listOpenQuotas()) {
+-            warmupPhysical(quota.getInvId());
++    }
++
++    private void warmupSegment(InventorySegmentVO segment, Long invId) {
++        if (inventoryRepository.queryLedger(segment, invId) == null) {
++            throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),
++                    "库存不存在 segment=" + segment.getCode() + " invId=" + invId);
++        }
++        int warmed = 0;
++        for (InventoryBucketVO bucket : inventoryRepository.listBuckets(segment, invId)) {
++            inventoryBucketPort.warmup(Constants.bucketKey(segment, invId, bucket.bucketId()), bucket.redisQty());
++            warmed++;
+         }
++        log.info("库存桶预热完成 segment={} invId={} buckets={}", segment.getCode(), invId, warmed);
+     }
+ }
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/PhysicalQuotaServiceImpl.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/PhysicalQuotaServiceImpl.java
+deleted file mode 100644
+index 6a32a4d..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/PhysicalQuotaServiceImpl.java
++++ /dev/null
+@@ -1,145 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.service;
+-
+-import com.betterschool.marketing.domain.inventory.adapter.port.IInventoryBucketPort;
+-import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
+-import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaDetailEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaEntity;
+-import com.betterschool.marketing.domain.inventory.model.valobj.DeductOutcomeVO;
+-import com.betterschool.marketing.types.common.AppException;
+-import com.betterschool.marketing.types.common.ResponseCode;
+-import com.betterschool.marketing.types.inventory.Constants;
+-import com.betterschool.marketing.types.inventory.InventoryBizTypes;
+-import lombok.RequiredArgsConstructor;
+-import lombok.extern.slf4j.Slf4j;
+-import org.springframework.dao.DuplicateKeyException;
+-import org.springframework.stereotype.Service;
+-
+-import java.util.List;
+-
+-/**
+- * 实物营销配额两段式实现。预扣与虚拟段同构（孪生，分叉只在仓储、桶 key 前缀与明细多一列 {@code type}）；
+- * 分叉语义在这里：合并进 waiting_qty（合并服务负责）与兑换确认 waiting → issued（本类）。
+- * 兜底（preDeductWithFallback）只组合两段的预扣——配额段零写入由「兜底路径根本不碰配额仓储」保证。
+- * <p>
+- * 业务身份：预扣明细带 {@code type = 1}（预扣结转）、{@code biz_type = LOTTERY_DRAW}、{@code biz_id = recordId}，
+- * 唯一键 {@code uk_biz_type (type, biz_type, biz_id)} 保证同一笔业务只落一行。**撞键不是错误**——撞键 =
+- * 这条流转已落过（同 token 并发双击的第二笔），回补本次 Redis 扣减后按「成功回放」返回 true；
+- * 其它异常仍是回补后抛出。
+- * <p>
+- * 撞键之外还有一条更窄的重放窗口：同 token 的下一笔晚到、桶已被上一笔扣空，或台账已被合并置
+- * {@code exhausted}，此时根本走不到 INSERT。因此**扣不出时会再做一次业务幂等预检**
+- * （{@link com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository#existsQuotaDeductDetail}），
+- * 命中即按成功回放；跨到兜底段时同样查虚拟表，避免同一 recordId 在物理与兜底两张表各扣一份。
+- */
+-@Slf4j
+-@Service
+-@RequiredArgsConstructor
+-public class PhysicalQuotaServiceImpl implements IPhysicalQuotaService {
+-
+-    private final IInventoryRepository inventoryRepository;
+-    private final IVirtualInventoryService virtualInventoryService;
+-    private final IInventoryBucketPort inventoryBucketPort;
+-
+-    @Override
+-    public boolean preDeduct(Long invId, long quantity, long recordId) {
+-        PhysicalMarketingQuotaEntity quota = inventoryRepository.queryQuota(invId);
+-        if (quota == null) {
+-            throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),
+-                    "实物营销配额不存在 invId=" + invId);
+-        }
+-        if (!"open".equals(quota.getState())) {
+-            return replayed(invId, recordId);
+-        }
+-        List<Integer> bucketIds = inventoryRepository.listQuotaBuckets(invId).stream()
+-                .map(bucket -> bucket.getBucketId())
+-                .toList();
+-        for (Integer bucketId : bucketIds) {
+-            String bucketKey = Constants.quotaBucketKey(invId, bucketId);
+-            if (!inventoryBucketPort.tryDeduct(bucketKey, quantity)) {
+-                continue;
+-            }
+-            try {
+-                PhysicalMarketingQuotaDetailEntity detail = new PhysicalMarketingQuotaDetailEntity();
+-                detail.setInvId(invId);
+-                detail.setBucketId(bucketId);
+-                detail.setQuantity(quantity);
+-                // 本票只写 1-预扣结转；2-兑换确认由票 11 的异步确认落
+-                detail.setType(Constants.DETAIL_TYPE_DEDUCT);
+-                detail.setBizType(InventoryBizTypes.LOTTERY_DRAW);
+-                detail.setBizId(recordId);
+-                detail.setState(0);
+-                inventoryRepository.insertQuotaDetail(detail);
+-                log.info("实物配额预扣成功 invId={} bucketId={} quantity={} recordId={}",
+-                        invId, bucketId, quantity, recordId);
+-                return true;
+-            } catch (DuplicateKeyException e) {
+-                // 撞业务唯一键 = 同一笔预扣已落过（并发双击的第二笔）：回补本次 Redis 扣减，按成功回放
+-                inventoryBucketPort.release(bucketKey, quantity);
+-                log.info("实物配额预扣撞业务唯一键，回补 Redis 后按成功回放 invId={} bucketId={} quantity={} recordId={}",
+-                        invId, bucketId, quantity, recordId);
+-                return true;
+-            } catch (RuntimeException e) {
+-                // 明细没落上：Redis 已扣的部分回补，保持「Redis 余额 == redis_qty − 未合并明细和」可对账
+-                inventoryBucketPort.release(bucketKey, quantity);
+-                throw e;
+-            }
+-        }
+-        if (replayed(invId, recordId)) {
+-            return true;
+-        }
+-        log.info("实物配额预扣余量不足 invId={} quantity={} buckets={} recordId={}",
+-                invId, quantity, bucketIds.size(), recordId);
+-        return false;
+-    }
+-
+-    @Override
+-    public DeductOutcomeVO preDeductWithFallback(Long invId, Long fallbackInvId, long quantity, long recordId) {
+-        if (preDeduct(invId, quantity, recordId)) {
+-            return DeductOutcomeVO.DEDUCTED;
+-        }
+-        // 主段扣不出：若上一笔同业务走的是兜底段（虚拟表），按 FALLBACK 回放，不再扣第二次。
+-        // 这一步是跨表补的：uk_biz_type 与 uk_biz 各管一张表，物理与兜底虚拟之间不会互相撞键。
+-        if (fallbackInvId == null) {
+-            return DeductOutcomeVO.FAILED;
+-        }
+-        if (inventoryRepository.existsVirtualDeductDetail(fallbackInvId, InventoryBizTypes.LOTTERY_DRAW, recordId)) {
+-            log.info("实物配额扣不出，但兜底段明细已存在，按成功回放 recordId={} fallbackInvId={}",
+-                    recordId, fallbackInvId);
+-            return DeductOutcomeVO.FALLBACK;
+-        }
+-        // 配额不足（业务事实）：改落兜底虚拟权益，配额段从这一行起零写入
+-        if (virtualInventoryService.preDeduct(fallbackInvId, quantity, recordId)) {
+-            log.info("实物配额不足，已落兜底奖品 invId={} fallbackInvId={} quantity={} recordId={}",
+-                    invId, fallbackInvId, quantity, recordId);
+-            return DeductOutcomeVO.FALLBACK;
+-        }
+-        log.warn("实物配额与兜底奖品均不足 invId={} fallbackInvId={} quantity={} recordId={}",
+-                invId, fallbackInvId, quantity, recordId);
+-        return DeductOutcomeVO.FAILED;
+-    }
+-
+-    @Override
+-    public void confirmIssued(Long invId, Long recordId, long quantity) {
+-        PhysicalMarketingQuotaEntity quota = inventoryRepository.queryQuota(invId);
+-        if (quota == null) {
+-            throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),
+-                    "实物营销配额不存在 invId=" + invId);
+-        }
+-        // 守卫转移一个域内事务（仓储方法内 REQUIRED）：0 行 = 没有足够的悬挂预扣，抛 4312 整笔回滚
+-        inventoryRepository.confirmIssued(invId, recordId, quantity);
+-        log.info("兑换确认转移 invId={} recordId={} quantity={}", invId, recordId, quantity);
+-    }
+-
+-    /**
+-     * 本段扣不出时的业务幂等预检：这场流转在本 inv 上已经落过预扣明细（含已被合并的）= 重放，按成功回放。
+-     * 只在失败路径调用（成功路径靠 {@code uk_biz_type} 撞键，不多付一次查询）——这条补丁覆盖
+-     * 「同 token 的下一笔晚到，桶已被上一笔扣空 / 台账已被合并置 exhausted，压根走不到 INSERT」的窗口。
+-     */
+-    private boolean replayed(Long invId, long recordId) {
+-        if (!inventoryRepository.existsQuotaDeductDetail(invId, InventoryBizTypes.LOTTERY_DRAW, recordId)) {
+-            return false;
+-        }
+-        log.info("实物配额预扣扣不出，但本 inv 的业务明细已存在，按成功回放 invId={} recordId={}", invId, recordId);
+-        return true;
+-    }
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/VirtualInventoryServiceImpl.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/VirtualInventoryServiceImpl.java
+deleted file mode 100644
+index 111492a..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/VirtualInventoryServiceImpl.java
++++ /dev/null
+@@ -1,103 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.service;
+-
+-import com.betterschool.marketing.domain.inventory.adapter.port.IInventoryBucketPort;
+-import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
+-import com.betterschool.marketing.domain.inventory.model.entity.VirtualInventoryQuotaDetailEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.VirtualInventoryQuotaEntity;
+-import com.betterschool.marketing.types.common.AppException;
+-import com.betterschool.marketing.types.common.ResponseCode;
+-import com.betterschool.marketing.types.inventory.Constants;
+-import com.betterschool.marketing.types.inventory.InventoryBizTypes;
+-import lombok.RequiredArgsConstructor;
+-import lombok.extern.slf4j.Slf4j;
+-import org.springframework.dao.DuplicateKeyException;
+-import org.springframework.stereotype.Service;
+-
+-import java.util.List;
+-
+-/**
+- * 虚拟权益池预扣实现。扣减路径三步（票面）：校验台账状态 → 逐桶 Lua 原子递减 → 落明细(state=0)。
+- * 桶内数量以 Redis 为权威，明细落库失败唯一补偿是回补 Redis（无跨系统分布式事务，与奖池桶同口径）。
+- * <p>
+- * 业务身份：明细带 {@code biz_type = LOTTERY_DRAW}、{@code biz_id = recordId}，由唯一键
+- * {@code uk_biz (biz_type, biz_id)} 保证同一笔业务只落一行。**撞键不是错误**——撞键 = 这条流转已落过
+- * （同 token 并发双击的第二笔），回补本次 Redis 扣减后按「成功回放」返回 true，让抽奖继续走它自己的
+- * {@code draw_record} 撞键回放；其它异常仍是回补后抛出。
+- * <p>
+- * 撞键之外还有一条更窄的重放窗口：同 token 的下一笔晚到、桶已被上一笔扣空（或台账已非 open）时，
+- * 根本走不到 INSERT。因此**扣不出时会再做一次业务幂等预检**（{@code existsVirtualDeductDetail}），
+- * 命中即按成功回放；虚拟段所有预扣（含兜底）都落同一张表，所以这张表的重放判定对两段都成立。
+- * <p>
+- * 与实物段（{@code PhysicalQuotaServiceImpl}）的预扣是同构孪生：分叉只在仓储、桶 key 前缀与实物多一列
+- * {@code type}——两段的目标表不同、Redis 前缀不同，但流转语义完全一致。
+- */
+-@Slf4j
+-@Service
+-@RequiredArgsConstructor
+-public class VirtualInventoryServiceImpl implements IVirtualInventoryService {
+-
+-    private final IInventoryRepository inventoryRepository;
+-    private final IInventoryBucketPort inventoryBucketPort;
+-
+-    @Override
+-    public boolean preDeduct(Long invId, long quantity, long recordId) {
+-        VirtualInventoryQuotaEntity inventory = inventoryRepository.queryVirtualInventory(invId);
+-        if (inventory == null) {
+-            throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),
+-                    "虚拟库存不存在 invId=" + invId);
+-        }
+-        if (!"open".equals(inventory.getState())) {
+-            return replayed(invId, recordId);
+-        }
+-        List<Integer> bucketIds = inventoryRepository.listVirtualBuckets(invId).stream()
+-                .map(bucket -> bucket.getBucketId())
+-                .toList();
+-        for (Integer bucketId : bucketIds) {
+-            String bucketKey = Constants.virtualBucketKey(invId, bucketId);
+-            if (!inventoryBucketPort.tryDeduct(bucketKey, quantity)) {
+-                continue;
+-            }
+-            try {
+-                VirtualInventoryQuotaDetailEntity detail = new VirtualInventoryQuotaDetailEntity();
+-                detail.setInvId(invId);
+-                detail.setBucketId(bucketId);
+-                detail.setQuantity(quantity);
+-                detail.setBizType(InventoryBizTypes.LOTTERY_DRAW);
+-                detail.setBizId(recordId);
+-                detail.setState(0);
+-                inventoryRepository.insertVirtualDetail(detail);
+-                log.info("虚拟权益预扣成功 invId={} bucketId={} quantity={} recordId={}",
+-                        invId, bucketId, quantity, recordId);
+-                return true;
+-            } catch (DuplicateKeyException e) {
+-                // 撞业务唯一键 = 同一笔预扣已落过（并发双击的第二笔）：回补本次 Redis 扣减，按成功回放
+-                inventoryBucketPort.release(bucketKey, quantity);
+-                log.info("虚拟权益预扣撞业务唯一键，回补 Redis 后按成功回放 invId={} bucketId={} quantity={} recordId={}",
+-                        invId, bucketId, quantity, recordId);
+-                return true;
+-            } catch (RuntimeException e) {
+-                // 明细没落上：Redis 已扣的部分回补，保持「Redis 余额 == redis_qty − 未合并明细和」可对账
+-                inventoryBucketPort.release(bucketKey, quantity);
+-                throw e;
+-            }
+-        }
+-        if (replayed(invId, recordId)) {
+-            return true;
+-        }
+-        log.info("虚拟权益预扣余量不足 invId={} quantity={} buckets={} recordId={}",
+-                invId, quantity, bucketIds.size(), recordId);
+-        return false;
+-    }
+-
+-    /**
+-     * 本段扣不出时的业务幂等预检：这场流转在本 inv 上已经落过明细 = 重放，按成功回放，不再扣减。
+-     * 只在失败路径调用（成功路径靠 {@code uk_biz} 撞键，不多付一次查询）。
+-     */
+-    private boolean replayed(Long invId, long recordId) {
+-        if (!inventoryRepository.existsVirtualDeductDetail(invId, InventoryBizTypes.LOTTERY_DRAW, recordId)) {
+-            return false;
+-        }
+-        log.info("虚拟权益预扣扣不出，但本 inv 的业务明细已存在，按成功回放 invId={} recordId={}", invId, recordId);
+-        return true;
+-    }
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/adapter/port/inventory/IInventoryDeductPort.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/adapter/port/inventory/IInventoryDeductPort.java
+index 2edacce..b22fdb4 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/adapter/port/inventory/IInventoryDeductPort.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/adapter/port/inventory/IInventoryDeductPort.java
+@@ -2,8 +2,8 @@ package com.betterschool.marketing.domain.raffle.adapter.port.inventory;
+ 
+ /**
+  * 抽奖域 → 库存域的发放预扣端口（CLAUDE.md §1：跨域写组合不在域服务间直接注入）。
+- * 实现在 infrastructure，委托票 12 的 {@code IVirtualInventoryService.preDeduct} /
+- * {@code IPhysicalQuotaService.preDeductWithFallback}；
++ * 实现在 infrastructure，委托库存域的 {@code IInventoryQuotaService.preDeduct} /
++ * {@code IInventoryQuotaService.preDeductWithFallback}（段与 bizType 由端口实现填）；
+  * 判据一致：余量不足 = 业务事实（返回 false / FALLBACK 语义），Redis 故障 = 异常抛出（调用方停止发放）。
+  * <p>
+  * 两个方法都带 {@code recordId}（= {@code draw_record.record_id}）：库存域把它写成明细的业务 ID
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/adapter/port/inventory/IQuotaConfirmPort.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/adapter/port/inventory/IQuotaConfirmPort.java
+index e00d0c5..cfa7d5b 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/adapter/port/inventory/IQuotaConfirmPort.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/adapter/port/inventory/IQuotaConfirmPort.java
+@@ -1,7 +1,7 @@
+ package com.betterschool.marketing.domain.raffle.adapter.port.inventory;
+ 
+ /**
+- * 库存域**兑换确认**端口（票 14 新增，票 12 的 {@code IPhysicalQuotaService.confirmIssued} 的抽奖域视图）：
++ * 库存域**兑换确认**端口（票 14 新增，库存域 {@code IInventoryQuotaService.confirmIssued} 的抽奖域视图）：
+  * 把实物营销配额的悬挂预扣转成正式占用（{@code waiting_qty → issued_qty}），是一次纯转移。
+  * <p>
+  * 为什么是端口的第二个方法而不是塞进 {@link IInventoryDeductPort}：预扣与确认是发放的两段，
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/model/valobj/ShippingPlanVO.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/model/valobj/ShippingPlanVO.java
+index ff7e09b..79de938 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/model/valobj/ShippingPlanVO.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/model/valobj/ShippingPlanVO.java
+@@ -34,7 +34,7 @@ public class ShippingPlanVO {
+ 
+     /**
+      * 一次实物配额兑换确认的意图（库存业务 ID + 确认量）。
+-     * 抽奖域自己的值对象，不引用库存域的 {@code IPhysicalQuotaService} 签名。
++     * 抽奖域自己的值对象，不引用库存域的 {@code IInventoryQuotaService} 签名。
+      */
+     @Data
+     @AllArgsConstructor
+diff --git a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/adapter/repository/InventoryRepository.java b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/adapter/repository/InventoryRepository.java
+index c934358..4df5ab8 100644
+--- a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/adapter/repository/InventoryRepository.java
++++ b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/adapter/repository/InventoryRepository.java
+@@ -1,12 +1,9 @@
+ package com.betterschool.marketing.infrastructure.inventory.adapter.repository;
+ 
+ import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
+-import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaBucketEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaDetailEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.VirtualInventoryQuotaBucketEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.VirtualInventoryQuotaDetailEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.VirtualInventoryQuotaEntity;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryBucketVO;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductDetailVO;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryLedgerVO;
+ import com.betterschool.marketing.domain.inventory.model.valobj.UnmergedDetailVO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.IPhysicalQuotaDao;
+ import com.betterschool.marketing.infrastructure.inventory.dao.IVirtualInventoryQuotaDao;
+@@ -16,9 +13,10 @@ import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarket
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.VirtualInventoryQuotaBucketPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.VirtualInventoryQuotaDetailPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.VirtualInventoryQuotaPO;
+-import com.betterschool.marketing.types.common.ResponseCode;
+ import com.betterschool.marketing.types.common.AppException;
++import com.betterschool.marketing.types.common.ResponseCode;
+ import com.betterschool.marketing.types.inventory.Constants;
++import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+ import lombok.RequiredArgsConstructor;
+ import org.springframework.stereotype.Repository;
+ import org.springframework.transaction.support.TransactionTemplate;
+@@ -26,11 +24,12 @@ import org.springframework.transaction.support.TransactionTemplate;
+ import java.util.List;
+ 
+ /**
+- * 库存域唯一仓储实现：虚拟权益池与实物营销配额两段的写面原样合成（各自只碰自己的 DAO），
+- * 分叉语义（waiting_qty 结算、兑换确认转移）留在 mapper SQL 与该仓储方法的写入顺序里。
++ * 库存域唯一仓储实现：两段各碰自己的 DAO（PO / mapper XML 仍是两套），
++ * 对外只呈现一套按 {@link InventorySegmentVO} 分派的方法。分派全部集中在 {@code switch} 表达式里，
++ * 不再有 {@code *Virtual*} / {@code *Quota*} 两族方法。
+  * <p>
+- * 事务：{@link #confirmIssued} 与两个合并组方法是「一次操作的原子边界」，由本类用
+- * {@code TransactionTemplate}（REQUIRED）包住；单步方法各是一条 SQL，不额外开事务。
++ * 事务：{@link #mergeBucketGroup} 与 {@link #confirmIssued} 是「一次操作的原子边界」，由本类用
++ * {@code TransactionTemplate}（REQUIRED）包住；其余单步方法各是一条 SQL，不额外开事务。
+  */
+ @Repository
+ @RequiredArgsConstructor
+@@ -40,243 +39,185 @@ public class InventoryRepository implements IInventoryRepository {
+     private final IPhysicalQuotaDao physicalQuotaDao;
+     private final TransactionTemplate transactionTemplate;
+ 
+-    // ---------------------------------------------------------------- 虚拟权益池
++    // ---------------------------------------------------------------- 台账 / 分桶
+ 
+     @Override
+-    public VirtualInventoryQuotaEntity queryVirtualInventory(Long invId) {
+-        return toInventoryEntity(virtualInventoryQuotaDao.selectInventory(invId));
++    public InventoryLedgerVO queryLedger(InventorySegmentVO segment, Long invId) {
++        return switch (segment) {
++            case VIRTUAL -> toLedger(virtualInventoryQuotaDao.selectInventory(invId));
++            case QUOTA -> toLedger(physicalQuotaDao.selectQuota(invId));
++        };
+     }
+ 
+     @Override
+-    public List<VirtualInventoryQuotaBucketEntity> listVirtualBuckets(Long invId) {
+-        return virtualInventoryQuotaDao.selectBuckets(invId).stream().map(this::toBucketEntity).toList();
++    public List<InventoryBucketVO> listBuckets(InventorySegmentVO segment, Long invId) {
++        return switch (segment) {
++            case VIRTUAL -> virtualInventoryQuotaDao.selectBuckets(invId).stream().map(this::toBucket).toList();
++            case QUOTA -> physicalQuotaDao.selectQuotaBuckets(invId).stream().map(this::toBucket).toList();
++        };
+     }
+ 
+     @Override
+-    public void insertVirtualDetail(VirtualInventoryQuotaDetailEntity detail) {
+-        VirtualInventoryQuotaDetailPO detailPO = new VirtualInventoryQuotaDetailPO();
+-        detailPO.setInvId(detail.getInvId());
+-        detailPO.setBucketId(detail.getBucketId());
+-        detailPO.setQuantity(detail.getQuantity());
+-        detailPO.setBizType(detail.getBizType());
+-        detailPO.setBizId(detail.getBizId());
+-        detailPO.setState(detail.getState());
+-        virtualInventoryQuotaDao.insertDetail(detailPO);
++    public List<InventoryLedgerVO> listOpenLedgers(InventorySegmentVO segment) {
++        return switch (segment) {
++            case VIRTUAL -> virtualInventoryQuotaDao.selectOpenInventories().stream().map(this::toLedger).toList();
++            case QUOTA -> physicalQuotaDao.selectOpenQuotas().stream().map(this::toLedger).toList();
++        };
+     }
+ 
+-    @Override
+-    public boolean existsVirtualDeductDetail(Long invId, String bizType, long bizId) {
+-        return virtualInventoryQuotaDao.existsDeductDetail(invId, bizType, bizId);
+-    }
++    // ---------------------------------------------------------------- 预扣路径
+ 
+     @Override
+-    public List<UnmergedDetailVO> listUnmergedVirtualDetailRows() {
+-        return virtualInventoryQuotaDao.selectUnmergedDetails().stream()
+-                .map(po -> new UnmergedDetailVO(po.getId(), po.getInvId(), po.getBucketId(), po.getQuantity()))
+-                .toList();
++    public void insertDeductDetail(InventorySegmentVO segment, InventoryDeductDetailVO detail) {
++        switch (segment) {
++            case VIRTUAL -> virtualInventoryQuotaDao.insertDetail(toVirtualDetailPO(detail));
++            case QUOTA -> physicalQuotaDao.insertQuotaDetail(toQuotaDetailPO(detail));
++        }
+     }
+ 
+     @Override
+-    public int deductVirtualBucketRedisQty(Long invId, Integer bucketId, long quantity) {
+-        return virtualInventoryQuotaDao.deductBucketRedisQty(invId, bucketId, quantity);
++    public boolean existsDeductDetail(InventorySegmentVO segment, Long invId, String bizType, long bizId) {
++        return switch (segment) {
++            case VIRTUAL -> virtualInventoryQuotaDao.existsDeductDetail(invId, bizType, bizId);
++            // 实物只认 type = 1（预扣结转）的行：type = 2 是兑换确认，不是同一笔预扣
++            case QUOTA -> physicalQuotaDao.existsDeductDetail(invId, Constants.DETAIL_TYPE_DEDUCT, bizType, bizId);
++        };
+     }
+ 
+-    @Override
+-    public int settleVirtualInventory(Long invId, long quantity) {
+-        return virtualInventoryQuotaDao.settleInventory(invId, quantity);
+-    }
++    // ---------------------------------------------------------------- 合并路径
+ 
+     @Override
+-    public int markVirtualDetailsMerged(List<Long> detailIds) {
+-        return virtualInventoryQuotaDao.markDetailsMerged(detailIds);
++    public List<UnmergedDetailVO> listUnmergedDetailRows(InventorySegmentVO segment) {
++        return switch (segment) {
++            case VIRTUAL -> virtualInventoryQuotaDao.selectUnmergedDetails().stream()
++                    .map(po -> new UnmergedDetailVO(po.getId(), po.getInvId(), po.getBucketId(), po.getQuantity()))
++                    .toList();
++            case QUOTA -> physicalQuotaDao.selectUnmergedQuotaDetails().stream()
++                    .map(po -> new UnmergedDetailVO(po.getId(), po.getInvId(), po.getBucketId(), po.getQuantity()))
++                    .toList();
++        };
+     }
+ 
+     @Override
+-    public boolean mergeVirtualBucketGroup(Long invId, Integer bucketId, long totalQty, List<Long> detailIds) {
++    public boolean mergeBucketGroup(InventorySegmentVO segment, Long invId, Integer bucketId,
++                                    long totalQty, List<Long> detailIds) {
+         Boolean applied = transactionTemplate.execute(status -> {
+-            if (deductVirtualBucketRedisQty(invId, bucketId, totalQty) == 0) {
+-                // 守卫不过：台账不变量被破坏，跳过该组留 state=0 给对账口径暴露
++            if (deductBucketRedisQty(segment, invId, bucketId, totalQty) == 0) {
++                // 守卫不过：台账不变量被破坏，整组回滚，留 state=0 给对账口径暴露
+                 status.setRollbackOnly();
+                 return false;
+             }
+-            settleVirtualInventory(invId, totalQty);
+-            markVirtualDetailsMerged(detailIds);
++            settleLedger(segment, invId, totalQty);
++            markDetailsMerged(segment, detailIds);
+             return true;
+         });
+         return Boolean.TRUE.equals(applied);
+     }
+ 
+-    @Override
+-    public List<VirtualInventoryQuotaEntity> listOpenVirtualInventories() {
+-        return virtualInventoryQuotaDao.selectOpenInventories().stream().map(this::toInventoryEntity).toList();
+-    }
+-
+-    @Override
+-    public long sumUnmergedVirtualQty(Long invId) {
+-        return virtualInventoryQuotaDao.sumUnmergedQty(invId);
+-    }
++    // ---------------------------------------------------------------- 兑换确认（仅实物段）
+ 
+     @Override
+-    public long sumMergedVirtualQty(Long invId) {
+-        return virtualInventoryQuotaDao.sumMergedQty(invId);
+-    }
+-
+-    // ---------------------------------------------------------------- 实物营销配额
+-
+-    @Override
+-    public PhysicalMarketingQuotaEntity queryQuota(Long invId) {
+-        return toQuotaEntity(physicalQuotaDao.selectQuota(invId));
+-    }
+-
+-    @Override
+-    public List<PhysicalMarketingQuotaBucketEntity> listQuotaBuckets(Long invId) {
+-        return physicalQuotaDao.selectQuotaBuckets(invId).stream().map(this::toBucketEntity).toList();
+-    }
+-
+-    @Override
+-    public void insertQuotaDetail(PhysicalMarketingQuotaDetailEntity detail) {
+-        PhysicalMarketingQuotaDetailPO detailPO = new PhysicalMarketingQuotaDetailPO();
+-        detailPO.setInvId(detail.getInvId());
+-        detailPO.setBucketId(detail.getBucketId());
+-        detailPO.setQuantity(detail.getQuantity());
+-        detailPO.setType(detail.getType());
+-        detailPO.setBizType(detail.getBizType());
+-        detailPO.setBizId(detail.getBizId());
+-        detailPO.setState(detail.getState());
+-        physicalQuotaDao.insertQuotaDetail(detailPO);
+-    }
+-
+-    @Override
+-    public boolean existsQuotaDeductDetail(Long invId, String bizType, long bizId) {
+-        return physicalQuotaDao.existsDeductDetail(invId, Constants.DETAIL_TYPE_DEDUCT, bizType, bizId);
+-    }
+-
+-    @Override
+-    public List<UnmergedDetailVO> listUnmergedQuotaDetailRows() {
+-        return physicalQuotaDao.selectUnmergedQuotaDetails().stream()
+-                .map(po -> new UnmergedDetailVO(po.getId(), po.getInvId(), po.getBucketId(), po.getQuantity()))
+-                .toList();
+-    }
+-
+-    @Override
+-    public int deductQuotaBucketRedisQty(Long invId, Integer bucketId, long quantity) {
+-        return physicalQuotaDao.deductQuotaBucketRedisQty(invId, bucketId, quantity);
+-    }
+-
+-    @Override
+-    public int settleQuota(Long invId, long quantity) {
+-        return physicalQuotaDao.settleQuota(invId, quantity);
+-    }
+-
+-    @Override
+-    public int markQuotaDetailsMerged(List<Long> detailIds) {
+-        return physicalQuotaDao.markQuotaDetailsMerged(detailIds);
+-    }
+-
+-    @Override
+-    public boolean mergeQuotaBucketGroup(Long invId, Integer bucketId, long totalQty, List<Long> detailIds) {
+-        Boolean applied = transactionTemplate.execute(status -> {
+-            if (deductQuotaBucketRedisQty(invId, bucketId, totalQty) == 0) {
+-                // 守卫不过：台账不变量被破坏，跳过该组留 state=0 给对账口径暴露
+-                status.setRollbackOnly();
+-                return false;
+-            }
+-            settleQuota(invId, totalQty);
+-            markQuotaDetailsMerged(detailIds);
+-            return true;
+-        });
+-        return Boolean.TRUE.equals(applied);
+-    }
+-
+-    @Override
+-    public void confirmIssued(Long invId, Long recordId, long quantity) {
++    public void confirmIssued(InventorySegmentVO segment, Long invId, long bizId, long quantity) {
++        if (segment != InventorySegmentVO.QUOTA) {
++            throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),
++                    "兑换确认只存在于 quota 段 segment=" + segment.getCode() + " invId=" + invId);
++        }
+         transactionTemplate.executeWithoutResult(status -> {
+             // waiting >= qty 守卫下转移：0 行 = 没有足够的悬挂预扣可确认（配额不足时根本不会产生 waiting）
+-            if (transferWaitingToIssued(invId, quantity) == 0) {
++            if (physicalQuotaDao.transferWaitingToIssued(invId, quantity) == 0) {
+                 throw new AppException(ResponseCode.INVENTORY_WAITING_SHORTAGE.getCode(),
+-                        "没有待确认的预扣库存 invId=" + invId + " recordId=" + recordId
++                        "没有待确认的预扣库存 invId=" + invId + " recordId=" + bizId
+                                 + " quantity=" + quantity);
+             }
+         });
+     }
+ 
++    // ---------------------------------------------------------------- 对账口径
++
+     @Override
+-    public int transferWaitingToIssued(Long invId, long quantity) {
+-        return physicalQuotaDao.transferWaitingToIssued(invId, quantity);
++    public long sumUnmergedQty(InventorySegmentVO segment, Long invId) {
++        return switch (segment) {
++            case VIRTUAL -> virtualInventoryQuotaDao.sumUnmergedQty(invId);
++            case QUOTA -> physicalQuotaDao.sumUnmergedQuotaQty(invId);
++        };
+     }
+ 
+     @Override
+-    public List<PhysicalMarketingQuotaEntity> listOpenQuotas() {
+-        return physicalQuotaDao.selectOpenQuotas().stream().map(this::toQuotaEntity).toList();
++    public long sumMergedQty(InventorySegmentVO segment, Long invId) {
++        return switch (segment) {
++            case VIRTUAL -> virtualInventoryQuotaDao.sumMergedQty(invId);
++            case QUOTA -> physicalQuotaDao.sumMergedQuotaQty(invId);
++        };
+     }
+ 
+-    @Override
+-    public long sumUnmergedQuotaQty(Long invId) {
+-        return physicalQuotaDao.sumUnmergedQuotaQty(invId);
++    // ---------------------------------------------------------------- 段内单步写面（仅供本类事务方法）
++
++    private int deductBucketRedisQty(InventorySegmentVO segment, Long invId, Integer bucketId, long quantity) {
++        return switch (segment) {
++            case VIRTUAL -> virtualInventoryQuotaDao.deductBucketRedisQty(invId, bucketId, quantity);
++            case QUOTA -> physicalQuotaDao.deductQuotaBucketRedisQty(invId, bucketId, quantity);
++        };
+     }
+ 
+-    @Override
+-    public long sumMergedQuotaQty(Long invId) {
+-        return physicalQuotaDao.sumMergedQuotaQty(invId);
++    private int settleLedger(InventorySegmentVO segment, Long invId, long quantity) {
++        return switch (segment) {
++            case VIRTUAL -> virtualInventoryQuotaDao.settleInventory(invId, quantity);
++            case QUOTA -> physicalQuotaDao.settleQuota(invId, quantity);
++        };
+     }
+ 
+-    // ---------------------------------------------------------------- PO / Entity 转换
++    private int markDetailsMerged(InventorySegmentVO segment, List<Long> detailIds) {
++        return switch (segment) {
++            case VIRTUAL -> virtualInventoryQuotaDao.markDetailsMerged(detailIds);
++            case QUOTA -> physicalQuotaDao.markQuotaDetailsMerged(detailIds);
++        };
++    }
++
++    // ---------------------------------------------------------------- PO → 公共形状
+ 
+-    private VirtualInventoryQuotaEntity toInventoryEntity(VirtualInventoryQuotaPO po) {
++    private InventoryLedgerVO toLedger(VirtualInventoryQuotaPO po) {
+         if (po == null) {
+             return null;
+         }
+-        VirtualInventoryQuotaEntity entity = new VirtualInventoryQuotaEntity();
+-        entity.setId(po.getId());
+-        entity.setInvId(po.getInvId());
+-        entity.setName(po.getName());
+-        entity.setType(po.getType());
+-        entity.setValue(po.getValue());
+-        entity.setSurplusQty(po.getSurplusQty());
+-        entity.setIssuedQty(po.getIssuedQty());
+-        entity.setState(po.getState());
+-        entity.setCreateTime(po.getCreateTime());
+-        entity.setUpdateTime(po.getUpdateTime());
+-        return entity;
+-    }
+-
+-    private VirtualInventoryQuotaBucketEntity toBucketEntity(VirtualInventoryQuotaBucketPO po) {
+-        VirtualInventoryQuotaBucketEntity entity = new VirtualInventoryQuotaBucketEntity();
+-        entity.setId(po.getId());
+-        entity.setInvId(po.getInvId());
+-        entity.setBucketId(po.getBucketId());
+-        entity.setRedisQty(po.getRedisQty());
+-        entity.setCreateTime(po.getCreateTime());
+-        entity.setUpdateTime(po.getUpdateTime());
+-        return entity;
++        // 虚拟段没有等待态：waiting 恒 0，对账口径 waiting + issued 因此两段同表达
++        return new InventoryLedgerVO(po.getInvId(), po.getSurplusQty(), 0L, po.getIssuedQty(), po.getState());
+     }
+ 
+-    private PhysicalMarketingQuotaEntity toQuotaEntity(PhysicalMarketingQuotaPO po) {
++    private InventoryLedgerVO toLedger(PhysicalMarketingQuotaPO po) {
+         if (po == null) {
+             return null;
+         }
+-        PhysicalMarketingQuotaEntity entity = new PhysicalMarketingQuotaEntity();
+-        entity.setId(po.getId());
+-        entity.setInvId(po.getInvId());
+-        entity.setName(po.getName());
+-        entity.setDecr(po.getDecr());
+-        entity.setSurplusQty(po.getSurplusQty());
+-        entity.setWaitingQty(po.getWaitingQty());
+-        entity.setIssuedQty(po.getIssuedQty());
+-        entity.setState(po.getState());
+-        entity.setCreateTime(po.getCreateTime());
+-        entity.setUpdateTime(po.getUpdateTime());
+-        return entity;
++        return new InventoryLedgerVO(po.getInvId(), po.getSurplusQty(), po.getWaitingQty(),
++                po.getIssuedQty(), po.getState());
+     }
+ 
+-    private PhysicalMarketingQuotaBucketEntity toBucketEntity(PhysicalMarketingQuotaBucketPO po) {
+-        PhysicalMarketingQuotaBucketEntity entity = new PhysicalMarketingQuotaBucketEntity();
+-        entity.setId(po.getId());
+-        entity.setInvId(po.getInvId());
+-        entity.setBucketId(po.getBucketId());
+-        entity.setRedisQty(po.getRedisQty());
+-        entity.setCreateTime(po.getCreateTime());
+-        entity.setUpdateTime(po.getUpdateTime());
+-        return entity;
++    private InventoryBucketVO toBucket(VirtualInventoryQuotaBucketPO po) {
++        return new InventoryBucketVO(po.getBucketId(), po.getRedisQty());
++    }
++
++    private InventoryBucketVO toBucket(PhysicalMarketingQuotaBucketPO po) {
++        return new InventoryBucketVO(po.getBucketId(), po.getRedisQty());
++    }
++
++    private VirtualInventoryQuotaDetailPO toVirtualDetailPO(InventoryDeductDetailVO detail) {
++        VirtualInventoryQuotaDetailPO detailPO = new VirtualInventoryQuotaDetailPO();
++        detailPO.setInvId(detail.invId());
++        detailPO.setBucketId(detail.bucketId());
++        detailPO.setQuantity(detail.quantity());
++        detailPO.setBizType(detail.bizType());
++        detailPO.setBizId(detail.bizId());
++        return detailPO;
++    }
++
++    private PhysicalMarketingQuotaDetailPO toQuotaDetailPO(InventoryDeductDetailVO detail) {
++        PhysicalMarketingQuotaDetailPO detailPO = new PhysicalMarketingQuotaDetailPO();
++        detailPO.setInvId(detail.invId());
++        detailPO.setBucketId(detail.bucketId());
++        detailPO.setQuantity(detail.quantity());
++        // 预扣结转 type = 1；type = 2 是兑换确认行（票 11 的异步确认才写）
++        detailPO.setType(Constants.DETAIL_TYPE_DEDUCT);
++        detailPO.setBizType(detail.bizType());
++        detailPO.setBizId(detail.bizId());
++        return detailPO;
+     }
+ }
+diff --git a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/raffle/adapter/port/inventory/InventoryDeductPort.java b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/raffle/adapter/port/inventory/InventoryDeductPort.java
+index 35fabc5..200b01c 100644
+--- a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/raffle/adapter/port/inventory/InventoryDeductPort.java
++++ b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/raffle/adapter/port/inventory/InventoryDeductPort.java
+@@ -1,34 +1,41 @@
+ package com.betterschool.marketing.infrastructure.raffle.adapter.port.inventory;
+ 
+ import com.betterschool.marketing.domain.inventory.model.valobj.DeductOutcomeVO;
+-import com.betterschool.marketing.domain.inventory.service.IPhysicalQuotaService;
+-import com.betterschool.marketing.domain.inventory.service.IVirtualInventoryService;
++import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductRequestVO;
++import com.betterschool.marketing.domain.inventory.service.IInventoryQuotaService;
+ import com.betterschool.marketing.domain.raffle.adapter.port.inventory.IInventoryDeductPort;
++import com.betterschool.marketing.types.inventory.InventoryBizTypes;
++import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+ import lombok.RequiredArgsConstructor;
+ import org.springframework.stereotype.Component;
+ 
+ /**
+- * 库存域发放预扣端口的实现：委托票 12 的虚拟权益池与实物营销配额两个域内服务，
++ * 库存域发放预扣端口的实现：委托唯一的库存配额服务（段由本实现选），
+  * 结果对象翻成端口自己的 {@link Outcome}（不把库存域的值对象类型漏进抽奖域）。
+  * <p>
+- * 纯透传：{@code recordId} 原样交给库存域服务，由库存侧填 {@code biz_type} 与 {@code biz_id}
+- * （抽奖域不认识库存的表列）。
++ * 纯透传：{@code recordId} 原样交给库存域服务，并在这里填 {@code bizType} 与段
++ * （抽奖域不认识库存的表列 / 分段）。
+  */
+ @Component
+ @RequiredArgsConstructor
+ public class InventoryDeductPort implements IInventoryDeductPort {
+ 
+-    private final IVirtualInventoryService virtualInventoryService;
+-    private final IPhysicalQuotaService physicalQuotaService;
++    private final IInventoryQuotaService inventoryQuotaService;
+ 
+     @Override
+     public boolean preDeductVirtual(Long invId, long quantity, long recordId) {
+-        return virtualInventoryService.preDeduct(invId, quantity, recordId);
++        return inventoryQuotaService.preDeduct(InventorySegmentVO.VIRTUAL, invId, quantity,
++                InventoryBizTypes.LOTTERY_DRAW, recordId);
+     }
+ 
+     @Override
+     public Outcome preDeductPhysicalWithFallback(Long invId, Long fallbackInvId, long quantity, long recordId) {
+-        DeductOutcomeVO outcome = physicalQuotaService.preDeductWithFallback(invId, fallbackInvId, quantity, recordId);
++        InventoryDeductRequestVO primary = new InventoryDeductRequestVO(InventorySegmentVO.QUOTA, invId, quantity,
++                InventoryBizTypes.LOTTERY_DRAW, recordId);
++        InventoryDeductRequestVO fallback = fallbackInvId == null ? null
++                : new InventoryDeductRequestVO(InventorySegmentVO.VIRTUAL, fallbackInvId, quantity,
++                InventoryBizTypes.LOTTERY_DRAW, recordId);
++        DeductOutcomeVO outcome = inventoryQuotaService.preDeductWithFallback(primary, fallback);
+         return switch (outcome) {
+             case DEDUCTED -> Outcome.DEDUCTED;
+             case FALLBACK -> Outcome.FALLBACK;
+diff --git a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/raffle/adapter/port/inventory/QuotaConfirmPort.java b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/raffle/adapter/port/inventory/QuotaConfirmPort.java
+index 6f21332..b8c3654 100644
+--- a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/raffle/adapter/port/inventory/QuotaConfirmPort.java
++++ b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/raffle/adapter/port/inventory/QuotaConfirmPort.java
+@@ -1,21 +1,23 @@
+ package com.betterschool.marketing.infrastructure.raffle.adapter.port.inventory;
+ 
+-import com.betterschool.marketing.domain.inventory.service.IPhysicalQuotaService;
++import com.betterschool.marketing.domain.inventory.service.IInventoryQuotaService;
+ import com.betterschool.marketing.domain.raffle.adapter.port.inventory.IQuotaConfirmPort;
++import com.betterschool.marketing.types.inventory.InventoryBizTypes;
+ import lombok.RequiredArgsConstructor;
+ import org.springframework.stereotype.Component;
+ 
+ /**
+- * 兑换确认端口的实现：纯委托票 12 的实物配额域服务（口径注释见域端口）。
++ * 兑换确认端口的实现：委托库存配额服务的确认动作（口径注释见域端口）。
++ * {@code bizType} 由本实现填——抽奖域只透传 {@code recordId}，不认识库存的表列。
+  */
+ @Component
+ @RequiredArgsConstructor
+ public class QuotaConfirmPort implements IQuotaConfirmPort {
+ 
+-    private final IPhysicalQuotaService physicalQuotaService;
++    private final IInventoryQuotaService inventoryQuotaService;
+ 
+     @Override
+     public void confirmIssued(Long invId, Long recordId, long quantity) {
+-        physicalQuotaService.confirmIssued(invId, recordId, quantity);
++        inventoryQuotaService.confirmIssued(invId, InventoryBizTypes.LOTTERY_CLAIM, recordId, quantity);
+     }
+ }
+diff --git a/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/Constants.java b/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/Constants.java
+index 5c1394a..3a49404 100644
+--- a/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/Constants.java
++++ b/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/Constants.java
+@@ -1,22 +1,18 @@
+ package com.betterschool.marketing.types.inventory;
+ 
+ /**
+- * 库存域自有常量：Redis key 前缀与桶 key 组装（虚拟权益池 / 实物营销配额各占一段）。
++ * 库存域自有常量：一条 Redis 桶 key 组装口径（两段只差 {@link InventorySegmentVO#getCode()} 那一段）。
+  * <p>
+- * key 形状：{@code bs:inventory:virtual:bucket:<invId>:<bucketId>} 与
+- * {@code bs:inventory:quota:bucket:<invId>:<bucketId>}。两段是同一套桶机制的两个目标表，
+- * key 前缀分开，防止同 invId 数字在两段间串味。
++ * key 形状：{@code bs:inventory:bucket:<segment>:<invId>:<bucketId>}，如
++ * {@code bs:inventory:bucket:quota:9101:0} / {@code bs:inventory:bucket:virtual:9001:0}。
++ * 段前缀在中间而不是尾巴：两段是同一套桶机制的两个目标表，段名跟着前缀走，防止同 invId 数字在两段间串味。
++ * <p>
++ * 改前缀 = 必须重跑 {@code inventoryBucketWarmup}（旧 key 留着无害，但没人读）。
+  */
+ public final class Constants {
+ 
+-    /** 本域 Redis key 前缀（与 lottery / raffle 各占一段，避免同实例下串味） */
+-    public final static String INVENTORY_KEY_PREFIX = "bs:inventory:";
+-
+-    /** 虚拟权益池桶 key 前缀 */
+-    public final static String VIRTUAL_BUCKET_KEY_PREFIX = INVENTORY_KEY_PREFIX + "virtual:bucket:";
+-
+-    /** 实物营销配额桶 key 前缀 */
+-    public final static String QUOTA_BUCKET_KEY_PREFIX = INVENTORY_KEY_PREFIX + "quota:bucket:";
++    /** 桶 key 前缀：后面依次拼 segment code / invId / bucketId */
++    public final static String BUCKET_KEY_PREFIX = "bs:inventory:bucket:";
+ 
+     /** 实物明细 {@code type}：1-预扣结转（合并时进 waiting_qty） */
+     public final static int DETAIL_TYPE_DEDUCT = 1;
+@@ -27,12 +23,12 @@ public final class Constants {
+     /** 桶 key 不存在 / 未预热（Lua 返回码 -1） */
+     public final static int LUA_CODE_NOT_WARMED = -1;
+ 
+-    public static String virtualBucketKey(Long invId, int bucketId) {
+-        return VIRTUAL_BUCKET_KEY_PREFIX + invId + ":" + bucketId;
+-    }
+-
+-    public static String quotaBucketKey(Long invId, int bucketId) {
+-        return QUOTA_BUCKET_KEY_PREFIX + invId + ":" + bucketId;
++    /**
++     * 组装桶 key（唯一的 key 组装入口，两段共用）。
++     * 不叫 {@code mergeKey}：那是 {@code IInventoryMergeService} 的方法名。
++     */
++    public static String bucketKey(InventorySegmentVO segment, long invId, int bucketId) {
++        return BUCKET_KEY_PREFIX + segment.getCode() + ":" + invId + ":" + bucketId;
+     }
+ 
+     private Constants() {
+diff --git a/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/InventorySegmentVO.java b/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/InventorySegmentVO.java
+new file mode 100644
+index 0000000..1b01267
+--- /dev/null
++++ b/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/InventorySegmentVO.java
+@@ -0,0 +1,29 @@
++package com.betterschool.marketing.types.inventory;
++
++import lombok.AllArgsConstructor;
++import lombok.Getter;
++
++/**
++ * 库存分段（spec §7.1）：两套 quota 表是**同一套模型的两个目标**，代码上用这一个参数选边，
++ * 不再有「虚拟版方法 + 实物版方法」两份孪生。
++ * <p>
++ * {@code code} 是唯一的对外表达：Redis key（{@link Constants#bucketKey}）、合并消息载荷、日志都用它，
++ * 枚举名只活在代码里。取值与表名对应：
++ * {@link #QUOTA} = {@code physical_marketing_quota*}（实物营销配额），
++ * {@link #VIRTUAL} = {@code virtual_inventory_quota*}（虚拟库存配额）。
++ * <p>
++ * 落在 {@code types} 而不是 domain：{@link Constants} 与本域的 wire 类型都要用它，
++ * 而 {@code types} 不能反向依赖 domain（backend/CLAUDE.md §1）。
++ */
++@Getter
++@AllArgsConstructor
++public enum InventorySegmentVO {
++
++    /** 实物营销配额：surplus → waiting → issued（合并进 waiting，兑换确认转 issued） */
++    QUOTA("quota"),
++
++    /** 虚拟库存配额：surplus → issued（没有兑换确认） */
++    VIRTUAL("virtual");
++
++    private final String code;
++}

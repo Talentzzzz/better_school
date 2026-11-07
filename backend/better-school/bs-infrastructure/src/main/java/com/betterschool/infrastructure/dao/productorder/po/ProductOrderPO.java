@@ -25,7 +25,7 @@ public class ProductOrderPO {
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 
-    /** 查询冗余字段：买卖双方昵称头像（JOIN 填充） */
+    /** 查询冗余字段：买卖双方昵称头像（仓储查 bs_user 批量回查填充，SQL 层零 JOIN） */
     private String buyerNickname;
     private String buyerAvatar;
     private String sellerNickname;

@@ -28,18 +28,18 @@
         WHERE r.room_id = #{roomId}
     </select>
 
-    <!-- ===== direct_room_pair（1v1 配对映射，room 不再承载配对） ===== -->
+    <!-- ===== user_pair_room（用户对 → 1v1 会话映射，room 不再承载配对） ===== -->
 
-    <select id="selectDirectRoomId" resultType="string">
+    <select id="selectUserPairRoomId" resultType="string">
         SELECT room_id
-        FROM direct_room_pair
+        FROM user_pair_room
         WHERE user_min = #{userMin} AND user_max = #{userMax}
     </select>
 
     <!-- 建会话事务的收尾闸门：撞 uk_pair（同一对人恒一行）即 DuplicateKeyException，
          事务内已写的 room/room_member 全部回滚，服务层捕获后幂等回读既有 room_id -->
-    <insert id="insertDirectRoomPair" parameterType="com.betterschool.infrastructure.dao.chat.po.DirectRoomPairPO">
-        INSERT INTO direct_room_pair (user_min, user_max, room_id, create_time, update_time)
+    <insert id="insertUserPairRoom" parameterType="com.betterschool.infrastructure.dao.chat.po.UserPairRoomPO">
+        INSERT INTO user_pair_room (user_min, user_max, room_id, create_time, update_time)
         VALUES (#{userMin}, #{userMax}, #{roomId}, #{createTime}, #{updateTime})
     </insert>
 
@@ -57,32 +57,47 @@
         WHERE room_id = #{roomId}
     </select>
 
-    <!-- 扇出时在用户维度行上刷列表副本（本票过渡：与取号同事务，票 02 起归扩散消费端单一写入方）：
-         last_seq_copy GREATEST 只进不退，预览三件套整行刷新（会话成员恒两行，一次覆盖双方） -->
-    <update id="updateMemberCopies">
+    <!-- 扇出时在用户维度行上刷列表预览（本票过渡：与取号同事务，票 02 起归扩散消费端单一写入方）：
+         预览三件套整行刷新（会话成员恒两行，一次覆盖双方）；未读数不落副本，由 room.last_seq 现算 -->
+    <update id="updateMemberPreview">
         UPDATE room_member
-        SET last_seq_copy    = GREATEST(last_seq_copy, #{seq}),
-            last_msg_type    = #{msgType},
+        SET last_msg_type    = #{msgType},
             last_msg_preview = #{preview},
             last_msg_at      = #{lastMsgAt},
             update_time      = NOW()
         WHERE room_id = #{roomId}
     </update>
 
-    <!-- 会话列表（room_member.idx_user_msg 主路径，用户维度单行可算）：排除隐藏，last_msg_at 倒序分页；
-         unread = last_seq_copy − last_read_seq 服务端拼装；room 只补 source/initiator_id（角色标签锚点）；
-         1v1 恒两行成员，自连出对家 user_id（对家头像昵称由服务层批量查用户拼装） -->
-    <select id="selectRoomItems" resultType="com.betterschool.infrastructure.dao.chat.po.RoomListItemPO">
-        SELECT <include refid="roomColumns"/>,
-               rm.last_seq_copy, rm.last_msg_type, rm.last_msg_preview, rm.last_msg_at,
-               rm.last_read_seq, rm2.user_id AS peer_user_id
+    <!-- 会话列表三段查之①（room_member.idx_user_msg 主路径）：本人成员行分页，排除隐藏，last_msg_at
+         倒序；列表三件套在本人成员行上，room 真相（source/initiator_id/last_seq——未读数真源）与对家
+         user_id 由仓储按 room_id 集二次回查拼装（②selectRoomsByIds ③selectPeerMembers，SQL 层零 JOIN；
+         1v1 恒两行成员）；unread = r.last_seq − rm.last_read_seq 服务端拼装，不落副本 -->
+    <select id="selectRoomMemberPage" resultType="com.betterschool.infrastructure.dao.chat.po.RoomListItemPO">
+        SELECT rm.room_id AS roomId,
+               rm.last_msg_type, rm.last_msg_preview, rm.last_msg_at,
+               rm.last_read_seq AS lastReadSeq
         FROM room_member rm
-        JOIN room r ON r.room_id = rm.room_id
-        JOIN room_member rm2 ON rm2.room_id = rm.room_id AND rm2.user_id != #{userId}
         WHERE rm.user_id = #{userId}
           AND rm.hidden_at IS NULL
         ORDER BY rm.last_msg_at DESC
         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <!-- 会话列表三段查之②：按 room_id 集批量回查会话行（lastSeq 未读数真源 + source/initiator_id 角色标签锚点） -->
+    <select id="selectRoomsByIds" resultType="com.betterschool.infrastructure.dao.chat.po.RoomPO">
+        SELECT <include refid="roomColumns"/>
+        FROM room r
+        WHERE r.room_id IN
+        <foreach collection="roomIds" item="roomId" open="(" separator="," close=")">#{roomId}</foreach>
+    </select>
+
+    <!-- 会话列表三段查之③：本批会话里的对家成员行（1v1 恒两行成员，每会话恰出一行对家） -->
+    <select id="selectPeerMembers" resultType="com.betterschool.infrastructure.dao.chat.po.RoomPeerRowPO">
+        SELECT rm.room_id AS roomId, rm.user_id AS userId
+        FROM room_member rm
+        WHERE rm.room_id IN
+        <foreach collection="roomIds" item="roomId" open="(" separator="," close=")">#{roomId}</foreach>
+          AND rm.user_id != #{userId}
     </select>
 
     <select id="countRoomsForUser" resultType="long">
@@ -103,14 +118,14 @@
     </insert>
 
     <select id="selectRoomMember" resultType="com.betterschool.infrastructure.dao.chat.po.RoomMemberPO">
-        SELECT id, room_id, user_id, last_seq_copy, last_msg_type, last_msg_preview, last_msg_at,
+        SELECT id, room_id, user_id, last_msg_type, last_msg_preview, last_msg_at,
                last_read_seq, hidden_at, create_time, update_time
         FROM room_member
         WHERE room_id = #{roomId} AND user_id = #{userId}
     </select>
 
     <select id="listRoomMembers" resultType="com.betterschool.infrastructure.dao.chat.po.RoomMemberPO">
-        SELECT id, room_id, user_id, last_seq_copy, last_msg_type, last_msg_preview, last_msg_at,
+        SELECT id, room_id, user_id, last_msg_type, last_msg_preview, last_msg_at,
                last_read_seq, hidden_at, create_time, update_time
         FROM room_member
         WHERE room_id = #{roomId}
@@ -192,14 +207,14 @@
         WHERE m.msg_id = #{messageId}
     </select>
 
-    <!-- 撤回后替换会话列表预览（用户维度成员行）：仅当该消息仍是最后一条（last_seq_copy 守卫，与
-         room.last_seq 同事务推进恒等值），并发新消息不被覆盖；恒两行成员，一次覆盖双方 -->
+    <!-- 撤回后替换会话列表预览（用户维度成员行）：仅当该消息仍是最后一条（room.last_seq 守卫，
+         标量子查询直取真源保持原子），并发新消息不被覆盖；恒两行成员，一次覆盖双方 -->
     <update id="markLastMsgRecalled">
         UPDATE room_member
         SET last_msg_preview = #{preview},
             update_time      = NOW()
         WHERE room_id = #{roomId}
-          AND last_seq_copy = #{seq}
+          AND (SELECT last_seq FROM room WHERE room_id = #{roomId}) = #{seq}
     </update>
 
     <!-- 历史分页（uk_room_seq 主路径）：beforeSeq 为 NULL 取最新一页，页内 seq 倒序 -->
@@ -224,16 +239,24 @@
         </foreach>
     </insert>
 
-    <!-- 增量补拉（timeline.uk_user_delivery 主路径）：delivery_seq 升序，JOIN message 取消息全量；
-         timeline.msg_id 外联的是消息业务 ID（message.msg_id），不是物理主键 -->
-    <select id="selectTimelineAfter" resultType="com.betterschool.infrastructure.dao.chat.po.TimelineMessagePO">
-        SELECT t.delivery_seq, <include refid="messageColumns"/>
+    <!-- 增量补拉两段查之①（timeline.uk_user_delivery 主路径）：delivery_seq 升序扫本人投递行；
+         消息全量由仓储按 msg_id 集二次回查拼装（selectMessagesByIds，SQL 层零 JOIN；
+         timeline.msg_id 外联的是消息业务 ID（message.msg_id），不是物理主键） -->
+    <select id="selectTimelineRows" resultType="com.betterschool.infrastructure.dao.chat.po.TimelineDeliveryRowPO">
+        SELECT t.msg_id AS msgId, t.delivery_seq AS deliverySeq
         FROM timeline t
-        JOIN message m ON m.msg_id = t.msg_id
         WHERE t.user_id = #{userId}
           AND t.delivery_seq &gt; #{afterDeliverySeq}
         ORDER BY t.delivery_seq ASC
         LIMIT #{limit}
+    </select>
+
+    <!-- 增量补拉两段查之②：按 msg_id 集批量回查消息全量 -->
+    <select id="selectMessagesByIds" resultType="com.betterschool.infrastructure.dao.chat.po.MessagePO">
+        SELECT <include refid="messageColumns"/>
+        FROM message m
+        WHERE m.msg_id IN
+        <foreach collection="msgIds" item="msgId" open="(" separator="," close=")">#{msgId}</foreach>
     </select>
 
     <!-- ===== user_seq ===== -->

@@ -28,7 +28,7 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
 
 ### POST /rooms/direct
 建/取 1v1 会话（「联系 TA」入口）。Body: `targetUserId`（必填，不能是自己，用户须存在）、`source?`（市集两入口分别传 ERRAND/PRODUCT，首页与用户主页私信入口不传；非法值 400）。
-`direct_room_pair.uk_pair` 幂等：同两人重复建（任意方向）返回同一 room。**`source` 只在首次建会话时写入**（首来源钉死），既有会话原样返回、来源不被覆盖。返回 `{roomId}`。
+`user_pair_room.uk_pair` 幂等：同两人重复建（任意方向）返回同一 room。**`source` 只在首次建会话时写入**（首来源钉死），既有会话原样返回、来源不被覆盖。返回 `{roomId}`。
 
 ## 消息
 

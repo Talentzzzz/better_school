@@ -25,17 +25,17 @@ public class PostCommentPO {
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 
-    /** 查询冗余字段：作者昵称（JOIN bs_user 填充） */
+    /** 查询冗余字段：作者昵称（仓储回查 bs_user 填充） */
     private String authorNickname;
 
-    /** 查询冗余字段：被回复人 id/昵称（楼内列表 JOIN parent 行填充，忽略其状态） */
+    /** 查询冗余字段：被回复人 id/昵称（楼内列表由仓储单表回查 parent 行填充，忽略其状态） */
     private String replyToUserId;
     private String replyToNickname;
 
-    /** 查询冗余字段：审核未通过理由（列表 JOIN content_review REJECT 行填充） */
+    /** 查询冗余字段：审核未通过理由（仓储回查 content_review 最新 REJECT 行填充） */
     private String rejectReason;
 
-    /** 查询冗余字段：来源帖标题/封面（按用户列评论 JOIN post 填充，评论行本身不存） */
+    /** 查询冗余字段：来源帖标题/封面（按用户列评论由仓储回查 post 填充，评论行本身不存） */
     private String postTitle;
     private String postCover;
 }

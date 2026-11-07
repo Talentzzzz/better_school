@@ -2,6 +2,7 @@ package com.betterschool.infrastructure.dao.errand;
 
 import com.betterschool.domain.errand.model.valobj.ErrandFeedCursorVO;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO;
+import com.betterschool.infrastructure.dao.errand.po.ErrandFeedIndexRowPO;
 import com.betterschool.infrastructure.dao.errand.po.ErrandOrderEventPO;
 import com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO;
 import org.apache.ibatis.annotations.Mapper;
@@ -18,10 +19,14 @@ public interface IErrandDao {
 
     int insert(ErrandOrderPO orderPO);
 
+    /** 详情内容查询：纯 errand_order 单表（昵称头像与浏览 UV 仓储回查拼装，SQL 层零 JOIN） */
     ErrandOrderPO selectById(@Param("orderId") String orderId);
 
     /** 按 id 列表查询（不分状态，搜索同步反查/搜索结果组装用） */
     List<ErrandOrderPO> selectByIds(@Param("ids") List<String> orderIds);
+
+    /** 浏览 UV 计数窄表批量读：按 id 集单表 IN 查询，仓储补 0 拼装（详情 UV 回填与列表展示共用） */
+    List<ErrandOrderPO> selectViewCountsByOrderIds(@Param("orderIds") List<String> orderIds);
 
     /**
      * 搜索索引全量重建的游标页（uuid-biz-id 票 05）：业务 ID 是 UUID 字符串，按 errand_order_id
@@ -29,9 +34,13 @@ public interface IErrandDao {
      */
     List<String> selectIdsAfter(@Param("lastId") String lastId, @Param("limit") int limit);
 
+    /** 旧直查降级路径 price/time 三档：公开口径 SQL 分页（hot 档走 {@link #selectVisibleRows} 内存排序） */
     List<ErrandOrderPO> selectPage(@Param("type") String type, @Param("state") String state,
                                    @Param("sort") String sort,
                                    @Param("offset") int offset, @Param("limit") int limit);
+
+    /** hot 档降级取数：公开口径全集（筛选条件同 {@link #selectPage}，无 LIMIT），窄表批量回查后仓储内存排序切片 */
+    List<ErrandOrderPO> selectVisibleRows(@Param("type") String type, @Param("state") String state);
 
     long count(@Param("type") String type, @Param("state") String state);
 
@@ -167,15 +176,18 @@ public interface IErrandDao {
     /** 浏览合并事务旁路 ±N：纯 UPDATE 不 upsert；0 行 = 索引行缺失，调用方落 warn 交重建 job */
     int updateFeedIndexViewCount(@Param("orderId") String orderId, @Param("delta") int delta);
 
-    // ── feed 索引全量重建（market-feed-uv 票 06：兜底恢复手段，照帖子 IPostDao 同名四条先例）──
-    // 四条语句由仓储收进一个事务（执行序：计数校准 → 清空索引 → 重灌投影）：
-    // 先算准计数窄表再抄进重灌语句，读者要么看到重建前、要么看到重建后的完整索引
+    // ── feed 索引全量重建（market-feed-uv 票 06：兜底恢复手段，照帖子 IPostDao 同名先例）──
+    // 各步由仓储收进一个事务（执行序：计数校准 → 清空索引 → 拼装重灌）：
+    // 先算准计数窄表再抄进重灌行集，读者要么看到重建前、要么看到重建后的完整索引
 
     /** 清空索引表（DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉与重灌语句的原子性） */
     int clearFeedIndex();
 
-    /** 重灌：行集 = PUBLISHED ∪ 有过审批通过；feed_time = MAX(APPROVE) 兜底 create_time；view_count 抄计数窄表 */
-    int rebuildFeedIndexProjection();
+    /** 重灌取数①：errand_order 全量 (errand_order_id, state, create_time, reward)——行集 = PUBLISHED ∪ 有过审批通过，仓储拼装 */
+    List<ErrandFeedIndexRowPO> selectRebuildRows();
+
+    /** 重灌写回：仓储拼装好的行集批量 INSERT（feed_time = MAX(APPROVE) 兜底 create_time；view_count 抄计数窄表） */
+    int insertFeedIndexRows(@Param("rows") List<ErrandFeedIndexRowPO> rows);
 
     /** 浏览 UV 加速列校准收尾：清掉没有明细行的孤儿计数行（重投影由 {@link #recalibrateViewCounts} 完成） */
     int deleteViewCountsMissingHistory();

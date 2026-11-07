@@ -45,7 +45,7 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         String roomId = first.path("data").path("roomId").asText();
         assertUuidId(roomId); // uuid-biz-id 票 04：roomId 必须是可解析的 UUID 字符串
 
-        // 反向建（B 找 A）与重复建都收敛同一 room（direct_room_pair.uk_pair 幂等）
+        // 反向建（B 找 A）与重复建都收敛同一 room（user_pair_room.uk_pair 幂等）
         JsonNode reverse = postJson("/api/chat/rooms/direct", Map.of("targetUserId", userA.userId()), userB);
         JsonNode repeat = postJson("/api/chat/rooms/direct", Map.of("targetUserId", userB.userId()), userA);
         assertSuccess(reverse, "B 反向建会话");
@@ -87,7 +87,7 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         assertThat(queryLong("SELECT last_seq FROM room WHERE room_id = '" + roomId + "'")).isEqualTo(1);
         assertThat(queryLong("SELECT COUNT(1) FROM room_member WHERE room_id = '" + roomId + "'"
                 + " AND last_msg_type = 'TEXT' AND last_msg_preview = '同学你好，帖子还在吗？'"
-                + " AND last_msg_at IS NOT NULL AND last_seq_copy = 1")).isEqualTo(2);
+                + " AND last_msg_at IS NOT NULL")).isEqualTo(2);
 
         // message：内容中心一行
         assertThat(queryLong("SELECT COUNT(1) FROM message WHERE room_id = '" + roomId + "'")).isEqualTo(1);

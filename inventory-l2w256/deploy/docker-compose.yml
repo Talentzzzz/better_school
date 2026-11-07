@@ -1,0 +1,90 @@
+# 本地/测试环境一键起：MySQL 9.x + 应用
+#
+#   cd deploy && docker compose up -d --build
+#   docker logs -f l2w256-app                 # 看到「合并扣减器启动」+「预热完成」即就绪
+#   curl -X POST localhost:8080/api/v1/stock/deduct -H 'Content-Type: application/json' \
+#        -d '{"skuId":1001,"qty":1,"bizNo":"order-0001"}'
+#
+# 生产上建议拆成两个 compose（中间件 / 应用），应用机只放 app。
+services:
+  mysql:
+    image: ${MYSQL_IMAGE:-mysql:9.7.0}
+    container_name: l2w256-mysql
+    restart: unless-stopped
+    command:
+      # 双 1：每次提交都刷日志 + 刷 binlog。压测/线上都要用这个口径，
+      # 否则磁盘写入被合并，测出来的吞吐没有参考意义。
+      - --innodb-flush-log-at-trx-commit=1
+      - --sync-binlog=1
+      # 8G 机器上 4G 足够（数据集上限约 1.5GB），留足内存给 OS 与连接缓冲；
+      # 设成 75%（6G）在无 swap 的容器里容易被 OOM kill
+      - --innodb-buffer-pool-size=4G
+      - --innodb-lock-wait-timeout=50
+      - --max-connections=500
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-root123}
+      MYSQL_DATABASE: inventory_demo
+    ports:
+      - "3306:3306"
+    volumes:
+      # 只在数据目录为空的首次启动执行
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: [ "CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: inventory-l2w256:1.0.0
+    container_name: l2w256-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USERNAME: root
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-root123}
+      MYSQL_DATABASE: inventory_demo
+
+      POOL_MAX: 20
+      POOL_MIN_IDLE: 20
+      POOL_CONNECTION_TIMEOUT_MS: 2000
+
+      # ===== 合并扣减核心参数（改之前先看 README §5 的约束）=====
+      MERGE_SHARD_COUNT: 256          # 2 的幂；≈ 峰值并发热点数
+      MERGE_WINDOW_MS: 5
+      MERGE_MAX_BATCH: 200
+      MERGE_WAIT_TIMEOUT_MS: 100      # 调到 200 可把超时率砍半，代价 p99 → 200ms
+      MERGE_SHARD_CAPACITY: 10000
+      MERGE_FLUSH_THREADS: 20         # ★ 必须等于 POOL_MAX，启动时强校验
+      MERGE_SOLDOUT_SHORTCUT: "true"  # ★ 必开
+      MERGE_DRAIN_TIMEOUT_MS: 5000
+
+      # Xms=Xmx 避免压测中途堆扩容引发的孤立 p99 尖刺；
+      # GC 日志落容器内 /tmp，跑完 docker cp 取出，否则 p99 抖动无法归因
+      JAVA_OPTS: >-
+        -Xms2g -Xmx2g
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=100
+        -XX:MaxDirectMemorySize=256m
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/tmp
+        -XX:+ExitOnOutOfMemoryError
+        -Xlog:gc*:file=/tmp/gc-%t.log:time,uptime,level,tags:filecount=5,filesize=50M
+    healthcheck:
+      # 镜像里没有 curl，用 bash 的 /dev/tcp 探活
+      test: [ "CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /api/v1/stock/health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200 || exit 1" ]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 40s
+
+volumes:
+  mysql-data:

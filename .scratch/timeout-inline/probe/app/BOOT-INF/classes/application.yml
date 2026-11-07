@@ -1,0 +1,83 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: timeout-center
+  # 虚拟线程开关（spec §2，票 05/12）：Web handler 从 Tomcat 平台线程池（默认 200 上限）换到 VT，
+  # 翻的理由 = 消平台线程上限 + 口径统一（注册/扫描链路本就是手写 VT）——实测吞吐收益 ≈ 0（票 04）。
+  # 两条硬约束：不许再配 server.tomcat.threads.max（翻开关后静默失效）、
+  # 不许混用 Tomcat 原生 useVirtualThreads。
+  threads:
+    virtual:
+      enabled: true
+  # 分片数据源走「JDBC 驱动 + YAML」：url 不是 MySQL 地址而是 ShardingSphere 的配置入口，
+  # 真实库地址在 sharding.yaml 里（开发库 bs_timeout / 测试库 bs_timeout_test）。
+  # 这里配的 username/password 由驱动忽略（YAML 里的才是真的），留空会触发 Hikari 的空凭据告警。
+  datasource:
+    driver-class-name: org.apache.shardingsphere.driver.ShardingSphereDriver
+    url: jdbc:shardingsphere:classpath:sharding.yaml
+    username: root
+    password: bs123456
+    hikari:
+      pool-name: timeout-center-sharding
+      # 外层池 ≥ 扫描并行度（16 个槽位，spec §5.3）+ 余量：一槽一连接会把 16 个占满，
+      # 注册方向（逐行虚拟线程）与 ShardingSphere 自身的元数据连接还要挤进来——
+      # 实测池正好 16 时，16 槽扫描期间第 17 个请求会在 connection-timeout 后失败。
+      # 24 = 1.5× 并行度，池仍是真并发上限（spec §5.3 的口径不变，只是不必卡得那么死）。
+      maximum-pool-size: 24
+      minimum-idle: 4
+      connection-timeout: 3000
+
+mybatis:
+  mapper-locations: classpath:/mybatis/mapper/task/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+# 重试与死信（spec §6.5）：失败后退避 30s 起指数翻倍、单次封顶 1h，共 16 次；
+# 第 16 次失败置 FAILED 终态进死信，等管理接口（/api/admin/timeout-tasks）人工重发或取消。
+# 三项都可配：改这里即改中心的重试口径，代码里没有写死的次数。
+timeout-center:
+  retry:
+    base-seconds: 30
+    max-seconds: 3600
+    max-times: 16
+
+# 中心只对外暴露 Dubbo 服务（tri 协议）；回调方向按任务行 callback_group 动态构建 ReferenceConfig（票 08）
+dubbo:
+  application:
+    name: timeout-center
+    # 3.3 默认 STRICT：未进 allowlist 的 DTO 首次调用直接被拒，本地联调先放宽为「只拦危险类」
+    serialize-check-status: WARN
+  registry:
+    address: nacos://127.0.0.1:8848
+  protocol:
+    name: tri
+    port: 50054
+    # Provider 池显式写 virtual（spec §2.2，票 07/12）：3.3.5 起翻 spring.threads.virtual.enabled
+    # 会隐式连带此值，这里显式写不吃默认——自文档 + 抗将来只改一边。与 Tomcat 翻开关同构：
+    # 消平台线程上限（threads=200 成死参数，不许写 threads/queues），DB 侧由连接池兜。
+    threadpool: virtual
+  consumer:
+    check: false
+  # 本服务是注册边的 Provider：没有这一行 @DubboService 不会被打扫到——应用照常启动、
+  # bean 也在，但一条 Export dubbo service 日志都没有，业务侧报 No provider available
+  scan:
+    base-packages: com.betterschool.timeout
+
+xxl:
+  job:
+    admin:
+      addresses: http://localhost:9090/xxl-job-admin
+    access-token: default_token
+    executor:
+      appname: timeout-center-executor
+      port: 9996
+      log-path: ./logs/xxl-job-timeout
+      log-retention-days: 30
+
+logging:
+  level:
+    com.betterschool: debug
+    com.betterschool.timeout.infrastructure.dao.task: warn

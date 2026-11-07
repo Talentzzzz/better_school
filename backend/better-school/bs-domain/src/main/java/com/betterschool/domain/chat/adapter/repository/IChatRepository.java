@@ -28,7 +28,7 @@ public interface IChatRepository {
 
     /**
      * 建 1v1 会话 + 两名成员 + 配对行（一个原子用例）：成员 = 首建发起人（room.initiatorId）+ 对家；
-     * 配对行（direct_room_pair.uk_pair）是事务收尾闸门，同一对人并发建会话时后到者整事务回滚
+     * 配对行（user_pair_room.uk_pair）是事务收尾闸门，同一对人并发建会话时后到者整事务回滚
      * room_id 由 insertRoom 在实现内应用层发号，成员行在实现内构造
      *
      * @return 落库后的会话（含 roomId）
@@ -62,7 +62,7 @@ public interface IChatRepository {
 
     RoomEntity findRoomById(String roomId);
 
-    /** 1v1 查重：同一对人恒一条会话（direct_room_pair.uk_pair） */
+    /** 1v1 查重：同一对人恒一条会话（user_pair_room.uk_pair） */
     RoomEntity findDirectRoom(String userMin, String userMax);
 
     /** 发消息事务内原子取号：UPDATE last_seq = last_seq + 1 后读回，失败回滚无空洞 */
@@ -70,13 +70,13 @@ public interface IChatRepository {
 
     /**
      * 发送事务内刷成员行列表副本（本票过渡：与取号同事务，扩散消费端单一写入方归票 02）：
-     * last_seq_copy GREATEST 只进不退 + 预览三件套整行刷新（恒两行成员，一次覆盖双方）
+     * 预览三件套整行刷新（恒两行成员，一次覆盖双方）；未读数不落副本，由 room.last_seq 现算
      */
-    void updateMemberCopies(String roomId, long seq, MsgTypeVO msgType, String preview, LocalDateTime lastMsgAt);
+    void updateMemberPreview(String roomId, MsgTypeVO msgType, String preview, LocalDateTime lastMsgAt);
 
     /**
      * 会话列表查询（idx_user_msg 主路径，用户维度单行可算）：排除 hidden_at 非空，
-     * 按 last_msg_at 倒序分页；unread 由调用方按 last_seq_copy − last_read_seq 拼装
+     * 按 last_msg_at 倒序分页；unread = lastSeq − last_read_seq 由调用方拼装（lastSeq 随 JOIN room 投影带出）
      *
      * @return 按 last_msg_at 倒序的会话概要（含本人在会话的水位线）
      */
@@ -137,7 +137,7 @@ public interface IChatRepository {
     MessageEntity findMessageById(String messageId);
 
     /**
-     * 撤回后替换会话列表预览（用户维度成员行）：仅当该消息仍是会话最后一条（last_seq_copy 守卫）才替换，
+     * 撤回后替换会话列表预览（用户维度成员行）：仅当该消息仍是会话最后一条（room.last_seq 守卫）才替换，
      * 并发新消息到达时守卫落空，不覆盖新消息预览
      */
     void markLastMsgRecalled(String roomId, long seq, String preview);

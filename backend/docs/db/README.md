@@ -9,5 +9,5 @@
 - **开发/测试库名隔离**：营销 `bs_marketing` 及 `bs_marketing_test`（测试栈 host 端口 +10000）。
 - **营销库的跨库纪律**：与单体库之间只存 id、**不 join 单体库、不存昵称头像快照**，
   用户信息一律经 Dubbo 取回后在应用层拼。
-  **同库内的 join 不受限制**（如抽奖的中奖记录关联 `virtual_inventory_quota` 带出面额与库存）。
+  同库内需要跨表展示的数据（如抽奖的中奖记录关联 `virtual_inventory_quota` 带出面额与库存）一律**多查一次应用层拼装**，SQL 层零 JOIN。
 - 建库/重建命令见 [`../../docker-compose.yml`](../../docker-compose.yml) 头注释 1，或直接 `scripts/test-env.sh up`。

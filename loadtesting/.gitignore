@@ -1,0 +1,6 @@
+results/
+app/target/
+*.log
+*.tar
+*.tar.gz
+.DS_Store

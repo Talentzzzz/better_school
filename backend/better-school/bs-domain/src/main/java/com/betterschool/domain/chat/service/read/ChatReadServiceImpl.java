@@ -11,7 +11,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 
 /**
- * 水位线推进：目标 = 本人在成员行上的水位副本 last_seq_copy（打开即已读，未读算式同源就地处），守卫 UPDATE 只前进；
+ * 水位线推进：目标 = 会话水位真源 room.last_seq（打开即已读，未读算式同源），守卫 UPDATE 只前进；
  * 仅水位线实际前进才投递 READ 事件——并发/重复打开时守卫 UPDATE 落空，幂等无噪音。
  * 「水位线 + READ 事件」的原子性由 IChatRepository.advanceReadWatermark 自带事务保证
  */
@@ -31,7 +31,7 @@ public class ChatReadServiceImpl implements IChatReadService {
             }
             throw new BusinessException(ResponseCode.FORBIDDEN, "非会话成员");
         }
-        long readSeq = self.getLastSeqCopy();
+        long readSeq = chatRepository.findRoomById(roomId).getLastSeq();
         if (self.getLastReadSeq() >= readSeq) {
             // 已追平：连守卫 UPDATE 都省了，无事件无写放大
             return self.getLastReadSeq();

@@ -40,7 +40,7 @@
 
 ## 关联
 - 1:N → post_comment（帖子评论）、post_like（点赞明细）、post_like_count（点赞计数，1:1 语义）
-- `like_count` / `comment_count` **不是本表列**：读路径 LEFT JOIN `post_like_count` / `post_comment_count` 后 `COALESCE(..., 0)` 投影出来（见 PostMapper.xml baseColumns/baseJoins）
+- `like_count` / `comment_count` **不是本表列**：读路径由仓储按 id 集批量回查 `post_like_count` / `post_comment_count`（三窄表各一次单表 IN 查询）后 `COALESCE(..., 0)` 投影进 PO（SQL 层零 JOIN）
 - 评论侧的点赞数与热评序不在本文件内：`post_comment` 行不存 `like_count`（comment-count-narrow-table 票 04 已删列），列表/详情的评论 `likeCount` 由 `post_comment_like_count` 按页内 id 集批量回查填充（缺行补 0）、「最热」档的顺序来自 `post_comment_feed_index`（漂移由 `commentFeedIndexRebuildJob` 清空重灌兜底）——见 [community_comment](community_comment.md)
 
 ## 注意

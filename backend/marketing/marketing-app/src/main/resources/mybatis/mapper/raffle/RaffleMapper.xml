@@ -99,23 +99,21 @@
         目录的库存展示口径：真相在 DB 台账（票 12），不读 Redis 桶（在途预扣会让「剩余」抖动）。
         remaining = 台账 surplus_qty；total = 投放总量（虚拟 surplus+issued，实物 surplus+waiting+issued）。
         surplus_qty = -1 是「不限量」，remaining/total 落 null 由 unlimited 表达。
+        原三表 LEFT JOIN 一步投影改为三段查拼装（SQL 层零 JOIN）：①奖品行 selectAwardListByStrategyId
+        （同 sort,id 排序）；②虚拟台账 ③实物台账按 inv_id 集批量回查，CASE 语义在仓储 Java 收口。
     -->
-    <select id="selectPrizeCatalog" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawPrizeViewPO">
-        SELECT a.award_id   AS awardId,
-               a.award_name AS awardName,
-               a.award_type AS awardType,
-               a.level      AS level,
-               CASE WHEN a.award_type = 'VIRTUAL' AND vi.type = 'POINTS' THEN vi.value END AS pointsAmount,
-               CASE WHEN a.inv_id = '0' OR COALESCE(vi.surplus_qty, q.surplus_qty) &lt; 0 THEN NULL
-                    ELSE COALESCE(vi.surplus_qty, q.surplus_qty) END  AS remaining,
-               CASE WHEN a.inv_id = '0' OR COALESCE(vi.surplus_qty, q.surplus_qty) &lt; 0 THEN NULL
-                    WHEN vi.inv_id IS NOT NULL THEN vi.surplus_qty + vi.issued_qty
-                    ELSE q.surplus_qty + q.waiting_qty + q.issued_qty END AS total
-        FROM draw_strategy_award a
-                 LEFT JOIN virtual_inventory_quota vi ON vi.inv_id = a.inv_id
-                 LEFT JOIN physical_marketing_quota q ON q.inv_id = a.inv_id
-        WHERE a.strategy_id = #{strategyId}
-        ORDER BY a.sort ASC, a.id ASC
+    <select id="selectVirtualQuotasByInvIds" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.VirtualQuotaRowPO">
+        SELECT inv_id AS invId, type, value, surplus_qty AS surplusQty, issued_qty AS issuedQty
+        FROM virtual_inventory_quota
+        WHERE inv_id IN
+        <foreach collection="invIds" item="invId" open="(" separator="," close=")">#{invId}</foreach>
+    </select>
+
+    <select id="selectPhysicalQuotasByInvIds" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.PhysicalQuotaRowPO">
+        SELECT inv_id AS invId, surplus_qty AS surplusQty, waiting_qty AS waitingQty, issued_qty AS issuedQty
+        FROM physical_marketing_quota
+        WHERE inv_id IN
+        <foreach collection="invIds" item="invId" open="(" separator="," close=")">#{invId}</foreach>
     </select>
 
     <select id="countDrawRecords" resultType="int">
@@ -124,20 +122,29 @@
         WHERE user_id = #{userId} AND award_type != 'THANKS'
     </select>
 
-    <select id="selectDrawRecordViews" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordViewPO">
+    <!-- 我的中奖记录（恒过滤 THANKS）：draw_record 单表分页；积分面额由仓储按 inv_id 集批量回查
+         虚拟台账（selectPointValuesByInvIds，仅 type=POINTS）拼装，缺行 = null（原 LEFT JOIN 口径） -->
+    <select id="selectDrawRecordRows" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordViewPO">
         SELECT r.record_id AS recordId,
                r.award_id  AS awardId,
                r.award_name AS awardName,
                r.award_type AS awardType,
                r.level     AS level,
-               vi.value    AS pointsAmount,
+               r.inv_id    AS invId,
                r.create_time AS createTime
         FROM draw_record r
-                 LEFT JOIN virtual_inventory_quota vi
-                           ON vi.inv_id = r.inv_id AND vi.type = 'POINTS'
         WHERE r.user_id = #{userId} AND r.award_type != 'THANKS'
         ORDER BY r.create_time DESC, r.id DESC
         LIMIT #{offset}, #{limit}
+    </select>
+
+    <!-- 积分面额批量读：仅 type=POINTS 的虚拟台账行（面额只对积分台账有意义，DRAW_COUNT 型不放这个字段） -->
+    <select id="selectPointValuesByInvIds" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.VirtualQuotaRowPO">
+        SELECT inv_id AS invId, value
+        FROM virtual_inventory_quota
+        WHERE type = 'POINTS'
+          AND inv_id IN
+        <foreach collection="invIds" item="invId" open="(" separator="," close=")">#{invId}</foreach>
     </select>
 
     <select id="countMyPrizes" resultType="int">
@@ -150,18 +157,17 @@
         </if>
     </select>
 
-    <select id="selectMyPrizeViews" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawUserPrizeViewPO">
+    <!-- 我的奖品（恒过滤 THANKS）：draw_record 单表分页；claimedAt（EXCHANGE 动作明细落库时刻）由仓储
+         按 record_id 集批量回查 draw_record_detail 拼装（缺行 = 还没兑换，null，原 LEFT JOIN 口径） -->
+    <select id="selectMyPrizeRows" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawUserPrizeViewPO">
         SELECT r.record_id AS recordId,
                r.award_id  AS awardId,
                r.award_name AS awardName,
                r.award_type AS awardType,
                r.level     AS level,
                r.state     AS state,
-               r.create_time AS createTime,
-               ex.create_time AS claimedAt
+               r.create_time AS createTime
         FROM draw_record r
-                 LEFT JOIN draw_record_detail ex
-                           ON ex.record_id = r.record_id AND ex.type = 'EXCHANGE'
         WHERE r.user_id = #{userId} AND r.award_type != 'THANKS'
         <if test="states != null and states.size() > 0">
             AND r.state IN
@@ -169,6 +175,15 @@
         </if>
         ORDER BY r.create_time DESC, r.id DESC
         LIMIT #{offset}, #{limit}
+    </select>
+
+    <!-- 兑换动作明细批量读（draw_record_detail 单表；该表原本只有 insert，这是第一条单表查询语句） -->
+    <select id="selectExchangeDetailsByRecordIds" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.ExchangeDetailRowPO">
+        SELECT record_id AS recordId, create_time AS createTime
+        FROM draw_record_detail
+        WHERE type = 'EXCHANGE'
+          AND record_id IN
+        <foreach collection="recordIds" item="recordId" open="(" separator="," close=")">#{recordId}</foreach>
     </select>
 
     <!-- =============== 发货状态机写面（票 14） =============== -->

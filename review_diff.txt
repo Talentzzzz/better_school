@@ -1,0 +1,3489 @@
+diff --git a/CONTEXT.md b/CONTEXT.md
+index 09e9b81..9ab3f4a 100644
+--- a/CONTEXT.md
++++ b/CONTEXT.md
+@@ -316,12 +316,16 @@ _Avoid_: 状态机（那是实现称谓）、发货状态（那只是其中一
+ ### 超时关闭
+ 
+ **超时任务**：
+-业务侧到点要执行的收口动作（如待支付关单）：业务在自己事务内写下注册意图，超时中心按到期时刻回调业务侧，动作由业务侧状态机幂等吸收（重复回调零副作用）；中心不携带业务快照，回调载荷只有定位三字段。
+-_Avoid_: 定时任务（那是固定 cron 的 job）、延迟消息（到期时刻由中心管理，不是 MQ 的延迟等级）、轮询业务表
++业务侧到点要执行的收口动作（如待支付关单）：业务在**自己的事务里直接插入**超时任务行（与业务行同库、同一条连接），xxl 分片广播按槽位认领，到点由**进程内**按 taskType 分发回调业务侧；动作由业务侧状态机幂等吸收（重复回调零副作用）。任务行不携带业务快照，载荷只有定位三字段；失败按退避重试，到重试上限进死信。超时能力内嵌在业务工程里，不再是独立微服务。
++_Avoid_: 独立超时服务（已内嵌进业务工程）、注册 outbox（已删，注册就是同事务直插）、RPC 回调、定时任务（那是固定 cron 的 job）、延迟消息（到期时刻由任务行管理，不是 MQ 的延迟等级）、轮询业务表
+ 
+-**注册 outbox**：
+-业务库里的超时注册意图表：与业务写同一事务、提交后异步发往超时中心，兜底扫描保证最终注册成功；同一意图二次注册是复位（刷新到期时刻）而不是插新行。
+-_Avoid_: 本地消息表（那是发事件的 outbox，不是注册意图）、直接 RPC 注册（回滚会留下幽灵任务）
++**超时槽位**：
++超时任务行的物理归属：全局展平编号 g（0..15），按 `biz_id` 哈希取模落到 16 张同构分表之一；扫描 job 按 `g % shardTotal == shardIndex` 认领，所以同 key 永远同表、多实例认领不重不漏。槽位与「库 × 表」两维表达解耦，本期 `dbCount` 恒为 1（>1 与同事务注册互斥）。
++_Avoid_: 业务表分片键（那是分库维度，超时分片只在超时表内部自洽）、按 taskType 分表
++
++**死信**：
++连续失败到重试上限的终态：扫描不再碰它，只能经管理面重发（回 WAITING）或取消；两个动作都以 `status = FAILED` 做行级守卫。
++_Avoid_: 失败任务（RETRYING 还在重试，不是死信）、消息死信队列（与 RocketMQ 的 DLQ 无关）
+ 
+ ### 审核与信用
+ 
+diff --git a/backend/CLAUDE.md b/backend/CLAUDE.md
+index cbe08fd..2eece32 100644
+--- a/backend/CLAUDE.md
++++ b/backend/CLAUDE.md
+@@ -4,9 +4,9 @@
+ 
+ ## 1. Maven 模块划分与依赖方向（严格单向）
+ 
+-`backend/` 下是三个互相独立的 Maven project（无 reactor）：单体 `better-school/`（bs-* 七模块）+ 营销 `marketing/`（`marketing-*` 七模块；票 06 并入原 `marketing-asset` 的积分域、票 07 并入原 `marketing-activity` 的抽奖域，两域同工程）+ `timeout-center/`（`timeout-center-*` 七模块）。每个工程内部模块划分与依赖方向同下表：
++`backend/` 下是两个互相独立的 Maven project（无 reactor）：单体 `better-school/`（bs-* 七模块）+ 营销 `marketing/`（`marketing-*` 七模块；票 06 并入原 `marketing-asset` 的积分域、票 07 并入原 `marketing-activity` 的抽奖域，两域同工程）。每个工程内部模块划分与依赖方向同下表：
+ 
+-**适用范围**：本文件管 `backend/` 下这三个工程。
++**适用范围**：本文件管 `backend/` 下这两个工程。超时中心已从独立工程内嵌进单体（见 [`docs/architecture/timeout.md`](docs/architecture/timeout.md)），不再是独立 project。
+ 
+ ```
+ app → trigger → case → domain → types
+@@ -34,6 +34,7 @@ types →（无内部依赖）
+ - **一域一仓储**：每个业务域**恰有一个** `I<域>Repository` 接口与一个实现（读写同一接口）。实现内可注入多个 DAO（`I<域>Dao` 等）；PO、mapper XML、DAO 不因合并而变。
+ - **事务落位在仓储内**：需要事务时，域服务构造参数/实体后**只调一次**仓储方法；由**仓储方法自身**在实现里用编程式事务（`TransactionTemplate`，传播恒 `REQUIRED`）把一次操作的多次读改写收成一个原子用例，并在调用方既有事务中合流。**域服务不注入 `TransactionTemplate`**，也不自持事务边界。仓储方法的事务必须是 REQUIRED——取号序/原子性/与域服务事务合流都依赖它。
+ - **跨域一致性 = 幂等 + 重试，禁止 case 层包多域事务**：每个域方法自己域内事务原子；重试安全靠"状态机条件 UPDATE / 流水唯一键（wallet_detail uk_order_type、user_credit_detail uk_user_reason_ref）/ 幂等位（errand_order.taker_canceled）"；资金/信用分操作一律**流水先行插入**（INSERT IGNORE，冲突 = 已处理过幂等跳过），流水表是事实源。失败恢复：MQ 路径靠 broker 自动重试，HTTP 路径返回失败让客户端重试。
++- **超时注册的显式例外（超时内嵌化票 03）**：trade / errand / review 三个业务仓储可在**自己已经开着事务的仓储方法**里注入并调用 `ITimeoutRepository.register(...)`，把超时行与业务行收进同一个本地事务。除此之外仍遵守「域不注入他域仓储」；域服务不注入超时仓储，也不自持事务边界。理由与迁移边界见 [`docs/architecture/timeout.md`](docs/architecture/timeout.md) §1/§3。
+ 
+ ## 2. domain 层包结构（核心）
+ 
+@@ -95,8 +96,10 @@ cn.xxx.trigger/
+ Dubbo 对称的两侧：Provider 在 `trigger/rpc/`，Consumer 的 `@DubboReference` 落在
+ `infrastructure/adapter/port/<域>/`（实现 `domain/adapter/port/<域>/IXxxPort`），
+ **域层与 case 层不认识 Dubbo 注解与对端的 api DTO**，翻译在 infrastructure 完成。
+-例外：对端调用**没有域层调用方**时（超时中心的注册边即此——域层只写自己的 outbox 行，真正发 RPC 的是
+-基础设施里的发送器），接口留在同一个 `infrastructure/adapter/port/<域>/` 包，不硬造一个没人实现的 domain 端口。
++例外（端口实现落 case 层）：超时域的回调端口 `ITimeoutTaskCallbackPort` 由
++`usecase.timeout.TimeoutTaskCallbackDispatcher` 实现——分发要按 `taskType` 调各域 case，而 infrastructure
++看不到 case 层。端口接口仍定义在 `domain.timeout/adapter/port`，实现落点在 case 层是**显式例外**，
++不要把 case 层依赖反向灌进 infrastructure 来「修正」它。
+ 
+ ## 5. api 层包结构
+ 
+@@ -171,7 +174,7 @@ public class Constants {
+   且 `@MapperScan` **逐域列出**，不能扫它们的伪公共前缀。
+   先例：`marketing/`（票 06 起 points，票 07 加 lottery，两域各占一个域段）。
+ 
+-单域工程（如 `timeout-center/`）不必强行分域段。
++单域工程不必强行分域段；本仓两个工程都是多域工程（单体按业务域、营销按 points / drawcount / config / raffle / inventory）。
+ 
+ ## 8. 硬性约定
+ 
+@@ -274,7 +277,7 @@ public class Constants {
+ powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/dev-stack.ps1 up
+ ```
+ 
+-`scripts/test-env.sh` 仍是 bash 环境下的参考口径（`up` / `reset-test-db`），但这台机器的 bash/WSL 是坏的，跑不了它——别在 Windows 上试。注意 `dev-stack.ps1 db-reset` 只重建三个**开发**库；重建 `*_test` 库目前没有 PowerShell 等价命令，需要手工 DROP 后重灌 `schema.sql`。
++`scripts/test-env.sh` 仍是 bash 环境下的参考口径（`up` / `reset-test-db`），但这台机器的 bash/WSL 是坏的，跑不了它——别在 Windows 上试。注意 `dev-stack.ps1 db-reset` 只重建两个**开发**库；重建 `*_test` 库目前没有 PowerShell 等价命令，需要手工 DROP 后重灌 `schema.sql`。
+ 
+ 环境没起时测试会直接连接失败——这是刻意的，不要加自动兜底。
+ 
+@@ -282,7 +285,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/dev-stack.ps
+ 
+ | 项 | 开发 | 测试 |
+ | --- | --- | --- |
+-| MySQL 库 | `better_school` / `bs_marketing` / `bs_timeout` | `better_school_test` / `bs_marketing_test` / `bs_timeout_test` |
++| MySQL 库 | `better_school` / `bs_marketing` | `better_school_test` / `bs_marketing_test` |
+ | Redis 逻辑库 | `database: 0` | `database: 1` |
+ | MinIO 桶 | `bs-files` | `bs-files-it` |
+ | Nacos | 8848 | 18848（独立容器） |
+diff --git a/backend/better-school/bs-app/src/main/resources/application.yml b/backend/better-school/bs-app/src/main/resources/application.yml
+index 2c4315d..5ca3788 100644
+--- a/backend/better-school/bs-app/src/main/resources/application.yml
++++ b/backend/better-school/bs-app/src/main/resources/application.yml
+@@ -37,7 +37,7 @@ spring:
+   datasource:
+     driver-class-name: org.apache.shardingsphere.driver.ShardingSphereDriver
+     url: jdbc:shardingsphere:classpath:sharding.yaml
+-    # 这对凭据由驱动忽略（YAML 里的才是真的），留空会触发 Hikari 的空凭据告警（口径沿 timeout-center）
++    # 这对凭据由驱动忽略（YAML 里的才是真的），留空会触发 Hikari 的空凭据告警
+     username: root
+     password: bs123456
+     # Hikari 显式化（spec §2.3，票 12）：翻 VT 开关后连接池是唯一真并发上限，connection-timeout
+diff --git a/backend/better-school/bs-app/src/main/resources/mybatis/mapper/TimeoutTaskMapper.xml b/backend/better-school/bs-app/src/main/resources/mybatis/mapper/TimeoutTaskMapper.xml
+index f68f048..cd93f15 100644
+--- a/backend/better-school/bs-app/src/main/resources/mybatis/mapper/TimeoutTaskMapper.xml
++++ b/backend/better-school/bs-app/src/main/resources/mybatis/mapper/TimeoutTaskMapper.xml
+@@ -6,7 +6,7 @@
+          （见 app 模块 resources/sharding.yaml 头注释）。**调用方必须先经仓储层把全局槽位塞进
+          HintManager（库维 + 表维两个 hint 值）**——TimeoutRepository 统一做这件事，别直接调本接口：
+          漏塞 hint 时写语句会被路由校验拒掉、读语句会退化成 16 表广播。
+-         列里没有 callback_group：进程内分发后路由列已删（内嵌化票 02）。 -->
++         列里没有回调路由列：进程内分发后按应用名路由的列已删（内嵌化票 02）。 -->
+ 
+     <insert id="insert">
+         INSERT INTO timeout_task (task_type, biz_id, action_time, next_fire_time,
+diff --git a/backend/better-school/bs-app/src/main/resources/sharding.yaml b/backend/better-school/bs-app/src/main/resources/sharding.yaml
+index e9aba56..9c2a8c0 100644
+--- a/backend/better-school/bs-app/src/main/resources/sharding.yaml
++++ b/backend/better-school/bs-app/src/main/resources/sharding.yaml
+@@ -6,13 +6,13 @@
+ # sharding-test.yaml（同内容、jdbcUrl 指 better_school_test），两处都要跟着 schema 改。
+ #
+ # ── !SINGLE 必须在 !SHARDING 之前，且 tables 只认 "*.*.*" / "*.*" 两个字面量（票 01 实测）──
+-# 驱动坐在生产主 datasource 上，30 张业务表没有任何分片规则：不显式声明 !SINGLE 时
++# 驱动坐在生产主 datasource 上，29 张业务表没有任何分片规则：不显式声明 !SINGLE 时
+ # 逻辑库只暴露 timeout_task 一张表，业务表一律 TableNotFoundException（且启动成功、第一条业务 SQL 才炸，
+ # 是静默的）。补上 "*.*.*" 后业务表完全透明（SELECT/INSERT/JOIN/ODKU/INSERT IGNORE/批量 UPDATE/
+ # generated keys/FOR UPDATE/SHOW/information_schema 全部照常），且分片物理表会被 SingleTableLoadUtils
+ # 自动摘除、不会被误认成单表（票 01 实测）。启动期自检见 config/ShardingSelfCheck。
+ #
+-# ── 分片策略是 hint 强制路由（沿用原 bs_timeout 工程跑通的形态）──
++# ── 分片策略是 hint 强制路由（沿用原独立超时工程跑通的形态）──
+ # **每一次 DAO 调用都由仓储层算好全局槽位 g 塞进 HintManager（库维 + 表维两个 hint 值）**：
+ # 写入按 bizId 算（TimeoutTaskShardSlots.slotOf）、扫描按分片 job 认领的槽位（票 04），
+ # 两个方向共用 TimeoutTaskShardSlots 的同一个公式——「同 key 永远同表」收敛成单点函数，不可能算岔。
+@@ -23,7 +23,7 @@
+ # 槽位 g 是全局展平编号：db = g / 16、table = g % 16。databaseStrategy/tableStrategy 各配一个
+ # CLASS_BASED 算法把 g 拆到两维。本期 DB_COUNT = 1（恒落 ds0）且**不得启用 >1**：
+ # 超时行落到另一个库 = 与业务写入不再同一条连接 = 「同事务注册」前提立刻失效
+-# （硬约束：要启用的前提是业务表也按同一分片键一起分库，见架构文档 timeout-center.md）。
++# （硬约束：要启用的前提是业务表也按同一分片键一起分库，见架构文档 docs/architecture/timeout.md §0）。
+ #
+ # 表名逐张列出而不用 ${0..15} 内联表达式：内联表达式生成的是 timeout_task_0..，
+ # 没有两位零填充，与 DDL 的 timeout_task_00..15 对不上。
+@@ -46,7 +46,7 @@ dataSources:
+ databaseName: better_school
+ 
+ rules:
+-  # 单表规则：30 张业务表零分片规则，声明为单表后对它们完全透明。
++  # 单表规则：29 张业务表零分片规则，声明为单表后对它们完全透明。
+   # 只认 "*.*.*" / "*.*" 字面量（逐张 "<schema>.<table>" 形式静默无效，票 01 实测）。
+   - !SINGLE
+     tables:
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/timeout/TimeoutTaskScanIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/timeout/TimeoutTaskScanIntegrationTest.java
+index 7279a84..2ee9245 100644
+--- a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/timeout/TimeoutTaskScanIntegrationTest.java
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/timeout/TimeoutTaskScanIntegrationTest.java
+@@ -197,6 +197,37 @@ class TimeoutTaskScanIntegrationTest extends TimeoutScanTestBase {
+         assertThat(physicalRow(bizIds.get(1)).get("status")).isEqualTo("SUCCESS");
+     }
+ 
++    @Test
++    void 两个实例各认领一半槽位_合计覆盖16张表且无重复回调() {
++        // 16 个槽位各摆一行；实例 0/2 吃偶数槽、实例 1/2 吃奇数槽，两次 scan 拼起来应恰好覆盖全部
++        List<String> bizIds = new ArrayList<>();
++        for (int slot = 0; slot < TOTAL_SLOTS; slot++) {
++            String bizId = bizIdForSlot("scan-half-" + slot + "-", slot);
++            registerDue(bizId, -1);
++            bizIds.add(bizId);
++        }
++        callbackProbe.stubSuccess();
++
++        ScanSummaryVO first = timeoutTaskScanCase.scan(0, 2);
++        ScanSummaryVO second = timeoutTaskScanCase.scan(1, 2);
++
++        assertThat(first.getSlotCount()).isEqualTo(TOTAL_SLOTS / 2);
++        assertThat(second.getSlotCount()).isEqualTo(TOTAL_SLOTS / 2);
++        assertThat(first.getTaskCount() + second.getTaskCount())
++                .as("两次扫描合计应覆盖 16 张分表各一行")
++                .isEqualTo(TOTAL_SLOTS);
++        // 每个槽位只会被一个实例认领：回调总数恰 16 条且 bizId 无重复
++        assertThat(callbackProbe.invocations())
++                .as("多实例认领重叠 = 同一任务被回调两次")
++                .hasSize(TOTAL_SLOTS)
++                .extracting(TaskKeyVO::getBizId)
++                .doesNotHaveDuplicates()
++                .containsExactlyInAnyOrderElementsOf(bizIds);
++        for (String bizId : bizIds) {
++            assertThat(physicalRow(bizId).get("status")).isEqualTo("SUCCESS");
++        }
++    }
++
+     @Test
+     void 批内一项失败不拖垮同批其余项() {
+         int slot = 6;
+diff --git a/backend/better-school/bs-case/src/main/java/com/betterschool/usecase/timeout/TimeoutTaskCallbackDispatcher.java b/backend/better-school/bs-case/src/main/java/com/betterschool/usecase/timeout/TimeoutTaskCallbackDispatcher.java
+index d810093..1523995 100644
+--- a/backend/better-school/bs-case/src/main/java/com/betterschool/usecase/timeout/TimeoutTaskCallbackDispatcher.java
++++ b/backend/better-school/bs-case/src/main/java/com/betterschool/usecase/timeout/TimeoutTaskCallbackDispatcher.java
+@@ -13,7 +13,7 @@ import org.springframework.stereotype.Service;
+ /**
+  * 回调端口的进程内实现（超时中心内嵌化票 04）：按 {@code taskType} 分发到各域既有的到期动作。
+  * <p>
+- * 它取代了独立中心时代的 Dubbo 回调边（中心按 {@code callback_group} 动态建引用打到业务进程）——
++ * 它取代了独立中心时代的 Dubbo 回调边（中心按任务行上的应用名动态建引用打到业务进程）——
+  * 中心与业务同进程后，这条边塌成一次方法调用，{@code spring.application.name} 作为 group 的来源、
+  * 以及「应用改名静默失配」那条坑一并消失。
+  * <p>
+diff --git a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/timeout/adapter/repository/ITimeoutRepository.java b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/timeout/adapter/repository/ITimeoutRepository.java
+index b79b645..205f2b5 100644
+--- a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/timeout/adapter/repository/ITimeoutRepository.java
++++ b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/timeout/adapter/repository/ITimeoutRepository.java
+@@ -34,7 +34,7 @@ public interface ITimeoutRepository {
+      *   <li>同键在途（WAITING/RETRYING）→ 幂等成功、<b>不改期</b>（沿用首次注册的时刻）；</li>
+      *   <li>同键终态（SUCCESS/FAILED/CANCELED）→ 复活刷新 {@code action_time}（重开一轮）。</li>
+      * </ol>
+-     * 原独立中心时代的「不同 group 冲突失败」随 callback_group 概念消失；outbox 的「同键复位」
++     * 原独立中心时代的「不同应用名冲突失败」随回调路由列概念消失；outbox 的「同键复位」
+      * 语义由本三分支接管（同键复位不再需要「先 cancel 再复位」纪律——那是注册在途竞态的产物，
+      * 同事务直插后结构性消失）。
+      *
+diff --git a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/timeout/model/entity/TimeoutTaskEntity.java b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/timeout/model/entity/TimeoutTaskEntity.java
+index 240d492..fcea99d 100644
+--- a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/timeout/model/entity/TimeoutTaskEntity.java
++++ b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/timeout/model/entity/TimeoutTaskEntity.java
+@@ -12,7 +12,7 @@ import java.time.temporal.ChronoUnit;
+  * 标识是自然键 {@code (taskType, bizId)}（业务方永不持久化物理 id）；
+  * {@code id} 只是物理主键，无业务含义。复合业务引用（如 {@code {orderId}:{lockSeq}}）编码进 {@code bizId}。
+  * <p>
+- * 列里没有 {@code callback_group}：进程内分发后回调路由不再需要业务方应用名（原独立中心的路由列已删）。
++ * 列里没有回调路由列：进程内分发后不再需要业务方应用名（原独立中心的路由列已删）。
+  */
+ @Data
+ public class TimeoutTaskEntity {
+diff --git a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/timeout/model/valobj/TaskStatusVO.java b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/timeout/model/valobj/TaskStatusVO.java
+index dc4765b..fdaf09c 100644
+--- a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/timeout/model/valobj/TaskStatusVO.java
++++ b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/timeout/model/valobj/TaskStatusVO.java
+@@ -2,7 +2,7 @@ package com.betterschool.domain.timeout.model.valobj;
+ 
+ /**
+  * 超时任务状态（5 态，无 PROCESSING——中间态一律用条件 UPDATE 的行级守卫表达，
+- * 不引入需要心跳续租的 PROCESSING；口径沿用原 bs_timeout 分表 DDL）。
++ * 不引入需要心跳续租的 PROCESSING；口径沿用原独立超时库的分表 DDL）。
+  * <p>
+  * 库列 {@code status VARCHAR(16)} 存枚举名（不用 ordinal）：这列是运维/管理面直接读的载体，可读性优先。
+  */
+diff --git a/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/sharding/TimeoutTaskShardSlots.java b/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/sharding/TimeoutTaskShardSlots.java
+index 7131775..85d7491 100644
+--- a/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/sharding/TimeoutTaskShardSlots.java
++++ b/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/sharding/TimeoutTaskShardSlots.java
+@@ -8,7 +8,7 @@ import java.util.Locale;
+  * 槽位公式：写入与扫描（票 04）两个方向<b>必须</b>共用这一个函数，否则扫描会漏掉写入落在别的分表上的行
+  * ——这是超时中心内嵌化的核心约束，不是优化点。
+  * <p>
+- * 与原独立工程（bs_timeout）的差异只有一处：hash 输入从 {@code (task_type, biz_id)} 改为
++ * 与原独立工程的差异只有一处：hash 输入从 {@code (task_type, biz_id)} 改为
+  * <b>{@code biz_id}</b>——同一业务对象的多种超时（PAY_TIMEOUT/LOCK_TIMEOUT）与多轮次（复合 bizId 的
+  * {@code :seq} 轮次）落同一张表；{@code uk_type_biz (task_type, biz_id)} 的全局唯一性不受影响
+  * （同键行永远同表，uk 在表内依旧唯一）。
+diff --git a/backend/better-school/bs-types/src/main/java/com/betterschool/types/timeout/TimeoutConstants.java b/backend/better-school/bs-types/src/main/java/com/betterschool/types/timeout/TimeoutConstants.java
+index 9723f0f..fec187b 100644
+--- a/backend/better-school/bs-types/src/main/java/com/betterschool/types/timeout/TimeoutConstants.java
++++ b/backend/better-school/bs-types/src/main/java/com/betterschool/types/timeout/TimeoutConstants.java
+@@ -1,7 +1,7 @@
+ package com.betterschool.types.timeout;
+ 
+ /**
+- * 超时域常量：timeout_task 分表规格（原 bs_timeout 独立工程的 Constants，内嵌化后随域迁入本工程）。
++ * 超时域常量：timeout_task 分表规格（原独立超时工程的 Constants，内嵌化后随域迁入本工程）。
+  * <p>
+  * 「库 × 表」两维表达（用户 2026-10-16 拍板保留）：槽位是<b>全局展平编号</b> {@code g}（0..TOTAL-1），
+  * {@code db = g / TABLES_PER_DB}、{@code table = g % TABLES_PER_DB}。
+@@ -9,7 +9,7 @@ package com.betterschool.types.timeout;
+  * <p>
+  * ⚠️ 硬约束：{@code DB_COUNT > 1} 与「超时行与业务写入同事务」<b>互斥</b>（业务行留在原库、
+  * 超时行按 hash 落到另一个库时同事务立刻失效）。这里保留的是<b>表达</b>，不是<b>开关</b>：
+- * 要启用的前提是业务表也按同一分片键一起分库（见 backend/docs/architecture/timeout-center.md）。
++ * 要启用的前提是业务表也按同一分片键一起分库（见 backend/docs/architecture/timeout.md §0）。
+  */
+ public final class TimeoutConstants {
+ 
+diff --git a/backend/better-school/pom.xml b/backend/better-school/pom.xml
+index fda9a92..0f45842 100644
+--- a/backend/better-school/pom.xml
++++ b/backend/better-school/pom.xml
+@@ -38,8 +38,8 @@
+         <jjwt.version>0.12.6</jjwt.version>
+         <xxljob.version>3.0.0</xxljob.version>
+         <minio.version>8.5.17</minio.version>
+-        <!-- 超时中心内嵌化（票 02）：主 datasource 坐 ShardingSphere 5.5.3 驱动（timeout-center 同版本）。
+-             各 artifact 的用途与「缺了不报错、运行期才炸」的坑见 timeout-center/pom.xml 同段注释 -->
++        <!-- 超时中心内嵌化（票 02）：主 datasource 坐 ShardingSphere 5.5.3 驱动。
++             各 artifact 的用途与「缺了不报错、运行期才炸」的坑见 docs/architecture/timeout.md §2 -->
+         <shardingsphere.version>5.5.3</shardingsphere.version>
+         <!-- 营销三服务的同步边（Dubbo）与配置中心（Nacos 经 SCA）。
+              版本矩阵与两条「必须冒烟验证」的出处见 .scratch/marketing/research-cloud-stack.md -->
+@@ -60,7 +60,7 @@
+             <!-- ShardingSphere 5.5.3 全家桶（票 02）：shardingsphere-jdbc 是驱动壳，
+                  其余是 5.5.x 起必须显式引的特性 artifact（!SHARDING tag / classpath: URL 加载器 /
+                  Hikari 池元数据 / Standalone 模式 / 权限 SPI / MySQL 方言解析器），缺哪个都是
+-                 启动或首条 SQL 才炸、报错还不提示（见 timeout-center/pom.xml 同段注释） -->
++                 启动或首条 SQL 才炸、报错还不提示（见 docs/architecture/timeout.md §2 的依赖清单） -->
+             <dependency>
+                 <groupId>org.apache.shardingsphere</groupId>
+                 <artifactId>shardingsphere-jdbc</artifactId>
+diff --git a/backend/better-school/sql/schema.sql b/backend/better-school/sql/schema.sql
+index 32672ed..8b4be46 100644
+--- a/backend/better-school/sql/schema.sql
++++ b/backend/better-school/sql/schema.sql
+@@ -2,7 +2,7 @@
+ -- 开发库与测试库共用本文件——各自一份建库文件在 init-dev.sql / init-test.sql，两段必须按序拼接喂给同一个连接。
+ -- 表结构与根目录 sql.md 第 1 节逐表一致（唯一事实源）：主键恒为无业务含义的物理自增 id，
+ -- 业务标识单独成列并配 uk；每表 create_time/update_time 收尾（不带默认值，由应用写入），全库无 created_at/updated_at
+--- （唯一例外：timeout_task_00..15 的 created_at/updated_at——按原样自 bs_timeout 迁入，见该节注释）。
++-- （唯一例外：timeout_task_00..15 的 created_at/updated_at——按原样自原独立超时库迁入，见该节注释）。
+ -- 容器 entrypoint 内 mysql CLI 默认 latin1，中文种子数据会乱码入库，先固定连接字符集
+ SET NAMES utf8mb4;
+ 
+@@ -165,16 +165,16 @@ CREATE TABLE IF NOT EXISTS outbox_message (
+     KEY idx_state (state)
+ ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '本地消息表(outbox)';
+ 
+--- ── 超时任务分表 timeout_task_00..15（超时中心内嵌化票 02：中心从 bs_timeout 独立工程搬进本库）──
++-- ── 超时任务分表 timeout_task_00..15（超时中心内嵌化票 02：原独立工程搬进本库）──
+ -- 16 张同构分表，业务/测试 SQL 一律写逻辑表 timeout_task，物理路由由 ShardingSphere 的 hint 强制路由
+ -- （app 模块 sharding.yaml + bs-infrastructure 的 TimeoutTaskShardSlots / 两个 hint 算法）。
+ -- 槽位 g = floorMod(hash(biz_id), 16)：hash 输入只有 biz_id——同一业务对象的多种超时/多轮次落同一张表，
+ -- uk_type_biz (task_type, biz_id) 的全局幂等不受影响（同键行永远同表）。槽位 g 是「库 × 表」两维表达的
+ -- 全局展平编号（db = g/16、table = g%16），本期 DB_COUNT = 1 且不得启用 >1：超时行落到另一个库 = 与
+--- 业务写入不同事务（硬约束，见 backend/docs/architecture/timeout-center.md）。
+--- 列照搬原 bs_timeout 的 schema-timeout-task.sql 并**删了 callback_group**（进程内分发不再需要路由列）；
++-- 业务写入不同事务（硬约束，见 backend/docs/architecture/timeout.md §0）。
++-- 列照搬原独立库的 schema-timeout-task.sql 并删了回调路由列（进程内分发不再需要按应用名路由）；
+ -- 时间列保留 created_at/updated_at（不打乱本库 create_time/update_time 口径是有意的：这批表按原样
+--- 从 bs_timeout 迁入，列名改名要同时动 16 份 DDL + mapper XML + 存量迁移，收益只有命名整齐）。
++-- 从原独立库迁入，列名改名要同时动 16 份 DDL + mapper XML + 存量迁移，收益只有命名整齐）。
+ -- 表结构完全一致（一份 DDL × 16），逐张写出而不用存储过程/内联表达式：内联表达式生成的是
+ -- timeout_task_0..，没有两位零填充，与 _00..15 对不上；运维要按表名 grep / 单表 DROP 重建。
+ -- 标识 = 自然键 (task_type, biz_id)，无中心生成的 taskId：uk_type_biz + 路由函数确定性（同 key 永远
+diff --git a/backend/docker-compose.yml b/backend/docker-compose.yml
+index 1c92cd0..3bea144 100644
+--- a/backend/docker-compose.yml
++++ b/backend/docker-compose.yml
+@@ -8,7 +8,7 @@
+ #      Linux：sudo sysctl -w vm.max_map_count=262144
+ #   1. MySQL 只负责启动，不自动初始化库表（用户拍板）——容器起来后手动执行（必须带 --default-character-set=utf8mb4，
+ #      否则容器内 mysql CLI 默认 latin1，中文种子数据会乱码入库）。
+-#      推荐：scripts/dev-stack.ps1 up —— 起容器 + 等就绪 + 建好三个开发库 + xxl 注册 + 三服务健康检查
++#      推荐：scripts/dev-stack.ps1 up —— 起容器 + 等就绪 + 建好两个开发库 + xxl 注册 + 两服务健康检查
+ #      （PowerShell 入口；本机 bash/WSL 是坏的，scripts/test-env.sh / run-app.sh 跑不了）。
+ #      test-env.sh 是等价的手工步骤参考：起容器 + 等就绪 + 建好 better_school / better_school_test 两个库（幂等，可重复跑）。
+ #      等效手工命令：init-dev.sql / init-test.sql 只建库并 USE，schema.sql 是唯一 DDL 主体；
+@@ -19,18 +19,15 @@
+ #      schema-legacy.sql 已随旧 lottery 十张表一起删除）：
+ #      { cat marketing/sql/init-dev.sql; cat marketing/sql/schema.sql; } | docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4
+ #      （init-dev.sql 自带 USE bs_marketing；测试侧换 init-test.sql。DDL 全 IF NOT EXISTS，重复拼接幂等）
+-#      timeout-center 一个库（bs_timeout，16 张 timeout_task 分表）：
+-#      { cat timeout-center/sql/init-dev.sql; echo 'USE bs_timeout;'; cat timeout-center/sql/schema-timeout-task.sql; } | docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4
+-#      （init-dev.sql 只建库不切库，USE 要自己补）
+ #      xxl-job 库非幂等，只需建一次（应用启动前）：
+ #      docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4 < sql/xxl-job.sql
+ #      docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4 < better-school/sql/xxl-job-tasks.sql
+-#      （三份 sql/xxl-job-tasks.sql 各自幂等；marketing / timeout-center 两份同法）
++#      （两份 sql/xxl-job-tasks.sql 各自幂等；better-school / marketing 同法）
+ #   2. 若本地 3306/6379/9876 已有服务在跑，改下面 ports 映射并同步改应用配置
+ #   3. 密码统一 bs123456（MySQL root / Redis requirepass / 数据源）
+ #   4. Nacos 起来后须建共享配置 dataId=better-school-shared.yml / group=DEFAULT_GROUP，
+-#      内容为 jwt.secret + jwt.expire-days。三个 app（单体 + 营销 + 超时中心）都严格导入这一份，
+-#      没建则三个 app 全部起不来。控制台 http://localhost:8848/nacos（2.5.4 未开鉴权，直接进）
++#      内容为 jwt.secret + jwt.expire-days。两个 app（单体 + 营销）都严格导入这一份，
++#      没建则两个 app 全部起不来。控制台 http://localhost:8848/nacos（2.5.4 未开鉴权，直接进）
+ #   5. 测试栈与开发栈同一份 compose：MySQL / Redis / MinIO 由两边共用（隔离靠各自的多租户机制——
+ #      库名 better_school 与 better_school_test、营销域 bs_marketing 及 bs_marketing_test、
+ #      Redis 逻辑库 0 与 1、桶 bs-files 与 bs-files-it），
+diff --git a/backend/docs/README.md b/backend/docs/README.md
+index 54c912c..0ccd3f7 100644
+--- a/backend/docs/README.md
++++ b/backend/docs/README.md
+@@ -1,35 +1,37 @@
+ # backend 文档索引
+ 
+-> better-school 后端文档：三个互相独立的 Maven 工程——单体 `backend/better-school/`（bs-* 七模块）+ 营销 `backend/marketing/`（票 06 并入原 `marketing-asset` 的积分域、票 07 并入原 `marketing-activity` 的抽奖域；票 09 起只余这两域）+ 超时中心 `backend/timeout-center/`（超时任务注册与回调，独立库）。
++> better-school 后端文档：两个互相独立的 Maven 工程——单体 `backend/better-school/`（bs-* 七模块）+ 营销 `backend/marketing/`（票 06 并入原 `marketing-asset` 的积分域、票 07 并入原 `marketing-activity` 的抽奖域）。超时中心已内嵌进单体，不再是独立工程（见 [`architecture/timeout.md`](architecture/timeout.md)）。
+ 
+ | 目录 | 内容 |
+ | --- | --- |
+ | [`db/`](db/README.md) | 营销域库表总览（单体与营销各工程的总览在各工程 `docs/db/README.md`） |
+ | [`api/`](api/README.md) | 营销域接口总览（同上，各工程 `docs/api/README.md`） |
+ | [`architecture/marketing-services.md`](architecture/marketing-services.md) | 营销两服务怎么跑起来、怎么改不翻车（端口 / Nacos / Dubbo / 契约变更纪律） |
+-| [`architecture/timeout-center.md`](architecture/timeout-center.md) | 超时中心怎么跑起来（端口 / 独立库 16 分表 / ShardingSphere 5.5.x 依赖清单 + hint 强制路由 / Dubbo 两条边 / 扫描 job 与池口径） |
+-| [`ops/timeout-inline-cutover.md`](ops/timeout-inline-cutover.md) | 超时中心内嵌化上线 / 回滚清单（票 07：存量在途一次性搬迁、切换顺序、`bs_timeout` 清理口径） |
++| [`architecture/timeout.md`](architecture/timeout.md) | 内嵌超时中心怎么跑（同事务注册 / 16 分表 + ShardingSphere hint 强制路由 / xxl 分片广播 + 有界并行 / 进程内回调 / 死信管理面） |
+ | [`testing.md`](testing.md) | 集成测试设施：怎么跑、约定、Nacos/Dubbo 的特殊处理 |
+ 
++> 超时中心的上线/回滚清单与一次性存量迁移工具是历史产物，已归档到
++> `.scratch/timeout-inline/archive/`（旧工程已删除，不再随代码演进）。
++
+ 编码规范见 [`../CLAUDE.md`](../CLAUDE.md)（DDD 分包分模块约定），需求以 `.scratch/<effort>/spec.md` 为准。
+ 
+-**构建顺序**：三工程无 reactor，跨工程契约经本地仓库解析。改了契约或首次构建时按序执行——
++**构建顺序**：两工程无 reactor，跨工程契约经本地仓库解析。改了契约或首次构建时按序执行——
+ 先在 `better-school/` 下 `mvn install`（`bs-api` 是营销服务消费的单体契约），再构建 `marketing/`。
+-`timeout-center/` 与另两者无契约往来，可独立构建。
+ （票 07 起营销只有一个工程：`marketing-api` 是它自己的模块，不再需要跨工程安装顺序。）
+ 
+-**改库表/接口后必须同步的文档**：各工程的 `docs/db/`、`docs/api/`（超时中心对应 `timeout-center/docs/db/`、
+-`timeout-center/docs/api/`，另加本目录的 `architecture/timeout-center.md`）。
++**改库表/接口后必须同步的文档**：各工程的 `docs/db/`、`docs/api/`，另加本目录的
++[`architecture/timeout.md`](architecture/timeout.md)（超时表/管理面变更时）。
+ 
+ **起应用入口是 `scripts/dev-stack.ps1`**（票 17 引入的 Windows 全栈一键起：`up`/`down`/`status`/`health`/
+ `build`/`db-init`/`db-reset`/`xxl-seed`/`nacos-prune`/`mq-prune`；本机 bash/WSL 不可用，bash 环境可参考
+-`scripts/run-app.sh`，svc 键 `bs|marketing|center`）：
++`scripts/run-app.sh`，svc 键 `bs|marketing`）：
+ 
+ ```powershell
+ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-stack.ps1 up
+ ```
+ 
+-它从工程目录起 jar，并**默认挂上 JFR 持续 recording**——虚拟线程常态化观测靠它：`jdk.VirtualThreadPinned`
++`dev-stack.ps1` 从工程目录起 jar，**不挂 JFR**；需要 JFR 持续 recording 时用 `scripts/run-app.sh`（它默认挂）
++——虚拟线程常态化观测靠它：`jdk.VirtualThreadPinned`
+ （`threshold=0ms`，默认 20ms 会漏短 pin）+ 线程统计事件，配置在 `backend/jvm/bs-vt-recording.jfc`，落盘
+ `<工程目录>/logs/jfr/`（不入库），轮转 `maxsize=200m` / `maxage=2d`。取数：
+ `jcmd <pid> JFR.dump name=bs-vt filename=...`；注意 `taskkill /F` 硬杀会绕过 shutdown hook，让文件停在 0 字节。
+diff --git a/backend/docs/architecture/marketing-services.md b/backend/docs/architecture/marketing-services.md
+index 3439a34..7b2abc9 100644
+--- a/backend/docs/architecture/marketing-services.md
++++ b/backend/docs/architecture/marketing-services.md
+@@ -5,14 +5,13 @@
+ 
+ ## 1. 工程形状
+ 
+-`backend/` 下三个**平级独立 project**，彼此**没有 reactor 关系**：
++`backend/` 下两个**平级独立 project**，彼此**没有 reactor 关系**：
+ 
+ ```
+ backend/
+-├── better-school/           单体工程（bs-* 七模块，聚合器 pom artifactId = better-school）
+-├── marketing/               营销服务聚合器（parent = spring-boot-starter-parent:3.3.5）
+-│   └── marketing-{types,api,domain,case,infrastructure,trigger,app}
+-└── timeout-center/          超时中心（timeout-center-* 七模块，独立库）
++├── better-school/           单体工程（bs-* 七模块，聚合器 pom artifactId = better-school；超时中心已内嵌在此工程）
++└── marketing/               营销服务聚合器（parent = spring-boot-starter-parent:3.3.5）
++    └── marketing-{types,api,domain,case,infrastructure,trigger,app}
+ ```
+ 
+ 营销服务一个 app 承载 **五个域段**：`points`（积分）、`raffle`（抽奖——票 11 表 + 责任链 + 预热，
+@@ -23,7 +22,7 @@ backend/
+ `MarketingApplication` 一个启动器 + 一套 `marketing.config.*`。
+ 
+ 每个工程 = 7 个模块，依赖方向照 `backend/CLAUDE.md` §1 严格单向。**每个工程自带一份 types**，
+-不复用 `bs-types`——改一个常量不该让三个服务一起重发。对外 `Response<T>{code,info,data}` 在各 `-api/response/`。
++不复用 `bs-types`——改一个常量不该让两个 app 一起重发。对外 `Response<T>{code,info,data}` 在各 `-api/response/`。
+ 
+ 包名口径：包根 `com.betterschool.marketing`，**所有层都带域子包**
+ （`marketing.{layer}.{points,drawcount,config,raffle,inventory}.*`——多域同名类多，物理上必须）：
+@@ -52,11 +51,10 @@ backend/
+ | --- | --- | --- | --- |
+ | better-school（单体） | 8080 | `better-school-executor` / 9999 / `./logs/xxl-job` | 50051 |
+ | marketing | 8081 | `marketing-executor` / 9998 / `./logs/xxl-job-marketing` | 50052 |
+-| timeout-center | 8083 | `timeout-center-executor` / 9996 / `./logs/xxl-job-timeout` | 50054 |
+ 
+-三个 app 同机跑，**上面每一列都必须错开**（xxl 执行器端口撞了会互相顶掉、Dubbo 端口撞了后起的起不来）。
++两个 app 同机跑，**上面每一列都必须错开**（xxl 执行器端口撞了会互相顶掉、Dubbo 端口撞了后起的起不来）。
+ RocketMQ dashboard 在 **8089**（避免与各服务的 HTTP 端口撞）。票 07 起 **8082 / 50053 / 9997 已释放**
+-（原 `marketing-activity` 的三个口）。
++（原 `marketing-activity` 的三个口）；超时中心内嵌化后 **8083 / 50054 / 9996 也已释放**。
+ 
+ 启动顺序：`docker compose up -d`（含 `bs-nacos`）→ **在 Nacos 建共享配置** → 单体（Dubbo Provider）→ marketing。
+ 
+@@ -68,14 +66,14 @@ RocketMQ dashboard 在 **8089**（避免与各服务的 HTTP 端口撞）。票
+ 
+ | DataId | Group | 内容 | 谁读 |
+ | --- | --- | --- | --- |
+-| `better-school-shared.yml` | `DEFAULT_GROUP` | `jwt.secret`、`jwt.expire-days` | 三个 app 全读 |
++| `better-school-shared.yml` | `DEFAULT_GROUP` | `jwt.secret`、`jwt.expire-days` | 两个 app 全读 |
+ 
+-三个 app 都经 `spring.config.import: nacos:better-school-shared.yml?group=DEFAULT_GROUP&refreshEnabled=true`
++两个 app 都经 `spring.config.import: nacos:better-school-shared.yml?group=DEFAULT_GROUP&refreshEnabled=true`
+ 导入（`bootstrap.yml` / `shared-configs` 均已废弃）。本服务的其余配置（端口 / topic）留在各自本地
+ `application.yml`，**不拆 per-service dataId**。
+ 
+ - **不加 `optional:`**：共享配置缺了就启动失败，比静默跑丢配置好。
+-  代价是「本机没起 Nacos，三个 app 全起不来」——该代价由「单体同时是 Dubbo Provider」付掉。
++  代价是「本机没起 Nacos，两个 app 全起不来」——该代价由「单体同时是 Dubbo Provider」付掉。
+ - **建配置**（compose 起来后手动一次，控制台 `http://localhost:8848/nacos` 或 HTTP API）：
+ 
+   ```bash
+@@ -88,7 +86,7 @@ RocketMQ dashboard 在 **8089**（避免与各服务的 HTTP 端口撞）。票
+     expire-days: 7"
+   ```
+ 
+-- **轮换 `jwt.secret`：改 Nacos 一处，三个 app 同步生效——但要重启。**
++- **轮换 `jwt.secret`：改 Nacos 一处，两个 app 同步生效——但要重启。**
+   `refreshEnabled=true` 只保证「配置变更事件送达」；`JwtService` 是 `@Value` 注入的，
+   不吃热刷新（实测：改完不重启，旧令牌仍 200、新令牌 401；重启后反过来）。要热轮换就给它加 `@RefreshScope`。
+ - 集成测试不吃外网 Nacos：测试基类对测试专用 Nacos（18848）把这份
+@@ -138,7 +136,7 @@ topic 是跨域契约（`types.common.Constants`）。生产 / 消费的字段
+   应用正常启动、`@DubboService` 的 bean 也在，唯独没有任何 `Export dubbo service` 日志，
+   consumer 侧报 `No provider available`。只有 marketing 是营销侧 Provider（scan `com.betterschool.marketing`）。
+ - **`serialize-check-status` 默认 `STRICT`**：未进 allowlist 的 DTO 首次调用直接被拒。
+-  本地联调统一设 `WARN`（三个 app 的 `application.yml` 里都已配）。
++  本地联调统一设 `WARN`（两个 app 的 `application.yml` 里都已配）。
+ - Dubbo 会**顺带把注册中心当 config-center 用**，所以注册中心连不上会在启动期就抛
+   `Failed to create nacos config service client` 直接炸上下文。集成测试因此也必须给它一个真 Nacos
+   （见 [../testing.md](../testing.md)）。
+@@ -163,7 +161,7 @@ mvn -o install -pl marketing-api -am -DskipTests
+ ```
+ 
+ 装完**重启相关的服务**（改 `bs-api` 要重启 marketing；`marketing-api` 现在同 reactor，改了直接重编即可）。
+-首次构建若 `-o` 报缺包，去掉 `-o`。三工程完整构建顺序见 [`../README.md`](../README.md)（单体 → marketing → timeout-center）。
++首次构建若 `-o` 报缺包，去掉 `-o`。两工程完整构建顺序见 [`../README.md`](../README.md)（单体 → marketing）。
+ 
+ 排查「到底解析到哪一份」：`mvn dependency:tree -Dincludes=com.betterschool`。
+ 需要强一致时：`mvn -U ...` 或 `mvn dependency:purge-local-repository -Dinclude=com.betterschool:bs-api`。
+diff --git a/backend/docs/architecture/timeout-center.md b/backend/docs/architecture/timeout-center.md
+deleted file mode 100644
+index 15ba7a5..0000000
+--- a/backend/docs/architecture/timeout-center.md
++++ /dev/null
+@@ -1,344 +0,0 @@
+-# 超时中心（timeout-center）
+-
+-> 归属：超时中心（独立服务）。需求以 [`.scratch/timeout-center/spec.md`](../../../.scratch/timeout-center/spec.md) 为准。
+-> 本文只写「怎么跑起来、怎么改不翻车」；接口见 [`../../timeout-center/docs/api/`](../../timeout-center/docs/api/README.md)，
+-> 库表见 [`../../timeout-center/docs/db/`](../../timeout-center/docs/db/README.md)。
+-
+-## 0. 内嵌化进行中：本中心正在被搬进业务库（.scratch/timeout-inline effort）
+-
+-> ⚠️ 本节以下（§1–§9）描述的是**改造前的独立服务形态**，将随内嵌化 effort 收口时整体改写（map 终点）。
+-> 截至票 02（域与存储），落进 `better-school` 的部分如下：
+-
+-- **域与存储**：`better-school` 新增 `domain.timeout`（entity/TaskStatusVO/`ITimeoutRepository` 按键读写原语）
+-  + `bs-infrastructure` 的 PO/DAO/mapper XML/仓储实现 + 分表路由三件套
+-  （`TimeoutTaskShardSlots` 单点槽位函数、库维/表维两个 `CLASS_BASED` hint 算法）。
+-  16 张 `timeout_task_00..15` 进了 `better-school/sql/schema.sql`（唯一 DDL 来源），
+-  **列照原样但删了 `callback_group`**（进程内分发后不再需要路由列），无 `PROCESSING`（5 态状态机）。
+-  扫描 job、注册直插、进程内回调、死信管理面分别在票 04/03/05/06 落地。
+-- **路由**：单体的主 datasource 换成 `jdbc:shardingsphere:classpath:sharding.yaml`
+-  （dev/test 两份，`better_school` / `better_school_test`）。配置形态 = 原 YAML + 显式
+-  `!SINGLE tables: ["*.*.*"]`（**必须放在 `!SHARDING` 之前**，且 `tables` 只认 `*.*.*` / `*.*` 两个字面量，
+-  逐张列出静默无效）——票 01 实测：缺 `!SINGLE` 时逻辑库只暴露 `timeout_task`，30 张业务表全部
+-  `TableNotFoundException` 且启动不报错；补上后业务表完全透明、事务仍是同一条连接同一个本地事务。
+-  `databaseName` 显式写真实 schema 名（不写则恒为 `logic_db`）。启动期自检见
+-  `bs-app/.../config/ShardingSelfCheck`（缺 `!SINGLE` / 物理分表泄漏都在启动期炸掉）。
+-- **槽位公式**：`slot = floorMod(hash(biz_id), 16)`，hash 输入从原 `(task_type, biz_id)` 改为 **`biz_id`**——
+-  同一业务对象的多种超时/多轮次（复合 bizId）落同一张表；`uk_type_biz (task_type, biz_id)` 的全局幂等
+-  不受影响（同键行永远同表）。槽位 g 是**全局展平编号**：`db = g / 16`、`table = g % 16`，
+-  路由侧把 g 同时塞 `HintManager.addDatabaseShardingValue` + `addTableShardingValue` 两个 hint 值。
+-- **`user_id` 列不加**（本票显式结论）：主查询按 `(status, next_fire_time)` 扫、分片键不参与；
+-  现 hint 方案扩库只改公式与 `actualDataNodes`、加列省不下任何事；一旦路由键 ⊥ 幂等键，就要额外维护
+-  「user 与幂等键绑定不可变」这条不变量，破了即双行双回调；且 `REVIEW_LEASE_TIMEOUT` 的
+-  `bizId = {taskId}:{claimSeq}` 没有天然 user，只能塞 NULL/系统用户。若将来真要分库，分片键由
+-  **业务表实际选的那个维度**决定，且业务表也必须同键分片——那是另一次全仓改造。
+-- **⚠️ 硬约束：`dbCount > 1` 与「超时行与业务写入同事务」互斥**。业务行留在原库、超时行按 hash 落到
+-  另一个库时，同一条连接、同一个本地事务的前提立刻失效（退回 2PC 或 outbox+RPC，即改造前形态）。
+-  本期 `dbCount` 恒为 1、**不得启用**：代码与配置里保留「库 × 表」两维表达
+-  （`TimeoutConstants.DB_COUNT/TABLES_PER_DB`、库维 hint 算法）是为了将来不必重写结构，
+-  **保留的是表达，不是开关**。要启用的前提是**业务表也按同一分片键一起分库**（30 张表 + 全部事务点
+-  的分库改造），否则永远不要把 `DB_COUNT` 配成大于 1。
+-- **进程内回调分发（票 05 已落地）**：§4 表里「中心 → 业务」那条 Dubbo 边已删——单体的
+-  `trigger/rpc/TimeoutTaskCallbackDubboService`（Provider）与 `timeout-center-api` jar 依赖一并移除，
+-  回调塌成进程内方法调用：扫描 case 按 `taskType` 分发到四个域动作
+-  （`usecase.timeout.TimeoutTaskCallbackDispatcher`，实现域端口 `ITimeoutTaskCallbackPort`，
+-  逐项隔离、未注册 taskType / 坏 bizId 按失败重投）。因此 **§9 整节（含 group 取应用名、
+-  「应用改名静默失配」那条坑）已随这条边的删除而过时**——`callback_group` 列在票 02 就没了，
+-  group 概念整体消失，不存在失配面。
+-- **死信管理面（票 06 已落地，本文件 §7 的「无鉴权 / 8083」口径就此过时）**：落点迁入单体
+-  `bs-trigger` 的 `trigger/http/timeout/TimeoutTaskAdminController`，走 8080 的
+-  `/api/admin/timeout-tasks/**`；鉴权接单体 JWT/角色（过滤链 401 + 控制器内收 ADMIN 403，
+-  与 `AdminReviewController` 同款），原「无鉴权 + 部署侧收紧」缺口随落点迁移关掉。
+-  分页钳制（每页 50 / 页码 1000）**保留**：列表仍是跨 16 分表广播归并（内嵌化只是把分表搬进
+-  业务库，分表没消失），且现在与用户请求共享池 10——钳制更有必要。重发/取消仍是只打 FAILED 行
+-  的条件 UPDATE（票 04 已落仓储，票 06 只接 HTTP 面）。接口文档见
+-  [`better-school/docs/api/timeout.md`](../../better-school/docs/api/timeout.md)。
+-  营销侧不落管理面（零接入方，票 08 只定规格）：口径是「谁有超时表、谁才有管理面」。
+-- **切换与存量搬迁（票 07 已落地）**：**不做双跑**（票 05 已删业务侧回调 Provider，旧中心继续扫会把
+-  在途行重试进死信），也不丢弃重注册；停旧扫描 → 滚动上线 → 停新扫描 → 按**新槽位公式**
+-  把 `WAITING/RETRYING/FAILED` 与残留 `timeout_register_outbox.PENDING` 一次性搬进
+-  `better_school.timeout_task_*` → 校验 → 开新扫描 → 停旧中心 → 观察 → 清理。
+-  可照做的清单见 [`ops/timeout-inline-cutover.md`](../ops/timeout-inline-cutover.md)，
+-  工具为 `backend/scripts/timeout-cutover-migrate.py`（含 `reverse` 回滚方向与槽位校验）。
+-
+-
+-## 1. 工程形状
+-
+-第四个**独立 project**，与单体 `backend/better-school/pom.xml` 没有 reactor 关系：
+-
+-```
+-backend/
+-├── better-school/      单体（bs-* 七模块）
+-├── marketing/          营销服务（points / drawcount / config / raffle / inventory 五个域段）
+-│                        （票 06 并入积分、票 07 并入抽奖旧域、票 10 加次数桶与配置、
+-│                         票 12 加库存、票 13 抽奖换 raffle 域段）
+-└── timeout-center/     超时中心（timeout-center-{types,api,domain,case,infrastructure,trigger,app}）
+-```
+-
+-包根 `com.betterschool.timeout`，依赖方向照 `backend/CLAUDE.md` §1。
+-
+-**与其余三个工程的两处命名差异（都是既有限制的产物，别改回去）**：
+-
+-- case 模块的**包名是 `com.betterschool.timeout.usecase.task`**：`case` 是 Java 保留字，不能做包名段
+-  （单体同样叫 `com.betterschool.usecase`）；模块名仍是 `timeout-center-case`。
+-- 顶层包只有 `task` 一个业务域，没有第二域子包（单域服务：超时任务）。
+-
+-## 2. 端口与启动
+-
+-| app | HTTP | xxl 执行器 appname / port / log-path | Dubbo tri |
+-| --- | --- | --- | --- |
+-| better-school（单体） | 8080 | `better-school-executor` / 9999 / `./logs/xxl-job` | 50051 |
+-| marketing | 8081 | `marketing-executor` / 9998 / `./logs/xxl-job-marketing` | 50052 |
+-
+-| **timeout-center** | **8083** | **`timeout-center-executor` / 9996 / `./logs/xxl-job-timeout`** | **50054** |
+-
+-同机四个 app，上面每一列都必须错开。**本服务没有 HTTP 业务接口**——对业务一律走 Dubbo；
+-8083 上唯一的东西是**运维面的死信管理接口**（票 09 落地，见本文件 §7 与
+-[`../../timeout-center/docs/api/dead-letter.md`](../../timeout-center/docs/api/dead-letter.md)）。
+-
+-```bash
+-scripts/test-env.sh up                                  # 起中间件 + 建好 bs_timeout / bs_timeout_test（幂等）
+-cd timeout-center && mvn -DskipTests install             # 首次构建（或 java -jar timeout-center-app/target/…jar）
+-```
+-
+-- 硬约束：接入方与中心**共用同一 Nacos 集群**（动态 ReferenceConfig 路由回调的前提，spec §6.1）。
+-  本服务**不读 Nacos 配置**（无共享 dataId、无 `spring.config.import`），只用它做 Dubbo 注册中心。
+-- **本服务是 Dubbo Provider，`dubbo.scan.base-packages` 必须配**（`= com.betterschool.timeout`）：
+-  没有这一行 `@DubboService` 根本不会被打扫到——应用照常启动、bean 也在，唯独一条
+-  `Export dubbo service` 日志都没有，业务侧报 `No provider available`（同 marketing 的坑）。
+-
+-## 3. 数据面：独立库 + 16 张分表
+-
+-| 文件 | 用途 |
+-| --- | --- |
+-| `timeout-center/sql/init-{dev,test}.sql` | 建库文件：只建 `bs_timeout` / `bs_timeout_test`，**不切库** |
+-| `timeout-center/sql/schema-timeout-task.sql` | DDL 主体：16 张分表逐张写出（`IF NOT EXISTS` 幂等），不含 `CREATE DATABASE` / `USE` |
+-| `timeout-center/sql/xxl-job-tasks.sql` | xxl-job 自动配置：执行器 + 扫描任务（10s / 分片广播 / DISCARD_LATER / 重试 0），幂等可重复执行 |
+-| `timeout-center-app/src/main/resources/sharding.yaml` | 分片配置（开发库）；**测试侧 `src/test/resources/sharding-test.yaml` 同内容、jdbcUrl 指 `bs_timeout_test`** |
+-
+-- 5.5.x 的 ShardingSphere 用法是「**JDBC 驱动 + YAML**」：`spring.datasource.url = jdbc:shardingsphere:classpath:sharding.yaml`，
+-  真实库地址在 YAML 里。**代价：Spring 的 `${}` 占位符到不了驱动解析的那一层**，所以开发/测试两份 YAML
+-  （只有 jdbcUrl 与池子大小不同）；改库地址要改两处。
+-- **路由全走 hint 强制路由**（票 08 实测改的，原打算「写入 complex + 扫描 hint」在本版本做不到）：
+-  表策略是 `strategy: HINT`，`TimeoutTaskRepository` 在**每一次 DAO 调用前**把槽位塞进 `HintManager`
+-  ——按键读写用 `TimeoutTaskShardSlots.slotOf(taskType, bizId)`，扫描用分片 job 认领的槽位号。
+-  漏塞 hint 的后果是响的：写语句被 ShardingSphere 的 Insert/Update 路由校验拒掉（不会静默写错表），
+-  扫描退化成 16 表广播（结果仍对，但白读一遍 + 跨实例重复回调，表级归属失效）。
+-  **别绕开仓储层直接调 DAO**：hint 是 ThreadLocal，塞与用必须同线程。
+-- 分片表名零填充（`timeout_task_00`），所以 `sharding.yaml` 的 `actualDataNodes` 逐张列出而不是用
+-  `${0..15}` 内联表达式（后者生成的是 `_0.._15`，对不上）。
+-- 内层池（YAML 里的 Hikari）与外层池（`spring.datasource.hikari`）都设 **24**：扫描 fan-out = 16 个槽位（spec §5.3），
+-  池要 ≥ 槽位数并留余量（为什么不是正好 16、余量给谁，见 §6 同步说明）。
+-- **`shardingsphere-jdbc` 5.5.x 只是「驱动壳」，跑起来要自己补齐特性 artifact**（缺哪个报哪个，
+-  错误信息都不提「少依赖」）：`shardingsphere-sharding-core`（`!SHARDING` YAML tag + `DatabaseRuleBuilder`）、
+-  `shardingsphere-infra-data-source-pool-hikari`（`jdbcUrl→url` 属性同义词表，缺了在 `StorageUnit` 里炸 NPE）、
+-  `shardingsphere-standalone-mode-repository-memory`（`ContextManagerBuilder` 二选一）、
+-  `shardingsphere-authority-simple`、`shardingsphere-parser-sql-engine-{mysql,sql92}`。
+-  权威清单 = `shardingsphere-jdbc` 自己的 pom 里那一批 **test scope** 依赖（就是作者跑测试用的集合）。
+-- **commons-lang3 必须 ≥ 3.18.0**：Spring Boot 3.3.5 管的是 3.14.0，而 sharding-core 用了 3.18.0 才有的
+-  `org.apache.commons.lang3.Strings`（本工程 pom 里显式覆盖，否则运行期 `NoClassDefFoundError`）。
+-
+-## 4. Dubbo：两条边（一进一出）
+-
+-| 方向 | 接口 | 模块 | Provider | Consumer |
+-| --- | --- | --- | --- | --- |
+-| 业务 → 中心 | `ITimeoutTaskRegister` | `timeout-center-api` | 中心 `trigger/task/rpc`（**无 group**） | 单体 `infrastructure/adapter/port/timeout`（票 10） |
+-| 中心 → 业务 | `ITimeoutTaskCallback` | `timeout-center-api` | 单体 `trigger/rpc/TimeoutTaskCallbackDubboService`（`@DubboService`，**group = 应用名**，票 11） | 中心按任务行 `callback_group` **动态 ReferenceConfig**（票 08） |
+-
+-- 契约只有 `timeout-center-api` 一个 jar（业务方引它实现回调、调注册）；**不提供 client**——
+-  outbox 写入、即时/兜底发送由各发送方自实现（spec §7.2）。
+-- 新业务接入中心**零代码变动**：中心不认识任何业务方的类，回调路由靠 group 字符串动态建引用（spec §6.1）。
+-  消费侧因此**不能**用 `@DubboReference`（注解是编译期写死的 group），只有注册方向那种固定 group 才用它；
+-  回调方向是 `TimeoutTaskCallbackReferences` 里按 group 建（并缓存）`ReferenceConfig`。
+-- `serialize-check-status: WARN`：3.3 默认 `STRICT` 会拒未进 allowlist 的 DTO；线上要收紧时，
+-  allowlist 里放的全是 `timeout-center-api` 的 DTO——业务方新增接入不触发中心的序列化配置变动（spec §6.2）。
+-  注意这个开关管的是**类名 allowlist**，管不了「DTO 没实现序列化接口」：`timeout-center-api` 的 DTO
+-  一律 `implements Serializable`（hessian2 的类检查会拒非序列化类，`WARN` 也救不了，首次调用即失败）。
+-- 契约变更纪律与营销服务同：改了 `timeout-center-api` 要在本工程 `mvn install`（`-am` 连带上游），
+-  否则业务方解析到的是本地仓库里的旧 jar。
+-
+-## 5. 与业务侧的分工（别再往中心塞）
+-
+-- 中心 **at-least-once**（重发同 `(taskType, bizId)`）；**幂等在业务方**（"必须幂等"写进契约，推荐状态机条件 UPDATE），
+-  收到重复回调幂等吞掉并返回成功，未命中状态机（已终态）= 幂等成功（spec §6.4）。
+-- **不保证顺序**，业务方以自身状态机为准。
+-- 业务方注册不到中心也**照常下单**（outbox 行积压 PENDING 持续重试，中心恢复自动追平，spec §7.5）；
+-  中心这边不做业务降级。
+-- 旧链路（`delay_outbox_message` / `ProductPayTimeoutConsumer` / `productTimeoutScan`）的**移除不在这条线里**：
+-  另开迁移 effort，将来一次性下线、不留双跑（spec §10）。
+-
+-## 6. 扫描 job（票 08）
+-
+-中心只有**一个** job：`timeoutTaskScanJob`（`trigger/task/job`，扫描 = 重试 = 死信重发统一入口，spec §5.1）。
+-调度参数不在代码里，在 admin 库（`sql/xxl-job-tasks.sql`，幂等脚本）：
+-
+-| 参数 | 值 | 为什么 |
+-| --- | --- | --- |
+-| `schedule_conf` | `0/10 * * * * ?` | 10s 周期，精度口径见 spec §5.6 |
+-| `executor_route_strategy` | `SHARDING_BROADCAST` | 每个实例都触发，靠 `shardIndex/shardTotal` 认领槽位 |
+-| `executor_block_strategy` | `DISCARD_LATER` | tick 重叠丢后到的（防漏靠下轮重扫，spec §5.5 ②） |
+-| `executor_fail_retry_count` | `0` | 调度层不重试，周期重扫即重试（spec §5.5 ③） |
+-| `misfire_strategy` | `FIRE_ONCE_NOW` | 错过补一次 |
+-
+-一次 tick 的流程（`TimeoutTaskScanCase`）：
+-
+-1. 认领槽位：`g % shardTotal == shardIndex` 且 `g < 16`（槽位 ≥ 实例数才分得匀；多出的实例空转）；
+-2. **一槽一虚拟线程**（hint ThreadLocal 与 mapper 调用必须同线程），每槽**循环拉批到空**——
+-   单批 ≤ 200（`timeout-center.scan.batch-size`），无单 tick 批数上限（spec §5.3）；
+-3. 批内按 `callback_group` 分组、**组间并行**、每组一次 Dubbo 调用（跨组不合并，spec §5.4）；
+-4. 按业务方回报的双清单**按结果分桶、每桶一条批量条件 UPDATE**（票 12）：成功桶置 `SUCCESS`；失败桶
+-   （含「两边都没回报」的项）`retry_count+1` + 退避推后 `next_fire_time` 进 `RETRYING`；
+-   **失败次数到上限（默认 16）的项单独分进死信桶、置 `FAILED` 终态**（spec §6.3/§6.5，票 09）。
+-
+-- **结算为什么能一条语句覆盖整批**（票 12）：一个批是**按槽位**从单张物理分表捞出来的
+-  （`selectDueBatch` 前仓储层已塞好 hint），语句天生单表——根据是「捞批的粒度就是一张表」，不是「一台机器负责一张表」。
+-  写库次数因此与「批内结果种类数 × taskType 数」成正比，与批大小无关（原来是满批 200 条最多 600 条
+-  UPDATE，在槽位线程上串行跑）。重试桶的 `SET next_fire_time` 走 `CASE`：各行 `retry_count` 不同 ⇒ 退避
+-  不同，这是桶内唯一按行不同的列；仓储层把 `bizIds` 与 `nextFireTimes` 两个列表按下标对齐，键序错位就会
+-  把退避时刻写串行。
+-- **三条批量 UPDATE 都保留 `status IN ('WAITING','RETRYING')`**：行级裁决权仍在库上，回调在途被取消/
+-  被死信重发的行不会被翻回来（spec §3.3）。代价是返回值从逐行布尔变成「本桶实际改到几行」——域服务把它
+-  记进日志，差值就是被并发取消的行，**不是错误**。别拿「反正扫描只捞非终态行」把这条条件删掉：捞批与
+-  结算之间的窗口正是取消会落进来的地方（集成测试用回调钩子在这个窗口里改库来钉这条守卫）。
+-- **空桶不发语句**：`IN ()` 是语法错误；仓储层与域服务两层都挡了空桶。
+-- **结算不另开事务**：一批三桶各自是一条语句，与逐行时代一致（幂等 + 重试兜底，spec §7.5 的取向）。
+-  批大小对参数数量的影响：重试桶一条语句约 4N 个占位符，批长 200 时 ~800，远在 MySQL 65535 之内。
+-
+-- **一次 tick 固定一个 `dueBefore`**：重试行结算后被推到「结算时刻 + 退避」，本轮一定不会再被捞起
+-  ——这是「循环拉批到空」的终止条件。别改成每批现取 `now`（tick 拖长到超过退避间隔会重复回调同一行）。
+-- **重试退避与死信**：30s 起指数翻倍、单次封顶 1h、到 16 次进 `FAILED` 死信
+-  （`timeout-center.retry.{base-seconds,max-seconds,max-times}`，三项都可配，见 §7）。
+-  重试不另开设施——单列 `next_fire_time` + 同一个扫描 job 就是重试机制（spec §5.1/§6.5）。
+-- **回调引用**：`TimeoutTaskCallbackReferences` 按 group 缓存 `ReferenceConfig`（`check=false`、`retries=0`、
+-  超时 `timeout-center.callback.timeout-ms` 默认 2s）。`retries=0` 是刻意的：Dubbo 自带重试会让同一批在一次
+-  tick 内重复回调，与「单次 2s、超时即失败、退避后由扫描重投」的口径打架。
+-- **并行模型**：组间并行只覆盖网络调用（每 group 一次 Dubbo），**落库回到槽位线程串行做**——
+-  并发 DB 需求恒等于槽位数（≤ 16），不被「批内组数」放大；池是真并发上限（spec §5.3）。
+-- **池给 24（1.5× 槽位数）不是 16**：一槽一连接会把 16 个占满，注册方向（逐行虚拟线程）与
+-  ShardingSphere 自身的元数据连接就挤不进来，卡满 `connection-timeout` 3s 后失败（实测踩过：
+-  16 槽扫描期间第 17 个请求报 `Connection is not available … active=16`）。调大 `scan.batch-size`
+-  不用动池。
+-- **测试 profile 的 `xxl.job.executor.appname` 必须另起一个**（`-test` 后缀）：本机 xxl-job-admin 里
+-  扫描任务是启用的（10s 分片广播），测试 JVM 若注册成同一个 appname，admin 会每 10s 往测试进程打
+-  一次真扫描——与用例自己调的 `scan()` 并发改同一批行，症状是「批次账莫名多出几条回调」
+-  （实测 200 条的用例偶发收到 `[200, 129, 5]`）。
+-
+-## 7. 死信管理面（票 09）
+-
+-> ⚠️ **本节描述的是改造前独立服务的形态，管理面部分已被票 06 推翻**：落点不再是 8083、
+-> 鉴权不再缺位（内嵌后接单体 JWT/ADMIN）、分页钳制保留、广播查询仍在——现状以
+-> §0 的票 06 条目与 [`better-school/docs/api/timeout.md`](../../better-school/docs/api/timeout.md) 为准。
+-> 本节其余口径（状态迁移、重发走扫描入口、条件 UPDATE 语义）仍成立；整节改写归票 09。
+-
+-回调连续失败到上限后进 `FAILED` 终态（**死信**）。**扫描永远排除终态**，所以死信只能从管理面人工处理
+-——这就是「中心全链路状态可查可改」（spec §6.1 选 Dubbo 直调的理由）里「可改」的落点。
+-
+-| 动作 | 落点 | 状态迁移 |
+-| --- | --- | --- |
+-| 列表 | `GET /api/admin/timeout-tasks/dead-letters` | 只读 |
+-| 重发 | `POST …/dead-letters/resend` | `FAILED → RETRYING`（`retry_count` 清零、`next_fire_time = now`、**不动 `action_time`**） |
+-| 取消 | `POST …/dead-letters/cancel` | `FAILED → CANCELED` |
+-
+-- **重发走同一个扫描 job 入口**（spec §5.1 的「入口唯一」）：不新开重试通路，重发后下一个 10s 周期
+-  就重投。因此重发后到重投之间有最多一个周期的延迟，这是设计内的。
+-- **重发/取消只打 `FAILED` 行**，是条件 UPDATE——所以并发两个管理员重发同一条、或重发与取消抢同一条，
+-  都只有一个赢，不需要加锁。返回 `false` / 进失败清单的含义是「该键当前不是死信」，不是出错。
+-- **列表是唯一跨 16 分表广播的查询**（按状态翻，SQL 里没有分片键）：故意不塞 hint，让 ShardingSphere
+-  广播归并（spec §5.2）。**别给它塞 hint**——塞了会只查一张分表、翻不出全量死信。分页上限
+-  （每页 50、页码 1000）是被刻意夹住的：广播一次 = 16 张分表各扫一遍，深 offset 的跳过行数还要每张各付一遍，
+-  而这个接口无鉴权——不夹等于给了一个能把中心读垮的入口。
+-- **落点与依赖**：控制器 `trigger/task/http/TimeoutTaskAdminController` + 同层的 dto/response，
+-  **不进 `timeout-center-api`**（那是业务契约 jar，spec §7.2；票 03 明确「运维面…不进业务契约」）。
+-  它走的是 `case → domain(service/deadletter) → infrastructure(仓储条件 UPDATE)`，与业务 API 同一条分层。
+-- **无鉴权（已知缺口）**：中心没有用户/JWT 设施，票 09 不为它新造一套（接入鉴权/监控平台属 spec §9 的开放项）。
+-  8083 别挂公网。
+-
+-## 8. 业务侧提交通道（票 10，落在单体里）
+-
+-单体的两处支付超时（商品订单 / 跑腿）不再写旧 `delay_outbox_message`，改走注册 outbox（spec §7.1）。
+-
+-| 环 | 落点 | 说明 |
+-| --- | --- | --- |
+-| 登记 | 两个接入点的业务事务内 | `ProductOrderServiceImpl.createOrder`、`ErrandOrderServiceImpl.createOrder`；各域仓储的 `schedulePayTimeout(...)` → `TimeoutRegisterOutboxStore` 写 `timeout_register_outbox` |
+-| 即时发送 | `TransactionSynchronization.afterCommit` → 虚拟线程 | `OutboxStore` 挂钩、`infrastructure/mq/TimeoutRegisterOutboxSender.sendAsync` 发单元素批量信封；**回滚不发**（无幽灵注册） |
+-| 兜底扫描 | `@XxlJob("timeoutRegisterOutboxScan")`，cron `0/30 * * * * ?` | 条件 `status='PENDING' AND created_at <= now-5s`（宽限期覆盖即时路径在途，免「发送中」标记）；调度行在 `better-school/sql/xxl-job-tasks.sql` |
+-| 注册边 | `infrastructure/adapter/port/timeout/TimeoutTaskRegisterPort` | `@DubboReference(check=false, timeout=2000)`；成功清单含本键即成功（新插入/幂等成功/终态复活三分支），冲突守卫落失败清单 → 保持 PENDING |
+-| 取消边 | **当前无生产调用方**（原「同键复位」业务场景随旧域删除而消失；`TimeoutRegisterOutboxSender.cancelAsync` 作为通用撤销能力保留） | `ITimeoutTaskRegister.cancel`（best-effort 异步，失败只告警）——机制说明见下面「取消边机制」 |
+-| taskType | `bs-types` 的 `Constants` | `PRODUCT_ORDER_PAY_TIMEOUT` / `ERRAND_PAY_TIMEOUT`（spec §8 原记三取值，其一随旧域删除退出，`Constants` 里已无该常量）；后续新增 `ERRAND_LOCK_TIMEOUT` / `REVIEW_LEASE_TIMEOUT`（见下表） |
+-
+-- **为什么接口（`ITimeoutTaskRegisterPort`）留在 infrastructure 而不是 domain**：域层只用自己仓储的
+-  `schedulePayTimeout` 写 outbox 行，真正发注册调用的是发送器（纯基础设施动作），域与 case 都不认识这条边。
+-- **`uk(task_type, biz_id)` = 注册意图唯一，撞键复位**：同一业务对象二次进入待支付时**复位同一行**（status 回
+-  PENDING、`action_time`/`created_at` 刷新、retry_count 清零），中心侧撞**终态**任务按「复活」重开一轮（spec §3.4）。
+-  商品/跑腿的订单 id 每次新建、实际不撞键，这是防同键重复注册的兜底语义（票 10 落地时的设计分叉之一）。
+-- **取消边机制**（`cancelAsync`，通用语义；spec §8 的取消点，票 10 实现）：复活**只对终态任务成立**——旧任务
+-  还在 `WAITING/RETRYING` 时重新注册，中心按「同 group 幂等成功应答、**不改期**」处理（spec §3.4），新
+-  `action_time` 被静默忽略。因此「同一业务对象支付后撤回再重新提交」这类同键复位场景必须先调一次
+-  `ITimeoutTaskRegister.cancel`（异步 best-effort）：旧任务变 CANCELED 终态，复位后的注册才真正按新
+-  `action_time` 重开一轮，否则旧任务的到点会把新单**提前关单**。
+-  商品/跑腿**不调**取消：订单 id 每次新建，不存在同键复位（spec §8 给它们的取消点属纯优化，首版不做）。
+-  该场景的业务宿主已随本轮重构整体删除，取消边当前无生产调用方，能力与机制说明保留备用。
+-- **取消要重试几次**（`cancel-attempts`/`cancel-retry-millis`，默认 3 次 × 1s）：取消与注册是两条独立异步
+-  路径，支付紧跟在发布/提交之后时**注册可能还在途**，中心此时没有这一行、撤销返回 false（联调冒烟实测踩到，
+-  抓到的日志是「取消注册任务未生效」，而库里那一行随后被标成 SENT）。3 次 ≈ 2s = 注册单次调用超时，覆盖
+-  「注册刚落地」。
+-- **残留窗口（已知，不再在票 10 内解）**：注册在**重试窗口之后**才落地（中心停机期间行停在 PENDING、
+-  30s 后被扫描补投），或某次注册的响应晚于取消到达中心（取消后注册会被中心按「复活」重开）——这两种情形
+-  下陈旧任务仍在，旧 `action_time` 到点会提前关单。无资金/数据损失，用户重新提交即可。要彻底消除需动
+-  中心侧语义（让同 group 非终态的重注册改期，即 spec §3.4「不改期」的变更）或在业务侧做「注册后再回查
+-  意图」的握手——两者都超出本票，留给迁移 effort 评估。
+-- **无上限重试、永不 DEAD**（与旧链路 5 次耗尽的刻意差异）：失败只 `retry_count+1` 保持 PENDING，
+-  单 tick 只拉一批（失败行恒满足扫描条件，循环拉批会死转——与中心侧扫描的差异点），且按 `id` 升序取批，
+-  长期失败的行会占住批头（≥批大小行永久失败属部署级故障，靠积压告警暴露）；
+-  兜底观测 = `timeout-center.register.backlog-warn-threshold`（默认 1000）越线打 WARN。
+-  三项扫描配置在单体 `application.yml` 的 `timeout-center.register.*`。
+-- **`@XxlJob` 落在 `infrastructure/mq/` 而非 `trigger/job/`**：发送器要持有 outbox 仓储与注册端口，
+-  而 `bs-trigger` **不依赖** `bs-infrastructure`（CLAUDE.md §1 的分层），handler 只能跟着发送器走——
+-  同 `OutboxMessageSender` / `DelayOutboxMessageSender` 的既有先例。
+-- **测试面**：集成测试用 `@Primary` 的 `FakeTimeoutTaskRegisterPort`（test 源码）覆盖真 Dubbo 引用；
+-  **测试 profile 的 `xxl.job.executor.appname` 必须另起一个**（`better-school-executor-test`）——
+-  否则 admin 里启用的 `timeoutRegisterOutboxScan` 会真改被测的 outbox 行（与用例断言竞态，同 §6 末尾那条）。
+-- 回调方向（中心 → 单体）是票 11，见 §9。
+-
+-### 后续新增接入方（errand-lock-review-hub effort 回填；中心零代码改动）
+-
+-| 接入方 | taskType | 注册点 | 回调点 | 复合 bizId | 计时起点 |
+-| --- | --- | --- | --- | --- | --- |
+-| 跑腿锁单超时 | `ERRAND_LOCK_TIMEOUT` | 抢单事务内：`ErrandRepository.scheduleLockTimeout`（`PUBLISHED→LOCKED` 条件 UPDATE 同事务写 outbox，action_time = 锁单时刻 + 5min） | `ErrandOrderCase.handleLockTimeout`：条件 UPDATE `LOCKED→PUBLISHED`（`lock_seq` 轮次守卫，清 `taker_id`）+ 同事务落订单事件 + 给被释放方发结果通知 | `{orderId}:{lockSeq}` | **锁单时刻**（5min 确认窗口；≠ 支付超时自创建起算） |
+-| 审核租约超时 | `REVIEW_LEASE_TIMEOUT` | 领单事务内：`ReviewTaskPoolStore` claim 的条件 UPDATE 同事务写 outbox（action_time = 领单时刻 + 5min） | `IReviewService.handleLeaseTimeout`：条件 UPDATE `CLAIMED→PENDING`（`claim_seq` 轮次守卫，`recycle_count+1`） | `{taskId}:{claimSeq}` | **领单时刻**（5min 租约窗口） |
+-
+-- 两者都**不调取消**（spec §4.2 的可选优化）：复合 bizId 使每次注册都是**新键插入**，绕开「在途键重注册 = 幂等成功、不改期」的陷阱（否则「放弃 → 重抢」会让新计时被旧到点吞掉，最坏永久卡死）；回调侧轮次守卫（条件 UPDATE 带 seq）使陈旧回调幂等落空——§8 的「同键复位要配 cancelAsync」那套机制对这两类用不上。
+-- 复合 bizId **不能走 `parseNumericBizId`**（十进制那条路）：回调分发按 taskType 各自拆 `{id}:{seq}`（`TimeoutTaskCallbackDubboService.parseCompositeBizId`），拆不开按失败重投进死信。
+-
+-## 9. 业务侧回调消费（票 11，落在单体里）
+-
+-> ⚠️ **本节已过时（内嵌化票 05 删掉了这条 Dubbo 边）**：Provider 类与 `timeout-center-api` 依赖已删，
+-> 回调改为进程内分发（见 §0 的「进程内回调分发」条目）。下文仅作改造前形态存档，
+-> 其中「group 取应用名 / 应用改名静默失配」那条坑已随 `callback_group` 概念整体消失。
+-
+-中心到点后按任务行的 `callback_group` 动态建引用打回单体，这边就是 §4 表里那个 Provider。
+-
+-| 环 | 落点 | 说明 |
+-| --- | --- | --- |
+-| Provider | `trigger/rpc/TimeoutTaskCallbackDubboService` | `@DubboService(group = "${spring.application.name}")`，实现 `ITimeoutTaskCallback` |
+-| 分发 | 同上类的 `applyCloseAction` | `switch (taskType)` → **四路**关单动作：两路支付超时（spec §8「回调点」列）+ 锁单超时与审核租约（本文件 §8 的新增接入方表 / spec §8.1） |
+-| 关单动作 | `ProductOrderCase.handlePayTimeout` / `ErrandOrderCase.handlePayTimeout` / `ErrandOrderCase.handleLockTimeout` / `IReviewService.handleLeaseTimeout` | 商品 = 条件 UPDATE 取消 + 商品回在售 + 搜索同步消息；跑腿支付 = 取消；跑腿锁单 = 释放回已发布（轮次守卫）；审核租约 = 回收回池（轮次守卫）——后两者的 bizId 是复合键，不走 `parseNumericBizId` |
+-
+-- **group 取 `${spring.application.name}`，不写死字面量**：注册侧写 outbox 的 `callback_group` 也是这个来源
+-  （`TimeoutRegisterOutboxStore` 的 `@Value`），应用改名时两侧自动一致。写死字面量则会在改名时**静默失配**——
+-  中心那条动态引用找不到 provider，回调全部超时进重试/死信，业务侧一条错都不报。
+-  Dubbo 会解析注解属性里的 `${}`（`AnnotationPropertyValuesAdapter` 走 Environment），实跑验证见票面。
+-- **幂等全靠关单动作自己的状态机**（spec §6.4）：三个 `handlePayTimeout` 都是「读状态 → 条件 UPDATE」，
+-  未命中（已支付/已取消/不存在）直接返回、零副作用，因此**本层没有任何去重设施**——重复回调走同一条路，
+-  照样回报成功。别在这里加「已处理过的 key 表」，那是把幂等责任从状态机挪走。
+-- **逐项隔离 + 全量回报**（spec §6.3）：`onTimeoutBatch` 对批内每一项独立 try/catch，单项抛异常只进失败清单、
+-  不拖垮同批其他项；每一项都必须落进成功/失败两个清单之一——中心把「两边都没回报」的项也按失败重投，
+-  但只回报失败项会让成功项白重投一轮。
+-- **未注册的 taskType 与坏 bizId 一律按失败回报**（不静默当成功吞掉）：前者意味着注册与消费的 `Constants`
+-  取值不一致，后者是注册方的编程错误——两者都该重投到 16 次进死信，在管理面显式暴露。
+-- **日志**：每批一条 INFO（成功/失败项数），单条失败另打 ERROR。单条成功的关单细节由各域服务自己打，本层不重复。
+-  日志 tag 用 `[TimeoutTaskCallback]`，**不要用 `[超时中心告警]`**——那个 tag 是 WARN/ERROR 告警点的保留标记
+-  （中心与单体的告警日志都靠它 grep），INFO 蹭上它会让告警面失灵。
+-- **测试面**：集成测试直接 `@Autowired TimeoutTaskCallbackDubboService`（Dubbo 会把这个 `@DubboService` 实现类
+-  注册成普通 Spring bean，同 marketing 的 `PointsExchangeDubboService` 用法），按接口调批——它就是这个
+-  trigger 入口。**跨进程的真实路由（中心动态 ReferenceConfig → 本 Provider）不在测试栈里**（测试栈没有中心进程），
+-  靠票面的全链路实跑验收覆盖。
+diff --git a/backend/docs/ops/timeout-inline-cutover.md b/backend/docs/ops/timeout-inline-cutover.md
+deleted file mode 100644
+index 82c8f0a..0000000
+--- a/backend/docs/ops/timeout-inline-cutover.md
++++ /dev/null
+@@ -1,518 +0,0 @@
+-# 超时中心内嵌化：上线 / 回滚清单（票 07）
+-
+-> 状态：定稿（2026-10-17）。适用改造：`backend/timeout-center/` 的存量在途任务切换到
+-> `better-school` 进程内超时中心（[`timeout-inline`](../../../.scratch/timeout-inline/map.md)）。
+-> 执行工具：[`backend/scripts/timeout-cutover-migrate.py`](../../scripts/timeout-cutover-migrate.py)；
+-> 背景与决策见[票 07](../../../.scratch/timeout-inline/issues/07-inflight-migration.md)。
+-
+-## 0. 结论（先看这 8 行）
+-
+-1. **不做双跑**。旧中心继续跑需要业务侧继续暴露 Dubbo 回调 Provider；票 05 已把它删掉
+-   （`TimeoutTaskCallbackDubboService` + `timeout-center-api` 依赖），双跑窗口里的回调会全部
+-   `No provider available`，把在途行重试进死信。旧口径「一次性下线、不留双跑」维持。
+-2. **不做丢弃重注册**。`productTimeoutScan` / `ProductPayTimeoutConsumer` 已在票 03 删除，
+-   商品支付超时没有业务侧兜底；跑腿虽有 MQ 延迟消息兜底，但锁单/审核租约（复合 `bizId`）没有。
+-   丢弃会让订单/锁/租约卡死。**必须搬。**
+-3. **选一次性搬迁**：旧扫描 job 先停 → 新代码滚动上线 → 新扫描 job 也停 → 把
+-   `bs_timeout.timeout_task_*` 的 `WAITING/RETRYING/FAILED` 和新代码上线前残留的
+-   `timeout_register_outbox.PENDING` 搬进 `better_school.timeout_task_*` → 校验 → 开新扫描 job
+-   → 停旧中心 → 观察 → 清理。
+-4. **必须按新公式重算分表号**：旧 `slot = floorMod(hash(len(taskType)+":"+taskType+bizId),16)`，
+-   新 `slot = floorMod(hash(bizId),16)`。**直接 `INSERT ... SELECT` 按旧表号搬会写错表，
+-   新扫描器永远扫不到（静默丢失）**。工具已实现两个公式（单测夹具由 JDK 21 实测值钉住）。
+-5. **搬 `FAILED` 死信，不搬 `SUCCESS/CANCELED`**：前者要在单体死信管理面继续重发/取消；
+-   后者是历史，留在 `bs_timeout` 归档里。业务状态机才是业务事实源。
+-6. **目标已有同键行时保留目标行**（新代码的注册是新一代事实源）。搬迁只补缺、不覆盖；
+-   重复执行安全。
+-7. **旧中心只在验收后清理**：先停 job、停进程、摘 Nacos、留 7 天回滚窗口；`bs_timeout` 先 dump
+-   + restore drill，留 30 天再 DROP。`backend/timeout-center/` 的删除归票 09，且必须在验收之后。
+-8. **窗口内旧回调暂停**：从停旧 job 到开新 job 之间，旧的支付/锁单/租约超时任务不触发。
+-   尽量把窗口压到 30 分钟内；业务状态机有守卫，延迟触发不会把已支付订单再关一次。
+-
+-## 1. 搬迁映射（工具替你做的事）
+-
+-| 旧位置 | 新位置 | 过滤/规则 |
+-| --- | --- | --- |
+-| `bs_timeout.timeout_task_00..15` | `better_school.timeout_task_{newSlot:02d}` | 只搬 `WAITING` / `RETRYING` / `FAILED`；`slot` 按 `hash(biz_id) % 16` 重算 |
+-| `better_school.timeout_register_outbox`（`PENDING` 残留） | `better_school.timeout_task_{newSlot:02d}` | 新代码没有发送器了；不搬就永远发不出去。`action_time` 原样，`next_fire_time = action_time`，`retry_count = 0` |
+-| 旧行 `callback_group` | 丢弃 | 新表没有这一列；进程内分发按 `taskType` 走 |
+-| `SUCCESS` / `CANCELED` | 不搬 | 历史留在 `bs_timeout` 归档 |
+-
+-冲突规则：
+-
+-- 目标已有同键行（新代码已经写过）→ **保留目标行，跳过旧行**；报告里逐条记录。
+-- 旧中心行与 outbox 同键时，按旧中心状态 + `action_time` 判断：
+-  - 旧中心在途（`WAITING/RETRYING`）→ 跳过 outbox（在途同键不改期）；
+-  - 旧中心终态、outbox 的 `action_time` **更晚** → 这是 outbox 复位后的**新一轮注册**
+-    （旧中心本会复活终态行），按 outbox 搬；
+-  - 旧中心终态、outbox 不更新 → 视为发送失败的残留，跳过。
+-- 源库出现重复 `(task_type, biz_id)` → 工具报错退出，先人工核对，不自动选一行。
+-- 前向搬迁是**只增不改**的；失败/中断后直接重跑，不会覆盖已有目标行。
+-
+-工具的前置保护（不满足会直接退出）：
+-
+-- 源/目标各有 16 张分表；目标表不存在时提示先执行 `better-school/sql/schema.sql`。
+-- 旧扫描 job `timeoutTaskScanJob` 必须 `trigger_status = 0`；新扫描 job `timeoutTaskScan` 也必须 `0`
+-  （校验期间不能让新代码把刚搬进去的行结算掉，否则校验读到的是漂移后的状态）。
+-- 目标库已有行时，必须显式 `--allow-existing-target`（滚动上线后这是正常状态）。
+-- `--force` 只用于「确认过风险」的越过（例如 xxl 库读不到、或你确实要并发扫描）；
+-  正常上线不要用。
+-
+-## 2. 前置准备（T-1 天）
+-
+-### 2.1 版本与工件
+-
+-- [ ] `better-school` 新版本已构建、制品可部署；`marketing` 不受影响。
+-- [ ] 旧 `timeout-center` 的 jar/镜像、启动命令、旧配置**保留至少 30 天**，回滚要用。
+-- [ ] 确认 `backend/timeout-center/` 源码尚未按票 09 删除（删除必须在验收之后）。
+-- [ ] 确认新版本启动日志里有 `ShardingSelfCheck` 通过、`timeoutTaskScan` handler 注册成功。
+-
+-### 2.2 数据库
+-
+-- [ ] 对生产 `better_school` 执行 `better-school/sql/schema.sql`（`CREATE TABLE IF NOT EXISTS`，
+-      老代码不受影响）。确认 16 张分表存在：
+-
+-```sql
+-SELECT COUNT(*) AS tables_ok
+-FROM information_schema.tables
+-WHERE table_schema = 'better_school'
+-  AND table_name REGEXP '^timeout_task_(0[0-9]|1[0-5])$';
+--- 期望 16
+-```
+-
+-- [ ] 确认 `bs_timeout` 与 `better_school` 在**同一个 MySQL 实例**上（同一连接能 schema 限定访问）。
+-      若生产不是同实例，先把 `bs_timeout` dump 恢复到业务实例的临时 schema，再执行工具。
+-- [ ] 备份（两个都要）：
+-
+-```bash
+-mysqldump --single-transaction --routines --triggers bs_timeout \
+-  > bs_timeout-pre-cutover-$(date +%Y%m%d%H%M).sql
+-mysqldump --single-transaction better_school timeout_register_outbox \
+-  > outbox-pre-cutover-$(date +%Y%m%d%H%M).sql
+-sha256sum bs_timeout-pre-cutover-*.sql outbox-pre-cutover-*.sql
+-```
+-
+-- [ ] 记录源库各状态量（后面用来对账）：
+-
+-```sql
+-SELECT SUM(status = 'WAITING')  AS waiting,
+-       SUM(status = 'RETRYING') AS retrying,
+-       SUM(status = 'FAILED')   AS failed,
+-       SUM(status = 'SUCCESS')  AS success,
+-       SUM(status = 'CANCELED') AS canceled
+-FROM (
+-    SELECT status FROM bs_timeout.timeout_task_00
+-    UNION ALL SELECT status FROM bs_timeout.timeout_task_01
+-    -- ... 一直 UNION 到 timeout_task_15
+-) t;
+-```
+-
+-- [ ] 记录 outbox 残留：
+-
+-```sql
+--- 列名注意：该表是 type/state/create_time/update_time，不是分表的 task_type/status/created_at/updated_at
+-SELECT state, COUNT(*) FROM better_school.timeout_register_outbox GROUP BY state;
+-```
+-
+-### 2.3 xxl-job / 端口 / Nacos
+-
+-- [ ] 记录旧 job 与新 job 的 `id`、`job_group`、`trigger_status`：
+-
+-```sql
+-SELECT id, job_group, executor_handler, trigger_status, schedule_conf, executor_route_strategy
+-FROM xxl_job.xxl_job_info
+-WHERE executor_handler IN ('timeoutTaskScanJob', 'timeoutTaskScan');
+-SELECT id, app_name, title, address_list, update_time
+-FROM xxl_job.xxl_job_group
+-WHERE app_name IN ('timeout-center-executor', 'better-school-executor');
+-```
+-
+-- [ ] 确认新 job seed 已执行（`timeoutTaskScan` 行存在）。没有就先执行
+-      `better-school/sql/xxl-job-tasks.sql`（幂等）；否则 Phase 3 没有 job 可开。
+-
+-- [ ] 确认旧中心端口：HTTP `8083`、Dubbo `50054`、xxl executor `9996`。
+-- [ ] 确认新单体端口：HTTP `8080`、Dubbo `50051`、xxl executor `9999`（与旧中心不冲突）。
+-- [ ] 确认 Nacos 上旧服务名 `timeout-center` 与 `ITimeoutTaskRegister` 的 Provider 清单（回滚时核对）。
+-- [ ] 通知：窗口内支付超时关单、跑腿锁单释放、审核租约回收会延迟，不丢单。
+-
+-## 3. 切换步骤
+-
+-所有 SQL 用同一个高权限连接执行；`mysql` 参数按环境替换。下文用
+-`$MYSQL` 代表 `mysql -h <host> -P <port> -u <user> -p`。
+-
+-### Phase 0：停旧扫描（T0）
+-
+-```sql
+-UPDATE xxl_job.xxl_job_info
+-SET trigger_status = 0
+-WHERE executor_handler = 'timeoutTaskScanJob';
+-```
+-
+-- [ ] 等 **60 秒**（6 个 10s 周期），确认 xxl-job admin 里旧任务无「运行中」实例；
+-      旧中心日志不再出现 `timeoutTaskScanJob` 的扫描完成行。
+-- [ ] 此后旧中心只保留注册 Provider（给还没下线的旧业务实例发注册），不再触发任何回调。
+-- [ ] 记录 T0。
+-
+-**回滚点 0**：把 `trigger_status` 改回 `1` 即恢复；无数据变化。
+-
+-### Phase 1：滚动上线新版本（T0 → T1）
+-
+-- [ ] 按正常发布流程滚动 `better-school`。新实例的效果：
+-      - 新下单/抢单/领单在业务事务内直插 `better_school.timeout_task_*`；
+-      - 本进程的 `timeoutTaskScan` 此时仍启用，只扫到新代码自己写入的新行（旧在途行还在
+-        `bs_timeout`，它看不见）；Phase 2 开始前必须停掉它，再做前向搬迁与校验；
+-      - 旧实例仍写 `timeout_register_outbox` 并调旧中心，旧中心扫描已停，所以只积压不触发。
+-- [ ] 等所有实例都切到新版本（发布平台确认，不能有旧实例继续服务）。
+-- [ ] 等 outbox 不再增长（老实例停完后没有新写入；通常在 30s 内稳定）：
+-
+-```sql
+-SELECT COUNT(*) AS pending FROM better_school.timeout_register_outbox WHERE state = 'PENDING';
+--- 连续两次（间隔 30s）相同即可；>0 也没关系，搬迁会一起处理
+-```
+-
+-- [ ] 记录 T1。
+-
+-**回滚点 1**：把业务版本回退到旧代码；旧中心仍在，数据没动，恢复旧 job 即可。
+-如果部分新实例已经写入过目标表，先按第 5 节 `reverse` 把这些行搬回旧中心，再回退。
+-
+-### Phase 2：停新扫描 + 前向搬迁（T1 → T2）
+-
+-先停新扫描（前向搬迁/校验期间不允许结算目标行）：
+-
+-```sql
+-UPDATE xxl_job.xxl_job_info
+-SET trigger_status = 0
+-WHERE executor_handler = 'timeoutTaskScan';
+-```
+-
+-- [ ] 等 10s，确认新 job 无运行中实例。如果 `timeoutTaskScan` 行还不存在（seed 未执行），跳过本步。
+-- [ ] 预检 + dry-run（不写库）：
+-
+-```bash
+-python backend/scripts/timeout-cutover-migrate.py forward \
+-  --host <host> --port <port> --user <user> \
+-  --source-schema bs_timeout --target-schema better_school --xxl-schema xxl_job \
+-  --allow-existing-target --dry-run \
+-  --report /tmp/timeout-cutover-forward-dry.json
+-```
+-
+-看三件事：
+-
+-1. `[forward] 源 N 行 ...` 与第 2.2 节记录的非终态量对得上（`WAITING+RETRYING+FAILED`）；
+-2. `outbox PENDING` 与第 2.2 节记录一致；
+-3. `[error]` 没有；`[warn]` 里的目标已有行数能解释（新代码上线后下的单）。
+-
+-- [ ] 正式搬迁：
+-
+-```bash
+-python backend/scripts/timeout-cutover-migrate.py forward \
+-  --host <host> --port <port> --user <user> \
+-  --source-schema bs_timeout --target-schema better_school --xxl-schema xxl_job \
+-  --allow-existing-target \
+-  --report /tmp/timeout-cutover-forward.json
+-```
+-
+-- [ ] 退出码必须为 `0`，报告里 `"verification": {"ok": true}`。工具会校验：
+-      - 每条源行/outbox 行都在目标库有同键行；
+-      - 本次插入的行状态、`action_time` 与源一致；
+-      - **目标库每一行的物理表号都等于新公式槽位**（这是「扫描器不漏行」的硬约束）。
+-
+-如果失败：
+-
+-- 旧中心数据还在，**不要继续**；
+-- 按报告修数据后直接重跑（只增不改，安全）；
+-- 若报「源库存在重复键」或「目标槽位错误」，先人工核对，不要用 `--force` 掩盖。
+-- 若报 `Duplicate entry ... for key 'uk_type_biz'`：这是「读取目标的快照之后，新代码刚好写入同键」
+-  的窄窗口。整个事务已回滚，**不要手工删目标行**，直接重跑即可（新目标行会被判为「目标已有」而跳过）。
+-
+-- [ ] 独立抽查：
+-
+-```sql
+--- 抽几条源行，确认目标同键存在且在新公式表里
+-SELECT task_type, biz_id, status, action_time
+-FROM better_school.timeout_task_00
+-WHERE biz_id IN ('<源 bizId 1>', '<源 bizId 2>');
+-
+--- 目标死信是否包含旧 FAILED
+-SELECT COUNT(*) AS failed FROM (
+-    SELECT status FROM better_school.timeout_task_00
+-    UNION ALL SELECT status FROM better_school.timeout_task_01
+-    -- ... 到 _15
+-) t WHERE status = 'FAILED';
+-```
+-
+-- [ ] 记录 T2。
+-
+-**回滚点 2**：目标表只增不改，旧中心数据完整。停新 job、回退业务版本、恢复旧 job
+-即可；新代码期间产生的目标行用第 5 节 `reverse` 搬回。
+-
+-### Phase 3：开新扫描，验证回调（T2 → T3）
+-
+-```sql
+-UPDATE xxl_job.xxl_job_info
+-SET trigger_status = 1
+-WHERE executor_handler = 'timeoutTaskScan';
+-```
+-
+-- [ ] 观察 2–3 个 10s 周期，确认 `timeoutTaskScan` 执行成功、日志出现：
+-      `扫描完成：槽位 N 个、批次 M、任务 K 条（成功 x / 重试 y / 进死信 z）`。
+-- [ ] 已经到期的旧行应在下一个周期被回调：业务状态应从待支付/锁定/待领变成目标终态；
+-      已支付/已取消的陈旧行按幂等成功落 `SUCCESS`。
+-- [ ] 打开管理面 `GET /api/admin/timeout-tasks/dead-letters`（ADMIN），确认旧 `FAILED` 能看到。
+-- [ ] 记录 T3。
+-
+-**回滚点 3**：此时旧中心仍完整、只停扫描。回退步骤同回滚点 2。
+-
+-### Phase 4：停旧中心（T3 → T4）
+-
+-- [ ] 优雅停掉旧中心进程（不要先删库/删 job）。
+-- [ ] 确认端口释放：
+-
+-```bash
+-ss -lntp | grep -E ':(8083|50054|9996)\b'   # 期望无输出
+-```
+-
+-- [ ] 确认 Nacos 上无 `timeout-center` 实例（Nacos 控制台或
+-      `GET /nacos/v1/ns/instance/list?serviceName=timeout-center`）；如有残留实例，手工下线。
+-- [ ] 确认旧 job `trigger_status = 0`。
+-- [ ] 记录 T4。
+-
+-**回滚点 4**：重新启动旧中心 + 第 5 节 `reverse` + 恢复旧 job。
+-
+-### Phase 5：观察期（T4 + 24h / 7d）
+-
+-- [ ] 24h 内每 10s 扫描无异常；`[超时中心告警]` 日志为 0 或可解释。
+-- [ ] `WAITING/RETRYING` 数量回落到正常水位；没有持续增长的单一 `taskType`。
+-- [ ] 死信数量不异常增长；旧 `FAILED` 搬过来的行可按需重发/取消。
+-- [ ] 四个 `taskType` 各抽一单做业务验收：
+-      `PRODUCT_ORDER_PAY_TIMEOUT` / `ERRAND_PAY_TIMEOUT` / `ERRAND_LOCK_TIMEOUT` / `REVIEW_LEASE_TIMEOUT`。
+-- [ ] 旧库 `bs_timeout` 已无新写入（`MAX(updated_at)` 停在 T4 之前）。
+-- [ ] 7 天后验收通过，进入清理。
+-
+-## 4. 清理口径（验收后）
+-
+-### 4.1 xxl-job
+-
+-先归档（留档到发布记录/工单），再删。**先删 `xxl_job_info`，再删 `xxl_job_group`**：
+-
+-```sql
+--- 归档
+-SELECT * FROM xxl_job.xxl_job_info WHERE executor_handler = 'timeoutTaskScanJob'\G
+-SELECT * FROM xxl_job.xxl_job_group WHERE app_name = 'timeout-center-executor'\G
+-
+--- 删除
+-DELETE FROM xxl_job.xxl_job_info WHERE executor_handler = 'timeoutTaskScanJob';
+-DELETE FROM xxl_job.xxl_job_group WHERE app_name = 'timeout-center-executor';
+-```
+-
+-保留：
+-
+-- `xxl_job_info` 的 `timeoutTaskScan`（新扫描 job，启用）；
+-- `xxl_job_group` 的 `better-school-executor`（新执行器）。
+-
+-`xxl_job_log` 旧 job 的历史日志可保留到日志保留期结束；不要为了删 job 顺手清全表。
+-
+-### 4.2 Nacos
+-
+-- [ ] 旧中心进程停止后应自动摘除；检查 `timeout-center` 应用与
+-      `providers:com.betterschool.timeout.api.task.ITimeoutTaskRegister` 的残留实例。
+-- [ ] 手工删除残留实例（控制台或
+-      `DELETE /nacos/v1/ns/instance?serviceName=...&ip=...&port=...`）。
+-- [ ] 旧中心的 Nacos 配置（dataId/group）确认无其他服务引用后再删除；不确定就留档。
+-
+-### 4.3 端口 / 监控 / 网关
+-
+-- [ ] 防火墙/安全组关闭 `8083`、`50054`、`9996` 的入站（旧中心已停）。
+-- [ ] 从监控、告警、日志采集、负载均衡/反代中移除 `timeout-center`。
+-- [ ] 确认新单体 `8080` / `50051` / `9999` 的监控已就位。
+-
+-### 4.4 `bs_timeout` 库：留档 30 天再 DROP
+-
+-- [ ] 停旧中心后再做一次最终 dump（旧库已无写入）：
+-
+-```bash
+-mysqldump --single-transaction --routines --triggers bs_timeout \
+-  > bs_timeout-final-$(date +%Y%m%d).sql
+-sha256sum bs_timeout-final-*.sql
+-```
+-
+-- [ ] 做一次恢复演练（证明 dump 可用）：
+-
+-```bash
+-mysql -e 'DROP DATABASE IF EXISTS bs_timeout_restore; CREATE DATABASE bs_timeout_restore'
+-mysql bs_timeout_restore < bs_timeout-final-YYYYMMDD.sql
+-mysql -e "SELECT COUNT(*) FROM bs_timeout_restore.timeout_task_00"
+-```
+-
+-- [ ] dump 存到备份仓库/工单附件，保留 **30 天**。
+-- [ ] 30 天后、且验收无回滚需求，执行：
+-
+-```sql
+-DROP DATABASE IF EXISTS bs_timeout;
+-DROP DATABASE IF EXISTS bs_timeout_test;   -- 测试/预发环境
+-```
+-
+-- [ ] 同步票 09 的 `dev-stack.ps1` / `test-env.sh` 清理项（不再建 `bs_timeout`）。
+-
+-### 4.5 `timeout_register_outbox`
+-
+-票 03 已把它从 `better-school/sql/schema.sql` 删除，但生产库里的实体表还在。验收后：
+-
+-```sql
+--- 先归档
+-SELECT * FROM better_school.timeout_register_outbox;   -- 或 mysqldump 单表
+--- 再删
+-DROP TABLE better_school.timeout_register_outbox;
+-```
+-
+-确认没有其他代码/报表引用后再删；`grep -r timeout_register_outbox` 应只剩历史 `.scratch/**`、
+-本清单与迁移工具（后两者是历史追溯用的文档/脚本，不是运行时引用）。
+-
+-### 4.6 工程与文档
+-
+-- [ ] 票 09：删除 `backend/timeout-center/` 整目录、改 `backend/CLAUDE.md` 的「三个工程」为两个、
+-      改写 `backend/docs/architecture/timeout-center.md`、补 ADR/词条。
+-- [ ] 本清单与工具保留在 `backend/docs/ops/`、`backend/scripts/`（历史追溯用；不属于运行时代码）。
+-- [ ] 确认根 `pom.xml` 无 `timeout-center-api` 残留、本地仓库说明已更新。
+-
+-## 5. 回滚
+-
+-### 5.1 阶段矩阵
+-
+-| 当前阶段 | 回滚动作 | 数据动作 |
+-| --- | --- | --- |
+-| Phase 0（旧 job 已停，未发版） | 旧 job `trigger_status=1` | 无 |
+-| Phase 1（发版中/刚发完，未搬迁） | 停新 job、停新实例；回退业务版本；最后恢复旧 job `1` | 新实例若写过目标表，先 `reverse`（旧 job 必须仍为 `0`） |
+-| Phase 2（前向搬迁已跑/校验失败） | 停新 job、停新实例；回退业务版本；最后恢复旧 job `1` | 目标表只增不改，旧中心数据完整；新代码期间产生的目标行按需 `reverse` |
+-| Phase 3（新 job 已开） | 停新 job、停新实例；回退业务版本；最后恢复旧 job `1` | 先 `reverse` 再恢复旧 job，避免新代码期间的行丢 |
+-| Phase 4（旧中心已停） | 起旧中心；回退业务版本 | 先 `reverse`（旧中心在停着时插入），再起旧中心、恢复旧 job |
+-| Phase 5/清理后 | 从 `bs_timeout` dump 恢复；重新部署旧中心工件 | 先恢复 dump，再 `reverse` 新表在途/死信；最后恢复旧 job |
+-
+-### 5.2 `reverse` 命令（业务库 → 旧中心）
+-
+-前提：
+-
+-1. 新扫描 job `timeoutTaskScan` 置 `0`；
+-2. 旧扫描 job `timeoutTaskScanJob` 也置 `0`（回滚期间它会把刚写回旧库的行结算掉）；
+-3. 停掉所有新版本业务实例（不再写目标表、不再扫描）；
+-4. 旧中心可以还没起；工具只写 `bs_timeout`，不依赖旧进程。
+-
+-```bash
+-# dry-run
+-python backend/scripts/timeout-cutover-migrate.py reverse \
+-  --host <host> --port <port> --user <user> \
+-  --source-schema bs_timeout --target-schema better_school --xxl-schema xxl_job \
+-  --callback-group better-school --dry-run \
+-  --report /tmp/timeout-cutover-reverse-dry.json
+-
+-# 正式
+-python backend/scripts/timeout-cutover-migrate.py reverse \
+-  --host <host> --port <port> --user <user> \
+-  --source-schema bs_timeout --target-schema better_school --xxl-schema xxl_job \
+-  --callback-group better-school \
+-  --report /tmp/timeout-cutover-reverse.json
+-```
+-
+-`reverse` 的规则：
+-
+-- 目标 `WAITING/RETRYING` → 按**旧公式**写回 `bs_timeout`；
+-- 旧中心已有同键在途行 → 跳过（不重复触发）；
+-- 旧中心同键是终态、目标是在途 → 复活旧行（状态/`action_time`/`next_fire_time`/`retry_count` 以目标为准）；
+-- 目标已经 `SUCCESS/CANCELED`、旧中心还是 `WAITING/RETRYING` → 把旧行置 `CANCELED`
+-  （业务动作已经发生，避免回滚后重复回调；不想要这个行为加 `--keep-stale-old`）；
+-- 目标 `FAILED`：
+-  - 旧中心没有同键行 → 插入死信行（保留新中心的人工重发能力）；
+-  - 旧中心同键死信 → 保留旧行；
+-  - 旧中心同键在途 → 保留旧在途继续重试，不拿死信覆盖；
+-  - 旧中心同键已 `SUCCESS/CANCELED` → **保留旧终态**，不把新死信覆盖回去
+-    （业务动作在旧中心已经结算；报告里逐条记录）。
+-
+-`reverse` 完成后：
+-
+-1. 部署旧版业务代码（恢复 Dubbo 回调 Provider）；
+-2. 启动旧中心（如果已停）；
+-3. 旧 job `trigger_status=1`；
+-4. 观察旧 job 扫到搬回的行并回调成功。
+-
+-### 5.3 回滚后的清理
+-
+-- 新代码在目标表里留下的行不用删（旧代码不读它）；确认旧中心接管后，按下一轮改造重新评估。
+-- 不要把 `reverse` 与 `forward` 同时跑；两个方向都要求对方扫描 job 停止。
+-- 若已经执行了 4.4 的 DROP，先恢复 dump 再 `reverse`。
+-
+-## 6. 验收 / 观察指标
+-
+-| 指标 | 正常 | 异常处理 |
+-| --- | --- | --- |
+-| `timeoutTaskScan` 10s 执行成功 | 连续成功 | 看日志 `[超时中心告警]`；旧 job 不得为 1 |
+-| `WAITING + RETRYING` 总量 | 与改造前水位相当、无持续增长 | 按 `taskType` 分解，查业务注册点 |
+-| `FAILED` 数量 | 不异常增长；旧死信可见 | 管理面重发/取消 |
+-| 回调并发 / Hikari 活跃连接 | ≤ 4 / ≤ 4（池 10 留 ≥6） | 调 `timeout.scan.parallelism`，不要动池 |
+-| `bs_timeout` 写入 | `MAX(updated_at)` 停在 T4 前 | 有写入 = 旧代码/旧 job 未停干净 |
+-| 旧端口 8083/50054/9996 | 无监听 | 有监听 = 旧进程未停 |
+-| Nacos `timeout-center` | 无实例 | 手工下线 |
+-
+-## 7. 已知风险与对策
+-
+-| 风险 | 对策 |
+-| --- | --- |
+-| 窗口内旧回调暂停，支付/锁单/租约超时延迟 | 窗口压到 30min 内；业务状态机幂等守卫；延迟触发不会重复关单/释放 |
+-| 分表号用错（按旧表号搬） | 工具强制新公式；校验目标每行槽位；禁止 `INSERT ... SELECT` 直接搬 |
+-| outbox PENDING 残留被遗忘 | 工具默认搬；预检报告 PENDING 数；验收后 DROP 旧表 |
+-| 搬迁时新代码刚好写入同键 | 读取快照后撞 `uk_type_biz` 会整批回滚；不要手工删目标行，直接重跑（目标已有键会被跳过） |
+-| 新扫描器在校验期间结算目标行 | 前向搬迁前停 `timeoutTaskScan`；工具前置检查；校验通过再开 |
+-| 旧中心停不干净（job/进程/端口） | Phase 0 停 job、Phase 4 停进程并验端口/Nacos；旧库 `MAX(updated_at)` 再确认 |
+-| 回滚漏掉新代码期间产生的行 | `reverse` 覆盖目标 `WAITING/RETRYING`；目标 `FAILED` 无旧行时插死信，有旧行时保留旧中心事实 |
+-| `bs_timeout` 未归档就 DROP | 先 dump + restore drill + 30 天保留；票 09 才删工程 |
+-| 生产不是同一 MySQL 实例 | 工具要求同一连接；不同实例先把 `bs_timeout` 恢复到业务实例临时 schema |
+-| 误用 `--force` | 只在确认 job 状态/并发风险后使用；报告会记录 warning |
+-
+-## 8. 工具速查
+-
+-```bash
+-python backend/scripts/timeout-cutover-migrate.py --help
+-python backend/scripts/timeout-cutover-migrate.py forward --help
+-python backend/scripts/timeout-cutover-migrate.py reverse --help
+-
+-# 离线单测（不需要 MySQL）
+-python backend/scripts/test_timeout_cutover_migrate.py -v
+-```
+-
+-连接参数优先取环境变量：`MYSQL_BIN` / `MYSQL_HOST` / `MYSQL_TCP_PORT` / `MYSQL_USER` / `MYSQL_PWD`，
+-也可以用 `--mysql/--host/--port/--user/--password` 覆盖。脚本只依赖 `mysql` 客户端，
+-不额外安装 Python 驱动。
+-
+-这是**数据搬迁**工具，不是 DDL 迁移：`schema.sql` 仍是唯一 DDL 来源（`backend/CLAUDE.md` §10）。
+-
+-**退出码**：
+-
+-- `0`：成功（dry-run 也返回 0，但报告里 `dry_run=true`、`verification` 未执行）；
+-- `2`：预检失败或执行失败——没有写库，或写入事务已整体回滚；
+-- `3`：**写入已 COMMIT，但落库/槽位校验失败**。不要立刻重跑掩盖问题：先看报告
+-  `verification.errors`，人工核对目标表；修好后重跑是安全的（只增不改），但要先确认
+-  失败原因不是「新扫描器在搬迁期间结算了行」。
+-
+-报告字段：
+-
+-- `counts`：源/目标各状态量、计划/实际插入、跳过；
+-- `conflicts`：逐条跳过原因（目标已有键、outbox 已在旧中心等）；
+-- `verification.ok` / `errors`：落库与槽位校验结果；
+-- `warnings`：job 状态、目标已有行、outbox 存在等操作提醒。
+-
+-## 9. 口径对照（为什么不是另外两个候选）
+-
+-- **(a) 双跑**：需要旧中心继续回调业务方。票 05 已删除业务侧
+-  `TimeoutTaskCallbackDubboService`、`ITimeoutTaskCallback` DTO 与 `timeout-center-api` 依赖，
+-  旧中心的动态 `ReferenceConfig` 找不到 Provider；要继续双跑就得把刚删掉的 Dubbo 回调边加回来，
+-  同时保留三工程/两套扫描，和「一次性下线」的方向相反。**否决。**
+-- **(c) 丢弃重注册**：商品支付超时的 `productTimeoutScan` / `ProductPayTimeoutConsumer` 已在票 03 删除，
+-  没有业务侧兜底；跑腿锁单/审核租约的复合 `bizId` 也没有可重放的业务事件来源。**会卡死，否决。**
+-- **(b) 一次性搬迁**：就是本清单。代价是一次短暂的旧回调暂停和一次数据搬迁；换来旧中心可以真正停掉、
+-  不留双跑、不恢复已删的回调边。
+-
+-## 10. 与票 09 的边界
+-
+-- 本清单负责：**切换顺序、数据搬迁工具、回滚、清理口径**。
+-- 票 09 负责：删 `backend/timeout-center/`、改写 `backend/docs/architecture/timeout-center.md`、
+-  改 `backend/CLAUDE.md` 工程数、补 ADR/词条、`dev-stack.ps1` / `test-env.sh` 的 `bs_timeout` 清理。
+-- 顺序：**先按本清单验收，再开工票 09**；票 09 删除工程后，旧中心回滚工件只能靠已保留的 jar/镜像。
+diff --git a/backend/marketing/docs/architecture/timeout.md b/backend/marketing/docs/architecture/timeout.md
+index 09f7cb3..bfeae0b 100644
+--- a/backend/marketing/docs/architecture/timeout.md
++++ b/backend/marketing/docs/architecture/timeout.md
+@@ -2,7 +2,7 @@
+ 
+ > 归属：营销服务（`backend/marketing/`）。**状态：规格——本期不落表、不落代码。**
+ > 来源：[`.scratch/timeout-inline/issues/08-marketing-side-spec.md`](../../../../.scratch/timeout-inline/issues/08-marketing-side-spec.md)（内嵌化 effort 票 08）。
+-> 主体实现与口径事实源：[`backend/docs/architecture/timeout-center.md`](../../../docs/architecture/timeout-center.md) §0、
++> 主体实现与口径事实源：[`backend/docs/architecture/timeout.md`](../../../docs/architecture/timeout.md)、
+ > [`backend/CLAUDE.md`](../../../CLAUDE.md) §1–§3/§7。
+ 
+ ## 0. 结论
+@@ -44,7 +44,7 @@ outbox 的 `scanTimeoutSeconds`、一处 javadoc 的 `payTimeoutMinutes` 与 Roc
+ | 槽位公式 | `slot = floorMod(hash(biz_id), 16)`（hash 输入只有 `biz_id`，单点函数 `TimeoutTaskShardSlots`） |
+ | 建库文件 | `marketing/sql/init-dev.sql` / `init-test.sql`：本票不改；表进 `schema.sql`，开发 `bs_marketing`、测试 `bs_marketing_test` 共用 |
+ 
+-**列与主体逐列同构，且没有 `callback_group`**（进程内分发不需要回调路由列）。DDL 直接照
++**列与主体逐列同构，且没有回调路由列**（进程内分发不需要按应用名路由）。DDL 直接照
+ `better-school/sql/schema.sql` 的 16 张表复制，只改表注释（`超时任务分表 NN` → `营销超时任务分表 NN`）；
+ 逻辑表形状与主体完全一致（下面的片段为可读性压缩了列注释的长尾，**落表以主体 schema.sql 原文为准**，
+ 表注释除外）：
+@@ -68,11 +68,11 @@ CREATE TABLE IF NOT EXISTS timeout_task_00 (
+ 
+ - **不加 `user_id`**：内嵌化票 02 已显式否决（主查询按 `(status, next_fire_time)` 扫、分片键不参与；
+   路由键 ⊥ 幂等键会引入「user 与幂等键绑定不可变」的额外不变量，破了即双行双回调）。
+-- 营销是**全新落表**、没有存量任务要搬：不需要内嵌化票 07 那种 forward/reverse 迁移工具与切换顺序。
++- 营销是**全新落表**、没有存量任务要搬：不需要主体那种 forward/reverse 迁移工具与切换顺序。
+   落表后空表随首个接入方开始写入。
+ - 表数：营销现在 **22** 张，落超时后 **38** 张（22 + 16）。
+-  `marketing/docs/README.md` 与根 `sql.md` 的营销段届时同步；**`sql.md` 的全局表数口径归票 09 改写**，
+-  营销这 16 张在真正落表时再补进去（避免两张票同时改同一段）。
++  `marketing/docs/README.md` 与根 `sql.md` 的营销段届时同步；营销这 16 张在真正落表时再补进 `sql.md`
++  （当前全库口径：单体 29 业务表 + 16 超时分表、营销 22 张）。
+ 
+ ### 1.2 列名口径的例外（落表时必须登记）
+ 
+@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_00 (
+ 
+ - 两个工程共享的是**同一份 DDL 模板与语义文档**（map Notes 1），列名一分叉，两份 PO / mapper XML
+   就不再逐行可对照，排查要同时记两套；
+-- 主体那 16 张是从 `bs_timeout` 原样迁入的，改名要动 16 份 DDL + XML + 存量迁移，收益只有命名整齐
++- 主体那 16 张是从原独立超时库原样迁入的，改名要动 16 份 DDL + XML + 存量迁移，收益只有命名整齐
+   （内嵌化票 02 已拒绝）；营销是全新落表，唯一代价是一行例外注释——比维护两套列名便宜。
+ 
+ ## 2. 域段落位
+@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_00 (
+ | `marketing-infrastructure` | `infrastructure.timeout.*` | `dao.ITimeoutTaskDao` + `dao.po.TimeoutTaskPO`；`adapter.repository.TimeoutRepository`；`sharding.{TimeoutTaskShardSlots,TimeoutTaskDbHintShardingAlgorithm,TimeoutTaskTableHintShardingAlgorithm}` |
+ | `marketing-case` | `usecase.timeout.*` | `TimeoutTaskScanCase`（认领 + 有界并行 + 结算）、`TimeoutTaskCallbackDispatcher`（端口实现）、`TimeoutTaskDeadLetterCase`（管理面编排） |
+ | `marketing-trigger` | `trigger.timeout.job.TimeoutTaskScanJob`；需要管理面时 `trigger.timeout.http.TimeoutTaskAdminController` | 只做入口，不含业务判据 |
+-| `marketing-api` | 仅管理面 DTO（`api.timeout.dto`） | **不建 Dubbo 契约**——没有跨进程边，别复制旧中心的 `timeout-center-api` |
++| `marketing-api` | 仅管理面 DTO（`api.timeout.dto`） | **不建 Dubbo 契约**——没有跨进程边，别复制改造前独立中心那套契约 jar |
+ | `marketing-app` | `config/ShardingSelfCheck`；`config/MybatisConfig` 的 `@MapperScan` 加一行；`mybatis/mapper/timeout/` | 应用装配与 mapper XML（营销 `mapper-locations` 是 `classpath:/mybatis/mapper/**/*.xml`，子目录可用） |
+ 
+ 落位细则：
+@@ -323,7 +323,7 @@ HINT 强制路由**。照 `better-school/bs-app/src/main/resources/sharding.yaml
+ 9. **文档**：本文状态改为「已落地」；`marketing/docs/db/`、`marketing/docs/api/` 增补；
+    `backend/docs/architecture/marketing-services.md` §6 的 handler 清单（6 → 7）与表数同步。
+ 
+-**不要做**：加 `user_id` 列；恢复 `callback_group`；用 `outbox_message` 承载注册；发 Dubbo 契约；
++**不要做**：加 `user_id` 列；恢复回调路由列；用 `outbox_message` 承载注册；发 Dubbo 契约；
+ 启用 `DB_COUNT > 1`；一表一线程；把 `pointsExpireScan` / `drawCountBucketExpireScan` / `inventoryMerge` 迁进来。
+ 
+ ## 7. `CONTEXT.md` 词条分工（与票 09 协调）
+diff --git a/backend/marketing/pom.xml b/backend/marketing/pom.xml
+index 9f557c1..6a1559d 100644
+--- a/backend/marketing/pom.xml
++++ b/backend/marketing/pom.xml
+@@ -4,9 +4,9 @@
+          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+     <modelVersion>4.0.0</modelVersion>
+ 
+-    <!-- backend/ 下只剩三个 Maven 工程：单体 better-school、营销 marketing（本工程，points + lottery
+-         两域）、超时中心 timeout-center。三者是兄弟目录、各自独立的 project：没有 reactor 关系，
+-         跨 project 取契约只能经本地仓库（com.betterschool:bs-api）。
++    <!-- backend/ 下只剩两个 Maven 工程：单体 better-school（超时中心已内嵌在此）、营销 marketing
++         （本工程，points + raffle 两业务域 + drawcount/config/inventory 三个支撑域）。两者是兄弟目录、
++         各自独立的 project：没有 reactor 关系，跨 project 取契约只能经本地仓库（com.betterschool:bs-api）。
+          本工程内部七个 marketing-* 模块同属一个 reactor，模块间契约走 dependencyManagement 的
+          ${project.version}（票 07 起抽奖侧原跨 project 引的 com.betterschool:marketing-api 已收敛为同 reactor 模块）。
+          parent 直接挂 Boot 官方 parent（票 06：由 marketing-asset 聚合器改名而来） -->
+diff --git a/backend/scripts/dev-stack.ps1 b/backend/scripts/dev-stack.ps1
+index 81b4f4b..35c50a7 100644
+--- a/backend/scripts/dev-stack.ps1
++++ b/backend/scripts/dev-stack.ps1
+@@ -1,6 +1,6 @@
+ ﻿<#
+ .SYNOPSIS
+-    better-school 全栈一键起（票 17）：中间件容器 + 三库 + xxl 注册 + MQ 清理 + 三服务 + 健康检查。
++    better-school 全栈一键起（票 17）：中间件容器 + 两库 + xxl 注册 + MQ 清理 + 两服务 + 健康检查。
+ 
+ .DESCRIPTION
+     bash / WSL 在这台机器上是坏的（`execvpe(/bin/bash) failed`），所以 test-env.sh / run-app.sh
+@@ -13,26 +13,24 @@
+ 
+       ① docker compose up -d        （cwd = backend/）
+            mysql ─┬─ xxl-job-admin（要先有 xxl_job 库，见 ③）
+-                  └─ 三服务库
++                  └─ 两服务库
+            redis / minio / nacos / rocketmq-namesrv / es 各自独立
+            rocketmq-broker 依赖 rocketmq-namesrv 健康（compose 里已写 depends_on）
+       ② 等就绪：mysql(healthy) → redis(healthy) → minio(healthy) → nacos(healthy)
+                 → rocketmq-namesrv(healthy) → es(healthy)
+                 broker / xxl-job-admin 无 healthcheck，只报状态不阻塞
+       ③ 建库（docker exec 直连，不用 test-env.sh）：
+-           better_school  = better-school/sql/init-dev.sql   + schema.sql
++           better_school  = better-school/sql/init-dev.sql   + schema.sql（超时 16 分表就在这份 schema 里）
+            bs_marketing   = marketing/sql/init-dev.sql       + schema.sql（init 已含 USE）
+-           bs_timeout     = timeout-center/sql/init-dev.sql  + `USE bs_timeout;` + schema-timeout-task.sql
+            xxl_job        = backend/sql/xxl-job.sql（只在 xxl_job_info 表缺失时灌；官方脚本非幂等）
+-      ④ xxl 注册（xxl-seed）：三个工程的 sql/xxl-job-tasks.sql（幂等，按 executor_handler 判重）
++      ④ xxl 注册（xxl-seed）：两个工程的 sql/xxl-job-tasks.sql（幂等，按 executor_handler 判重）
+                               + 清掉已无 handler 对应的历史行与两个废弃执行器组
+       ⑤ 注册面清理：Nacos（nacos-prune，删掉已删工程留下的 dataId）+ RocketMQ（mq-prune，
+                     删掉已无生产/消费方的 topic 与消费组，清单见 $StaleMqNames）
+-      ⑥ 构建（除非 -SkipBuild）：mvn -o clean package -DskipTests（三个工程各一次）
++      ⑥ 构建（除非 -SkipBuild）：mvn -o clean package -DskipTests（两个工程各一次）
+       ⑦ 起服务并等健康（顺序 = 依赖方向）：
+-           timeout-center（注册边 Provider，谁都不依赖）
+-             → better-school（注册边 Consumer；同时是 bs-api 的 Dubbo Provider）
+-               → marketing（IUserQueryService 的 Consumer）
++           better-school（bs-api 的 Dubbo Provider）
++             → marketing（IUserQueryService 的 Consumer）
+ 
+     健康端点（无 actuator 依赖，取各服务匿名可访问的 GET；xxl 执行器端口顺带校验）：
+ 
+@@ -40,10 +38,9 @@
+       | -------------- | ---- | ----------------------------------------------------- | --------- | ---------- |
+       | better-school  | 8080 | GET /api/community/posts?page=1&pageSize=1            | 50051     | 9999       |
+       | marketing      | 8081 | GET /api/lottery/activity                             | 50052     | 9998       |
+-      | timeout-center | 8083 | GET /api/admin/timeout-tasks/dead-letters?page=1&pageSize=1 | 50054 | 9996   |
+ 
+-      端口清单来源：三个工程的 app 模块 src/main/resources/application.yml。
+-      9999 / 9998 / 9996 是 **xxl 执行器端口**（票 17 票面把这三个误称作 actuator——本仓没有引入
++      端口清单来源：两个工程的 app 模块 src/main/resources/application.yml。
++      9999 / 9998 是 **xxl 执行器端口**（票 17 票面把这两个误称作 actuator——本仓没有引入
+       spring-boot-starter-actuator，也没有 management.* 配置）。
+ 
+     日志与 pid：`<工程目录>/logs/dev-stack-<key>.log` / `.err.log` / `.pid`
+@@ -52,10 +49,10 @@
+ 
+ .EXAMPLE
+     powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/dev-stack.ps1 up               # 全栈一键起（幂等）
+-    powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/dev-stack.ps1 up -ResetDb      # 顺带 DROP 重建三个开发库
++    powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/dev-stack.ps1 up -ResetDb      # 顺带 DROP 重建两个开发库
+     powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/dev-stack.ps1 up -SkipBuild    # 复用已有 jar
+     powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/dev-stack.ps1 health           # 只做健康检查
+-    powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/dev-stack.ps1 down             # 停三个 java 进程（容器不动）
++    powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/dev-stack.ps1 down             # 停两个 java 进程（容器不动）
+     （本机只有 Windows PowerShell 5.1，没有 pwsh 7——不要照抄别的教程里的 pwsh 调用）
+ #>
+ [CmdletBinding()]
+@@ -67,7 +64,7 @@ param(
+     # up 时跳过 mvn package（复用已有 jar；改过 java 就别跳）
+     [switch]$SkipBuild,
+ 
+-    # up 时先 DROP 三个开发库再重建（改过 schema.sql 后必须；只动开发库，不碰 *_test）
++    # up 时先 DROP 两个开发库再重建（改过 schema.sql 后必须；只动开发库，不碰 *_test）
+     [switch]$ResetDb,
+ 
+     [int]$HealthTimeoutSeconds = 300
+@@ -89,11 +86,6 @@ $MySqlArgs = @('exec', '-i', $MysqlContainer, 'mysql', '-uroot', '-pbs123456', '
+ 
+ # 服务清单：顺序 = 依赖方向（先起的在后面被依赖）。health = 匿名可访问的 GET。
+ $Services = @(
+-    [pscustomobject]@{
+-        Key = 'center'; Project = 'timeout-center'; Module = 'timeout-center-app'
+-        HttpPort = 8083; DubboPort = 50054; XxlPort = 9996
+-        HealthPath = '/api/admin/timeout-tasks/dead-letters?page=1&pageSize=1'
+-    }
+     [pscustomobject]@{
+         Key = 'bs'; Project = 'better-school'; Module = 'bs-app'
+         HttpPort = 8080; DubboPort = 50051; XxlPort = 9999
+@@ -111,7 +103,7 @@ $Middleware = @('bs-mysql', 'bs-redis', 'bs-minio', 'bs-nacos', 'bs-rocketmq-nam
+ $MiddlewareNoHealth = @('bs-rocketmq-broker', 'bs-xxl-job-admin')
+ 
+ # 已废弃的 RocketMQ topic / 消费组（票 17 编排收口）。
+-# 判据：全仓 grep 三个工程源码，已无任何 @RocketMQMessageListener / Producer group / topic 常量引用它们
++# 判据：全仓 grep 两个工程源码，已无任何 @RocketMQMessageListener / Producer group / topic 常量引用它们
+ #   bs-agent-review         旧审核链路（票 02 删除）
+ #   bs-want-paid            旧支付下单链路（票 03 删除）
+ #   bs-errand-grouped       旧跑腿成团（票 04 删除）
+@@ -253,10 +245,9 @@ function Invoke-DbInit([switch]$Drop) {
+     Write-Step "3/7 建库（$mode）"
+     $bsSql = Join-Path $BackendDir 'better-school\sql'
+     $mktSql = Join-Path $BackendDir 'marketing\sql'
+-    $toSql = Join-Path $BackendDir 'timeout-center\sql'
+ 
+     if ($Drop) {
+-        foreach ($db in @('better_school', 'bs_marketing', 'bs_timeout')) {
++        foreach ($db in @('better_school', 'bs_marketing')) {
+             Invoke-SqlStatement "DROP DATABASE IF EXISTS ``$db``;" | Out-Null
+             Write-Ok "dropped $db"
+         }
+@@ -268,10 +259,6 @@ function Invoke-DbInit([switch]$Drop) {
+     Invoke-SqlFiles -Paths @((Join-Path $mktSql 'init-dev.sql'), (Join-Path $mktSql 'schema.sql'))
+     Write-Ok 'bs_marketing = init-dev.sql + schema.sql（init 自带 USE）'
+ 
+-    # timeout-center 的 init-dev.sql 只建库不切库，USE 由这里补
+-    Invoke-SqlFiles -Paths @((Join-Path $toSql 'init-dev.sql'), (Join-Path $toSql 'schema-timeout-task.sql')) -InlineBetween @('USE bs_timeout;')
+-    Write-Ok 'bs_timeout = init-dev.sql + USE bs_timeout + schema-timeout-task.sql'
+-
+     # xxl_job.sql 非幂等（CREATE TABLE 无 IF NOT EXISTS），只在表缺失时灌一次
+     $xxlTables = Invoke-SqlStatement "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='xxl_job' AND table_name='xxl_job_info';"
+     if ([int]$xxlTables -eq 0) {
+@@ -282,7 +269,7 @@ function Invoke-DbInit([switch]$Drop) {
+         Write-Ok 'xxl_job 已在（xxl_job_info 存在），跳过官方建库脚本'
+     }
+ 
+-    foreach ($row in (Invoke-SqlStatement "SELECT table_schema, COUNT(*) FROM information_schema.tables WHERE table_schema IN ('better_school','bs_marketing','bs_timeout') GROUP BY table_schema ORDER BY table_schema;")) {
++    foreach ($row in (Invoke-SqlStatement "SELECT table_schema, COUNT(*) FROM information_schema.tables WHERE table_schema IN ('better_school','bs_marketing') GROUP BY table_schema ORDER BY table_schema;")) {
+         Write-Ok "表数 $row"
+     }
+ }
+@@ -292,7 +279,7 @@ function Invoke-XxlSeed {
+     $handlers = ($StaleXxlHandlers | ForEach-Object { "'$_'" }) -join ','
+     $groups = ($StaleXxlGroups | ForEach-Object { "'$_'" }) -join ','
+ 
+-    # 先删废弃行（含已删执行器组下的行），再灌三份 seed
++    # 先删废弃行（含已删执行器组下的行），再灌两份 seed
+     Invoke-SqlStatement "USE xxl_job; DELETE FROM xxl_job_info WHERE executor_handler IN ($handlers);" | Out-Null
+     Write-Ok "清掉已无 handler 的历史任务行：$($StaleXxlHandlers -join ', ')"
+ 
+@@ -302,9 +289,8 @@ function Invoke-XxlSeed {
+ 
+     Invoke-SqlFiles -Paths @(
+         (Join-Path $BackendDir 'better-school\sql\xxl-job-tasks.sql'),
+-        (Join-Path $BackendDir 'marketing\sql\xxl-job-tasks.sql'),
+-        (Join-Path $BackendDir 'timeout-center\sql\xxl-job-tasks.sql'))
+-    Write-Ok '灌入三份 sql/xxl-job-tasks.sql'
++        (Join-Path $BackendDir 'marketing\sql\xxl-job-tasks.sql'))
++    Write-Ok '灌入两份 sql/xxl-job-tasks.sql'
+ 
+     Write-Host '  当前注册表（组 → handler，trigger_status）：'
+     # 箭头用 ASCII：→ 会在 mysql 客户端回显时被转码成乱码
+@@ -321,7 +307,7 @@ $NacosInstances = @(
+ # 已删工程在 Nacos 里留下的配置（Dubbo 元数据 + 接口→应用映射）。
+ # 判据：包根属于票 06/07 删掉的两个工程（com.betterschool.asset.* / com.betterschool.points.*）、
+ # 或测试探针/桩的临时项（probe-*.yml / stub-bs-*）。在用的
+-# com.betterschool.marketing.api.points.* 与 com.betterschool.timeout.* 都不匹配这些前缀。
++# com.betterschool.marketing.api.points.* 不匹配这些前缀（com.betterschool.timeout.* 包已随独立超时工程删除）。
+ $StaleNacosPrefixes = @('com.betterschool.asset.', 'com.betterschool.points.', 'probe-')
+ $StaleNacosContains = @('stub-bs-')
+ 
+@@ -364,7 +350,7 @@ function Invoke-MqPrune {
+ }
+ 
+ function Invoke-Build {
+-    Write-Step '6/7 构建三个工程（mvn -o clean package -DskipTests）'
++    Write-Step '6/7 构建两个工程（mvn -o clean package -DskipTests）'
+     foreach ($svc in $Services) {
+         $projDir = Join-Path $BackendDir $svc.Project
+         Write-Host "  → $($svc.Project)"
+@@ -379,7 +365,7 @@ function Invoke-Build {
+ }
+ 
+ function Start-Services {
+-    Write-Step '7/7 起三服务（timeout-center → better-school → marketing）'
++    Write-Step '7/7 起两服务（better-school → marketing）'
+     foreach ($svc in $Services) {
+         $jar = Get-ServiceJar $svc
+         $projDir = Join-Path $BackendDir $svc.Project
+@@ -427,12 +413,12 @@ function Invoke-Health {
+                 $svc.Project, $svc.HttpPort, $svc.HealthPath, $svc.DubboPort, $dubbo, $svc.XxlPort, $xxl)
+         if ($http -eq 'FAIL') { $allOk = $false }
+     }
+-    if ($allOk) { Write-Ok '三服务全部健康' } else { Write-Warn2 '存在不健康项（见上）' }
++    if ($allOk) { Write-Ok '两服务全部健康' } else { Write-Warn2 '存在不健康项（见上）' }
+     return $allOk
+ }
+ 
+ function Invoke-Down {
+-    Write-Step '停三服务（容器保持运行；要停容器用 docker compose down）'
++    Write-Step '停两服务（容器保持运行；要停容器用 docker compose down）'
+     foreach ($svc in $Services) {
+         $pidFile = Join-Path $BackendDir "$($svc.Project)\logs\dev-stack-$($svc.Key).pid"
+         if (-not (Test-Path $pidFile)) { Write-Warn2 "$($svc.Project)：无 pid 文件，跳过"; continue }
+diff --git a/backend/scripts/run-app.sh b/backend/scripts/run-app.sh
+index 88ee0e3..bf14a33 100644
+--- a/backend/scripts/run-app.sh
++++ b/backend/scripts/run-app.sh
+@@ -1,11 +1,11 @@
+ #!/usr/bin/env bash
+ #
+-# 三工程共享启动入口（virtual-thread effort 票 16，spec §5.1「JFR 常态化」）。
++# 两工程共享启动入口（virtual-thread effort 票 16，spec §5.1「JFR 常态化」）。
+ # 在 backend/ 下执行：
+ #
+ #   scripts/run-app.sh <svc> [--no-jfr] [传给应用的参数...]
+ #
+-# svc ∈ bs | marketing | center —— 端口分别 8080 / 8081 / 8083
++# svc ∈ bs | marketing —— 端口分别 8080 / 8081
+ # （票 07 起营销只有一个工程 marketing-app，域为 points + raffle + inventory + drawcount；原 activity 的 8082 已释放）
+ #
+ # 例：起单体并打开 Hikari JMX（spec §5.1「替代信号」手册要读池的 active / awaiting）
+@@ -30,11 +30,11 @@ RECORDING_NAME="bs-vt"
+ 
+ usage() {
+     cat <<'EOF'
+-三工程共享启动入口（JFR 常态化）。在 backend/ 下执行：
++两工程共享启动入口（JFR 常态化）。在 backend/ 下执行：
+ 
+   scripts/run-app.sh <svc> [--no-jfr] [传给应用的参数...]
+ 
+-  svc ∈ bs | marketing | center —— 端口分别 8080 / 8081 / 8083
++  svc ∈ bs | marketing —— 端口分别 8080 / 8081
+ 
+ 例：起单体并打开 Hikari JMX（spec §5.1「替代信号」手册要读池的 active / awaiting）
+   scripts/run-app.sh bs --spring.datasource.hikari.register-mbeans=true
+@@ -58,9 +58,8 @@ shift
+ case "$SVC" in
+     bs)        PROJ="better-school";  APP_DIR="bs-app";                PORT=8080 ;;
+     marketing) PROJ="marketing";      APP_DIR="marketing-app";         PORT=8081 ;;
+-    center)    PROJ="timeout-center"; APP_DIR="timeout-center-app";    PORT=8083 ;;
+     -h|--help) usage; exit 0 ;;
+-    *) echo "未知工程：$SVC（可选 bs / marketing / center）" >&2; exit 2 ;;
++    *) echo "未知工程：$SVC（可选 bs / marketing）" >&2; exit 2 ;;
+ esac
+ 
+ USE_JFR=true
+diff --git a/backend/scripts/test-env.sh b/backend/scripts/test-env.sh
+index 89c5547..f86c930 100755
+--- a/backend/scripts/test-env.sh
++++ b/backend/scripts/test-env.sh
+@@ -1,10 +1,10 @@
+ #!/usr/bin/env bash
+-# 本地开发/测试常驻栈：一条命令起容器并把单体两库与各独立服务库建好，之后一整天不用再管。
++# 本地开发/测试常驻栈：一条命令起容器并把单体两库与营销库建好，之后一整天不用再管。
+ #
+ # 集成测试连的是这里起好的栈，不是自建容器——跑测试前必须先跑一次本脚本。
+ # 开发库与测试库共用一个 MySQL 容器，靠库名隔离：better_school / better_school_test。
+ #
+-#   scripts/test-env.sh up             起全部容器 + 等就绪 + 建好单体两库与各服务库
++#   scripts/test-env.sh up             起全部容器 + 等就绪 + 建好单体两库与营销库
+ #   scripts/test-env.sh reset-test-db  先 DROP 再重建 better_school_test（改 schema / 加迁移后用）
+ #   scripts/test-env.sh help           显示帮助
+ set -euo pipefail
+@@ -24,18 +24,14 @@ MYSQL_CONTAINER=bs-mysql
+ MYSQL_PASSWORD=bs123456
+ DEV_DB=better_school
+ TEST_DB=better_school_test
+-# 独立服务各自一个库（同 MySQL 实例），与单体同法隔离开发/测试库。
+-# 各服务一个库：建库语句在各工程 sql/init-{dev,test}.sql；表 DDL 各在自己的 schema-<svc>.sql。
++# 营销各一个库（同 MySQL 实例），与单体同法隔离开发/测试库。
++# 建库语句在工程 sql/init-{dev,test}.sql；表 DDL 在自己的 schema.sql。
+ # 营销服务（backend/marketing/，票 08 起单文件 schema.sql = sql.md §2 的 22 张新表）：
+ # bs_marketing 一库，schema.sql（票 13 起唯一 DDL，schema-legacy.sql 已随旧 lottery 表删除）——
+ # DDL 全部 IF NOT EXISTS 幂等；outbox_message 只在新形状 schema.sql 里。
+ MARKETING_SQL_DIR="$BASE_DIR/marketing/sql"
+ SERVICE_DEV_DBS="bs_marketing"
+ SERVICE_TEST_DBS="bs_marketing_test"
+-# 超时中心已随 timeout-center 工程落位（票 07）：16 张分表在 bs_timeout / bs_timeout_test 里
+-TIMEOUT_SQL_DIR="$BASE_DIR/timeout-center/sql"
+-SERVICE_DEV_DBS="$SERVICE_DEV_DBS bs_timeout"
+-SERVICE_TEST_DBS="$SERVICE_TEST_DBS bs_timeout_test"
+ 
+ # 起完要等就绪的 7 个中间件（开发侧 + 测试侧各三个共用/独立 + 各自 nacos）。
+ # 不含 rocketmq-broker / rocketmq-dashboard / xxl-job-admin / es：测试不依赖它们
+@@ -54,10 +50,9 @@ usage() {
+ 用法：scripts/test-env.sh <命令>
+ 
+   up（默认）        起全部容器 + 等中间件就绪 + 建好 better_school 与 better_school_test
+-                    + 独立服务库（bs_marketing / bs_timeout 及各自 _test）
+-  reset-test-db     先 DROP 再重建 better_school_test 与各服务测试库（改过 schema.sql /
+-                    schema-<svc>.sql 或跑了新迁移之后用；只动测试库，
+-                    容器要在运行中——没起就先跑 up）
++                    + 营销库（bs_marketing 及其 _test）
++  reset-test-db     先 DROP 再重建 better_school_test 与营销测试库（改过 schema.sql
++                    之后用；只动测试库，容器要在运行中——没起就先跑 up）
+   help              显示本帮助
+ EOF
+ }
+@@ -76,12 +71,10 @@ apply_init() {
+ }
+ 
+ # 独立服务同容器同实例：建库文件 + 该服务的 DDL 主体同样必须拼给同一个连接。
+-# 建库文件负责 CREATE DATABASE + USE（营销两份 init 已与单体同形；本函数再插一次 USE 是幂等冗余，
+-# timeout-center 的 init 若只建库则靠它切库）。各份 schema-*.sql 都不含 CREATE DATABASE / USE，
++# 建库文件负责 CREATE DATABASE + USE（营销两份 init 已与单体同形；本函数再插一次 USE 是幂等冗余）。
++# 各份 schema.sql 都不含 CREATE DATABASE / USE，
+ # 才能让开发库与测试库共用同一份 DDL 主体。
+-# 一个服务有多份 schema 时，对同一个库名按序各调一次本函数，
+-# DDL 全 IF NOT EXISTS 幂等，重复拼是 no-op。
+-# 第一个参数是工程 sql 目录（各服务都有自己的目录）；追加新服务时在调用处加几行。
++# 第一个参数是工程 sql 目录；追加新服务时在调用处加几行。
+ apply_service_init() {
+   local base_dir="$1" init_file="$2" db_name="$3" schema_file="$4"
+   { cat "$base_dir/$init_file"; printf 'USE `%s`;\n' "$db_name"; cat "$base_dir/$schema_file"; } | sql_stdin
+@@ -125,13 +118,10 @@ cmd_up() {
+   printf '\n== 3/3 建库（幂等，可重复执行）\n'
+   apply_init init-dev.sql
+   apply_init init-test.sql
+-  # 营销服务（marketing 工程，单库 bs_marketing：唯一 schema.sql）、
+-  # 超时中心（timeout-center 工程，票 07 落位）：
+-  # 建库文件 + DDL 都在各工程 sql/ 下
++  # 营销服务（marketing 工程，单库 bs_marketing：唯一 schema.sql）；
++  # 建库文件 + DDL 都在工程 sql/ 下
+   apply_service_init "$MARKETING_SQL_DIR" init-dev.sql  bs_marketing      schema.sql
+   apply_service_init "$MARKETING_SQL_DIR" init-test.sql bs_marketing_test schema.sql
+-  apply_service_init "$TIMEOUT_SQL_DIR" init-dev.sql  bs_timeout      schema-timeout-task.sql
+-  apply_service_init "$TIMEOUT_SQL_DIR" init-test.sql bs_timeout_test schema-timeout-task.sql
+ 
+   printf '\n就绪：%s（开发）/ %s（测试）\n' "$DEV_DB" "$TEST_DB"
+   printf '独立服务：%s（开发）/ %s（测试）\n' "$SERVICE_DEV_DBS" "$SERVICE_TEST_DBS"
+@@ -154,10 +144,8 @@ cmd_reset_test_db() {
+ 
+   printf '== 重建（init-test.sql + schema.sql）\n'
+   apply_init init-test.sql
+-  printf '== 重建独立服务库（各工程 init-test.sql + 各份 schema-<svc>.sql）\n'
++  printf '== 重建独立服务库（营销工程 init-test.sql + schema.sql）\n'
+   apply_service_init "$MARKETING_SQL_DIR" init-test.sql bs_marketing_test schema.sql
+-  apply_service_init "$MARKETING_SQL_DIR" init-test.sql bs_marketing_test schema.sql
+-  apply_service_init "$TIMEOUT_SQL_DIR" init-test.sql bs_timeout_test schema-timeout-task.sql
+ 
+   printf '\n已重建：%s、%s（开发库 %s / %s 未触碰）\n' \
+     "$TEST_DB" "$SERVICE_TEST_DBS" "$DEV_DB" "$SERVICE_DEV_DBS"
+diff --git a/backend/scripts/test_timeout_cutover_migrate.py b/backend/scripts/test_timeout_cutover_migrate.py
+deleted file mode 100644
+index 8757742..0000000
+--- a/backend/scripts/test_timeout_cutover_migrate.py
++++ /dev/null
+@@ -1,385 +0,0 @@
+-#!/usr/bin/env python3
+-"""`timeout-cutover-migrate.py` 的离线单测（不需要 MySQL）。
+-
+-运行：
+-
+-    python backend/scripts/test_timeout_cutover_migrate.py -v
+-
+-槽位夹具由 JDK 21 直接跑 `String.hashCode()` 得到（见票 07 的 Answer），
+-不是用 Python 反推的——这个文件的唯一价值就是钉住「Python 工具与 Java 运行时逐字节一致」。
+-"""
+-
+-from __future__ import annotations
+-
+-import importlib.util
+-import sys
+-import unittest
+-from pathlib import Path
+-
+-MODULE_PATH = Path(__file__).with_name("timeout-cutover-migrate.py")
+-SPEC = importlib.util.spec_from_file_location("timeout_cutover_migrate", MODULE_PATH)
+-assert SPEC and SPEC.loader
+-migrate = importlib.util.module_from_spec(SPEC)
+-sys.modules[SPEC.name] = migrate
+-SPEC.loader.exec_module(migrate)
+-
+-
+-def row(
+-    task_type: str,
+-    biz_id: str,
+-    status: str = "WAITING",
+-    *,
+-    table: str = "timeout_task_00",
+-    action_time: str = "2026-10-17 12:00:00",
+-    next_fire_time: str | None = None,
+-    retry_count: int = 0,
+-    origin: str = "center",
+-) -> "migrate.TaskRow":
+-    return migrate.TaskRow(
+-        table=table,
+-        task_type=task_type,
+-        biz_id=biz_id,
+-        action_time=action_time,
+-        next_fire_time=next_fire_time or action_time,
+-        status=status,
+-        retry_count=retry_count,
+-        created_at="2026-10-17 11:45:00",
+-        updated_at="2026-10-17 11:45:00",
+-        origin=origin,
+-    )
+-
+-
+-class JavaHashTest(unittest.TestCase):
+-    """夹具：Java 21 `String.hashCode()` / `String.length()` 的实测输出。"""
+-
+-    def test_ascii_hash(self) -> None:
+-        self.assertEqual(migrate.java_hash("1001"), 1507424)
+-        self.assertEqual(migrate.java_hash("3003:1"), 1505896535)
+-        self.assertEqual(migrate.java_hash("4004:2"), 1534526648)
+-
+-    def test_cjk_hash(self) -> None:
+-        self.assertEqual(migrate.java_hash("订单-测试"), -711078908)
+-
+-    def test_surrogate_pair_hash(self) -> None:
+-        # Java String.length() 数 UTF-16 code unit：emoji 是 2，不是 1。
+-        self.assertEqual(migrate.java_hash("😀:7"), 1703757792)
+-        self.assertEqual(migrate.java_length("😀:7"), 4)
+-
+-    def test_cjk_length(self) -> None:
+-        self.assertEqual(migrate.java_length("订单-测试"), 5)
+-
+-    def test_old_slot_fixtures(self) -> None:
+-        cases = [
+-            ("PRODUCT_ORDER_PAY_TIMEOUT", "1001", 2),
+-            ("ERRAND_PAY_TIMEOUT", "2002", 0),
+-            ("ERRAND_LOCK_TIMEOUT", "3003:1", 15),
+-            ("REVIEW_LEASE_TIMEOUT", "4004:2", 9),
+-            ("PRODUCT_ORDER_PAY_TIMEOUT", "订单-测试", 2),
+-            ("ERRAND_LOCK_TIMEOUT", "😀:7", 8),
+-        ]
+-        for task_type, biz_id, expected in cases:
+-            with self.subTest(task_type=task_type, biz_id=biz_id):
+-                self.assertEqual(migrate.old_slot(task_type, biz_id), expected)
+-
+-    def test_new_slot_fixtures(self) -> None:
+-        cases = [
+-            ("1001", 0),
+-            ("2002", 0),
+-            ("3003:1", 7),
+-            ("4004:2", 8),
+-            ("订单-测试", 4),
+-            ("😀:7", 0),
+-        ]
+-        for biz_id, expected in cases:
+-            with self.subTest(biz_id=biz_id):
+-                self.assertEqual(migrate.new_slot(biz_id), expected)
+-
+-    def test_physical_table_zero_pads(self) -> None:
+-        self.assertEqual(migrate.physical_table(0), "timeout_task_00")
+-        self.assertEqual(migrate.physical_table(15), "timeout_task_15")
+-        with self.assertRaises(migrate.MigrationError):
+-            migrate.physical_table(16)
+-
+-
+-class ForwardPlanTest(unittest.TestCase):
+-
+-    def test_missing_key_is_inserted_into_new_slot(self) -> None:
+-        source = [row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_15")]
+-        plan = migrate.plan_forward(source, [], [])
+-        self.assertEqual(len(plan.inserts), 1)
+-        self.assertEqual(plan.inserts[0].target_table, "timeout_task_07")
+-        self.assertFalse(plan.skips)
+-
+-    def test_existing_target_wins(self) -> None:
+-        source = [row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_15")]
+-        target = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="RETRYING",
+-                      table="timeout_task_07", retry_count=3)]
+-        plan = migrate.plan_forward(source, [], target)
+-        self.assertFalse(plan.inserts)
+-        self.assertEqual(len(plan.skips), 1)
+-        self.assertEqual(plan.skips[0].target_table, "timeout_task_07")
+-        self.assertIn("保留目标行", plan.skips[0].reason)
+-
+-    def test_outbox_row_is_migrated_when_center_lost_it(self) -> None:
+-        outbox = [row("PRODUCT_ORDER_PAY_TIMEOUT", "1001", origin="outbox",
+-                      table="timeout_register_outbox")]
+-        plan = migrate.plan_forward([], outbox, [])
+-        self.assertEqual(len(plan.inserts), 1)
+-        self.assertEqual(plan.inserts[0].row.origin, "outbox")
+-        self.assertEqual(plan.inserts[0].target_table, "timeout_task_00")
+-
+-    def test_outbox_row_skipped_when_center_already_has_key(self) -> None:
+-        source = [row("PRODUCT_ORDER_PAY_TIMEOUT", "1001")]
+-        outbox = [row("PRODUCT_ORDER_PAY_TIMEOUT", "1001", origin="outbox",
+-                      table="timeout_register_outbox")]
+-        plan = migrate.plan_forward(source, outbox, [])
+-        self.assertEqual(len(plan.inserts), 1)
+-        self.assertEqual(plan.inserts[0].row.origin, "center")
+-        self.assertEqual(len(plan.skips), 1)
+-        self.assertIn("outbox", plan.skips[0].reason)
+-
+-    def test_outbox_row_skipped_when_center_terminal_and_outbox_is_stale(self) -> None:
+-        outbox = [row("PRODUCT_ORDER_PAY_TIMEOUT", "1001", origin="outbox",
+-                      table="timeout_register_outbox", action_time="2026-10-17 12:00:00")]
+-        old = row("PRODUCT_ORDER_PAY_TIMEOUT", "1001", status="SUCCESS",
+-                  table="timeout_task_00", action_time="2026-10-17 13:00:00")
+-        plan = migrate.plan_forward(
+-            [], outbox, [],
+-            source_by_key={("PRODUCT_ORDER_PAY_TIMEOUT", "1001"): old},
+-        )
+-        self.assertFalse(plan.inserts)
+-        self.assertEqual(len(plan.skips), 1)
+-        self.assertIn("SUCCESS", plan.skips[0].reason)
+-        self.assertIn("残留", plan.skips[0].reason)
+-
+-    def test_outbox_row_migrated_when_center_terminal_but_outbox_is_newer(self) -> None:
+-        # outbox uk 会复位 PENDING：终态旧行 + 更晚 action_time = 新一轮注册，不能丢。
+-        outbox = [row("PRODUCT_ORDER_PAY_TIMEOUT", "1001", origin="outbox",
+-                      table="timeout_register_outbox", action_time="2026-10-17 14:00:00")]
+-        old = row("PRODUCT_ORDER_PAY_TIMEOUT", "1001", status="SUCCESS",
+-                  table="timeout_task_00", action_time="2026-10-17 13:00:00")
+-        plan = migrate.plan_forward(
+-            [], outbox, [],
+-            source_by_key={("PRODUCT_ORDER_PAY_TIMEOUT", "1001"): old},
+-        )
+-        self.assertEqual(len(plan.inserts), 1)
+-        self.assertEqual(plan.inserts[0].row.origin, "outbox")
+-        self.assertFalse(plan.skips)
+-
+-    def test_duplicate_source_key_is_fatal(self) -> None:
+-        source = [
+-            row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_15"),
+-            row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_08"),
+-        ]
+-        with self.assertRaises(migrate.MigrationError):
+-            migrate.plan_forward(source, [], [])
+-
+-    def test_failed_dead_letter_is_carried_over(self) -> None:
+-        source = [row("REVIEW_LEASE_TIMEOUT", "4004:2", status="FAILED", retry_count=16)]
+-        plan = migrate.plan_forward(source, [], [])
+-        self.assertEqual(plan.inserts[0].row.status, "FAILED")
+-        self.assertEqual(plan.inserts[0].row.retry_count, 16)
+-
+-    def test_verify_forward_does_not_require_terminal_outbox_row(self) -> None:
+-        outbox = [row("ERRAND_LOCK_TIMEOUT", "3003:1", origin="outbox",
+-                      table="timeout_register_outbox", action_time="2026-10-17 12:00:00")]
+-        old = row("ERRAND_LOCK_TIMEOUT", "3003:1", status="SUCCESS",
+-                  table="timeout_task_15", action_time="2026-10-17 13:00:00")
+-        plan = migrate.plan_forward(
+-            [], outbox, [],
+-            source_by_key={("ERRAND_LOCK_TIMEOUT", "3003:1"): old},
+-        )
+-        self.assertEqual(migrate.verify_forward(migrate.Config(), plan, []), [])
+-
+-    def test_verify_forward_reports_missing_source_row(self) -> None:
+-        source = [row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_15")]
+-        plan = migrate.plan_forward(source, [], [])
+-        errors = migrate.verify_forward(migrate.Config(), plan, [])
+-        self.assertTrue(any("未出现在目标库" in error for error in errors))
+-
+-
+-class ReversePlanTest(unittest.TestCase):
+-
+-    def test_new_target_row_is_inserted_into_old_slot(self) -> None:
+-        target = [row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_07")]
+-        plan = migrate.plan_reverse(target, [])
+-        self.assertEqual(len(plan.inserts), 1)
+-        self.assertEqual(plan.inserts[0].target_table, "timeout_task_15")
+-
+-    def test_old_active_row_is_not_duplicated(self) -> None:
+-        target = [row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_07")]
+-        old = [row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_15", retry_count=2)]
+-        plan = migrate.plan_reverse(target, old)
+-        self.assertFalse(plan.inserts)
+-        self.assertEqual(len(plan.skips), 1)
+-        self.assertIn("旧中心已有在途行", plan.skips[0].reason)
+-
+-    def test_old_terminal_row_is_revived(self) -> None:
+-        target = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="RETRYING",
+-                      table="timeout_task_07", retry_count=3)]
+-        old = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="SUCCESS",
+-                   table="timeout_task_15")]
+-        plan = migrate.plan_reverse(target, old)
+-        self.assertEqual(len(plan.revives), 1)
+-        self.assertEqual(plan.revives[0].target_table, "timeout_task_15")
+-
+-    def test_target_success_cancels_stale_old_active_row(self) -> None:
+-        target = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="SUCCESS",
+-                      table="timeout_task_07")]
+-        old = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="WAITING",
+-                   table="timeout_task_15")]
+-        plan = migrate.plan_reverse(target, old)
+-        self.assertEqual(len(plan.cancels), 1)
+-        self.assertFalse(plan.inserts)
+-
+-    def test_stale_cancel_can_be_disabled(self) -> None:
+-        target = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="SUCCESS",
+-                      table="timeout_task_07")]
+-        old = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="WAITING",
+-                   table="timeout_task_15")]
+-        plan = migrate.plan_reverse(target, old, cancel_stale_old=False)
+-        self.assertFalse(plan.cancels)
+-        self.assertEqual(len(plan.skips), 1)
+-
+-    def test_old_active_row_is_kept_when_target_is_failed(self) -> None:
+-        target = [row("REVIEW_LEASE_TIMEOUT", "4004:2", status="FAILED",
+-                      table="timeout_task_08", retry_count=16)]
+-        old = [row("REVIEW_LEASE_TIMEOUT", "4004:2", status="RETRYING",
+-                   table="timeout_task_09", retry_count=5)]
+-        plan = migrate.plan_reverse(target, old)
+-        self.assertFalse(plan.inserts)
+-        self.assertFalse(plan.revives)
+-        self.assertEqual(len(plan.skips), 1)
+-        self.assertIn("继续重试", plan.skips[0].reason)
+-
+-    def test_failed_target_without_old_row_is_inserted(self) -> None:
+-        target = [row("REVIEW_LEASE_TIMEOUT", "4004:2", status="FAILED",
+-                      table="timeout_task_08", retry_count=16)]
+-        plan = migrate.plan_reverse(target, [])
+-        self.assertEqual(len(plan.inserts), 1)
+-        self.assertEqual(plan.inserts[0].target_table, "timeout_task_09")
+-
+-    def test_failed_target_with_old_terminal_keeps_old_terminal(self) -> None:
+-        # 旧中心已结算（SUCCESS/CANCELED）时不拿新死信覆盖：业务事实已发生。
+-        target = [row("REVIEW_LEASE_TIMEOUT", "4004:2", status="FAILED",
+-                      table="timeout_task_08", retry_count=16)]
+-        old = [row("REVIEW_LEASE_TIMEOUT", "4004:2", status="SUCCESS",
+-                   table="timeout_task_09")]
+-        plan = migrate.plan_reverse(target, old)
+-        self.assertFalse(plan.inserts)
+-        self.assertFalse(plan.revives)
+-        self.assertEqual(len(plan.skips), 1)
+-        self.assertIn("保留旧终态", plan.skips[0].reason)
+-
+-
+-class JobGuardTest(unittest.TestCase):
+-    """扫描 job 前置守卫：读不到 xxl 默认拒绝，两个 job 启用都阻塞。"""
+-
+-    def test_unreadable_xxl_requires_force(self) -> None:
+-        with self.assertRaises(migrate.MigrationError):
+-            migrate.check_job_statuses(migrate.Config(), None, "forward")
+-
+-    def test_unreadable_xxl_allowed_with_force(self) -> None:
+-        warnings = migrate.check_job_statuses(migrate.Config(force=True), None, "forward")
+-        self.assertTrue(any("--force" in warning for warning in warnings))
+-
+-    def test_old_job_enabled_blocks_forward(self) -> None:
+-        with self.assertRaises(migrate.MigrationError):
+-            migrate.check_job_statuses(
+-                migrate.Config(), {"timeoutTaskScanJob": 1, "timeoutTaskScan": 0}, "forward"
+-            )
+-
+-    def test_old_job_enabled_blocks_reverse(self) -> None:
+-        with self.assertRaises(migrate.MigrationError):
+-            migrate.check_job_statuses(
+-                migrate.Config(), {"timeoutTaskScanJob": 1, "timeoutTaskScan": 0}, "reverse"
+-            )
+-
+-    def test_new_job_enabled_blocks_forward(self) -> None:
+-        with self.assertRaises(migrate.MigrationError):
+-            migrate.check_job_statuses(
+-                migrate.Config(), {"timeoutTaskScanJob": 0, "timeoutTaskScan": 1}, "forward"
+-            )
+-
+-    def test_missing_new_job_warns_seed(self) -> None:
+-        warnings = migrate.check_job_statuses(
+-            migrate.Config(), {"timeoutTaskScanJob": 0}, "forward"
+-        )
+-        self.assertTrue(any("xxl-job-tasks.sql" in warning for warning in warnings))
+-
+-    def test_no_jobs_warns(self) -> None:
+-        warnings = migrate.check_job_statuses(migrate.Config(), {}, "forward")
+-        self.assertTrue(any("没有" in warning for warning in warnings))
+-
+-
+-class SqlGenerationTest(unittest.TestCase):
+-    def test_sql_text_uses_hex_literal(self) -> None:
+-        self.assertEqual(
+-            migrate.sql_text("订单-测试"),
+-            "CONVERT(X'"
+-            + "订单-测试".encode("utf-8").hex()
+-            + "' USING utf8mb4)",
+-        )
+-
+-    def test_forward_insert_has_no_callback_group(self) -> None:
+-        cfg = migrate.Config()
+-        item = migrate.PlannedInsert("timeout_task_00", row("PRODUCT_ORDER_PAY_TIMEOUT", "1001"))
+-        sql = migrate.insert_forward_sql(cfg, item)
+-        self.assertNotIn("callback_group", sql)
+-        self.assertIn("`better_school`.`timeout_task_00`", sql)
+-
+-    def test_reverse_insert_has_callback_group(self) -> None:
+-        cfg = migrate.Config(callback_group="better-school")
+-        item = migrate.PlannedInsert("timeout_task_02", row("PRODUCT_ORDER_PAY_TIMEOUT", "1001"))
+-        sql = migrate.insert_reverse_sql(cfg, item)
+-        self.assertIn("callback_group", sql)
+-        self.assertIn(migrate.sql_text("better-school"), sql)
+-
+-    def test_outbox_select_uses_real_column_names(self) -> None:
+-        # 回归：outbox 列名是 type/state/create_time/update_time（票 03 删表前的 DDL），
+-        # 不是分表的 task_type/status/created_at/updated_at。
+-        sql = migrate.select_outbox_sql("better_school")
+-        self.assertIn("HEX(type)", sql)
+-        self.assertIn("state = 'PENDING'", sql)
+-        self.assertIn("create_time", sql)
+-        self.assertIn("update_time", sql)
+-        self.assertNotIn("task_type", sql)
+-        self.assertNotIn("status =", sql)
+-        self.assertNotIn("created_at", sql)
+-        self.assertNotIn("updated_at", sql)
+-
+-    def test_revive_reverse_sql_guards_terminal_status(self) -> None:
+-        cfg = migrate.Config()
+-        item = migrate.PlannedInsert(
+-            "timeout_task_15", row("ERRAND_LOCK_TIMEOUT", "3003:1", status="RETRYING")
+-        )
+-        sql = migrate.revive_reverse_sql(cfg, item)
+-        self.assertIn("`bs_timeout`.`timeout_task_15`", sql)
+-        self.assertIn("AND status IN ('SUCCESS', 'FAILED', 'CANCELED')", sql)
+-        self.assertIn(migrate.sql_text("3003:1"), sql)
+-
+-    def test_cancel_reverse_sql_only_hits_active_rows(self) -> None:
+-        cfg = migrate.Config()
+-        item = migrate.PlannedInsert(
+-            "timeout_task_15", row("ERRAND_LOCK_TIMEOUT", "3003:1", status="SUCCESS")
+-        )
+-        sql = migrate.cancel_reverse_sql(cfg, item)
+-        self.assertIn("status = 'CANCELED'", sql)
+-        self.assertIn("AND status IN ('WAITING', 'RETRYING')", sql)
+-
+-    def test_forward_script_is_one_transaction(self) -> None:
+-        cfg = migrate.Config()
+-        plan = migrate.ForwardPlan(
+-            inserts=[
+-                migrate.PlannedInsert(
+-                    "timeout_task_00", row("PRODUCT_ORDER_PAY_TIMEOUT", "1001")
+-                )
+-            ]
+-        )
+-        sql = migrate.forward_script(cfg, plan)
+-        self.assertTrue(sql.startswith("SET NAMES utf8mb4;\nSTART TRANSACTION;"))
+-        self.assertTrue(sql.rstrip().endswith("COMMIT;"))
+-
+-
+-if __name__ == "__main__":
+-    unittest.main()
+diff --git a/backend/scripts/timeout-cutover-migrate.py b/backend/scripts/timeout-cutover-migrate.py
+deleted file mode 100644
+index bbbeb6c..0000000
+--- a/backend/scripts/timeout-cutover-migrate.py
++++ /dev/null
+@@ -1,1199 +0,0 @@
+-#!/usr/bin/env python3
+-"""超时中心内嵌化切换的数据搬迁工具（一次性，票 07）。
+-
+-把 `bs_timeout.timeout_task_*` 里的存量在途/死信行搬进
+-`better_school.timeout_task_*`，并支持回滚方向的逆向搬迁。
+-
+-为什么需要它（而不是直接 `INSERT ... SELECT`）：
+-
+-* **槽位公式变了**。旧中心 `slot = floorMod(hash(len(taskType)+":"+taskType+bizId), 16)`，
+-  新单体 `slot = floorMod(hash(bizId), 16)`。目标分表号必须按新公式重算，否则新扫描器
+-  永远看不到这一行（写错表 = 静默丢失，不是报错）。
+-* **目标表里可能已有新代码写入的行**。新代码先滚动上线再搬迁时，同键以目标行为准
+-  （目标行是新一代注册的事实源），搬迁只补缺、不覆盖。
+-* **`timeout_register_outbox` 里可能还有 PENDING 残留**。新代码不再有 outbox 发送器；
+-  这些行如果只留在旧表里，部署完成后就永远发不出去，必须一并搬。
+-
+-安全边界（脚本会做/不会做的事）：
+-
+-* 前置检查旧扫描 job `timeoutTaskScanJob` 必须已停（`trigger_status = 0`），
+-  新扫描 job `timeoutTaskScan` 也必须已停（前向搬迁/校验期间不能让新代码把刚搬进去的行结算掉），
+-  除非显式 `--force`。这一条是「搬迁期间到点」竞态的主要防线。
+-* 前向搬迁只搬 `WAITING` / `RETRYING` / `FAILED`：前两者是未完成动作，`FAILED` 是死信，
+-  搬过去才能在单体的死信管理面里继续重发/取消。`SUCCESS` / `CANCELED` 是历史，
+-  随 `bs_timeout` 留档，不搬。
+-* 不修改源库。搬迁可重复执行：同键已存在就跳过并记入报告。
+-* 整个写入在一个事务里；任一条失败回滚全部，重跑安全。
+-
+-用法见 `backend/docs/ops/timeout-inline-cutover.md`。
+-"""
+-
+-from __future__ import annotations
+-
+-import argparse
+-import json
+-import os
+-import subprocess
+-import sys
+-from dataclasses import dataclass, field
+-from datetime import datetime, timezone
+-from typing import Iterable, Sequence
+-
+-SCRIPT_VERSION = "1.0.0"
+-SHARD_COUNT = 16
+-TABLE_PREFIX = "timeout_task"
+-ACTIVE_STATUSES = ("WAITING", "RETRYING")
+-MIGRATED_STATUSES = ("WAITING", "RETRYING", "FAILED")
+-ALL_STATUSES = ("WAITING", "RETRYING", "SUCCESS", "FAILED", "CANCELED")
+-OLD_SCAN_HANDLER = "timeoutTaskScanJob"
+-NEW_SCAN_HANDLER = "timeoutTaskScan"
+-OUTBOX_TABLE = "timeout_register_outbox"
+-SOURCE_KEY_CHUNK = 200  # 旧中心按键查状态时单条 SQL 的键数上限（16 表 UNION）
+-
+-EXIT_OK = 0
+-EXIT_PREFLIGHT = 2
+-EXIT_VERIFY = 3
+-
+-
+-class MigrationError(RuntimeError):
+-    """可预期的操作失败：打印后以非零码退出，不抛栈。"""
+-
+-
+-# ---------------------------------------------------------------------------
+-# 槽位公式（必须与 Java 实现逐字节一致）
+-# ---------------------------------------------------------------------------
+-
+-def java_hash(text: str) -> int:
+-    """`java.lang.String.hashCode()`：按 UTF-16 code unit 计算，返回有符号 32 位。"""
+-    units = text.encode("utf-16-be")
+-    value = 0
+-    for index in range(0, len(units), 2):
+-        unit = (units[index] << 8) | units[index + 1]
+-        value = (31 * value + unit) & 0xFFFFFFFF
+-    return value - 0x100000000 if value >= 0x80000000 else value
+-
+-
+-def java_length(text: str) -> int:
+-    """`java.lang.String.length()`：UTF-16 code unit 数（不是 Unicode code point 数）。"""
+-    return len(text.encode("utf-16-be")) // 2
+-
+-
+-def old_slot(task_type: str, biz_id: str) -> int:
+-    """旧中心槽位：`floorMod(hash(len(taskType) + ":" + taskType + bizId), 16)`。"""
+-    key = f"{java_length(task_type)}:{task_type}{biz_id}"
+-    return java_hash(key) % SHARD_COUNT
+-
+-
+-def new_slot(biz_id: str) -> int:
+-    """新单体槽位：`floorMod(hash(bizId), 16)`（`TimeoutTaskShardSlots.slotOf`）。"""
+-    return java_hash(biz_id) % SHARD_COUNT
+-
+-
+-def physical_table(slot: int) -> str:
+-    if not 0 <= slot < SHARD_COUNT:
+-        raise MigrationError(f"槽位越界：{slot}")
+-    return f"{TABLE_PREFIX}_{slot:02d}"
+-
+-
+-# ---------------------------------------------------------------------------
+-# SQL 拼装：字符串一律走 UTF-8 hex，避免引号/反斜杠/换行注入
+-# ---------------------------------------------------------------------------
+-
+-def qi(identifier: str) -> str:
+-    """MySQL 标识符引用。"""
+-    return "`" + identifier.replace("`", "``") + "`"
+-
+-
+-def qname(schema: str, table: str) -> str:
+-    return f"{qi(schema)}.{qi(table)}"
+-
+-
+-def sql_text(value: str) -> str:
+-    """安全的 utf8mb4 字符串字面量（用于 WHERE / information_schema / 时间列等）。"""
+-    return "CONVERT(X'" + value.encode("utf-8").hex() + "' USING utf8mb4)"
+-
+-
+-def sql_datetime(value: str) -> str:
+-    # DATE_FORMAT 产出的固定形态，直接引用无注入面；保留引号是为了让 SQL 可读。
+-    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
+-
+-
+-def require_datetime(value: str, context: str) -> str:
+-    """拒绝 NULL / 零值日期：写成 `'NULL'` 会在目标端静默变成 0000-00-00 或被拒。"""
+-    if value in ("", "NULL", "0000-00-00 00:00:00"):
+-        raise MigrationError(f"{context} 的日期列为空/零值：{value!r}")
+-    return value
+-
+-
+-# ---------------------------------------------------------------------------
+-# MySQL CLI 封装（仓库/生产都已有 mysql 客户端，不额外装 Python 驱动）
+-# ---------------------------------------------------------------------------
+-
+-@dataclass
+-class SqlClient:
+-    mysql_bin: str
+-    host: str
+-    port: int
+-    user: str
+-    password: str | None
+-
+-    def _command(self) -> list[str]:
+-        command = [
+-            self.mysql_bin,
+-            "--default-character-set=utf8mb4",
+-            "--batch",
+-            "--skip-column-names",
+-            "-h", self.host,
+-            "-P", str(self.port),
+-            "-u", self.user,
+-        ]
+-        return command
+-
+-    def run(self, sql: str) -> str:
+-        env = os.environ.copy()
+-        if self.password is not None:
+-            env["MYSQL_PWD"] = self.password
+-        try:
+-            completed = subprocess.run(
+-                self._command(),
+-                input=sql,
+-                text=True,
+-                capture_output=True,
+-                encoding="utf-8",
+-                errors="replace",
+-                env=env,
+-                check=False,
+-            )
+-        except FileNotFoundError as exc:
+-            raise MigrationError(
+-                f"找不到 mysql 客户端：{self.mysql_bin!r}；用 --mysql 指定路径"
+-            ) from exc
+-        if completed.returncode != 0:
+-            detail = (completed.stderr or completed.stdout or "").strip()
+-            raise MigrationError(f"mysql 执行失败（exit {completed.returncode}）：{detail}")
+-        return completed.stdout
+-
+-    def query(self, sql: str) -> list[list[str]]:
+-        output = self.run(sql)
+-        rows: list[list[str]] = []
+-        for line in output.splitlines():
+-            if not line.strip():
+-                continue
+-            rows.append(line.rstrip("\r").split("\t"))
+-        return rows
+-
+-
+-# ---------------------------------------------------------------------------
+-# 数据模型
+-# ---------------------------------------------------------------------------
+-
+-@dataclass(frozen=True)
+-class TaskRow:
+-    table: str
+-    task_type: str
+-    biz_id: str
+-    action_time: str
+-    next_fire_time: str
+-    status: str
+-    retry_count: int
+-    created_at: str
+-    updated_at: str
+-    origin: str = "center"
+-
+-    @property
+-    def key(self) -> tuple[str, str]:
+-        return self.task_type, self.biz_id
+-
+-
+-@dataclass
+-class Config:
+-    mysql_bin: str = "mysql"
+-    host: str = "127.0.0.1"
+-    port: int = 3306
+-    user: str = "root"
+-    password: str | None = None
+-    source_schema: str = "bs_timeout"
+-    target_schema: str = "better_school"
+-    xxl_schema: str = "xxl_job"
+-    callback_group: str = "better-school"
+-    dry_run: bool = False
+-    force: bool = False
+-    allow_existing_target: bool = False
+-    cancel_stale_old: bool = True
+-    report_path: str | None = None
+-
+-
+-@dataclass
+-class PlannedInsert:
+-    target_table: str
+-    row: TaskRow
+-
+-
+-@dataclass
+-class PlannedSkip:
+-    row: TaskRow
+-    target_table: str | None
+-    reason: str
+-
+-
+-@dataclass
+-class ForwardPlan:
+-    inserts: list[PlannedInsert] = field(default_factory=list)
+-    skips: list[PlannedSkip] = field(default_factory=list)
+-    source_rows: list[TaskRow] = field(default_factory=list)
+-    outbox_rows: list[TaskRow] = field(default_factory=list)
+-
+-
+-@dataclass
+-class ReversePlan:
+-    inserts: list[PlannedInsert] = field(default_factory=list)
+-    revives: list[PlannedInsert] = field(default_factory=list)
+-    cancels: list[PlannedInsert] = field(default_factory=list)
+-    skips: list[PlannedSkip] = field(default_factory=list)
+-    target_rows: list[TaskRow] = field(default_factory=list)
+-
+-
+-# ---------------------------------------------------------------------------
+-# 查询
+-# ---------------------------------------------------------------------------
+-
+-def timeout_table_names() -> list[str]:
+-    return [physical_table(slot) for slot in range(SHARD_COUNT)]
+-
+-
+-def existing_tables(client: SqlClient, schema: str) -> set[str]:
+-    names = timeout_table_names()
+-    in_list = ", ".join(sql_text(name) for name in names)
+-    rows = client.query(
+-        "SELECT table_name FROM information_schema.tables "
+-        f"WHERE table_schema = {sql_text(schema)} AND table_name IN ({in_list})"
+-    )
+-    return {row[0] for row in rows if row}
+-
+-
+-def table_count(client: SqlClient, schema: str, table: str) -> int:
+-    rows = client.query(f"SELECT COUNT(*) FROM {qname(schema, table)}")
+-    return int(rows[0][0]) if rows else 0
+-
+-
+-def ensure_timeout_tables(
+-    client: SqlClient, schema: str, label: str, hint: str = ""
+-) -> None:
+-    existing = existing_tables(client, schema)
+-    missing = [name for name in timeout_table_names() if name not in existing]
+-    if missing:
+-        raise MigrationError(f"{label} {schema} 缺少分表：{', '.join(missing)}{hint}")
+-
+-
+-def job_statuses(client: SqlClient, schema: str) -> dict[str, int] | None:
+-    """读扫描 job 的 trigger_status；整个 xxl 库/表读不到时返回 None（调用方决定是否放行）。"""
+-    try:
+-        rows = client.query(
+-            "SELECT executor_handler, trigger_status FROM "
+-            f"{qname(schema, 'xxl_job_info')} WHERE executor_handler IN "
+-            f"({sql_text(OLD_SCAN_HANDLER)}, {sql_text(NEW_SCAN_HANDLER)})"
+-        )
+-    except MigrationError:
+-        return None
+-    return {row[0]: int(row[1]) for row in rows if len(row) >= 2}
+-
+-
+-def check_job_statuses(
+-    cfg: Config, statuses: dict[str, int] | None, mode: str
+-) -> list[str]:
+-    """两个扫描 job 的前置守卫；读不到 xxl 库时默认拒绝，`--force` 才放行。"""
+-    warnings: list[str] = []
+-    if statuses is None:
+-        if not cfg.force:
+-            raise MigrationError(
+-                f"读不到 {cfg.xxl_schema}.xxl_job_info，无法确认扫描 job 已停。"
+-                "先核对 --xxl-schema 与连接权限；确认要跳过这项检查再加 --force。"
+-            )
+-        warnings.append(
+-            f"⚠️ 读不到 {cfg.xxl_schema}.xxl_job_info，已按 --force 越过；无法确认 job 已停"
+-        )
+-        return warnings
+-
+-    if not statuses:
+-        warnings.append(
+-            f"xxl-job 中没有 {OLD_SCAN_HANDLER}/{NEW_SCAN_HANDLER} 行；确认 seed/清理状态"
+-        )
+-        return warnings
+-
+-    old_status = statuses.get(OLD_SCAN_HANDLER)
+-    if old_status is None:
+-        warnings.append(f"xxl-job 中没有 {OLD_SCAN_HANDLER} 行（可能已清理）")
+-    elif old_status == 1 and not cfg.force:
+-        if mode == "reverse":
+-            raise MigrationError(
+-                f"逆向前旧扫描 job {OLD_SCAN_HANDLER} 仍为启用状态（trigger_status=1）。"
+-                "回滚期间它会把刚写回旧库的行结算掉；先停旧 job 并等过一个 10s 周期，"
+-                "确需并发可加 --force。"
+-            )
+-        raise MigrationError(
+-            f"旧扫描 job {OLD_SCAN_HANDLER} 仍为启用状态（trigger_status=1）。"
+-            "先把它的 trigger_status 置 0 并等过至少一个 10s 周期，再用 --force 才可越过。"
+-        )
+-    elif old_status == 1:
+-        warnings.append(f"⚠️ {OLD_SCAN_HANDLER} 仍启用，已按 --force 越过（有并发到点风险）")
+-
+-    new_status = statuses.get(NEW_SCAN_HANDLER)
+-    if new_status is None:
+-        warnings.append(
+-            f"xxl-job 中没有 {NEW_SCAN_HANDLER} 行：Phase 3 前需执行 "
+-            "better-school/sql/xxl-job-tasks.sql（幂等）"
+-        )
+-    elif new_status == 1 and not cfg.force:
+-        if mode == "reverse":
+-            raise MigrationError(
+-                f"新扫描 job {NEW_SCAN_HANDLER} 仍启用（trigger_status=1）。回滚前先禁用它并"
+-                "停掉新版本实例，否则搬迁读到的行会被并发结算。确已停止可加 --force。"
+-            )
+-        raise MigrationError(
+-            f"新扫描 job {NEW_SCAN_HANDLER} 仍为启用状态（trigger_status=1）。"
+-            "前向搬迁 + 校验期间必须关掉它：否则新代码会在校验前把刚搬进去的行结算掉，"
+-            "验证读到的状态会漂移（不是搬迁失败）。停掉并等过一个 10s 周期后再跑；"
+-            "确需并发扫描可加 --force。"
+-        )
+-    elif new_status == 1:
+-        warnings.append(
+-            f"⚠️ {NEW_SCAN_HANDLER} 仍启用，已按 --force 越过；"
+-            "校验可能因新扫描器就地结算而误报状态漂移"
+-        )
+-
+-    return warnings
+-
+-
+-def _select_rows_sql(schema: str, tables: Sequence[str], statuses: Sequence[str]) -> str:
+-    status_list = ", ".join(sql_text(status) for status in statuses)
+-    selects = []
+-    for table in tables:
+-        selects.append(
+-            f"SELECT {sql_text(table)}, HEX(task_type), HEX(biz_id), "
+-            f"DATE_FORMAT(action_time, '%Y-%m-%d %H:%i:%s'), "
+-            f"DATE_FORMAT(next_fire_time, '%Y-%m-%d %H:%i:%s'), "
+-            f"status, retry_count, "
+-            f"DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), "
+-            f"DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') "
+-            f"FROM {qname(schema, table)} WHERE status IN ({status_list})"
+-        )
+-    return "\nUNION ALL\n".join(selects)
+-
+-
+-def task_row_from_values(values: Sequence[str], origin: str) -> TaskRow:
+-    """解析 `task_type/biz_id/...` 九列查询结果（分表与按键查询共用）。"""
+-    if len(values) != 9:
+-        raise MigrationError(f"查询结果列数不符（期望 9，实际 {len(values)}）：{values!r}")
+-    try:
+-        task_type = bytes.fromhex(values[1]).decode("utf-8")
+-        biz_id = bytes.fromhex(values[2]).decode("utf-8")
+-    except (ValueError, UnicodeDecodeError) as exc:
+-        raise MigrationError(f"无法解码 {values[0]} 的行：{values!r}") from exc
+-    try:
+-        retry_count = int(values[6])
+-    except ValueError as exc:
+-        raise MigrationError(
+-            f"{values[0]} 的 retry_count 不是整数：{values[6]!r}"
+-        ) from exc
+-    return TaskRow(
+-        table=values[0],
+-        task_type=task_type,
+-        biz_id=biz_id,
+-        action_time=require_datetime(values[3], f"{values[0]} action_time"),
+-        next_fire_time=require_datetime(values[4], f"{values[0]} next_fire_time"),
+-        status=values[5],
+-        retry_count=retry_count,
+-        created_at=require_datetime(values[7], f"{values[0]} created_at"),
+-        updated_at=require_datetime(values[8], f"{values[0]} updated_at"),
+-        origin=origin,
+-    )
+-
+-
+-def fetch_rows(
+-    client: SqlClient,
+-    schema: str,
+-    tables: Sequence[str],
+-    statuses: Sequence[str],
+-    origin: str,
+-) -> list[TaskRow]:
+-    if not tables:
+-        return []
+-    rows = client.query(_select_rows_sql(schema, tables, statuses))
+-    return [task_row_from_values(values, origin) for values in rows]
+-
+-
+-def outbox_exists(client: SqlClient, schema: str) -> bool:
+-    rows = client.query(
+-        "SELECT COUNT(*) FROM information_schema.tables "
+-        f"WHERE table_schema = {sql_text(schema)} AND table_name = {sql_text(OUTBOX_TABLE)}"
+-    )
+-    return bool(rows and int(rows[0][0]) > 0)
+-
+-
+-def select_outbox_sql(schema: str) -> str:
+-    """outbox 的列名是 `type/state/create_time/update_time`（不是分表的 `task_type/status/...`）。
+-
+-    票 03 删表前的 DDL 与 `TimeoutRegisterOutboxMapper.xml` 都以此为准；写错列名会让
+-    `forward` 在真实生产库上直接报 Unknown column，而不是搬错数据。
+-    """
+-    return (
+-        "SELECT HEX(type), HEX(biz_id), "
+-        "DATE_FORMAT(action_time, '%Y-%m-%d %H:%i:%s'), "
+-        "DATE_FORMAT(create_time, '%Y-%m-%d %H:%i:%s'), "
+-        "DATE_FORMAT(update_time, '%Y-%m-%d %H:%i:%s') "
+-        f"FROM {qname(schema, OUTBOX_TABLE)} WHERE state = 'PENDING'"
+-    )
+-
+-
+-def fetch_outbox_rows(client: SqlClient, schema: str) -> list[TaskRow]:
+-    rows = client.query(select_outbox_sql(schema))
+-    result: list[TaskRow] = []
+-    for values in rows:
+-        if len(values) != 5:
+-            raise MigrationError(f"outbox 查询列数不符：{values!r}")
+-        try:
+-            task_type = bytes.fromhex(values[0]).decode("utf-8")
+-            biz_id = bytes.fromhex(values[1]).decode("utf-8")
+-        except (ValueError, UnicodeDecodeError) as exc:
+-            raise MigrationError(f"无法解码 outbox 行：{values!r}") from exc
+-        # outbox 的 action_time 就是中心的到期时刻；new code 注册时 next_fire_time = action_time
+-        result.append(
+-            TaskRow(
+-                table=OUTBOX_TABLE,
+-                task_type=task_type,
+-                biz_id=biz_id,
+-                action_time=require_datetime(values[2], f"{OUTBOX_TABLE} action_time"),
+-                next_fire_time=require_datetime(values[2], f"{OUTBOX_TABLE} action_time"),
+-                status="WAITING",
+-                retry_count=0,
+-                created_at=require_datetime(values[3], f"{OUTBOX_TABLE} created_at"),
+-                updated_at=require_datetime(values[4], f"{OUTBOX_TABLE} updated_at"),
+-                origin="outbox",
+-            )
+-        )
+-    return result
+-
+-
+-def fetch_source_rows_by_key(
+-    client: SqlClient, schema: str, keys: Iterable[tuple[str, str]]
+-) -> dict[tuple[str, str], TaskRow]:
+-    """查旧中心这些键的完整行（含 SUCCESS/CANCELED 等终态）。
+-
+-    `forward` 只搬非终态行，但 outbox 冲突不能只看「有没有行」：outbox 的 `uk(type,biz_id)`
+-    upsert 会把同一行复位成 `PENDING`，所以 PENDING 也可能是**新一轮注册**（旧中心会把终态行
+-    复活）。必须拿到旧行的状态与 `action_time` 才能区分「陈旧残留」与「新意图」。
+-    """
+-    unique = list(dict.fromkeys(keys))
+-    result: dict[tuple[str, str], TaskRow] = {}
+-    for start in range(0, len(unique), SOURCE_KEY_CHUNK):
+-        chunk = unique[start:start + SOURCE_KEY_CHUNK]
+-        pairs = ", ".join(
+-            f"({sql_text(task_type)}, {sql_text(biz_id)})" for task_type, biz_id in chunk
+-        )
+-        selects = [
+-            f"SELECT {sql_text(table)}, HEX(task_type), HEX(biz_id), "
+-            "DATE_FORMAT(action_time, '%Y-%m-%d %H:%i:%s'), "
+-            "DATE_FORMAT(next_fire_time, '%Y-%m-%d %H:%i:%s'), "
+-            "status, retry_count, "
+-            "DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), "
+-            "DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') "
+-            f"FROM {qname(schema, table)} WHERE (task_type, biz_id) IN ({pairs})"
+-            for table in timeout_table_names()
+-        ]
+-        for values in client.query("\nUNION ALL\n".join(selects)):
+-            row = task_row_from_values(values, "center")
+-            result[row.key] = row
+-    return result
+-
+-
+-# ---------------------------------------------------------------------------
+-# 计划（纯函数，便于单测）
+-# ---------------------------------------------------------------------------
+-
+-def outbox_is_new_registration(outbox_row: TaskRow, center_row: TaskRow) -> bool:
+-    """PENDING outbox 是否代表「新一轮注册」而不是陈旧残留（同键 upsert 会复位 PENDING）。
+-
+-    旧中心的注册语义：在途同键不改期、终态同键复活。所以 outbox 的 `action_time` 比旧中心行更晚
+-    时，它只可能是新注册；否则视为发送失败的残留，按旧中心为准。
+-    """
+-    return outbox_row.action_time > center_row.action_time
+-
+-
+-def plan_forward(
+-    source_rows: Sequence[TaskRow],
+-    outbox_rows: Sequence[TaskRow],
+-    target_rows: Sequence[TaskRow],
+-    source_by_key: dict[tuple[str, str], TaskRow] | None = None,
+-) -> ForwardPlan:
+-    plan = ForwardPlan(source_rows=list(source_rows), outbox_rows=list(outbox_rows))
+-    existing_targets = {row.key: row for row in target_rows}
+-    seen_source: dict[tuple[str, str], TaskRow] = {}
+-
+-    for row in source_rows:
+-        previous = seen_source.get(row.key)
+-        if previous is not None:
+-            raise MigrationError(
+-                "源库存在重复 (task_type, biz_id)，先人工核对："
+-                f"{row.key!r} 同时在 {previous.table} 与 {row.table}"
+-            )
+-        seen_source[row.key] = row
+-
+-    # 默认只认识待迁移的非终态行；真实调用会额外传入终态行（见 fetch_source_rows_by_key）。
+-    known_source = dict(source_by_key) if source_by_key is not None else {
+-        row.key: row for row in source_rows
+-    }
+-
+-    candidates: list[TaskRow] = list(source_rows)
+-    for row in outbox_rows:
+-        old = known_source.get(row.key)
+-        if old is None:
+-            candidates.append(row)
+-        elif old.status in ACTIVE_STATUSES:
+-            plan.skips.append(
+-                PlannedSkip(
+-                    row,
+-                    None,
+-                    f"outbox 行已在旧中心在途（status={old.status}），以中心行为准",
+-                )
+-            )
+-        elif outbox_is_new_registration(row, old):
+-            # 旧中心会复活终态行；这是 legit 的新一轮注册，不能当残留丢掉。
+-            candidates.append(row)
+-        else:
+-            plan.skips.append(
+-                PlannedSkip(
+-                    row,
+-                    None,
+-                    f"旧中心同键已是终态（status={old.status}）且 outbox 不更新，按残留跳过",
+-                )
+-            )
+-
+-    for row in candidates:
+-        target = existing_targets.get(row.key)
+-        if target is not None:
+-            plan.skips.append(
+-                PlannedSkip(
+-                    row,
+-                    target.table,
+-                    f"目标已有同键行（status={target.status}），保留目标行",
+-                )
+-            )
+-            continue
+-        plan.inserts.append(PlannedInsert(physical_table(new_slot(row.biz_id)), row))
+-
+-    return plan
+-
+-
+-def plan_reverse(
+-    target_rows: Sequence[TaskRow],
+-    old_rows: Sequence[TaskRow],
+-    cancel_stale_old: bool = True,
+-) -> ReversePlan:
+-    plan = ReversePlan(target_rows=list(target_rows))
+-    existing_old = {row.key: row for row in old_rows}
+-
+-    for row in target_rows:
+-        old = existing_old.get(row.key)
+-        if row.status in ACTIVE_STATUSES:
+-            if old is None:
+-                plan.inserts.append(PlannedInsert(physical_table(old_slot(row.task_type, row.biz_id)), row))
+-            elif old.status in ACTIVE_STATUSES:
+-                plan.skips.append(
+-                    PlannedSkip(row, old.table, f"旧中心已有在途行（status={old.status}）")
+-                )
+-            else:
+-                plan.revives.append(
+-                    PlannedInsert(physical_table(old_slot(row.task_type, row.biz_id)), row)
+-                )
+-        elif row.status == "FAILED":
+-            if old is None:
+-                plan.inserts.append(PlannedInsert(physical_table(old_slot(row.task_type, row.biz_id)), row))
+-            elif old.status == "FAILED":
+-                plan.skips.append(PlannedSkip(row, old.table, "旧中心已有同键死信"))
+-            elif old.status in ACTIVE_STATUSES:
+-                plan.skips.append(
+-                    PlannedSkip(row, old.table, "旧中心在途行继续重试（不用新死信覆盖）")
+-                )
+-            else:
+-                plan.skips.append(
+-                    PlannedSkip(
+-                        row,
+-                        old.table,
+-                        f"旧中心同键已是终态（status={old.status}）；业务已结算，保留旧终态",
+-                    )
+-                )
+-        elif row.status in ("SUCCESS", "CANCELED"):
+-            if old is not None and old.status in ACTIVE_STATUSES and cancel_stale_old:
+-                plan.cancels.append(
+-                    PlannedInsert(physical_table(old_slot(row.task_type, row.biz_id)), row)
+-                )
+-            else:
+-                plan.skips.append(PlannedSkip(row, old.table if old else None, "无需逆向的终态行"))
+-        else:
+-            plan.skips.append(PlannedSkip(row, old.table if old else None, f"未知状态 {row.status}"))
+-
+-    return plan
+-
+-
+-# ---------------------------------------------------------------------------
+-# SQL 生成
+-# ---------------------------------------------------------------------------
+-
+-def insert_forward_sql(cfg: Config, item: PlannedInsert) -> str:
+-    row = item.row
+-    return (
+-        f"INSERT INTO {qname(cfg.target_schema, item.target_table)} "
+-        "(task_type, biz_id, action_time, next_fire_time, status, retry_count, created_at, updated_at) "
+-        "VALUES ("
+-        f"{sql_text(row.task_type)}, {sql_text(row.biz_id)}, "
+-        f"{sql_datetime(row.action_time)}, {sql_datetime(row.next_fire_time)}, "
+-        f"{sql_text(row.status)}, {row.retry_count}, "
+-        f"{sql_datetime(row.created_at)}, {sql_datetime(row.updated_at)});"
+-    )
+-
+-
+-def insert_reverse_sql(cfg: Config, item: PlannedInsert) -> str:
+-    row = item.row
+-    return (
+-        f"INSERT INTO {qname(cfg.source_schema, item.target_table)} "
+-        "(task_type, callback_group, biz_id, action_time, next_fire_time, status, retry_count, created_at, updated_at) "
+-        "VALUES ("
+-        f"{sql_text(row.task_type)}, {sql_text(cfg.callback_group)}, {sql_text(row.biz_id)}, "
+-        f"{sql_datetime(row.action_time)}, {sql_datetime(row.next_fire_time)}, "
+-        f"{sql_text(row.status)}, {row.retry_count}, "
+-        f"{sql_datetime(row.created_at)}, {sql_datetime(row.updated_at)});"
+-    )
+-
+-
+-def revive_reverse_sql(cfg: Config, item: PlannedInsert) -> str:
+-    row = item.row
+-    return (
+-        f"UPDATE {qname(cfg.source_schema, item.target_table)} SET "
+-        f"status = {sql_text(row.status)}, "
+-        f"action_time = {sql_datetime(row.action_time)}, "
+-        f"next_fire_time = {sql_datetime(row.next_fire_time)}, "
+-        f"retry_count = {row.retry_count}, "
+-        f"updated_at = {sql_datetime(row.updated_at)} "
+-        f"WHERE task_type = {sql_text(row.task_type)} AND biz_id = {sql_text(row.biz_id)} "
+-        "AND status IN ('SUCCESS', 'FAILED', 'CANCELED');"
+-    )
+-
+-
+-def cancel_reverse_sql(cfg: Config, item: PlannedInsert) -> str:
+-    row = item.row
+-    return (
+-        f"UPDATE {qname(cfg.source_schema, item.target_table)} SET "
+-        "status = 'CANCELED', updated_at = NOW() "
+-        f"WHERE task_type = {sql_text(row.task_type)} AND biz_id = {sql_text(row.biz_id)} "
+-        "AND status IN ('WAITING', 'RETRYING');"
+-    )
+-
+-
+-def forward_script(cfg: Config, plan: ForwardPlan) -> str:
+-    statements = ["SET NAMES utf8mb4;", "START TRANSACTION;"]
+-    statements.extend(insert_forward_sql(cfg, item) for item in plan.inserts)
+-    statements.append("COMMIT;")
+-    return "\n".join(statements) + "\n"
+-
+-
+-def reverse_script(cfg: Config, plan: ReversePlan) -> str:
+-    statements = ["SET NAMES utf8mb4;", "START TRANSACTION;"]
+-    statements.extend(insert_reverse_sql(cfg, item) for item in plan.inserts)
+-    statements.extend(revive_reverse_sql(cfg, item) for item in plan.revives)
+-    statements.extend(cancel_reverse_sql(cfg, item) for item in plan.cancels)
+-    statements.append("COMMIT;")
+-    return "\n".join(statements) + "\n"
+-
+-
+-# ---------------------------------------------------------------------------
+-# 校验
+-# ---------------------------------------------------------------------------
+-
+-def verify_forward(
+-    cfg: Config,
+-    plan: ForwardPlan,
+-    target_rows: Sequence[TaskRow],
+-) -> list[str]:
+-    errors: list[str] = []
+-    target_by_key = {row.key: row for row in target_rows}
+-
+-    # 源行必须都在目标库；outbox 行只有「本次插入」或「目标已有同键」才要求出现——
+-    # 被旧中心终态行挡掉的 outbox 残留本来就不该出现在目标库。
+-    expected_keys = {row.key for row in plan.source_rows}
+-    expected_keys |= {item.row.key for item in plan.inserts}
+-    expected_keys |= {row.key for row in plan.outbox_rows if row.key in target_by_key}
+-    for key in expected_keys:
+-        if key not in target_by_key:
+-            errors.append(f"源行未出现在目标库：task_type={key[0]!r}, biz_id={key[1]!r}")
+-
+-    for item in plan.inserts:
+-        actual = target_by_key.get(item.row.key)
+-        if actual is None:
+-            errors.append(f"本次插入的行未读到：{item.row.key!r} -> {item.target_table}")
+-            continue
+-        if actual.table != item.target_table:
+-            errors.append(
+-                f"插入落表不符：{item.row.key!r} 预期 {item.target_table}，实际 {actual.table}"
+-            )
+-        if actual.status != item.row.status:
+-            errors.append(
+-                f"状态不符：{item.row.key!r} 预期 {item.row.status}，实际 {actual.status}"
+-            )
+-        if actual.action_time != item.row.action_time:
+-            errors.append(
+-                f"action_time 不符：{item.row.key!r} 预期 {item.row.action_time}，"
+-                f"实际 {actual.action_time}"
+-            )
+-
+-    # 全量不变量：目标表每一行的物理表都必须等于新槽位。错表 = 扫描器永远看不到。
+-    for row in target_rows:
+-        expected_table = physical_table(new_slot(row.biz_id))
+-        if row.table != expected_table:
+-            errors.append(
+-                f"目标行槽位错误（扫描器会漏掉）：{row.key!r} 在 {row.table}，应在 {expected_table}"
+-            )
+-
+-    return errors
+-
+-
+-def verify_reverse(
+-    cfg: Config,
+-    plan: ReversePlan,
+-    old_rows: Sequence[TaskRow],
+-    target_rows: Sequence[TaskRow],
+-) -> list[str]:
+-    errors: list[str] = []
+-    old_by_key = {row.key: row for row in old_rows}
+-    target_by_key = {row.key: row for row in target_rows}
+-    expected_tables = {
+-        row.key: physical_table(old_slot(row.task_type, row.biz_id))
+-        for row in target_rows
+-    }
+-
+-    accounted = set()
+-    for item in plan.inserts + plan.revives:
+-        accounted.add(item.row.key)
+-        actual = old_by_key.get(item.row.key)
+-        if actual is None:
+-            errors.append(f"逆向搬迁的行未读到：{item.row.key!r} -> {item.target_table}")
+-            continue
+-        if actual.table != item.target_table:
+-            errors.append(
+-                f"逆向落表不符：{item.row.key!r} 预期 {item.target_table}，实际 {actual.table}"
+-            )
+-        if actual.status != item.row.status:
+-            errors.append(
+-                f"逆向状态不符：{item.row.key!r} 预期 {item.row.status}，实际 {actual.status}"
+-            )
+-        if actual.action_time != item.row.action_time:
+-            errors.append(
+-                f"逆向 action_time 不符：{item.row.key!r} 预期 {item.row.action_time}，"
+-                f"实际 {actual.action_time}"
+-            )
+-
+-    for item in plan.cancels:
+-        actual = old_by_key.get(item.row.key)
+-        if actual is None:
+-            errors.append(f"取消陈旧旧行失败（行不存在）：{item.row.key!r}")
+-        elif actual.status != "CANCELED":
+-            errors.append(
+-                f"旧行未置取消：{item.row.key!r} 实际 status={actual.status}（新中心已终态）"
+-            )
+-
+-    # 旧中心的行必须按旧公式落表；否则旧扫描器漏行。
+-    for key, expected_table in expected_tables.items():
+-        old = old_by_key.get(key)
+-        if old is not None and old.table != expected_table:
+-            errors.append(
+-                f"旧中心行槽位错误（旧扫描器会漏掉）：{key!r} 在 {old.table}，应在 {expected_table}"
+-            )
+-
+-    for row in target_rows:
+-        if row.status in ACTIVE_STATUSES or row.status == "FAILED":
+-            if row.key not in accounted and row.key not in old_by_key:
+-                errors.append(f"目标行未逆向到旧中心：{row.key!r}（status={row.status}）")
+-
+-    return errors
+-
+-
+-# ---------------------------------------------------------------------------
+-# 报告
+-# ---------------------------------------------------------------------------
+-
+-def count_by_status(rows: Iterable[TaskRow]) -> dict[str, int]:
+-    counts: dict[str, int] = {}
+-    for row in rows:
+-        counts[row.status] = counts.get(row.status, 0) + 1
+-    return dict(sorted(counts.items()))
+-
+-
+-def count_by_table(rows: Iterable[TaskRow]) -> dict[str, int]:
+-    counts: dict[str, int] = {}
+-    for row in rows:
+-        counts[row.table] = counts.get(row.table, 0) + 1
+-    return dict(sorted(counts.items()))
+-
+-
+-def build_report(
+-    mode: str,
+-    cfg: Config,
+-    *,
+-    warnings: Sequence[str] = (),
+-    summary: dict | None = None,
+-    conflicts: Sequence[PlannedSkip] = (),
+-    verification_errors: Sequence[str] = (),
+-) -> dict:
+-    return {
+-        "script_version": SCRIPT_VERSION,
+-        "mode": mode,
+-        "generated_at": datetime.now(timezone.utc).isoformat(),
+-        "dry_run": cfg.dry_run,
+-        "source_schema": cfg.source_schema,
+-        "target_schema": cfg.target_schema,
+-        "counts": summary or {},
+-        "warnings": list(warnings),
+-        "conflicts": [
+-            {
+-                "origin": skip.row.origin,
+-                "source_table": skip.row.table,
+-                "target_table": skip.target_table,
+-                "task_type": skip.row.task_type,
+-                "biz_id": skip.row.biz_id,
+-                "status": skip.row.status,
+-                "reason": skip.reason,
+-            }
+-            for skip in list(conflicts)[:200]
+-        ],
+-        "conflict_total": len(conflicts),
+-        "verification": {
+-            "ok": not verification_errors,
+-            "errors": list(verification_errors),
+-        },
+-    }
+-
+-
+-def write_report(path: str | None, report: dict) -> None:
+-    if not path:
+-        return
+-    directory = os.path.dirname(os.path.abspath(path))
+-    try:
+-        if directory:
+-            os.makedirs(directory, exist_ok=True)
+-        with open(path, "w", encoding="utf-8") as handle:
+-            json.dump(report, handle, ensure_ascii=False, indent=2)
+-            handle.write("\n")
+-    except OSError as exc:
+-        # 报告是辅助产物；写失败不应把已提交的搬迁误报成失败（退出码仍由校验决定）。
+-        print(f"[warn] 报告写入失败（{path}）：{exc}", file=sys.stderr)
+-
+-
+-# ---------------------------------------------------------------------------
+-# 命令
+-# ---------------------------------------------------------------------------
+-
+-def print_preflight(cfg: Config, client: SqlClient) -> list[str]:
+-    warnings: list[str] = []
+-
+-    ensure_timeout_tables(client, cfg.source_schema, "源库")
+-    ensure_timeout_tables(
+-        client, cfg.target_schema, "目标库", "（先执行 better-school/sql/schema.sql）"
+-    )
+-
+-    target_count = sum(table_count(client, cfg.target_schema, table) for table in timeout_table_names())
+-    if target_count > 0 and not cfg.allow_existing_target:
+-        raise MigrationError(
+-            f"目标库已有 {target_count} 行超时任务。滚动上线后这是正常的（新代码先写入），"
+-            "确认后加 --allow-existing-target 再跑；否则请先核对 schema 是否指错。"
+-        )
+-    if target_count > 0:
+-        warnings.append(f"目标库已有 {target_count} 行（同键以目标行为准，只补缺不覆盖）")
+-
+-    statuses = job_statuses(client, cfg.xxl_schema)
+-    warnings.extend(check_job_statuses(cfg, statuses, "forward"))
+-
+-    if outbox_exists(client, cfg.target_schema):
+-        # COUNT(*) 是全表；PENDING 行数单独查
+-        rows = client.query(
+-            f"SELECT COUNT(*) FROM {qname(cfg.target_schema, OUTBOX_TABLE)} WHERE state = 'PENDING'"
+-        )
+-        pending = int(rows[0][0]) if rows else 0
+-        warnings.append(f"{OUTBOX_TABLE} 存在，PENDING={pending}（会一并搬入）")
+-    else:
+-        warnings.append(f"{OUTBOX_TABLE} 不存在（已清理或全新库），跳过 outbox 搬迁")
+-
+-    return warnings
+-
+-
+-def read_all_for_forward(
+-    cfg: Config, client: SqlClient
+-) -> tuple[list[TaskRow], list[TaskRow], list[TaskRow], dict[tuple[str, str], TaskRow]]:
+-    source_rows = fetch_rows(
+-        client, cfg.source_schema, timeout_table_names(), MIGRATED_STATUSES, "center"
+-    )
+-    outbox_rows = (
+-        fetch_outbox_rows(client, cfg.target_schema)
+-        if outbox_exists(client, cfg.target_schema)
+-        else []
+-    )
+-    source_by_key = {row.key: row for row in source_rows}
+-    missing_keys = [row.key for row in outbox_rows if row.key not in source_by_key]
+-    if missing_keys:
+-        source_by_key.update(
+-            fetch_source_rows_by_key(client, cfg.source_schema, missing_keys)
+-        )
+-    target_rows = fetch_rows(
+-        client,
+-        cfg.target_schema,
+-        timeout_table_names(),
+-        ALL_STATUSES,
+-        "target",
+-    )
+-    return source_rows, outbox_rows, target_rows, source_by_key
+-
+-
+-def command_forward(cfg: Config) -> int:
+-    client = SqlClient(cfg.mysql_bin, cfg.host, cfg.port, cfg.user, cfg.password)
+-    warnings = print_preflight(cfg, client)
+-
+-    source_rows, outbox_rows, target_rows, source_by_key = read_all_for_forward(cfg, client)
+-    plan = plan_forward(source_rows, outbox_rows, target_rows, source_by_key)
+-
+-    summary = {
+-        "source_rows": len(source_rows),
+-        "source_by_status": count_by_status(source_rows),
+-        "outbox_rows": len(outbox_rows),
+-        "target_rows_before": len(target_rows),
+-        "planned_inserts": len(plan.inserts),
+-        "planned_inserts_by_status": count_by_status(item.row for item in plan.inserts),
+-        "planned_inserts_by_table": count_by_table(item.row for item in plan.inserts),
+-        "skipped": len(plan.skips),
+-    }
+-
+-    print(
+-        f"[forward] 源 {len(source_rows)} 行 {summary['source_by_status']}，"
+-        f"outbox PENDING {len(outbox_rows)} 行，目标现有 {len(target_rows)} 行"
+-    )
+-    print(
+-        f"[forward] 计划插入 {len(plan.inserts)} 行，跳过 {len(plan.skips)} 行"
+-        + ("（dry-run，不写库）" if cfg.dry_run else "")
+-    )
+-
+-    if plan.inserts and not cfg.dry_run:
+-        client.run(forward_script(cfg, plan))
+-        try:
+-            target_rows_after = fetch_rows(
+-                client,
+-                cfg.target_schema,
+-                timeout_table_names(),
+-                ALL_STATUSES,
+-                "target",
+-            )
+-        except MigrationError as exc:
+-            print(f"[error] 搬迁事务已提交，但校验查询失败：{exc}", file=sys.stderr)
+-            print("[forward] 数据可能已写入；重跑安全（只增不改），先人工核对目标表", file=sys.stderr)
+-            return EXIT_VERIFY
+-    else:
+-        target_rows_after = target_rows
+-
+-    verification_errors = (
+-        [] if cfg.dry_run else verify_forward(cfg, plan, target_rows_after)
+-    )
+-    summary["target_rows_after"] = len(target_rows_after)
+-    summary["target_by_status_after"] = count_by_status(target_rows_after)
+-
+-    report = build_report(
+-        "forward",
+-        cfg,
+-        warnings=warnings,
+-        summary=summary,
+-        conflicts=plan.skips,
+-        verification_errors=verification_errors,
+-    )
+-    write_report(cfg.report_path, report)
+-
+-    for warning in warnings:
+-        print(f"[warn] {warning}")
+-    for error in verification_errors:
+-        print(f"[verify] {error}", file=sys.stderr)
+-    if verification_errors:
+-        print(f"[forward] 校验失败：{len(verification_errors)} 项", file=sys.stderr)
+-        return EXIT_VERIFY
+-
+-    print("[forward] 完成" + ("（dry-run：未写库，未校验落库）" if cfg.dry_run else "且校验通过"))
+-    return EXIT_OK
+-
+-
+-def command_reverse(cfg: Config) -> int:
+-    client = SqlClient(cfg.mysql_bin, cfg.host, cfg.port, cfg.user, cfg.password)
+-    warnings: list[str] = []
+-
+-    ensure_timeout_tables(client, cfg.source_schema, "源库")
+-    ensure_timeout_tables(client, cfg.target_schema, "目标库")
+-
+-    statuses = job_statuses(client, cfg.xxl_schema)
+-    warnings.extend(check_job_statuses(cfg, statuses, "reverse"))
+-
+-    target_rows = fetch_rows(
+-        client,
+-        cfg.target_schema,
+-        timeout_table_names(),
+-        ALL_STATUSES,
+-        "target",
+-    )
+-    old_rows = fetch_rows(
+-        client,
+-        cfg.source_schema,
+-        timeout_table_names(),
+-        ALL_STATUSES,
+-        "center",
+-    )
+-    plan = plan_reverse(target_rows, old_rows, cancel_stale_old=cfg.cancel_stale_old)
+-
+-    summary = {
+-        "target_rows": len(target_rows),
+-        "target_by_status": count_by_status(target_rows),
+-        "old_rows_before": len(old_rows),
+-        "planned_inserts": len(plan.inserts),
+-        "planned_revives": len(plan.revives),
+-        "planned_cancels": len(plan.cancels),
+-        "skipped": len(plan.skips),
+-    }
+-    print(
+-        f"[reverse] 新库 {len(target_rows)} 行 {summary['target_by_status']}，"
+-        f"旧库现有 {len(old_rows)} 行"
+-    )
+-    print(
+-        f"[reverse] 计划插入 {len(plan.inserts)}、复活 {len(plan.revives)}、"
+-        f"取消陈旧旧行 {len(plan.cancels)}、跳过 {len(plan.skips)}"
+-        + ("（dry-run，不写库）" if cfg.dry_run else "")
+-    )
+-
+-    if (plan.inserts or plan.revives or plan.cancels) and not cfg.dry_run:
+-        client.run(reverse_script(cfg, plan))
+-        try:
+-            old_rows_after = fetch_rows(
+-                client,
+-                cfg.source_schema,
+-                timeout_table_names(),
+-                ALL_STATUSES,
+-                "center",
+-            )
+-        except MigrationError as exc:
+-            print(f"[error] 回滚事务已提交，但校验查询失败：{exc}", file=sys.stderr)
+-            print("[reverse] 数据可能已写回旧库；重跑安全（只增不改），先人工核对旧表", file=sys.stderr)
+-            return EXIT_VERIFY
+-    else:
+-        old_rows_after = old_rows
+-
+-    verification_errors = (
+-        [] if cfg.dry_run else verify_reverse(cfg, plan, old_rows_after, target_rows)
+-    )
+-    summary["old_rows_after"] = len(old_rows_after)
+-    summary["old_by_status_after"] = count_by_status(old_rows_after)
+-
+-    report = build_report(
+-        "reverse",
+-        cfg,
+-        warnings=warnings,
+-        summary=summary,
+-        conflicts=plan.skips,
+-        verification_errors=verification_errors,
+-    )
+-    write_report(cfg.report_path, report)
+-
+-    for warning in warnings:
+-        print(f"[warn] {warning}")
+-    for error in verification_errors:
+-        print(f"[verify] {error}", file=sys.stderr)
+-    if verification_errors:
+-        print(f"[reverse] 校验失败：{len(verification_errors)} 项", file=sys.stderr)
+-        return EXIT_VERIFY
+-
+-    print("[reverse] 完成" + ("（dry-run：未写库，未校验落库）" if cfg.dry_run else "且校验通过"))
+-    return EXIT_OK
+-
+-
+-# ---------------------------------------------------------------------------
+-# CLI
+-# ---------------------------------------------------------------------------
+-
+-def build_parser() -> argparse.ArgumentParser:
+-    parser = argparse.ArgumentParser(
+-        description="超时中心内嵌化：bs_timeout <-> better_school 的一次性数据搬迁（票 07）",
+-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+-    )
+-    subparsers = parser.add_subparsers(dest="mode", required=True)
+-
+-    def add_common(sub: argparse.ArgumentParser) -> None:
+-        sub.add_argument("--mysql", default=os.environ.get("MYSQL_BIN", "mysql"),
+-                         help="mysql 客户端路径")
+-        sub.add_argument("--host", default=os.environ.get("MYSQL_HOST", "127.0.0.1"))
+-        sub.add_argument("--port", type=int, default=int(os.environ.get("MYSQL_TCP_PORT", "3306")))
+-        sub.add_argument("--user", default=os.environ.get("MYSQL_USER", "root"))
+-        sub.add_argument("--password", default=os.environ.get("MYSQL_PWD"),
+-                         help="不传则沿用 MYSQL_PWD 环境变量")
+-        sub.add_argument("--source-schema", default="bs_timeout",
+-                         help="旧中心库（forward 的源 / reverse 的目标）")
+-        sub.add_argument("--target-schema", default="better_school",
+-                         help="业务库（forward 的目标 / reverse 的源）")
+-        sub.add_argument("--xxl-schema", default="xxl_job",
+-                         help="xxl-job admin 库（用于检查扫描 job 是否已停）")
+-        sub.add_argument("--callback-group", default="better-school",
+-                         help="仅 reverse 用：旧中心的回调 group（= 单体应用名）")
+-        sub.add_argument("--dry-run", action="store_true", help="只打印计划，不写库")
+-        sub.add_argument("--force", action="store_true",
+-                         help="越过扫描 job 状态的保护（慎用，会记入报告）")
+-        sub.add_argument("--allow-existing-target", action="store_true",
+-                         help="forward 时允许目标库已有行（新代码已滚动上线时必然如此）")
+-        sub.add_argument("--report", dest="report_path", default=None,
+-                         help="把预检/计划/校验结果写成 JSON 报告")
+-
+-    forward = subparsers.add_parser("forward", help="旧中心 -> 业务库")
+-    add_common(forward)
+-
+-    reverse = subparsers.add_parser("reverse", help="业务库 -> 旧中心（回滚）")
+-    add_common(reverse)
+-    reverse.add_argument("--keep-stale-old", dest="cancel_stale_old", action="store_false",
+-                         default=True,
+-                         help="不把「新中心已终态、旧中心仍存活」的旧行置取消（默认会取消）")
+-
+-    return parser
+-
+-
+-def config_from_args(args: argparse.Namespace) -> Config:
+-    return Config(
+-        mysql_bin=args.mysql,
+-        host=args.host,
+-        port=args.port,
+-        user=args.user,
+-        password=args.password,
+-        source_schema=args.source_schema,
+-        target_schema=args.target_schema,
+-        xxl_schema=args.xxl_schema,
+-        callback_group=args.callback_group,
+-        dry_run=args.dry_run,
+-        force=args.force,
+-        allow_existing_target=args.allow_existing_target,
+-        cancel_stale_old=getattr(args, "cancel_stale_old", True),
+-        report_path=args.report_path,
+-    )
+-
+-
+-def main(argv: Sequence[str] | None = None) -> int:
+-    parser = build_parser()
+-    args = parser.parse_args(argv)
+-    cfg = config_from_args(args)
+-    try:
+-        if args.mode == "forward":
+-            return command_forward(cfg)
+-        if args.mode == "reverse":
+-            return command_reverse(cfg)
+-        parser.error(f"未知模式：{args.mode}")
+-        return EXIT_PREFLIGHT
+-    except MigrationError as exc:
+-        print(f"[error] {exc}", file=sys.stderr)
+-        return EXIT_PREFLIGHT
+-
+-
+-if __name__ == "__main__":
+-    sys.exit(main())
+diff --git a/sql.md b/sql.md
+index 066bfdd..c6e2315 100644
+--- a/sql.md
++++ b/sql.md
+@@ -1,16 +1,16 @@
+ # 全库建表语句（SQL DDL 汇总）
+ 
+-> 收录 3 个服务的建表语句：better-school 单体（库 better_school）、marketing 营销（库 bs_marketing；points / lottery / referral 三域同属 `backend/marketing/` 一个工程）、timeout-center 超时中心（库 bs_timeout）。XXL-Job 调度库（原 backend/sql/xxl-job.sql 的 8 张表）不在本文档范围内。
+-> **超时中心内嵌化（2026-10-16 起，[`.scratch/timeout-inline/`](.scratch/timeout-inline/map.md)）**：timeout-center 工程整体下线中，超时任务表已随票 02 进单体库——`better_school` / `better_school_test` 各含 16 张 `timeout_task_00..15` 分表（见 §1 末）。§3 的 `bs_timeout` 16 张停写、待票 07 处置（DROP 或留档），本节暂保留作迁移参照。全库物理表数 = 29（单体业务；票 03 删注册 outbox 后少一张）+ 16（单体超时分表）+ 22（营销）+ 16（bs_timeout，停写）。
+-> 不含种子数据 `INSERT`、`sql/migrations/` 下的迁移脚本与集成测试夹具；开发库与测试库共用同一份 DDL，建库语句在各自的 `init-dev.sql` / `init-test.sql`。第 2 节的抽奖/库存部分是目标设计，尚未落库。
+-> 命名口径：每张表固定以 `create_time DATETIME NOT NULL COMMENT '创建时间'` 与 `update_time DATETIME NOT NULL COMMENT '更新时间'` 收尾（不带默认值，由应用写入），全库不再出现 `created_at` / `updated_at`。**唯一例外是第 3 节的 `timeout_task`**（`created_at` / `updated_at`）：那是超时中心分表落地时既有的形态、且已进 16 张分表与 mapper XML，本口径不回溯改它（见 §3 说明）。
++> 收录 2 个工程的建表语句：better-school 单体（库 better_school，超时中心已内嵌在此）、marketing 营销（库 bs_marketing；points / raffle / drawcount / config / inventory 同属 `backend/marketing/` 一个工程）。XXL-Job 调度库（原 backend/sql/xxl-job.sql 的 8 张表）不在本文档范围内。
++> **超时中心内嵌化（2026-10-16 起，[`.scratch/timeout-inline/`](.scratch/timeout-inline/map.md)）已完成**：原独立超时工程与独立库已下线，16 张 `timeout_task_00..15` 分表在 `better_school` / `better_school_test` 里（见 §1 末），与业务表同库、同事务。全库物理表数 = **29（单体业务）+ 16（单体超时分表）+ 22（营销）= 67**。
++> 不含种子数据 `INSERT`、`sql/migrations/` 下的迁移脚本与集成测试夹具；开发库与测试库共用同一份 DDL，建库语句在各自的 `init-dev.sql` / `init-test.sql`。
++> 命名口径：每张表固定以 `create_time DATETIME NOT NULL COMMENT '创建时间'` 与 `update_time DATETIME NOT NULL COMMENT '更新时间'` 收尾（不带默认值，由应用写入），全库不再出现 `created_at` / `updated_at`。**唯一例外是 §1 的 `timeout_task_00..15`**（`created_at` / `updated_at`）：那是分批表从原独立超时库迁入时的既有形态、且已进 16 张分表与 mapper XML，本口径不回溯改它（见 §1 说明）。
+ > 主键口径：每张表第一列恒为 `id BIGINT NOT NULL AUTO_INCREMENT`——纯物理自增，无业务含义、不写注释、禁止当对外标识或游标/水位；它必须落在某条索引的首列，计数器表用 `PRIMARY KEY (id)` + `UNIQUE KEY uk_<业务键>` 兜住；业务标识一律单独成列（17 张实体主表，如 `bs_user.user_id`、`post.post_id`、`errand_order.errand_order_id`），并配 `UNIQUE KEY uk_<列>`；关联表、流水表、计数器、单行配置、outbox 与超时任务表不设业务列。
+ 
+ ---
+ 
+ ## 1. 单体 better-school（库 better_school，bs-* 七模块）
+ 
+-来源：`backend/better-school/sql/schema.sql` · 本文档收录 29 张业务表 + 16 张 `timeout_task` 分表（该文件其余 6 张均已定不收录：want_to_buy、errand_order_member、agent_review_log 已随求购/多人单下线及审核去 agent 化删除；errand_evaluation、user_daily_active、delay_outbox_message 本轮重构不收录。原第 30 张 `timeout_register_outbox` 已随超时中心内嵌化票 03 删除——注册改为业务事务内直插 `timeout_task` 分表，见下节）
++来源：`backend/better-school/sql/schema.sql` · 本文档收录 29 张业务表 + 16 张 `timeout_task` 分表（该文件其余 6 张均已定不收录：want_to_buy、errand_order_member、agent_review_log 已随求购/多人单下线及审核去 agent 化删除；errand_evaluation、user_daily_active、delay_outbox_message 本轮重构不收录。原第 30 张「超时注册意图表」已随超时内嵌化票 03 删除——注册改为业务事务内直插 `timeout_task` 分表，见下节）
+ 
+ 社区（帖子/评论/二手）、用户、钱包、chat（会话/消息/时间线，仅 1v1）、通知、审核（人工 + 举报）、跑腿与二手托管交易、信用分、敏感词、outbox。
+ 
+@@ -216,9 +216,9 @@ CREATE TABLE IF NOT EXISTS outbox_message (
+ 
+ ### timeout_task_00 .. timeout_task_15（超时中心内嵌化票 02）
+ 
+-超时任务分表（16 张同构，业务/测试 SQL 一律写逻辑表 `timeout_task`，物理路由由 ShardingSphere 的 hint 强制路由决定：`bs-app/src/main/resources/sharding.yaml` + `bs-infrastructure/.../sharding/TimeoutTaskShardSlots`）。原来在独立库 `bs_timeout`（§3），内嵌化后与业务表同库——超时行与业务写入同一条连接、同一个本地事务。`callback_group` 列已随进程内分发删除（原独立中心的 Dubbo 回调路由列）。时间列保留 `created_at`/`updated_at`（全库 `create_time`/`update_time` 口径的唯一例外：按原样自 `bs_timeout` 迁入，改名要动 16 份 DDL + mapper XML + 存量迁移，收益只有命名整齐；见文首命名口径）。
++超时任务分表（16 张同构，业务/测试 SQL 一律写逻辑表 `timeout_task`，物理路由由 ShardingSphere 的 hint 强制路由决定：`bs-app/src/main/resources/sharding.yaml` + `bs-infrastructure/.../sharding/TimeoutTaskShardSlots`）。原来在独立库，内嵌化后与业务表同库——超时行与业务写入同一条连接、同一个本地事务。回调路由列已随进程内分发删除（原独立中心的 Dubbo 回调路由列）。时间列保留 `created_at`/`updated_at`（全库 `create_time`/`update_time` 口径的唯一例外：按原样自原独立超时库迁入，改名要动 16 份 DDL + mapper XML + 存量迁移，收益只有命名整齐；见文首命名口径）。
+ 
+-槽位 = `floorMod(hash(biz_id), 16)`（**hash 输入只有 `biz_id`**：同一业务对象的多种超时/多轮次落同一张表；`uk_type_biz (task_type, biz_id)` 的全局幂等不受影响——同键行永远同表）。槽位 g 是「库 × 表」两维表达的全局展平编号：`db = g / 16`、`table = g % 16`；本期 `dbCount = 1` 且**不得启用 >1**——超时行落到另一个库 = 与业务写入不同事务（硬约束，见 `backend/docs/architecture/timeout-center.md §0`）。分表 DDL 逐张相同，`schema.sql` 里完整写出；下面列逻辑表形状（`timeout_task_00` 那份）：
++槽位 = `floorMod(hash(biz_id), 16)`（**hash 输入只有 `biz_id`**：同一业务对象的多种超时/多轮次落同一张表；`uk_type_biz (task_type, biz_id)` 的全局幂等不受影响——同键行永远同表）。槽位 g 是「库 × 表」两维表达的全局展平编号：`db = g / 16`、`table = g % 16`；本期 `dbCount = 1` 且**不得启用 >1**——超时行落到另一个库 = 与业务写入不同事务（硬约束，见 `backend/docs/architecture/timeout.md §0`）。分表 DDL 逐张相同，`schema.sql` 里完整写出；下面列逻辑表形状（`timeout_task_00` 那份）：
+ 
+ ```sql
+ CREATE TABLE IF NOT EXISTS timeout_task_00 (
+@@ -1046,46 +1046,3 @@ CREATE TABLE IF NOT EXISTS outbox_message (
+ ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '本地消息表(outbox)';
+ ```
+ 
+----
+-
+-## 3. 超时中心 timeout-center（库 bs_timeout）——已停写（内嵌化中）
+-
+-> ⚠️ 本节是**改造前**的独立库形态，仅作票 07 迁移对照保留：超时任务表已进单体库（见 §1 的 `timeout_task_00..15`），`bs_timeout` 停写、待处置（DROP 或留档）。
+-
+-来源：`backend/timeout-center/sql/schema-timeout-task.sql` · 逻辑表 `timeout_task` = **16 张物理同构表** `timeout_task_00..15`（票 15 已把本节回写成这份分表落地形态）· 下表是逻辑表形状（物理 16 张各自一份相同 DDL）
+-
+-超时任务中心：业务方按自然键 `(task_type, biz_id)` 注册超时任务（经第 1 节的 `timeout_register_outbox` 投递），中心扫到期行回调业务方 Dubbo group。`uk_type_biz` 是全局幂等键——自然键唯一 + 路由函数确定性（同 key 永远同槽位同表）；扫描是一条 `idx_scan` 区间查询（每张分表各一条，由分片 job 认领槽位）。业务 SQL 一律写逻辑表 `timeout_task`，物理分表由 ShardingSphere 的 hint 强制路由决定（`sharding.yaml` + `TimeoutTaskShardSlots`）。
+-
+-> **单表形态 → 分表形态的两处口径变更**（照落地代码回写；改前是分表之前的草案）：
+-> 1. `type` → **`task_type`**、`state` → **`status`**、`create_time`/`update_time` → **`created_at`/`updated_at`**（列语义不变）。与第 1 节注册边的 `type` 不同名是刻意的：注册边在业务库、中心在 `bs_timeout`，两侧各自命名，跨库不 join。
+->    时间列是本文件「全库统一 `create_time`/`update_time`」口径的**唯一例外**（见文首命名口径）：`bs_timeout` 这 16 张分表与 mapper XML 都已是 `created_at`/`updated_at`，改名要动 DDL × 16 + XML + 建库脚本，收益只是命名整齐，故保留现状并在此登记为例外。
+-> 2. `uk_type_biz` 列序 → **`(task_type, biz_id)`**（原草案写的 `(biz_id, type)`）：与路由键 `(task_type, biz_id)` **同序**，也是所有按键语句的谓词顺序（`WHERE task_type = ? AND biz_id [= ? | IN (...)]`），所以是这些语句的索引前缀；`biz_id` 单独查询不是任何语句的访问路径（死信列表按 `status` 广播、不按键点查）。
+->
+-> **为什么是 16 张**：槽位公式见下（`TimeoutTaskShardSlots`）；一张表只能配一个 `tableStrategy`，且在 5.5.3 上 complex 表里的 `HintManager` 不生效，所以整张表统一走 hint 强制路由（一张分表的全部读写都同库同表，无跨库事务问题）。`DB_COUNT = 1` 起步（16 槽全在同一库），将来扩库只改配置。
+-> **单表形态（本节的逻辑表形状）仍然是业务的全部可见面**：所有 mapper SQL 都写 `timeout_task`，分表对业务/测试不可见；集成测试在 `bs_timeout_test` 上连的也是这份 16 张分表。
+-
+-### timeout_task
+-
+-```sql
+--- 逻辑表 timeout_task 的形状（物理落地为 timeout_task_00..15，逐张一份相同 DDL）
+-CREATE TABLE IF NOT EXISTS timeout_task (
+-    id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
+-    task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
+-    callback_group  VARCHAR(64)  NOT NULL COMMENT '回调路由 Dubbo group（= 业务方应用名）',
+-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列）',
+-    action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（不可变；回调 DTO 携带，供业务监控精度）',
+-    next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
+-    status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED',
+-    retry_count     INT          NOT NULL DEFAULT 0 COMMENT '已重试次数（16 次封顶进 FAILED）',
+-    created_at      DATETIME     NOT NULL COMMENT '创建时间',
+-    updated_at      DATETIME     NOT NULL COMMENT '更新时间',
+-    PRIMARY KEY (id),
+-    UNIQUE KEY uk_type_biz (task_type, biz_id),
+-    KEY idx_scan (status, next_fire_time)
+-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '超时任务分表 00';
+-```
+-
+-上面只列第 1 张：`schema-timeout-task.sql` 里是同一份 DDL 逐张写 16 遍（**不用**存储过程，理由见该文件头注释）。
+-
+-> ⚠️ **业务 / 运维 SQL 只写逻辑表名 `timeout_task`，不要写 `timeout_task_07` 这种物理名**：物理名绕过 ShardingSphere 的路由，破坏「同 key 永远同表」，`uk_type_biz` 的全局幂等也随之失效（同一自然键可能落进两张分表）。需要按表名运维时（grep / `DROP` / 单表巡检）才用物理名。
+-> 物理表名的 `_00..15` 是**槽位**：`slot = floorMod(hashCode(task_type.length() + ":" + task_type + biz_id), 16)`（长度前缀防 `("ab","c")` 与 `("a","bc")` 撞同一槽位），由 `TimeoutTaskShardSlots.slotOf` 单点实现、写入与扫描共用。`DB_COUNT = 1` 起步，槽位 g 展平为 `db = g / TABLES_PER_DB, table = g % TABLES_PER_DB`——将来扩库只改 `sharding.yaml`，DDL 形状不变。

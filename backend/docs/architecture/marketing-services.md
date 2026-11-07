@@ -170,8 +170,8 @@ mvn -o install -pl marketing-api -am -DskipTests
 
 营销服务一个 schema（与单体**同 MySQL 实例、不同库**）：**`bs_marketing`**（测试 `bs_marketing_test`），
 points / drawcount / config / raffle / inventory 五段同库。跨 schema 的硬约定只对**单体库**成立：
-**互相只存 id，不 join 单体库、不存昵称头像快照**，用户信息一律经 `IUserQueryService` 取回后在应用层拼。
-**同库内的 join 不受限制**（如抽奖的中奖记录关联 `virtual_inventory_quota` 带出面额与库存）。
+**互相只存 id、不回查单体库、不存昵称头像快照**，用户信息一律经 `IUserQueryService` 取回后在应用层拼。
+**同库内跨表展示的数据也一律多查一次应用层拼装**（如抽奖的中奖记录关联 `virtual_inventory_quota` 带出面额与库存），SQL 层零 JOIN。
 
 | 文件 | 用途 |
 | --- | --- |

@@ -14,7 +14,7 @@ public interface IChatQueryService {
 
     /**
      * 会话列表：排除 hidden_at 非空，按 last_msg_at 倒序分页；
-     * 拼对方 userId+昵称+头像；unread = last_seq_copy − 水位线（O(1) 无 COUNT，用户维度成员行上就地可算）
+     * 拼对方 userId+昵称+头像；unread = room.last_seq − 水位线（服务端拼装，不落副本）
      */
     List<RoomListItemVO> listRooms(String userId, int page, int pageSize);
 

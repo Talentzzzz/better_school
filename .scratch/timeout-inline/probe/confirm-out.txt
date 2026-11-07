@@ -1,0 +1,92 @@
+﻿13:35:22.870 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Starting...
+13:35:23.012 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@139982de
+13:35:23.012 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Start completed.
+
+################ A noSingle   probe-sharding.yaml ################
+13:35:23.307 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Starting...
+13:35:23.311 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-2 - Added connection com.mysql.cj.jdbc.ConnectionImpl@25a6944c
+13:35:23.311 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Start completed.
+java.exe : 2026-10-16 13:35:23.497 [main] INFO  com.cedarsoftware.util.MultiKeyMap - MultiKeyMap stripe configuration: 
+64 locks for 32 cores
+所在位置 行:7 字符: 1
++ & "$env:JAVA_HOME\bin\java.exe" "-Dfile.encoding=UTF-8" "-Duser.langu ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-10-16 13:3...ks for 32 cores:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+13:35:24.870 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:35:24.870 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: b6ca8d59-6591-4778-9d8d-a30ea0dda657, IP: 26.144.150.84
+  [info] logical db 'logic_db' units={ds0=org.apache.shardingsphere.infra.metadata.database.resource.unit.StorageUnit@2132b483}
+  [info]   rule ShardingRule :: org.apache.shardingsphere.sharding.api.config.ShardingRuleConfiguration@37efd131
+  [info]   rule SingleRule :: org.apache.shardingsphere.single.config.SingleRuleConfiguration@5cdd09b1
+  [info]   singleTableDataNodes (0) keys=[]
+  [FAIL] SELECT business  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'user_account' does not exist.
+  [FAIL] INSERT business  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] JOIN business  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] EXPLAIN business  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] ODKU  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] INSERT IGNORE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] subquery  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] DDL  ::  ok
+  [PASS] DDL drop  ::  ok
+  [PASS] sharded logical read (broadcast, no hint)  ::  count=0
+  [FAIL] hinted write  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'timeout_task_03' does not exist.
+  [FAIL] mixed transaction  ::  java.sql.SQLException: Table or view 'product_order' does not exist.
+  [FAIL] sharded UPDATE without hint must fail  ::  succeeded
+
+################ B singleStar probe-star.yaml ################
+13:35:26.974 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-3 - Starting...
+13:35:26.977 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-3 - Added connection com.mysql.cj.jdbc.ConnectionImpl@225a83ea
+13:35:26.977 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-3 - Start completed.
+13:35:27.256 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:35:27.256 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: ebe33d28-2c56-427d-8dae-c693c156af8a, IP: 26.144.150.84
+  [info] logical db 'probe' units={ds0=org.apache.shardingsphere.infra.metadata.database.resource.unit.StorageUnit@48a70b4}
+  [info]   rule ShardingRule :: org.apache.shardingsphere.sharding.api.config.ShardingRuleConfiguration@da8bd0d
+  [info]   rule SingleRule :: org.apache.shardingsphere.single.config.SingleRuleConfiguration@4982fc4a
+  [info]   singleTableDataNodes (4) keys=[errand_order, product_order, review_task, user_account]
+  [PASS] business SELECT  ::  name=alice
+  [PASS] business INSERT  ::  n=1
+  [PASS] business JOIN  ::  rows=1
+  [PASS] EXPLAIN business table  ::  rows=1
+  [PASS] ON DUPLICATE KEY UPDATE  ::  n=2
+  [PASS] INSERT IGNORE  ::  n=0
+  [PASS] subquery over business table  ::  count=2
+  [PASS] DDL  ::  ok
+  [PASS] DDL drop  ::  ok
+  [PASS] sharded logical read (broadcast, no hint)  ::  count=0
+  [FAIL] hinted write  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'timeout_task_03' does not exist.
+  [PASS] one MySQL session for sharded+unsharded writes  ::  ids=63,63,63
+  [PASS] one rollback clears all three tables  ::  po=0 tt=0 rt=0
+  [FAIL] sharded UPDATE without hint must fail  ::  succeeded
+
+################ C singleExpl probe-explicit.yaml ################
+13:35:27.459 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-4 - Starting...
+13:35:27.462 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-4 - Added connection com.mysql.cj.jdbc.ConnectionImpl@6eb1def7
+13:35:27.462 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-4 - Start completed.
+13:35:27.620 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:35:27.620 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: 1d2a4f19-a1b6-4722-bc28-6722d71cc7cb, IP: 26.144.150.84
+  [info] logical db 'probe' units={ds0=org.apache.shardingsphere.infra.metadata.database.resource.unit.StorageUnit@34d2ab1f}
+  [info]   rule ShardingRule :: org.apache.shardingsphere.sharding.api.config.ShardingRuleConfiguration@d3588ae
+  [info]   rule SingleRule :: org.apache.shardingsphere.single.config.SingleRuleConfiguration@48fe184c
+  [info]   singleTableDataNodes (0) keys=[]
+  [FAIL] SELECT business  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'user_account' does not exist.
+  [FAIL] INSERT business  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] JOIN business  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] EXPLAIN business  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] ODKU  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] INSERT IGNORE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] subquery  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] DDL  ::  ok
+  [PASS] DDL drop  ::  ok
+  [PASS] sharded logical read (broadcast, no hint)  ::  count=0
+  [FAIL] hinted write  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'timeout_task_03' does not exist.
+  [FAIL] mixed transaction  ::  java.sql.SQLException: Table or view 'product_order' does not exist.
+  [FAIL] sharded UPDATE without hint must fail  ::  succeeded
+
+################ HintManager thread-transmission ################
+  [info] HINT_MANAGER_HOLDER class = com.alibaba.ttl.TransmittableThreadLocal
+  [info] ThreadLocal impl class = java.lang.ThreadLocal
+  [PASS] plain child Thread inherits the parent hint (TransmittableThreadLocal)  ::  child tableShardingValues=[timeout_task_11]
+  [PASS] hint does not leak into the next task on a reused pooled thread  ::  next task isInstantiated=false
+
+=== CONFIRM RESULT: PASS=20 FAIL=22 ===

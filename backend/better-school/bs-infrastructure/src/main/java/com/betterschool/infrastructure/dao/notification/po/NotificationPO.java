@@ -17,7 +17,7 @@ public class NotificationPO {
     private String type;
     private String title;
     private String content;
-    /** 仅查询路径的计算列（seq ≤ 该范围水位），非表列 */
+    /** 仅查询路径的计算列（seq ≤ 该范围水位），非表列；仓储按页内 scope 集查水位后 Java 计算填充 */
     private Boolean isRead;
     private String refType;
     private String refId;

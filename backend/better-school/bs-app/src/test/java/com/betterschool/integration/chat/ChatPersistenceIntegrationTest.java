@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * chat 持久化层造数集成测试（落地票 01）：建 room/扇出/取号五表状态 + direct_room_pair 配对闸门语义。
+ * chat 持久化层造数集成测试（落地票 01）：建 room/扇出/取号五表状态 + user_pair_room 配对闸门语义。
  * 发送链路的域服务归票 02，本测试直接在事务内驱动仓储原语
  */
 public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
@@ -33,7 +33,7 @@ public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
     private IChatRepository chatRepository;
 
     @Test
-    void directRoomPairUnique_duplicateCreationRejectedByPairGate() {
+    void userPairRoomUnique_duplicateCreationRejectedByPairGate() {
         RoomEntity room = new RoomEntity();
         room.setInitiatorId(USER_A);
         String roomId = chatRepository.createDirectRoom(room, USER_B).getRoomId();
@@ -41,7 +41,7 @@ public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
 
         RoomEntity found = chatRepository.findDirectRoom(USER_A, USER_B);
         assertThat(found.getRoomId()).as("1v1 查重应命中同人唯一会话").isEqualTo(roomId);
-        assertThat(queryLong("SELECT COUNT(1) FROM direct_room_pair WHERE user_min = '" + USER_A + "'"
+        assertThat(queryLong("SELECT COUNT(1) FROM user_pair_room WHERE user_min = '" + USER_A + "'"
                 + " AND user_max = '" + USER_B + "' AND room_id = '" + roomId + "'"))
                 .as("建会话应同事务落一行配对（规范序在前）").isEqualTo(1);
 
@@ -49,9 +49,9 @@ public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
         RoomEntity again = new RoomEntity();
         again.setInitiatorId(USER_B);
         assertThatThrownBy(() -> chatRepository.createDirectRoom(again, USER_A))
-                .as("direct_room_pair.uk_pair 应拦截同一对人重复建会话")
+                .as("user_pair_room.uk_pair 应拦截同一对人重复建会话")
                 .isInstanceOf(DuplicateKeyException.class);
-        assertThat(queryLong("SELECT COUNT(1) FROM direct_room_pair")).isEqualTo(1);
+        assertThat(queryLong("SELECT COUNT(1) FROM user_pair_room")).isEqualTo(1);
         assertThat(queryLong("SELECT COUNT(1) FROM room")).isEqualTo(1);
         assertThat(queryLong("SELECT COUNT(1) FROM room_member WHERE room_id = '" + roomId + "'")).isEqualTo(2);
     }
@@ -81,20 +81,19 @@ public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
                     timeline(USER_A, newRoomId, seq, message.getMessageId(), deliveryA),
                     timeline(USER_B, newRoomId, seq, message.getMessageId(), deliveryB)));
 
-            chatRepository.updateMemberCopies(newRoomId, seq, MsgTypeVO.TEXT, "同学你好，帖子还在吗？", message.getCreatedAt());
+            chatRepository.updateMemberPreview(newRoomId, MsgTypeVO.TEXT, "同学你好，帖子还在吗？", message.getCreatedAt());
             return newRoomId;
         });
 
         // room：纯取号器
         assertThat(queryLong("SELECT last_seq FROM room WHERE room_id = '" + roomId + "'")).isEqualTo(1);
 
-        // room_member：双方成员行，列表副本（水位 + 预览三件套）落用户维度、水位线 0
+        // room_member：双方成员行，列表副本（预览三件套）落用户维度、水位线 0；未读数不落库，由 room.last_seq 现算
         assertThat(queryLong("SELECT COUNT(1) FROM room_member WHERE room_id = '" + roomId + "'")).isEqualTo(2);
         assertThat(queryLong("SELECT MIN(last_read_seq) FROM room_member WHERE room_id = '" + roomId + "'")).isEqualTo(0);
-        assertThat(queryLong("SELECT MIN(last_seq_copy) FROM room_member WHERE room_id = '" + roomId + "'")).as("水位副本与取号器同事务推进").isEqualTo(1);
         assertThat(queryLong("SELECT COUNT(1) FROM room_member WHERE room_id = '" + roomId + "'"
                 + " AND last_msg_type = 'TEXT' AND last_msg_preview = '同学你好，帖子还在吗？'"
-                + " AND last_msg_at IS NOT NULL AND last_seq_copy = 1")).isEqualTo(2);
+                + " AND last_msg_at IS NOT NULL")).isEqualTo(2);
 
         // message：内容中心一行，NORMAL + client_msg_id
         assertThat(queryLong("SELECT seq FROM message WHERE room_id = '" + roomId + "'")).isEqualTo(1);

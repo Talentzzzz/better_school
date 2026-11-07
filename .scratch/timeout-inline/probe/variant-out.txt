@@ -1,0 +1,71 @@
+﻿13:33:33.845 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Starting...
+13:33:33.994 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@139982de
+13:33:33.995 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Start completed.
+MySQL probe table count = 20
+
+################ VARIANT A : probe-named.yaml ################
+13:33:34.253 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Starting...
+13:33:34.257 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-2 - Added connection com.mysql.cj.jdbc.ConnectionImpl@7c1e2a2d
+13:33:34.257 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Start completed.
+java.exe : 2026-10-16 13:33:34.437 [main] INFO  com.cedarsoftware.util.MultiKeyMap - MultiKeyMap stripe configuration: 
+64 locks for 32 cores
+所在位置 行:7 字符: 1
++ & "$env:JAVA_HOME\bin\java.exe" "-Dfile.encoding=UTF-8" "-Duser.langu ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-10-16 13:3...ks for 32 cores:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+13:33:35.823 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:33:35.824 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: aa0ae358-284b-4e5b-94a7-dacfc2edeef9, IP: 26.144.150.84
+  [info] allDatabaseNames = [performance_schema, information_schema, sys, probe, shardingsphere, mysql]
+  [info] database 'probe' isComplete=true containsDataSource=true
+  [info]   storageUnits = {ds0=org.apache.shardingsphere.infra.metadata.database.resource.unit.StorageUnit@1cc6d408}
+  [info]   schema 'probe' tables (0): []
+  [info]   rule ShardingRule
+  [info]   rule SingleRule
+  [info]     defaultDataSource = Optional.empty ; tables = []
+  [info]     singleTableDataNodes size = 0
+  [FAIL] SELECT unconfigured  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'user_account' does not exist.
+  [FAIL] INSERT product_order  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] UPDATE product_order  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] JOIN  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] DDL create  ::  ok
+  [PASS] DDL drop  ::  ok
+  [FAIL] hint routed write  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'timeout_task_03' does not exist.
+  [FAIL] mixed tx  ::  java.sql.SQLException: Table or view 'product_order' does not exist.
+
+################ VARIANT B : probe-rawpool.yaml ################
+  [info] shape failed: java.lang.IllegalStateException: dataSourceClassName can not be null.
+  [FAIL] SELECT unconfigured  ::  java.lang.IllegalStateException: dataSourceClassName can not be null.
+  [FAIL] INSERT product_order  ::  java.lang.IllegalStateException: dataSourceClassName can not be null.
+  [FAIL] UPDATE product_order  ::  java.lang.IllegalStateException: dataSourceClassName can not be null.
+  [FAIL] JOIN  ::  java.lang.IllegalStateException: dataSourceClassName can not be null.
+  [FAIL] DDL  ::  java.lang.IllegalStateException: dataSourceClassName can not be null.
+  [FAIL] DDL drop  ::  java.lang.IllegalStateException: dataSourceClassName can not be null.
+  [FAIL] hint routed write  ::  java.lang.IllegalStateException: dataSourceClassName can not be null.
+  [FAIL] mixed tx  ::  java.lang.IllegalStateException: dataSourceClassName can not be null.
+
+################ VARIANT C : probe-single.yaml ################
+13:33:37.862 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-3 - Starting...
+13:33:37.864 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-3 - Added connection com.mysql.cj.jdbc.ConnectionImpl@1d2be44d
+13:33:37.864 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-3 - Start completed.
+13:33:38.132 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:33:38.132 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: 654446ac-50f3-4018-aa5b-76126ce61669, IP: 26.144.150.84
+  [info] allDatabaseNames = [information_schema, performance_schema, sys, probe, shardingsphere, mysql]
+  [info] database 'probe' isComplete=true containsDataSource=true
+  [info]   storageUnits = {ds0=org.apache.shardingsphere.infra.metadata.database.resource.unit.StorageUnit@2cf30632}
+  [info]   schema 'probe' tables (0): []
+  [info]   rule ShardingRule
+  [info]   rule SingleRule
+  [info]     defaultDataSource = Optional[ds0] ; tables = []
+  [info]     singleTableDataNodes size = 0
+  [FAIL] SELECT unconfigured  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'user_account' does not exist.
+  [FAIL] INSERT product_order  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] UPDATE product_order  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] JOIN  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] DDL create  ::  ok
+  [PASS] DDL drop  ::  ok
+  [FAIL] hint routed write  ::  java.sql.SQLIntegrityConstraintViolationException: Duplicate entry 'T-h1' for key 'timeout_task_03.uk_type_biz'
+  [FAIL] mixed tx  ::  java.sql.SQLException: Table or view 'product_order' does not exist.
+
+=== VARIANT RESULT: PASS=4 FAIL=20 ===

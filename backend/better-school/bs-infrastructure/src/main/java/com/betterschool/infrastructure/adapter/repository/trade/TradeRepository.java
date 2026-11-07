@@ -23,6 +23,16 @@ import com.betterschool.infrastructure.dao.productorder.IProductOrderDao;
 import com.betterschool.infrastructure.dao.productorder.po.ProductOrderEventPO;
 import com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO;
 import com.betterschool.infrastructure.adapter.repository.moderation.ReviewTaskPoolStore;
+import com.betterschool.infrastructure.dao.moderation.IModerationDao;
+import com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO;
+import com.betterschool.infrastructure.dao.product.IProductDao;
+import com.betterschool.infrastructure.dao.product.po.ProductFeedIndexRowPO;
+import com.betterschool.infrastructure.dao.product.po.ProductPO;
+import com.betterschool.infrastructure.dao.productorder.IProductOrderDao;
+import com.betterschool.infrastructure.dao.productorder.po.ProductOrderEventPO;
+import com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO;
+import com.betterschool.infrastructure.dao.user.IUserDao;
+import com.betterschool.infrastructure.dao.user.po.UserPO;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
 import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCode;
@@ -38,8 +48,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * 交易仓储（闲置商品 + 商品托管订单合一，一域一仓储）：持有 IProductDao + IProductOrderDao +
@@ -69,6 +85,10 @@ public class TradeRepository implements ITradeRepository {
     private final ViewMergeWriter viewMergeWriter;
     /** 业务 ID 发号器（uuid-biz-id 票 05）：36 位小写 UUID 字符串，insert 前生成、随行一次写入 */
     private final IIdGenerator idGenerator;
+    /** 卖家昵称头像批量回查（SQL 层零 JOIN：商品列表/详情的 bs_user 信息在这里多查一次拼装） */
+    private final IUserDao userDao;
+    /** feed 索引重建取 APPROVE 审批流水（content_review 单表，IModerationDao 内该语句零 JOIN） */
+    private final IModerationDao moderationDao;
 
     // ---------- 商品 ----------
 
@@ -90,7 +110,9 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public ProductEntity findById(String productId) {
-        return toProductEntity(productDao.selectById(productId));
+        ProductPO row = productDao.selectById(productId);
+        fillProductExtras(row == null ? List.of() : List.of(row));
+        return toProductEntity(row);
     }
 
     @Override
@@ -298,8 +320,26 @@ public class TradeRepository implements ITradeRepository {
     public List<ProductEntity> pageList(ProductCategoryVO category, BigDecimal minPrice, BigDecimal maxPrice,
                                         String sort, int offset, int limit) {
         String categoryName = category == null ? null : category.name();
-        return productDao.selectPage(categoryName, minPrice, maxPrice, sort, offset, limit)
-                .stream().map(this::toProductEntity).toList();
+        // hot 档排序键 view_count 在窄表（SQL 不能 JOIN 进来）：ON_SALE 全集 + 窄表批量回查 + 内存排序切片。
+        // 旧直查路径仅作降级（索引不可用时），数据集有界，可接受
+        List<ProductPO> rows;
+        if ("hot".equals(sort)) {
+            List<ProductPO> allOnSale = productDao.selectOnSaleRows(categoryName, minPrice, maxPrice);
+            Map<String, ProductPO> viewRows = viewCountRowsById(productDao.selectViewCountsByProductIds(
+                    allOnSale.stream().map(ProductPO::getProductId).toList()));
+            rows = allOnSale.stream()
+                    .sorted(Comparator
+                            .comparing((ProductPO p) -> viewCountOf(viewRows, p.getProductId())).reversed()
+                            .thenComparing(ProductPO::getCreateTime, Comparator.reverseOrder())
+                            .thenComparing(ProductPO::getProductId, Comparator.reverseOrder()))
+                    .skip(offset)
+                    .limit(limit)
+                    .toList();
+        } else {
+            rows = productDao.selectPage(categoryName, minPrice, maxPrice, sort, offset, limit);
+        }
+        fillProductExtras(rows);
+        return rows.stream().map(this::toProductEntity).toList();
     }
 
     @Override
@@ -325,10 +365,44 @@ public class TradeRepository implements ITradeRepository {
             int recalibrated = productDao.recalibrateViewCounts();
             int orphans = productDao.deleteViewCountsMissingHistory();
             productDao.clearFeedIndex();
-            int rebuilt = productDao.rebuildFeedIndexProjection();
+            int rebuilt = rebuildFeedIndexRows();
             log.info("[MarketFeedIndexRebuild] product_feed_index 清空重灌 {} 行；product_view_count 校准 {} 行、清理孤儿 {} 行",
                     rebuilt, recalibrated, orphans);
         });
+    }
+
+    /**
+     * 重灌行集拼装（原 INSERT..SELECT 一步投影的多查形态）：行集 = ON_SALE 商品 ∪ 有过审批通过的商品。
+     * 三段取数——① product 全量 (product_id, state, create_time, price)；② content_review 的 APPROVE 流水
+     * （feed_time 真源，经 IModerationDao 单表 GROUP BY，查不到审批流水取 create_time 兜底）；
+     * ③ view_count 从计数窄表抄入（无行 = 0）——组装后批量写回
+     */
+    private int rebuildFeedIndexRows() {
+        Map<String, LocalDateTime> approveTimes = new HashMap<>();
+        for (ContentReviewPO approveRow : moderationDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.PRODUCT.name())) {
+            approveTimes.put(approveRow.getTargetId(), approveRow.getCreateTime());
+        }
+        List<ProductFeedIndexRowPO> rows = new ArrayList<>();
+        for (ProductFeedIndexRowPO candidate : productDao.selectRebuildRows()) {
+            boolean approved = approveTimes.containsKey(candidate.getProductId());
+            if (!ProductStatusVO.ON_SALE.name().equals(candidate.getState()) && !approved) {
+                // 从未通过审的待审/驳回/草稿商品不凭空进索引
+                continue;
+            }
+            candidate.setFeedTime(approveTimes.getOrDefault(candidate.getProductId(), candidate.getCreateTime()));
+            rows.add(candidate);
+        }
+        if (!rows.isEmpty()) {
+            Map<String, ProductPO> viewRows = viewCountRowsById(productDao.selectViewCountsByProductIds(
+                    rows.stream().map(ProductFeedIndexRowPO::getProductId).toList()));
+            for (ProductFeedIndexRowPO row : rows) {
+                row.setViewCount(viewCountOf(viewRows, row.getProductId()));
+            }
+            for (int from = 0; from < rows.size(); from += REBUILD_INSERT_BATCH) {
+                productDao.insertFeedIndexRows(rows.subList(from, Math.min(from + REBUILD_INSERT_BATCH, rows.size())));
+            }
+        }
+        return rows.size();
     }
 
     @Override
@@ -353,12 +427,30 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public List<ProductEntity> listFavorites(String userId, int offset, int limit) {
-        return productDao.selectFavoritesByUser(userId, offset, limit).stream().map(this::toProductEntity).toList();
+        // 收藏关系行主查 → 商品行两段查（原 INNER JOIN product 的行集与 state != 'DELETED' 谓词）
+        List<String> favoriteIds = productDao.selectFavoriteProductIdsByUser(userId);
+        if (favoriteIds.isEmpty()) {
+            return List.of();
+        }
+        Map<String, ProductPO> productsById = productDao.selectByIds(favoriteIds).stream()
+                .collect(Collectors.toMap(ProductPO::getProductId, product -> product, (a, b) -> a));
+        List<ProductPO> visibleRows = new ArrayList<>(favoriteIds.size());
+        for (String productId : favoriteIds) {
+            ProductPO product = productsById.get(productId);
+            if (product != null && !ProductStatusVO.DELETED.name().equals(product.getState())) {
+                visibleRows.add(product);
+            }
+        }
+        List<ProductPO> page = visibleRows.stream().skip(offset).limit(limit).toList();
+        fillProductExtras(page);
+        return page.stream().map(this::toProductEntity).toList();
     }
 
     @Override
     public List<ProductEntity> pageBySeller(String userId, int offset, int limit) {
-        return productDao.selectPageBySeller(userId, offset, limit).stream().map(this::toProductEntity).toList();
+        List<ProductPO> rows = productDao.selectPageBySeller(userId, offset, limit);
+        fillProductExtras(rows);
+        return rows.stream().map(this::toProductEntity).toList();
     }
 
     @Override
@@ -368,7 +460,9 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public List<ProductEntity> pageOnSaleByUser(String userId, int offset, int limit) {
-        return productDao.selectOnSalePageByUser(userId, offset, limit).stream().map(this::toProductEntity).toList();
+        List<ProductPO> rows = productDao.selectOnSalePageByUser(userId, offset, limit);
+        fillProductExtras(rows);
+        return rows.stream().map(this::toProductEntity).toList();
     }
 
     @Override
@@ -391,7 +485,9 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public List<ProductEntity> listByIds(List<String> productIds) {
-        return productDao.selectByIds(productIds).stream().map(this::toProductEntity).toList();
+        List<ProductPO> rows = productDao.selectByIds(productIds);
+        fillProductExtras(rows);
+        return rows.stream().map(this::toProductEntity).toList();
     }
 
     @Override
@@ -492,7 +588,9 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public ProductOrderEntity findOrderById(String orderId) {
-        return toOrderEntity(productOrderDao.selectById(orderId));
+        ProductOrderPO row = productOrderDao.selectById(orderId);
+        fillOrderUserExtras(row == null ? List.of() : List.of(row));
+        return toOrderEntity(row);
     }
 
     @Override
@@ -545,7 +643,9 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public List<ProductOrderEntity> listMineByBuyer(String userId, int offset, int limit) {
-        return productOrderDao.selectMineByBuyer(userId, offset, limit).stream().map(this::toOrderEntity).toList();
+        List<ProductOrderPO> rows = productOrderDao.selectMineByBuyer(userId, offset, limit);
+        fillOrderUserExtras(rows);
+        return rows.stream().map(this::toOrderEntity).toList();
     }
 
     @Override
@@ -555,7 +655,9 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public List<ProductOrderEntity> listMineBySeller(String userId, int offset, int limit) {
-        return productOrderDao.selectMineBySeller(userId, offset, limit).stream().map(this::toOrderEntity).toList();
+        List<ProductOrderPO> rows = productOrderDao.selectMineBySeller(userId, offset, limit);
+        fillOrderUserExtras(rows);
+        return rows.stream().map(this::toOrderEntity).toList();
     }
 
     @Override
@@ -707,6 +809,71 @@ public class TradeRepository implements ITradeRepository {
             saveSearchSyncMessage(productId);
             return null;
         });
+    }
+
+    // ---------- 拼装辅助：浏览窄表 / 卖家信息（SQL 层零 JOIN 的 Java 收口点） ----------
+
+    /** 重灌行集批量写回的分片大小（防 foreach 语句过长） */
+    private static final int REBUILD_INSERT_BATCH = 500;
+
+    /**
+     * 商品行补齐浏览 UV 加速列 + 卖家昵称头像：product_view_count 一次 IN 批量回查、bs_user 一次 IN 批量回查。
+     * 缺行补 0 / 补 null（与原 LEFT JOIN 合成口径一致）；列表与详情共用
+     */
+    private void fillProductExtras(List<ProductPO> rows) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        Map<String, ProductPO> viewRows = viewCountRowsById(
+                productDao.selectViewCountsByProductIds(rows.stream().map(ProductPO::getProductId).toList()));
+        List<String> userIds = rows.stream().map(ProductPO::getUserId).filter(Objects::nonNull).distinct().toList();
+        Map<String, UserPO> users = userIds.isEmpty() ? Map.of() : userDao.selectByIds(userIds).stream()
+                .collect(Collectors.toMap(UserPO::getUserId, user -> user, (a, b) -> a));
+        for (ProductPO row : rows) {
+            row.setViewCount(viewCountOf(viewRows, row.getProductId()));
+            UserPO user = users.get(row.getUserId());
+            if (user != null) {
+                row.setSellerNickname(user.getNickname());
+                row.setSellerAvatar(user.getAvatar());
+            }
+        }
+    }
+
+    /** 部分列计数行 → productId 索引 */
+    private static Map<String, ProductPO> viewCountRowsById(List<ProductPO> viewRows) {
+        return viewRows.stream().collect(Collectors.toMap(ProductPO::getProductId, row -> row, (a, b) -> a));
+    }
+
+    /** 窄表缺行 = 计数 0（与原 LEFT JOIN IFNULL(x, 0) 同口径） */
+    private static Integer viewCountOf(Map<String, ProductPO> viewRows, String productId) {
+        ProductPO row = viewRows.get(productId);
+        return row == null ? 0 : row.getViewCount();
+    }
+
+    /**
+     * 订单行补齐买卖双方昵称头像（原 SELECT 里 bs_user ×2 的 LEFT JOIN 列）：
+     * 买卖双方 userId 合并一次 bs_user 批量回查，缺行补 null（与 LEFT JOIN 一致）
+     */
+    private void fillOrderUserExtras(List<ProductOrderPO> rows) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        List<String> userIds = new ArrayList<>(rows.size() * 2);
+        for (ProductOrderPO row : rows) {
+            userIds.add(row.getBuyerId());
+            userIds.add(row.getSellerId());
+        }
+        Map<String, UserPO> users = userDao.selectByIds(
+                userIds.stream().filter(Objects::nonNull).distinct().toList()).stream()
+                .collect(Collectors.toMap(UserPO::getUserId, user -> user, (a, b) -> a));
+        for (ProductOrderPO row : rows) {
+            UserPO buyer = users.get(row.getBuyerId());
+            UserPO seller = users.get(row.getSellerId());
+            row.setBuyerNickname(buyer == null ? null : buyer.getNickname());
+            row.setBuyerAvatar(buyer == null ? null : buyer.getAvatar());
+            row.setSellerNickname(seller == null ? null : seller.getNickname());
+            row.setSellerAvatar(seller == null ? null : seller.getAvatar());
+        }
     }
 
     // ---------- PO / Entity 转换 ----------

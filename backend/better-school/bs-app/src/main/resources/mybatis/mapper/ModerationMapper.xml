@@ -163,91 +163,18 @@
     </select>
 
     <!-- 审核队列：读 review_task（工单态 PENDING + 类型过滤 + entered_at 先到先审，spec §5.1 队列口径切换）。
-         素材仍联业务表实时直取（工单只存定位与派单态）；status 返回业务表 state（与原接口口径兼容）。
-         targetType 为空 = 跨类型取候选（UNION ALL 后按 entered_at 全局 FIFO）。
+         工单只存定位与派单态：本语句单表返回工单定位列，素材（内容/配图/状态）与作者昵称由仓储按
+         target_id 集回查各业务表与 bs_user 拼装（SQL 层零 JOIN）；targetType 为空 = 跨类型统一 FIFO。
          索引：单类型走 idx_queue_type(claim_state,target_type,entered_at)，跨类型走 idx_queue(claim_state,entered_at) -->
-    <sql id="queuePost">
-        SELECT 'POST' AS target_type, rt.task_id AS task_id, rt.id AS task_num, rt.target_id, rt.review_round,
-               rt.author_id, u.nickname AS author_nickname,
-               CONCAT(COALESCE(p.title, ''), p.content) AS content,
-               NULL AS reward, p.images, p.state AS status, p.create_time,
-               rt.entered_at
-        FROM review_task rt
-        JOIN post p ON p.post_id = rt.target_id
-        LEFT JOIN bs_user u ON u.user_id = rt.author_id
-        WHERE rt.claim_state = 'PENDING'
-          AND rt.target_type = 'POST'
-          AND p.state = 'PENDING_REVIEW'
-    </sql>
-    <sql id="queueComment">
-        SELECT 'COMMENT' AS target_type, rt.task_id AS task_id, rt.id AS task_num, rt.target_id, rt.review_round,
-               rt.author_id, u.nickname AS author_nickname,
-               c.content AS content, NULL AS reward, NULL AS images, c.state AS status, c.create_time,
-               rt.entered_at
-        FROM review_task rt
-        JOIN post_comment c ON c.comment_id = rt.target_id
-        LEFT JOIN bs_user u ON u.user_id = rt.author_id
-        WHERE rt.claim_state = 'PENDING'
-          AND rt.target_type = 'COMMENT'
-          AND c.state = 'PENDING_REVIEW'
-    </sql>
-    <sql id="queueProduct">
-        SELECT 'PRODUCT' AS target_type, rt.task_id AS task_id, rt.id AS task_num, rt.target_id, rt.review_round,
-               rt.author_id, u.nickname AS author_nickname,
-               CONCAT(COALESCE(p.title, ''), p.description) AS content,
-               p.price AS reward, p.images, p.state AS status, p.create_time,
-               rt.entered_at
-        FROM review_task rt
-        JOIN product p ON p.product_id = rt.target_id
-        LEFT JOIN bs_user u ON u.user_id = rt.author_id
-        WHERE rt.claim_state = 'PENDING'
-          AND rt.target_type = 'PRODUCT'
-          AND p.state = 'PENDING_REVIEW'
-    </sql>
-    <sql id="queueErrand">
-        SELECT 'ERRAND' AS target_type, rt.task_id AS task_id, rt.id AS task_num, rt.target_id, rt.review_round,
-               rt.author_id, u.nickname AS author_nickname,
-               e.description AS content, e.reward, e.images, e.state AS status, e.create_time,
-               rt.entered_at
-        FROM review_task rt
-        JOIN errand_order e ON e.errand_order_id = rt.target_id
-        LEFT JOIN bs_user u ON u.user_id = rt.author_id
-        WHERE rt.claim_state = 'PENDING'
-          AND rt.target_type = 'ERRAND'
-          AND e.state = 'PENDING_REVIEW'
-    </sql>
-
     <select id="selectReviewQueue" resultType="com.betterschool.infrastructure.dao.moderation.po.ReviewQueueItemPO">
-        <choose>
-            <when test="targetType == 'POST'">
-                <include refid="queuePost"/>
-                ORDER BY entered_at ASC, task_num ASC
-            </when>
-            <when test="targetType == 'COMMENT'">
-                <include refid="queueComment"/>
-                ORDER BY entered_at ASC, task_num ASC
-            </when>
-            <when test="targetType == 'PRODUCT'">
-                <include refid="queueProduct"/>
-                ORDER BY entered_at ASC, task_num ASC
-            </when>
-            <when test="targetType == 'ERRAND'">
-                <include refid="queueErrand"/>
-                ORDER BY entered_at ASC, task_num ASC
-            </when>
-            <otherwise>
-                SELECT * FROM (
-                    <include refid="queuePost"/>
-                    UNION ALL
-                    <include refid="queueComment"/>
-                    UNION ALL
-                    <include refid="queueProduct"/>
-                    UNION ALL
-                    <include refid="queueErrand"/>
-                ) t
-                ORDER BY t.entered_at ASC, t.task_num ASC
-            </otherwise>
-        </choose>
+        SELECT rt.target_type AS targetType, rt.target_id AS targetId, rt.review_round AS reviewRound,
+               rt.author_id AS authorId, rt.entered_at AS enteredAt
+        FROM review_task rt
+        WHERE rt.claim_state = 'PENDING'
+        <if test="targetType != null">
+            AND rt.target_type = #{targetType}
+        </if>
+        ORDER BY rt.entered_at ASC, rt.id ASC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -277,44 +204,38 @@
         WHERE claim_state = 'PENDING'
     </select>
 
+    <!-- 审核详情素材：按类型分支单表直查业务行（spec §5.1 多类型统一），作者昵称由仓储回查 bs_user 拼装。
+         status 返回业务表 state（与原接口口径兼容）；不筛业务行状态——DONE 工单也要能看 -->
     <select id="selectReviewDetail" resultType="com.betterschool.infrastructure.dao.moderation.po.ReviewQueueItemPO">
         <choose>
             <when test="targetType == 'POST'">
-                SELECT 'POST' AS target_type, p.post_id AS target_id,
-                       p.review_round AS review_round,
-                       p.user_id AS author_id,
-                       u.nickname AS author_nickname,
+                SELECT 'POST' AS targetType, p.post_id AS targetId,
+                       p.review_round AS reviewRound,
+                       p.user_id AS authorId,
                        CONCAT(COALESCE(p.title, ''), p.content) AS content,
-                       NULL AS reward, p.images, p.state, p.create_time
+                       NULL AS reward, p.images AS images, p.state AS status, p.create_time AS createTime
                 FROM post p
-                LEFT JOIN bs_user u ON p.user_id = u.user_id
                 WHERE p.post_id = #{targetId}
             </when>
             <when test="targetType == 'COMMENT'">
-                SELECT 'COMMENT' AS target_type, c.comment_id AS target_id, 1 AS review_round, c.user_id AS author_id,
-                       u.nickname AS author_nickname,
-                       c.content AS content, NULL AS reward, c.state AS status, c.create_time
+                SELECT 'COMMENT' AS targetType, c.comment_id AS targetId, 1 AS reviewRound, c.user_id AS authorId,
+                       c.content AS content, NULL AS reward, c.state AS status, c.create_time AS createTime
                 FROM post_comment c
-                LEFT JOIN bs_user u ON c.user_id = u.user_id
                 WHERE c.comment_id = #{targetId}
             </when>
             <when test="targetType == 'PRODUCT'">
-                SELECT 'PRODUCT' AS target_type, p.product_id AS target_id,
-                       p.review_round AS review_round,
-                       p.user_id AS author_id,
-                       u.nickname AS author_nickname,
+                SELECT 'PRODUCT' AS targetType, p.product_id AS targetId,
+                       p.review_round AS reviewRound,
+                       p.user_id AS authorId,
                        CONCAT(COALESCE(p.title, ''), p.description) AS content,
-                       p.price AS reward, p.images, p.state AS status, p.create_time
+                       p.price AS reward, p.images AS images, p.state AS status, p.create_time AS createTime
                 FROM product p
-                LEFT JOIN bs_user u ON p.user_id = u.user_id
                 WHERE p.product_id = #{targetId}
             </when>
             <otherwise>
-                SELECT 'ERRAND' AS target_type, e.errand_order_id AS target_id, 1 AS review_round, e.publisher_id AS author_id,
-                       u.nickname AS author_nickname,
-                       e.description AS content, e.reward, e.images, e.state AS status, e.create_time
+                SELECT 'ERRAND' AS targetType, e.errand_order_id AS targetId, 1 AS reviewRound, e.publisher_id AS authorId,
+                       e.description AS content, e.reward AS reward, e.images AS images, e.state AS status, e.create_time AS createTime
                 FROM errand_order e
-                LEFT JOIN bs_user u ON e.publisher_id = u.user_id
                 WHERE e.errand_order_id = #{targetId}
             </otherwise>
         </choose>
@@ -353,54 +274,49 @@
           AND claim_by = #{claimBy}
     </update>
 
-    <!-- 工单详情内容素材：按类型分支直查（spec §5.1 多类型统一，延续 selectReviewDetail 形态；
-         通用列 = 内容/配图/作者昵称头像/业务行状态，类型专属 = 跑腿悬赏(reward)/评论的所属帖子标题与父评论文本。
+    <!-- 工单详情内容素材：按类型分支单表直查（spec §5.1 多类型统一，延续 selectReviewDetail 形态；
+         通用列 = 内容/配图/业务行状态，类型专属 = 跑腿悬赏(reward)/评论的所属帖子标题与父评论文本——
+         后者与作者昵称头像均由仓储二次回查拼装，SQL 层零 JOIN。
          不筛业务行状态——DONE 工单也要能看；纯只读，不改变任何业务行状态与可见性（工单不承载可见性） -->
     <sql id="detailPost">
-        SELECT 'POST' AS target_type, p.post_id AS target_id,
-               p.user_id AS author_id, u.nickname AS author_nickname, u.avatar AS author_avatar,
+        SELECT 'POST' AS targetType, p.post_id AS targetId,
+               p.user_id AS authorId,
                CONCAT(COALESCE(p.title, ''), p.content) AS content,
                p.images, NULL AS reward, p.state AS status,
-               NULL AS context_post_id, NULL AS context_post_title,
-               NULL AS context_parent_id, NULL AS context_parent_content
+               NULL AS contextPostId, NULL AS contextPostTitle,
+               NULL AS contextParentId, NULL AS contextParentContent
         FROM post p
-        LEFT JOIN bs_user u ON p.user_id = u.user_id
         WHERE p.post_id = #{targetId}
     </sql>
     <sql id="detailComment">
-        SELECT 'COMMENT' AS target_type, c.comment_id AS target_id,
-               c.user_id AS author_id, u.nickname AS author_nickname, u.avatar AS author_avatar,
+        SELECT 'COMMENT' AS targetType, c.comment_id AS targetId,
+               c.user_id AS authorId,
                c.content AS content, c.images, NULL AS reward, c.state AS status,
-               c.post_id AS context_post_id, p.title AS context_post_title,
+               c.post_id AS contextPostId, NULL AS contextPostTitle,
                <!-- parent_id='0' 表示根评论，无父上下文（CASE 无 ELSE 落 NULL）。
                     uuid-biz-id 票 03：parent_id 已是 VARCHAR，数值比较 &gt; 0 会把 UUID 隐式转数退化为 0（随首字符概率性漏判），必须用字符串不等 -->
-               CASE WHEN c.parent_id &lt;&gt; '0' THEN c.parent_id END AS context_parent_id,
-               pc.content AS context_parent_content
+               CASE WHEN c.parent_id &lt;&gt; '0' THEN c.parent_id END AS contextParentId,
+               NULL AS contextParentContent
         FROM post_comment c
-        LEFT JOIN bs_user u ON c.user_id = u.user_id
-        LEFT JOIN post p ON p.post_id = c.post_id
-        LEFT JOIN post_comment pc ON pc.comment_id = c.parent_id
         WHERE c.comment_id = #{targetId}
     </sql>
     <sql id="detailProduct">
-        SELECT 'PRODUCT' AS target_type, p.product_id AS target_id,
-               p.user_id AS author_id, u.nickname AS author_nickname, u.avatar AS author_avatar,
+        SELECT 'PRODUCT' AS targetType, p.product_id AS targetId,
+               p.user_id AS authorId,
                CONCAT(COALESCE(p.title, ''), p.description) AS content,
                p.images, p.price AS reward, p.state AS status,
-               NULL AS context_post_id, NULL AS context_post_title,
-               NULL AS context_parent_id, NULL AS context_parent_content
+               NULL AS contextPostId, NULL AS contextPostTitle,
+               NULL AS contextParentId, NULL AS contextParentContent
         FROM product p
-        LEFT JOIN bs_user u ON p.user_id = u.user_id
         WHERE p.product_id = #{targetId}
     </sql>
     <sql id="detailErrand">
-        SELECT 'ERRAND' AS target_type, e.errand_order_id AS target_id,
-               e.publisher_id AS author_id, u.nickname AS author_nickname, u.avatar AS author_avatar,
+        SELECT 'ERRAND' AS targetType, e.errand_order_id AS targetId,
+               e.publisher_id AS authorId,
                e.description AS content, e.images, e.reward, e.state AS status,
-               NULL AS context_post_id, NULL AS context_post_title,
-               NULL AS context_parent_id, NULL AS context_parent_content
+               NULL AS contextPostId, NULL AS contextPostTitle,
+               NULL AS contextParentId, NULL AS contextParentContent
         FROM errand_order e
-        LEFT JOIN bs_user u ON e.publisher_id = u.user_id
         WHERE e.errand_order_id = #{targetId}
     </sql>
 
@@ -453,31 +369,35 @@
         LIMIT 1
     </select>
 
-    <!-- 批量拒绝理由：每个 target 取最新一轮 REJECT 行（列表页免 N+1） -->
-    <select id="selectRejectReasons" resultType="map">
-        SELECT cr.target_id AS targetId, cr.reason
-        FROM content_review cr
-        JOIN (
-            SELECT target_id, MAX(id) AS max_id
-            FROM content_review
-            WHERE target_type = #{targetType}
-              AND action = 'REJECT'
-              AND target_id IN
-              <foreach collection="targetIds" item="id" open="(" separator="," close=")">
-                  #{id}
-              </foreach>
-            GROUP BY target_id
-        ) latest ON latest.max_id = cr.id
+    <!-- 批量拒绝理由取数（每个 target 取最新一轮 REJECT 行 = 物理 id 最大的行）：单表查全部 REJECT 行，
+         「按 target 取最新」的裁决在仓储 Java 侧做（原自连派生表 JOIN 的多查形态）；列表页免 N+1 -->
+    <select id="selectRejectRowsByTargetIds" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO">
+        SELECT id, target_id AS targetId, reason
+        FROM content_review
+        WHERE target_type = #{targetType}
+          AND action = 'REJECT'
+          AND target_id IN
+          <foreach collection="targetIds" item="id" open="(" separator="," close=")">
+              #{id}
+          </foreach>
     </select>
 
-    <!-- 举报列表（可按状态过滤）；物理自增 id DESC 定稳定序（report_id 已 UUID 化不代表插入先后） -->
+    <!-- feed 索引重建取数：某类型全部 APPROVE 流水的最新时刻（content_review 单表 GROUP BY，
+         CommunityRepository 拼 feed_time 用，与「feed_time = 最近 APPROVE ?? create_time」口径配套） -->
+    <select id="selectApproveRowsByTargetType" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO">
+        SELECT target_id AS targetId, MAX(create_time) AS createTime
+        FROM content_review
+        WHERE target_type = #{targetType}
+          AND action = 'APPROVE'
+        GROUP BY target_id
+    </select>
+
+    <!-- 举报列表（可按状态过滤）；物理自增 id DESC 定稳定序（report_id 已 UUID 化不代表插入先后）。
+         举报人/被举报人昵称由仓储回查 bs_user 拼装（SQL 层零 JOIN） -->
     <select id="selectReports" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReportPO">
         SELECT r.report_id, r.target_type, r.target_id, r.author_id, r.reporter_id, r.reason,
-               r.content_snapshot, r.status, r.handler_id, r.handled_at, r.create_time, r.update_time,
-               ru.nickname AS reporter_nickname, au.nickname AS author_nickname
+               r.content_snapshot, r.status, r.handler_id, r.handled_at, r.create_time, r.update_time
         FROM content_report r
-        LEFT JOIN bs_user ru ON r.reporter_id = ru.user_id
-        LEFT JOIN bs_user au ON r.author_id = au.user_id
         <where>
             <if test="status != null">
                 r.status = #{status}

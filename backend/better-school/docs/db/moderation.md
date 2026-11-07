@@ -15,7 +15,7 @@
 |target_type|varchar(20)|NOT NULL, `uk_target_round` 首列|内容类型 POST/COMMENT/PRODUCT/ERRAND（`ReviewTargetTypeVO` 可审值；USER/MESSAGE 仅举报用不入池）|
 |target_id|varchar(36)|NOT NULL|内容业务 ID（post_id/comment_id/product_id/errand_order_id，UUID 字符串）|
 |review_round|int|NOT NULL, DEFAULT 1, `uk_target_round` 第三列|审核轮次，与 `content_review.review_round` 同源（COMMENT/ERRAND 恒 1）|
-|author_id|varchar(36)|NOT NULL|作者用户 ID（冗余，工单详情/历史聚合免 join）|
+|author_id|varchar(36)|NOT NULL|作者用户 ID（冗余，工单详情/历史聚合免回查工单表）|
 |source|varchar(20)|NOT NULL, DEFAULT 'MANUAL'|入池来源 MANUAL/KEYWORD/RANDOM（当前仅 MANUAL，其余扩展点）|
 |claim_state|varchar(20)|NOT NULL, DEFAULT 'PENDING'|工单态 PENDING(在池)/CLAIMED(租约中)/DONE(已裁决)。**不叫 status**（业务表已占 state）|
 |claim_by|varchar(36)|NULL|当前持单人（审核员用户 ID）|
@@ -64,7 +64,7 @@
 - `idx_create (create_time)`
 
 ## 注意
-- 只插入审计/历史裁决：同一内容历轮裁决按 `(target_type, target_id)` 查（工单详情聚合，票 07），同一作者历史按 `author_id` 单表直查免 join
+- 只插入审计/历史裁决：同一内容历轮裁决按 `(target_type, target_id)` 查（工单详情聚合，票 07），同一作者历史按 `author_id` 单表直查免回查工单表
 - 写入走 `IReviewService.recordReview` → `INSERT IGNORE`，撞 `uk_target_action_round` = 该轮已记录过（重放裁决自然幂等跳过）；轮次由业务表行锚定，重复裁决业务行轮次不变 → 只插一行
 - 同一目标可被多次审核（商品转草稿重提、下架重发各成一轮），历史裁决留痕完整；拒绝理由按最新一次展示（`selectRejectReason` ORDER BY 物理自增 id DESC LIMIT 1）
 - 业务 ID `review_id` 承担对外标识（uuid-biz-id 票 06 起）；物理 `id` 只作「最新一轮」排序等内部用途
@@ -120,7 +120,7 @@
 - review_task.target_id / content_review.target_id / content_report.target_id 均指向**业务表的业务 ID**（`post.post_id`、`post_comment.comment_id`、`product.product_id`、`errand_order.errand_order_id`、`message.msg_id`、`bs_user.user_id`），非物理 `id`
 - review_task（claim_state=DONE）⇔ 本轮已落 content_review 行（同事务，互为充分）；工单不承载可见性，对外可见与否由业务行状态流转决定
 - content_report（target_type=MESSAGE）是 chat 的举报兜底；content_review / review_task 不记录 MESSAGE
-- 拒绝理由回显：PostCommentMapper 等列表 JOIN `content_review` 的 `action='REJECT'` 行，取最新一轮
+- 拒绝理由回显：仓储按 target_id 集单表查 `content_review` 的 `action='REJECT'` 行，Java 取每 target 最新一轮
 - 敏感词命中转审是扩展点（content_review.source=KEYWORD）
 
 ## 谁在写

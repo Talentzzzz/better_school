@@ -172,10 +172,13 @@ class DrawCountBucketIntegrationTest extends TestingEnvironment {
         assertThat(bucketCountOf(USER_ID)).isEqualTo(2);
 
         assertThat(drawCountAccountService.deductForDraw(USER_ID, "97007")).isTrue();
-        List<String> consumedFrom = jdbcTemplate.queryForList(
-                "SELECT db.bucket_id FROM draw_count_detail d JOIN draw_count_bucket db ON d.bucket_id = db.bucket_id "
-                        + "WHERE d.ref_id = '97007'", String.class);
-        assertThat(consumedFrom).as("过期桶不被扣，扣的是有效桶").hasSize(1);
+        // 两查拼装（SQL 层零 JOIN）：先单表查扣减明细，再单表核对该桶真实存在
+        List<String> detailBucketIds = jdbcTemplate.queryForList(
+                "SELECT bucket_id FROM draw_count_detail WHERE ref_id = '97007'", String.class);
+        assertThat(detailBucketIds).as("过期桶不被扣，扣的是有效桶：明细恰一行").hasSize(1);
+        Integer bucketExists = jdbcTemplate.queryForObject(
+                "SELECT COUNT(1) FROM draw_count_bucket WHERE bucket_id = ?", Integer.class, detailBucketIds.get(0));
+        assertThat(bucketExists).as("明细指向的是有效桶（未随过期清理退场）").isEqualTo(1);
     }
 
     @Test

@@ -25,11 +25,11 @@ public class PostPO {
     private LocalDateTime updateTime;
     private LocalDateTime expireAt;
 
-    /** 查询投影列：点赞/评论计数（窄表 post_like_count / post_comment_count LEFT JOIN 合成，非 post 行列） */
+    /** 查询投影列：点赞/评论计数（窄表 post_like_count / post_comment_count 仓储批量回查填充，非 post 行列） */
     private Integer likeCount;
     private Integer commentCount;
 
-    /** 查询冗余字段：作者昵称/头像（JOIN bs_user 填充） */
+    /** 查询冗余字段：作者昵称/头像（仓储查 bs_user 批量回查填充，SQL 层零 JOIN） */
     private String authorNickname;
     private String authorAvatar;
 }

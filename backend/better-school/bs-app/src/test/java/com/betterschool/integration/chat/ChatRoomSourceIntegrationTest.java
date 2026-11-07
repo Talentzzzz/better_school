@@ -69,7 +69,7 @@ public class ChatRoomSourceIntegrationTest extends CommunityApiTestBase {
         String roomId = createRoom(userA, userB.userId(), "PRODUCT");
         String again = createRoom(userB, userA.userId(), "ERRAND");
 
-        assertThat(again).as("direct_room_pair.uk_pair 只认人对，来源不拆会话").isEqualTo(roomId);
+        assertThat(again).as("user_pair_room.uk_pair 只认人对，来源不拆会话").isEqualTo(roomId);
         assertThat(jdbcTemplate.queryForObject("SELECT source FROM room WHERE room_id = ?", String.class, roomId))
                 .as("二次进入不覆盖首来源").isEqualTo("PRODUCT");
         assertThat(jdbcTemplate.queryForObject("SELECT initiator_id FROM room WHERE room_id = ?", String.class, roomId))

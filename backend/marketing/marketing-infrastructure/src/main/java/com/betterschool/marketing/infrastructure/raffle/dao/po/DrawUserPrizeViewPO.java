@@ -4,7 +4,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/** 我的奖品视图行（draw_record LEFT JOIN EXCHANGE 动作明细，恒过滤 THANKS） */
+/** 我的奖品视图行（draw_record 单表 + EXCHANGE 动作明细批量回查，恒过滤 THANKS） */
 @Data
 public class DrawUserPrizeViewPO {
 

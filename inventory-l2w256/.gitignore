@@ -1,0 +1,26 @@
+# 构建产物
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### IntelliJ IDEA ###
+.idea/
+*.iml
+*.ipr
+*.iws
+
+### 运行时产物 ###
+*.log
+logs/
+gc-*.log
+*.hprof
+hs_err_pid*
+
+### 部署临时文件 ###
+deploy/dist/
+deploy/*.tar
+
+### OS ###
+.DS_Store
+Thumbs.db

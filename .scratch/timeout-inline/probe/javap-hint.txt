@@ -1,0 +1,24 @@
+===== shardingsphere-infra-binder-core-5.5.3.jar : 1 refs
+         13: invokestatic  #102                // Method org/apache/shardingsphere/infra/hint/HintManager.getDataSourceName:()Ljava/util/Optional;
+===== shardingsphere-infra-common-5.5.3.jar : 12 refs
+   Compiled from "HintManager.java"
+   public final class org.apache.shardingsphere.infra.hint.HintManager implements java.lang.AutoCloseable {
+     private static final com.alibaba.ttl.TransmittableThreadLocal<org.apache.shardingsphere.infra.hint.HintManager> HINT_MANAGER_HOLDER;
+     public static org.apache.shardingsphere.infra.hint.HintManager getInstance();
+         20: new           #2                  // class org/apache/shardingsphere/infra/hint/HintManager
+===== shardingsphere-infra-route-core-5.5.3.jar : 3 refs
+          0: invokestatic  #187                // Method org/apache/shardingsphere/infra/hint/HintManager.isInstantiated:()Z
+          6: invokestatic  #192                // Method org/apache/shardingsphere/infra/hint/HintManager.getDataSourceName:()Ljava/util/Optional;
+         15: invokestatic  #192                // Method org/apache/shardingsphere/infra/hint/HintManager.getDataSourceName:()Ljava/util/Optional;
+===== shardingsphere-jdbc-5.5.3.jar : 1 refs
+         35: invokestatic  #264                // Method org/apache/shardingsphere/infra/hint/HintManager.isInstantiated:()Z
+===== shardingsphere-sharding-core-5.5.3.jar : 4 refs
+         13: invokestatic  #219                // Method org/apache/shardingsphere/infra/hint/HintManager.isDatabaseShardingOnly:()Z
+         19: invokestatic  #224                // Method org/apache/shardingsphere/infra/hint/HintManager.getDatabaseShardingValues:()Ljava/util/Collection;
+         29: invokestatic  #226                // Method org/apache/shardingsphere/infra/hint/HintManager.getDatabaseShardingValues:(Ljava/lang/String;)Ljava/util/Collection;
+         17: invokestatic  #245                // Method org/apache/shardingsphere/infra/hint/HintManager.getTableShardingValues:(Ljava/lang/String;)Ljava/util/Collection;
+===== timeout-center-infrastructure-1.0.0-SNAPSHOT.jar : 4 refs
+          0: invokestatic  #129                // Method org/apache/shardingsphere/infra/hint/HintManager.getInstance:()Lorg/apache/shardingsphere/infra/hint/HintManager;
+         11: invokevirtual #139                // Method org/apache/shardingsphere/infra/hint/HintManager.addTableShardingValue:(Ljava/lang/String;Ljava/lang/Comparable;)V
+         27: invokevirtual #148                // Method org/apache/shardingsphere/infra/hint/HintManager.close:()V
+         40: invokevirtual #148                // Method org/apache/shardingsphere/infra/hint/HintManager.close:()V

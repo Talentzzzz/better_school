@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>cn.inventory</groupId>
+        <artifactId>inventory-l2w256</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>l2w256-api</artifactId>
+    <name>l2w256-api</name>
+    <description>对外契约：接口 + DTO + Response，不依赖任何业务模块（后续 dubbo 暴露的就是这一层）</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <!-- 只引校验注解的 API，不带实现：让契约层能声明校验规则，又不把 hibernate-validator 传给所有下游 -->
+        <dependency>
+            <groupId>jakarta.validation</groupId>
+            <artifactId>jakarta.validation-api</artifactId>
+        </dependency>
+    </dependencies>
+</project>

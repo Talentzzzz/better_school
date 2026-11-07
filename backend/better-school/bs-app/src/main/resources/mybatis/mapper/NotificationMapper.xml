@@ -54,11 +54,12 @@
 
     <!-- ===== 读路径 ===== -->
 
+    <!-- 通知分页：notification 单表（SQL 层零 JOIN）；is_read 不在 SQL 里——仓储按页内 scope 集逐 scope 查
+         notification_read 水位（selectLastReadSeq，每 user_id × scope 一行，scope 个数有界）后 Java 计算：
+         is_read = seq ≤ COALESCE(水位, 0)，与原 LEFT JOIN 计算列同口径 -->
     <select id="selectPage" resultType="com.betterschool.infrastructure.dao.notification.po.NotificationPO">
-        SELECT <include refid="baseColumns"/>,
-               (n.seq &lt;= COALESCE(r.last_read_seq, 0)) AS is_read
+        SELECT <include refid="baseColumns"/>
         FROM notification n
-        LEFT JOIN notification_read r ON r.user_id = n.user_id AND r.scope = n.scope
         WHERE n.user_id = #{userId}
         <if test="scope != null">
             AND n.scope = #{scope}

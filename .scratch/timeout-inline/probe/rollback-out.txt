@@ -1,0 +1,27 @@
+﻿java.exe : Picked up JAVA_TOOL_OPTIONS: -Duser.language=en -Duser.country=US
+所在位置 行:9 字符: 1
++ & "$jdk\bin\java.exe" "-Dfile.encoding=UTF-8" "-Duser.language=en" -c ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Picked up JAVA_...user.country=US:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+13:45:57.107 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Starting...
+13:45:57.116 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@5ccbeb64
+13:45:57.117 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Start completed.
+2026-10-16 13:45:57.291 [main] INFO  com.cedarsoftware.util.MultiKeyMap - MultiKeyMap stripe configuration: 64 locks fo
+r 32 cores
+13:45:58.572 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:45:58.572 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: 302fe341-11fc-4d34-ac29-d280b52fb231, IP: 26.144.150.84
+  [info] per-shard counts BEFORE = <all empty>
+  [info] inside hint scope, values=[timeout_task_05]
+  [info] sharded insert updateCount=1
+  [info] session ids = 204,204,204
+  [info] per-shard counts BEFORE ROLLBACK (from a DIFFERENT connection, so invisible if truly uncommitted) = <all empty>
+  [info] per-shard counts AFTER ROLLBACK = <all empty>
+  [info] business rows: product_order(TX1)=0 review_task=0
+
+  ---- control: hinted sharded insert, autocommit OFF, explicit ROLLBACK ----
+  [info] per-shard counts after control rollback = <all empty>
+
+  ---- control 2: session identity across two Hikari borrows ----
+  [info] two sequential Hikari borrows -> session 204 then 204 (SAME physical session)

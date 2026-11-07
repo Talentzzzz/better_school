@@ -1,0 +1,65 @@
+# ============================================================================
+# 库存扣减压测 · 应用 compose（Spring Boot 库存压测服务）
+# 部署在应用机（公网 101.201.49.50 / 内网 172.31.89.1）
+#
+#   docker load -i lt-inventory-app-1.0.0.tar
+#   docker compose -f docker-compose-app.yml up -d
+#
+# 镜像是 tar 包 load 进来的，不在这里构建（见 scripts/build-image.sh）。
+# 所有值（IP / 端口 / 密码 / 容量参数）都写死在文件里；调参直接改本文件。
+# ============================================================================
+name: lt-inventory
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "100m"
+    max-file: "3"
+
+services:
+  app:
+    container_name: lt-app
+    image: lt-inventory-app:1.0.0
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # 中间件机内网 IP，已写死
+      MYSQL_HOST: 172.31.88.255
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: lt123456
+      REDIS_HOST: 172.31.88.255
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: lt123456
+      ROCKETMQ_NAMESRV: 172.31.88.255:9876
+      # JVM：4C8G 机器给 4G，剩 4G 留给堆外/page cache/系统
+      JAVA_OPTS: -Xms4g -Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=50 -XX:+AlwaysPreTouch -Duser.timezone=Asia/Shanghai
+      # ===== Tomcat 接入能力（默认 max-threads=200 太小，压测会在容器层就排队）=====
+      # 工作线程：4C8G 上 400 足够（请求基本都堵在 IO，再加只是多吃上下文切换）
+      # 注意要略高于 DB_POOL_SIZE，让排队发生在连接池而不是 Tomcat
+      TOMCAT_THREADS: 400
+      TOMCAT_MIN_SPARE: 100
+      # 全连接数（含 keep-alive 空闲连接）：压测机 200~800 并发时不应成为瓶颈
+      TOMCAT_MAX_CONNECTIONS: 20000
+      # 连接满之后的排队队列长度
+      TOMCAT_ACCEPT_COUNT: 2000
+      # Hikari 连接池：db 策略的并发上限 ≈ 这个值。单热点行下 200 已远超行锁并行度
+      DB_POOL_SIZE: 200
+      # Lettuce 连接池：要和 TOMCAT_THREADS 对齐，否则高并发会报 pool exhausted
+      REDIS_POOL_SIZE: 400
+      # 库存参数
+      BUCKET_COUNT: 1
+      DEFAULT_STOCK: 10000
+      # 合并窗口（毫秒）：窗口内同一桶只发一条唤醒消息
+      MERGE_WINDOW_MS: 1000
+      # 一次唤醒最多合几个时间格（1 = 与线上一致）
+      MERGE_CELLS_PER_WAKE: 1
+      # 兜底扫描间隔（毫秒）
+      MERGE_FALLBACK_MS: 5000
+      TZ: Asia/Shanghai
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    logging: *default-logging

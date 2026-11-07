@@ -44,7 +44,7 @@
 
 ## 谁在写 / 注意
 - 资料编辑只写 `signature`/`gender`（`UserMapper.updateProfile`），隐私设置只写 `show_liked`/`show_comments`（`updatePrivacy`），登录只写 `nickname`/`avatar`/`last_login_at`（`updateById`）——**三条语句各管一摊，不要合并成通用 updateById**：`role`/`state`/`credit_score` 归其他域写，防止登录写覆盖并发封禁/调分
-- **获赞无独立计数列**：公开资料接口的 `receivedLikeCount` 读时聚合 `SUM(post_like_count.like_count) JOIN post ON post_id WHERE post.user_id=? AND post.state='NORMAL'`（窄表计数由 MQ 窗口聚合异步刷盘，属近似值；不含评论获赞）
+- **获赞无独立计数列**：公开资料接口的 `receivedLikeCount` 读时两段查聚合——post 单表取该用户 NORMAL 帖 id 集，再按 id 集批量读 `post_like_count` 后 Java 求和（窄表计数由 MQ 窗口聚合异步刷盘，属近似值；不含评论获赞；SQL 层零 JOIN）
 - 查用户请走 `phone` / `user_id`（都有 uk），不要扫全表
 
 # virtual_wallet

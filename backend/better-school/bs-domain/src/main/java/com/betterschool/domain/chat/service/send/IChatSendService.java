@@ -14,7 +14,7 @@ import com.betterschool.domain.chat.model.valobj.RoomSourceVO;
 public interface IChatSendService {
 
     /**
-     * 建/取 1v1 会话：direct_room_pair.uk_pair 幂等，同一对人重复建返回既有 room（「联系 TA」入口）。
+     * 建/取 1v1 会话：user_pair_room.uk_pair 幂等，同一对人重复建返回既有 room（「联系 TA」入口）。
      *
      * @param source 会话来源（市集三入口各带一个；首页/用户主页私信入口传 null）；
      *               仅在**首次建会话**时写入，既有会话原样返回（首来源钉死）

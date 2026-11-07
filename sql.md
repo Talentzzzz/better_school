@@ -426,15 +426,15 @@ CREATE TABLE IF NOT EXISTS room (
     update_time      DATETIME     NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
     UNIQUE KEY uk_room_id (room_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '会话表（1v1，纯取号器 + 会话真相：预览/排序/未读已迁用户维度 room_member）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '会话表（1v1，纯取号器 + 会话真相：预览/排序已迁用户维度 room_member，未读数由 last_seq − 水位线现算）';
 ```
 
-> room.user_min / room.user_max / uk_direct_pair 已迁出（direct-room-pair 收口：1v1 查重与配对映射独立成 direct_room_pair 表，room 回归纯会话实体、不知道「配对」的存在）；room.last_msg_type / last_msg_preview / last_msg_at 已迁出（列表职责迁用户维度：排序键与预览三件套落 room_member，room 回归纯取号器 + 会话真相）。存量库不迁移（uuid-biz-id：删库重建），历史割接脚本已随 uuid-biz-id 票 08 退役。
+> room.user_min / room.user_max / uk_direct_pair 已迁出（配对收口：1v1 查重与配对映射独立成 user_pair_room 表，room 回归纯会话实体、不知道「配对」的存在）；room.last_msg_type / last_msg_preview / last_msg_at 已迁出（列表职责迁用户维度：排序键与预览三件套落 room_member，room 回归纯取号器 + 会话真相）。存量库不迁移（uuid-biz-id：删库重建），历史割接脚本已随 uuid-biz-id 票 08 退役。
 
-### direct_room_pair
+### user_pair_room
 
 ```sql
-CREATE TABLE IF NOT EXISTS direct_room_pair (
+CREATE TABLE IF NOT EXISTS user_pair_room (
     id          BIGINT   NOT NULL AUTO_INCREMENT,
     user_min    VARCHAR(36)   NOT NULL COMMENT '1v1 双方 user_id 的规范序在前方（字符串字典序，uk_pair 首列）',
     user_max    VARCHAR(36)   NOT NULL COMMENT '1v1 双方 user_id 的规范序在后方（字符串字典序）',
@@ -444,7 +444,7 @@ CREATE TABLE IF NOT EXISTS direct_room_pair (
     PRIMARY KEY (id),
     UNIQUE KEY uk_pair (user_min, user_max) COMMENT '1v1 查重：同一对人恒一行，建会话的幂等裁决者（并发建会话撞键即回读既有 room_id）',
     UNIQUE KEY uk_room_id (room_id) COMMENT '配对→会话反查锚点（一会话恒一行配对）'
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '1v1 会话配对映射（查重与反查专用，room 不再承载配对）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '用户对 → 1v1 会话映射（查重与反查专用，room 不再承载配对）';
 ```
 
 说明：建会话事务的收尾闸门：room + 两行 room_member + 一行配对同事务；并发建同一对人时后到者撞 uk_pair 整事务回滚（room/成员行不落），服务层捕获 DuplicateKeyException 后经本表幂等回读既有 room_id。配对键沿用归一化（无序对在有序存储里的规范表示），uuid-biz-id 票 04 起取**字符串字典序**规范序（user_min = 字典序在前的一方；原数值 min/max 已失效——UUID 不可比大小），由 `DirectRoomPairVO` 收敛。会话列表的对家 user_id 不再由 room 列推导：列表 SQL 自连 room_member（1v1 恒两行）直出。
@@ -456,18 +456,17 @@ CREATE TABLE IF NOT EXISTS room_member (
     id               BIGINT       NOT NULL AUTO_INCREMENT,
     room_id          VARCHAR(36)  NOT NULL COMMENT '会话业务键（room.room_id，UUID 字符串）',
     user_id          VARCHAR(36)  NOT NULL COMMENT '成员 user_id',
-    last_seq_copy    BIGINT       NOT NULL DEFAULT 0 COMMENT '会话水位副本：未读数 = 此列 − last_read_seq（用户维度就地可算，与 OpenIM Conversation 行同构）；写链路 GREATEST 只进不退，真源 room.last_seq 仍由取号事务维护',
     last_msg_type    VARCHAR(20)  NULL COMMENT '最后一条消息类型副本（列表预览标签：IMAGE=[图片]、CARD=按 ref_type 出标签 [商品]/[帖子]/[跑腿]，不查标题）',
     last_msg_preview VARCHAR(200) NULL COMMENT '最后一条消息预览文案副本（TEXT=原文截断至 200，撤回=[已撤回]）',
     last_msg_at      DATETIME     NULL COMMENT '最后消息时间副本（会话列表排序键）',
-    last_read_seq    BIGINT       NOT NULL DEFAULT 0 COMMENT '已读水位线：未读数 = last_seq_copy − 此列；打开会话即推到 last_seq_copy',
+    last_read_seq    BIGINT       NOT NULL DEFAULT 0 COMMENT '已读水位线：未读数 = room.last_seq − 此列（服务端拼装，不落副本）；打开会话即推到 room.last_seq',
     hidden_at        DATETIME     NULL COMMENT '会话隐藏时间（用户侧删除会话，软删）；新消息清空弹回',
     create_time      DATETIME     NOT NULL COMMENT '创建时间',
     update_time      DATETIME     NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
     UNIQUE KEY uk_room_user (room_id, user_id),
     KEY idx_user_msg (user_id, last_msg_at) COMMENT '会话列表驱动索引（user_id 等值 + last_msg_at 倒序取页，分库日即 user 片单分片查询面）'
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '会话成员状态（每会话恒两行；用户维度会话列表唯一查询面，排序键与预览三件套落此）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '会话成员状态（每会话恒两行；用户维度会话列表唯一查询面，排序键与预览三件套落此，未读数不落库）';
 ```
 
 ### message

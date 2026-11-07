@@ -1,0 +1,22 @@
+# 运行态镜像（不联网也能构建）：先在本机 mvn package 出 jar，再打这个镜像。
+#
+#   cd app && mvn -B -DskipTests package
+#   docker build -f Dockerfile.runtime -t lt-inventory-app:1.0.0 .
+#   docker save -o lt-inventory-app-1.0.0.tar lt-inventory-app:1.0.0
+#   # 传到应用机后：docker load -i lt-inventory-app-1.0.0.tar
+FROM eclipse-temurin:21-jre-alpine
+RUN addgroup -S app && adduser -S app -G app
+
+WORKDIR /app
+COPY target/inventory-loadtest.jar /app/app.jar
+
+ENV TZ=Asia/Shanghai \
+    JAVA_OPTS="-Xms2g -Xmx2g -XX:+UseG1GC -XX:MaxGCPauseMillis=50 -XX:+AlwaysPreTouch -Duser.timezone=Asia/Shanghai"
+
+EXPOSE 8080
+USER app
+
+HEALTHCHECK --interval=10s --timeout=3s --retries=30 --start-period=60s \
+    CMD wget -qO- http://127.0.0.1:8080/actuator/health || exit 1
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]

@@ -57,7 +57,7 @@
 工单详情聚合（spec §5.1：一屏裁决上下文；Auth: AUDITOR/ADMIN）：
 - 通用列：`taskId`/`targetType`/`targetId`/`reviewRound`/`claimState`（PENDING/CLAIMED/DONE）/`enteredAt`/`decidedAt` + 内容 `content`/`images`/`authorId`/`authorNickname`/`authorAvatar`/`status`（业务行当前状态）
 - 类型专属：ERRAND `reward`=悬赏（PRODUCT 沿用队列口径 `reward`=价格）；COMMENT `contextPostId`/`contextPostTitle`（所属帖子）与 `contextParentId`/`contextParentContent`（父评论，根评论为 null）
-- 历史裁决：`targetReviews`（同一内容历轮，review_round 升序，含 action/reason/reasonCode/operatorId/createdAt）+ `authorReviews`（同一作者历史，content_review 单表 author_id 直查免 join，id 降序最新 20 条）
+- 历史裁决：`targetReviews`（同一内容历轮，review_round 升序，含 action/reason/reasonCode/operatorId/createdAt）+ `authorReviews`（同一作者历史，content_review 单表 author_id 直查免查工单表，id 降序最新 20 条）
 - 纯只读聚合，不改变任何业务行状态与对外可见性（工单不承载可见性）；工单/内容不存在 404
 - 失败常见: 非审核员 403 / 工单不存在 404
 

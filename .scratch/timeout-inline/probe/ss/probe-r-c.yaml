@@ -1,0 +1,29 @@
+# Final confirmation, variant C: repo shape verbatim -- !SHARDING only, NO !SINGLE, no databaseName.
+dataSources:
+  ds0:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://127.0.0.1:3307/ss_c?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8
+    username: root
+    password: ""
+    maximumPoolSize: 10
+    minimumIdle: 1
+    connectionTimeout: 3000
+
+rules:
+  - !SHARDING
+    tables:
+      timeout_task:
+        actualDataNodes: ds0.timeout_task_00,ds0.timeout_task_01,ds0.timeout_task_02,ds0.timeout_task_03,ds0.timeout_task_04,ds0.timeout_task_05,ds0.timeout_task_06,ds0.timeout_task_07,ds0.timeout_task_08,ds0.timeout_task_09,ds0.timeout_task_10,ds0.timeout_task_11,ds0.timeout_task_12,ds0.timeout_task_13,ds0.timeout_task_14,ds0.timeout_task_15
+        tableStrategy:
+          hint:
+            shardingAlgorithmName: timeout-task-hint
+    shardingAlgorithms:
+      timeout-task-hint:
+        type: CLASS_BASED
+        props:
+          strategy: HINT
+          algorithmClassName: org.apache.shardingsphere.sharding.algorithm.sharding.hint.HintInlineShardingAlgorithm
+
+props:
+  sql-show: false

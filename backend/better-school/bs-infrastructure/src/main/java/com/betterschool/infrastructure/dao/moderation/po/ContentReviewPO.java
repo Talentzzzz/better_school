@@ -8,6 +8,9 @@ import java.time.LocalDateTime;
 @Data
 public class ContentReviewPO {
 
+    /** 物理自增 id（内部键；部分列投影语句才带出，「同 target 最新一轮 REJECT = id 最大的行」裁决用） */
+    private Long id;
+
     /** 业务 ID（UUID 字符串；uuid-biz-id 票 06：IIdGenerator 随 insert 一次写入，物理自增 id 保留纯内部键） */
     private String reviewId;
     private String targetType;

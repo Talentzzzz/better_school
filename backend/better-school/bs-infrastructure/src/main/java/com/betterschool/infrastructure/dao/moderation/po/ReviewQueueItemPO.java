@@ -5,7 +5,8 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** 审核队列跨表查询统一结果 PO（post/post_comment/errand_order/product 各查各的，字段求同） */
+/** 审核队列统一结果 PO：工单定位列由 review_task 单表直查，素材列（content/reward/images/status/createTime）
+ * 与 authorNickname 由仓储按 target_id 集回查业务表 + bs_user 拼装（SQL 层零 JOIN，字段求同） */
 @Data
 public class ReviewQueueItemPO {
 

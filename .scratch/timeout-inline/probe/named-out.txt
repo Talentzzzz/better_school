@@ -1,0 +1,154 @@
+﻿13:31:18.246 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Starting...
+13:31:18.398 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@139982de
+13:31:18.399 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Start completed.
+MySQL schema probe has 20 tables
+
+================ A. NO databaseName  (exactly backend/timeout-center/sharding.yaml shape) ================
+  ---- metadata shape ----
+13:31:18.681 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Starting...
+13:31:18.685 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-2 - Added connection com.mysql.cj.jdbc.ConnectionImpl@4218500f
+13:31:18.685 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Start completed.
+java.exe : 2026-10-16 13:31:18.851 [main] INFO  com.cedarsoftware.util.MultiKeyMap - MultiKeyMap stripe configuration: 
+64 locks for 32 cores
+所在位置 行:7 字符: 1
++ & "$env:JAVA_HOME\bin\java.exe" "-Dfile.encoding=UTF-8" "-Duser.langu ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-10-16 13:3...ks for 32 cores:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+13:31:20.348 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:31:20.348 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: 0a34b280-ca23-491c-b8c3-1d89162202d5, IP: 26.144.150.84
+  [info] allDatabaseNames = [information_schema, performance_schema, sys, shardingsphere, logic_db, mysql]
+  [info] preSelectedDatabaseName = information_schema
+  [info] database 'information_schema' isComplete=false containsDataSource=false
+  [info]   schema 'information_schema'
+  [info]     getAllTables (0): []
+  [info]     getAllViews (0): []
+  [info] database 'performance_schema' isComplete=false containsDataSource=false
+  [info]   schema 'performance_schema'
+  [info]     getAllTables (0): []
+  [info]     getAllViews (0): []
+  [info] database 'sys' isComplete=false containsDataSource=false
+  [info]   schema 'sys'
+  [info]     getAllTables (0): []
+  [info]     getAllViews (0): []
+  [info] database 'shardingsphere' isComplete=false containsDataSource=false
+  [info]   schema 'shardingsphere'
+  [info]     getAllTables (0): []
+  [info]     getAllViews (0): []
+  [info] database 'logic_db' isComplete=true containsDataSource=true
+  [info]   schema 'logic_db'
+  [info]     getAllTables (0): []
+  [info]     getAllViews (0): []
+  [info]   rule: ShardingRule
+  [info]     logicTableNames = [timeout_task]
+  [info]   rule: SingleRule
+  [info]     defaultDataSource = Optional.empty, tables = []
+  [info]     singleTableDataNodes (0):
+  [info] database 'mysql' isComplete=false containsDataSource=false
+  [info]   schema 'mysql'
+  [info]     getAllTables (0): []
+  [info]     getAllViews (0): []
+  ---- SQL against unconfigured business tables ----
+  [FAIL] SELECT unconfigured  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'user_account' does not exist.
+  [FAIL] INSERT unconfigured  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] UPDATE unconfigured  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] JOIN unconfigured  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] COUNT unconfigured  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'review_task' does not exist.
+  [FAIL] schema-qualified schema name  ::  org.apache.shardingsphere.database.exception.core.exception.syntax.database.UnknownDatabaseException
+  [FAIL] schema-qualified logic_db  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'user_account' does not exist.
+  [PASS] unconfigured DDL CREATE passthrough  ::  ok
+  [PASS] unconfigured DDL DROP passthrough  ::  ok
+  [FAIL] physical shard  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'timeout_task_01' does not exist.
+  [PASS] logical shard table readable without hint (broadcast)  ::  count=0
+  ---- mixed sharded + unsharded transaction ----
+  [FAIL] mixed tx  ::  java.sql.SQLException: Table or view 'product_order' does not exist.
+  [FAIL] physical connection reuse  ::  org.apache.shardingsphere.database.exception.core.exception.syntax.database.UnknownDatabaseException
+  ---- feature matrix ----
+  [PASS] SQL ok: SELECT 1  ::  rows=1
+  [PASS] SQL ok: SHOW TABLES  ::  rows=5
+  [PASS] SQL ok: SHOW CREATE TABLE product_order  ::  rows=1
+  [PASS] SQL ok: DESC product_order  ::  rows=5
+  [FAIL] SQL ok: EXPLAIN SELECT * FROM product_order  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] SQL ok: SELECT TABLE_NAME FROM information_schema.TABLES WHERE TAB...  ::  updateCount=-1
+  [PASS] SQL ok: SELECT DATABASE()  ::  rows=1
+  [FAIL] SQL ok: SELECT COUNT(*) FROM (SELECT id FROM product_order) t  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] SQL ok: SELECT * FROM product_order FOR UPDATE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] SQL ok: INSERT INTO product_order (order_no,user_id,status,msg) VA...  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] SQL ok: INSERT IGNORE INTO product_order (order_no,user_id,status,...  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] SQL ok: UPDATE product_order SET msg = CASE order_no WHEN 'OK-1' T...  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] SQL ok: SELECT LAST_INSERT_ID()  ::  rows=1
+  [FAIL] SQL ok: TRUNCATE TABLE review_task  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'review_task' does not exist.
+  [FAIL] generated keys  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+
+================ B. WITH databaseName: probe ================
+  ---- metadata shape ----
+13:31:21.825 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-3 - Starting...
+13:31:21.827 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-3 - Added connection com.mysql.cj.jdbc.ConnectionImpl@5a776995
+13:31:21.828 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-3 - Start completed.
+13:31:22.147 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:31:22.147 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: 73ac34ff-e2ed-4d21-ac93-11b45327b893, IP: 26.144.150.84
+  [info] allDatabaseNames = [information_schema, performance_schema, sys, probe, shardingsphere, mysql]
+  [info] preSelectedDatabaseName = information_schema
+  [info] database 'information_schema' isComplete=false containsDataSource=false
+  [info]   schema 'information_schema'
+  [info]     getAllTables (0): []
+  [info]     getAllViews (0): []
+  [info] database 'performance_schema' isComplete=false containsDataSource=false
+  [info]   schema 'performance_schema'
+  [info]     getAllTables (0): []
+  [info]     getAllViews (0): []
+  [info] database 'sys' isComplete=false containsDataSource=false
+  [info]   schema 'sys'
+  [info]     getAllTables (0): []
+  [info]     getAllViews (0): []
+  [info] database 'probe' isComplete=true containsDataSource=true
+  [info]   schema 'probe'
+  [info]     getAllTables (0): []
+  [info]     getAllViews (0): []
+  [info]   rule: ShardingRule
+  [info]     logicTableNames = [timeout_task]
+  [info]   rule: SingleRule
+  [info]     defaultDataSource = Optional.empty, tables = []
+  [info]     singleTableDataNodes (0):
+  [info] database 'shardingsphere' isComplete=false containsDataSource=false
+  [info]   schema 'shardingsphere'
+  [info]     getAllTables (0): []
+  [info]     getAllViews (0): []
+  [info] database 'mysql' isComplete=false containsDataSource=false
+  [info]   schema 'mysql'
+  [info]     getAllTables (0): []
+  [info]     getAllViews (0): []
+  ---- SQL against unconfigured business tables ----
+  [FAIL] SELECT unconfigured  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'user_account' does not exist.
+  [FAIL] INSERT unconfigured  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] UPDATE unconfigured  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] JOIN unconfigured  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] COUNT unconfigured  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'review_task' does not exist.
+  [FAIL] schema-qualified schema name  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'user_account' does not exist.
+  [FAIL] schema-qualified logic_db  ::  org.apache.shardingsphere.database.exception.core.exception.syntax.database.UnknownDatabaseException
+  [PASS] unconfigured DDL CREATE passthrough  ::  ok
+  [PASS] unconfigured DDL DROP passthrough  ::  ok
+  [FAIL] physical shard  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'timeout_task_01' does not exist.
+  [PASS] logical shard table readable without hint (broadcast)  ::  count=0
+  ---- mixed sharded + unsharded transaction ----
+  [FAIL] mixed tx  ::  java.sql.SQLException: Table or view 'product_order' does not exist.
+  [FAIL] physical connection reuse  ::  org.apache.shardingsphere.database.exception.core.exception.syntax.database.UnknownDatabaseException
+  ---- feature matrix ----
+  [PASS] SQL ok: SELECT 1  ::  rows=1
+  [PASS] SQL ok: SHOW TABLES  ::  rows=5
+  [PASS] SQL ok: SHOW CREATE TABLE product_order  ::  rows=1
+  [PASS] SQL ok: DESC product_order  ::  rows=5
+  [FAIL] SQL ok: EXPLAIN SELECT * FROM product_order  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] SQL ok: SELECT TABLE_NAME FROM information_schema.TABLES WHERE TAB...  ::  updateCount=-1
+  [PASS] SQL ok: SELECT DATABASE()  ::  rows=1
+  [FAIL] SQL ok: SELECT COUNT(*) FROM (SELECT id FROM product_order) t  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] SQL ok: SELECT * FROM product_order FOR UPDATE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] SQL ok: INSERT INTO product_order (order_no,user_id,status,msg) VA...  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] SQL ok: INSERT IGNORE INTO product_order (order_no,user_id,status,...  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] SQL ok: UPDATE product_order SET msg = CASE order_no WHEN 'OK-1' T...  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] SQL ok: SELECT LAST_INSERT_ID()  ::  rows=1
+  [FAIL] SQL ok: TRUNCATE TABLE review_task  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'review_task' does not exist.
+  [FAIL] generated keys  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+
+=== NAMED PROBE RESULT: PASS=20 FAIL=36 ===

@@ -8,15 +8,8 @@
         e.create_time, e.update_time
     </sql>
 
-    <sql id="userJoinColumns">
-        pu.nickname AS publisher_nickname, pu.avatar AS publisher_avatar,
-        tu.nickname AS taker_nickname, tu.avatar AS taker_avatar
-    </sql>
-
-    <sql id="userJoins">
-        LEFT JOIN bs_user pu ON e.publisher_id = pu.user_id
-        LEFT JOIN bs_user tu ON e.taker_id = tu.user_id
-    </sql>
+    <!-- 全部语句纯 errand_order / 窄表单表（SQL 层零 JOIN）：发布方/接单方昵称头像与浏览 UV 计数
+         由仓储批量回查拼装 -->
 
     <insert id="insert" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
         INSERT INTO errand_order (errand_order_id, publisher_id, taker_id, type, description, pickup_location, delivery_location,
@@ -28,17 +21,15 @@
     </insert>
 
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
-        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
+        SELECT <include refid="baseColumns"/>
         FROM errand_order e
-        <include refid="userJoins"/>
         WHERE e.errand_order_id = #{orderId}
     </select>
 
     <!-- 按 id 列表查询：不分状态（搜索同步按 state 判定 upsert/删除，搜索命中组装按公开状态过滤） -->
     <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
-        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
+        SELECT <include refid="baseColumns"/>
         FROM errand_order e
-        <include refid="userJoins"/>
         WHERE e.errand_order_id IN
         <foreach collection="ids" item="orderId" open="(" separator="," close=")">#{orderId}</foreach>
     </select>
@@ -52,14 +43,21 @@
         LIMIT #{limit}
     </select>
 
+    <!-- 浏览 UV 计数窄表批量读：按 id 集单表 IN 查询，仓储补 0 拼装（详情 UV 回填与列表展示共用，
+         market-feed-uv 票 04 两路口径对齐） -->
+    <select id="selectViewCountsByOrderIds" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+        SELECT c.errand_order_id AS errandOrderId, c.view_count AS viewCount
+        FROM errand_view_count c
+        WHERE c.errand_order_id IN
+        <foreach collection="orderIds" item="orderId" open="(" separator="," close=")">#{orderId}</foreach>
+    </select>
+
+    <!-- 旧直查降级路径（market-feed-uv 票 04 起仅索引不可用/带筛选时走）：price/time 三档纯单表 SQL 分页；
+         hot 档排序键 view_count 在窄表（不能 JOIN 进来），由仓储走 selectVisibleRows 全集 + 窄表批量回查 +
+         内存排序切片（降级路径，数据集有界） -->
     <select id="selectPage" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
-        <!-- 浏览 UV 计数窄表：列表要展示浏览量（market-feed-uv 票 04 两路口径对齐），热度排序也用它，
-             故无条件 JOIN 一次（主键等值，命中即回表 1 行） -->
-        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>,
-               IFNULL(evc.view_count, 0) AS view_count
+        SELECT <include refid="baseColumns"/>
         FROM errand_order e
-        <include refid="userJoins"/>
-        LEFT JOIN errand_view_count evc ON evc.errand_order_id = e.errand_order_id
         <where>
             <!-- 公开列表口径：草稿（私有）与软删单一律不出现，显式传 status 也不放行 -->
             AND e.state NOT IN ('DRAFT', 'DELETED')
@@ -72,18 +70,32 @@
         </where>
         ORDER BY
         <choose>
-            <!-- 五档排序（market-feed-uv 票 04）与索引路径语义同构：热度 = 浏览 UV 数、tie-break 同向。
-                 已知口径差：时间键这里取主表 create_time，索引热度档同值收敛键也换成了 create_time 快照
-                 （uuid-biz-id 票 05：业务 ID 是 UUID 无序，不能再拿它当「创建先后」的代理，两路热度档
-                 同为 view_count DESC, create_time DESC, errand_order_id DESC）；其余档 tie-break 取
-                 errand_order_id 字典序，与索引尾列一致（物理 id 只作内部键，不再对外） -->
-            <when test="sort == 'hot'">IFNULL(evc.view_count, 0) DESC, e.create_time DESC, e.errand_order_id DESC</when>
+            <!-- 五档排序（market-feed-uv 票 04）与索引路径语义同构；已知口径差：时间键这里取主表
+                 create_time，索引热度档同值收敛键是 create_time 快照（uuid-biz-id 票 05：业务 ID 是 UUID
+                 无序，不能再拿它当「创建先后」的代理）；其余档 tie-break 取 errand_order_id 字典序，
+                 与索引尾列一致。热度档三段收敛（view_count DESC, create_time DESC, errand_order_id DESC）
+                 不走本语句：仓储内存排序（见 selectVisibleRows） -->
             <when test="sort == 'price_asc'">e.reward ASC, e.errand_order_id ASC</when>
             <when test="sort == 'price_desc'">e.reward DESC, e.errand_order_id DESC</when>
             <when test="sort == 'time_asc'">e.create_time ASC, e.errand_order_id ASC</when>
             <otherwise>e.create_time DESC, e.errand_order_id DESC</otherwise>
         </choose>
         LIMIT #{offset}, #{limit}
+    </select>
+
+    <!-- hot 档降级取数：公开口径全集（筛选条件同 selectPage，无 LIMIT），窄表批量回查后仓储内存排序切片 -->
+    <select id="selectVisibleRows" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+        SELECT <include refid="baseColumns"/>
+        FROM errand_order e
+        <where>
+            AND e.state NOT IN ('DRAFT', 'DELETED')
+            <if test="type != null">
+                AND e.type = #{type}
+            </if>
+            <if test="state != null">
+                AND e.state = #{state}
+            </if>
+        </where>
     </select>
 
     <!-- 跑腿大厅索引序扫描（market-feed-uv 票 04）：state 过滤（可见 = PUBLISHED）+ (排序键, errand_order_id)
@@ -402,9 +414,8 @@
     </update>
 
     <select id="selectMyPublished" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
-        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
+        SELECT <include refid="baseColumns"/>
         FROM errand_order e
-        <include refid="userJoins"/>
         WHERE e.publisher_id = #{userId}
           AND e.state != 'DELETED'
         <if test="state != null">
@@ -427,9 +438,8 @@
     <!-- 某用户发布的进行中跑腿单（作者主页「跑腿」tab，访客口径）：只列发布、不含接单；
          待支付/待审/终态/争议一律不外露（锁单中可见，展示「锁单中」） -->
     <select id="selectPublicPageByPublisher" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
-        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
+        SELECT <include refid="baseColumns"/>
         FROM errand_order e
-        <include refid="userJoins"/>
         WHERE e.publisher_id = #{userId}
           AND e.state IN ('PUBLISHED', 'LOCKED', 'CONFIRMED')
         ORDER BY e.create_time DESC, e.errand_order_id DESC
@@ -445,9 +455,8 @@
 
     <!-- 我接的：按 taker_id -->
     <select id="selectMyTaken" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
-        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
+        SELECT <include refid="baseColumns"/>
         FROM errand_order e
-        <include refid="userJoins"/>
         WHERE e.taker_id = #{userId}
           AND e.state != 'DELETED'
         <if test="state != null">
@@ -587,32 +596,23 @@
 
     <!-- 重灌：一单一行 1:1 投影。行集 = PUBLISHED 订单 ∪ 有过审批通过的订单（行常驻口径：通过事务才诞生行、
          之后 13 态流转只翻快照、行永不删除；审核通过前的草稿/待支付/待审/驳回订单不凭空进索引）。
-         feed_time 取审核记录里最近一次 APPROVE 时刻（与票 01 回填脚本同口径），查不到审批流水的存量老单取
-         create_time 兜底；price = reward；create_time 快照取主表创建时刻（uuid-biz-id 票 05 热度收敛键）；
-         view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步
-         同时把「过审前被浏览、旁路命中 0 行」漏计的那部分追平 -->
-    <insert id="rebuildFeedIndexProjection">
+         原 INSERT..SELECT 一步投影改为仓储三段查拼装：① selectRebuildRows 取 errand_order 全量
+         (errand_order_id, state, create_time, reward)；② feed_time 取审核记录最近一次 APPROVE 时刻
+         （经 IModerationDao.selectApproveRowsByTargetType，与票 01 回填脚本同口径），查不到审批流水的
+         存量老单取 create_time 兜底；③ view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步
+         同时把「过审前被浏览、旁路命中 0 行」漏计的那部分追平。组装后走 insertFeedIndexRows 批量写回 -->
+    <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandFeedIndexRowPO">
+        SELECT e.errand_order_id AS errandOrderId, e.state AS state, e.create_time AS createTime, e.reward AS price
+        FROM errand_order e
+    </select>
+
+    <!-- 重灌写回：仓储拼装好的行集批量 INSERT（见 selectRebuildRows 注释） -->
+    <insert id="insertFeedIndexRows">
         INSERT INTO errand_feed_index (errand_order_id, state, feed_time, create_time, price, view_count, update_time)
-        SELECT e.errand_order_id,
-               e.state,
-               COALESCE((SELECT MAX(cr.create_time)
-                           FROM content_review cr
-                          WHERE cr.target_type = 'ERRAND'
-                            AND cr.target_id = e.errand_order_id
-                            AND cr.action = 'APPROVE'),
-                        e.create_time),
-               e.create_time,
-               e.reward,
-               COALESCE(evc.view_count, 0),
-               NOW()
-          FROM errand_order e
-          LEFT JOIN errand_view_count evc ON evc.errand_order_id = e.errand_order_id
-         WHERE e.state = 'PUBLISHED'
-            OR EXISTS (SELECT 1
-                         FROM content_review cr2
-                        WHERE cr2.target_type = 'ERRAND'
-                          AND cr2.target_id = e.errand_order_id
-                          AND cr2.action = 'APPROVE')
+        VALUES
+        <foreach collection="rows" item="row" separator=",">
+            (#{row.errandOrderId}, #{row.state}, #{row.feedTime}, #{row.createTime}, #{row.price}, #{row.viewCount}, NOW())
+        </foreach>
     </insert>
 
     <!-- 浏览 UV 加速列校准第一步：清掉没有明细行的孤儿计数行（懒建行口径：无浏览不建行） -->

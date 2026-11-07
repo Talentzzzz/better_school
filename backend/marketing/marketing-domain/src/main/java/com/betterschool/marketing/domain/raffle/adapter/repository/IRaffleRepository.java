@@ -87,7 +87,7 @@ public interface IRaffleRepository {
     /** 今日已抽数 = draw_record 该用户当日行数 */
     int countTodayDrawn(String userId);
 
-    /** 奖品目录视图：奖品位 LEFT JOIN 两段库存台账的展示口径（remaining/total），inv_id=0 = 不限量 */
+    /** 奖品目录视图：奖品位 + 两段库存台账批量回查的展示口径（remaining/total），inv_id=0 = 不限量 */
     List<PrizeCatalogVO> queryPrizeCatalog(String strategyId);
 
     /** 我的中奖记录：恒过滤 THANKS，create_time DESC */

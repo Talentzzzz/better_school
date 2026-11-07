@@ -1,0 +1,539 @@
+diff --git a/backend/marketing/marketing-app/src/main/resources/mybatis/mapper/inventory/PhysicalQuotaMapper.xml b/backend/marketing/marketing-app/src/main/resources/mybatis/mapper/inventory/PhysicalQuotaMapper.xml
+index f997f6f..14fa6dc 100644
+--- a/backend/marketing/marketing-app/src/main/resources/mybatis/mapper/inventory/PhysicalQuotaMapper.xml
++++ b/backend/marketing/marketing-app/src/main/resources/mybatis/mapper/inventory/PhysicalQuotaMapper.xml
+@@ -69,27 +69,6 @@
+         WHERE inv_id = #{invId} AND waiting_qty &gt;= #{quantity}
+     </update>
+ 
+-    <select id="selectInventory" resultType="com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalInventoryPO">
+-        SELECT id, inv_id, name, decr, surplus_qty, issued_qty, state, create_time, update_time
+-        FROM physical_inventory
+-        WHERE inv_id = #{invId}
+-    </select>
+-
+-    <!-- 发放出库：-1=不限量；限量余量不足返回 0 行（调用方映射为台账余量不足，避免撞 CHECK 约束裸抛 SQL 异常） -->
+-    <update id="issueInventory">
+-        UPDATE physical_inventory
+-        SET issued_qty = issued_qty + #{quantity},
+-            surplus_qty = IF(surplus_qty &lt; 0, surplus_qty, surplus_qty - #{quantity}),
+-            update_time = NOW()
+-        WHERE inv_id = #{invId} AND (surplus_qty &lt; 0 OR surplus_qty &gt;= #{quantity})
+-    </update>
+-
+-    <!-- OUT 发放记录：quantity 存负数（发放为负），ref_id = 兑换单 id -->
+-    <insert id="insertInventoryDetail" parameterType="com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalInventoryDetailPO">
+-        INSERT INTO physical_inventory_detail (inv_id, quantity, type, ref_id, operator_id, create_time, update_time)
+-        VALUES (#{invId}, #{quantity}, #{type}, #{refId}, #{operatorId}, NOW(), NOW())
+-    </insert>
+-
+     <!-- ============ 预热 / 对账 ============ -->
+ 
+     <select id="selectOpenQuotas" resultType="com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaPO">
+diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/PhysicalQuotaIntegrationTest.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/PhysicalQuotaIntegrationTest.java
+index e2e36d8..34e2cd6 100644
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/PhysicalQuotaIntegrationTest.java
++++ b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/PhysicalQuotaIntegrationTest.java
+@@ -56,7 +56,6 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+     @BeforeEach
+     void resetFixtures() {
+         List.of("virtual_inventory", "virtual_inventory_bucket", "virtual_inventory_detail",
+-                "physical_inventory", "physical_inventory_detail",
+                 "physical_marketing_quota", "physical_marketing_quota_bucket", "physical_marketing_quota_detail")
+                 .forEach(table -> jdbcTemplate.execute("TRUNCATE TABLE " + table));
+         redissonClient.getKeys().deleteByPattern("bs:inventory:*");
+@@ -67,12 +66,6 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+                         """,
+                 QUOTA_INV_ID);
+         insertQuotaBucket(QUOTA_INV_ID, 0, QUOTA_BUCKET_QTY);
+-        jdbcTemplate.update("""
+-                        INSERT INTO physical_inventory (inv_id, name, decr, surplus_qty, issued_qty,
+-                                                        state, create_time, update_time)
+-                        VALUES (?, '暑期实物礼包', NULL, 50, 0, 'open', NOW(), NOW())
+-                        """,
+-                QUOTA_INV_ID);
+         jdbcTemplate.update("""
+                         INSERT INTO virtual_inventory (inv_id, name, type, value, surplus_qty, issued_qty,
+                                                        state, create_time, update_time)
+@@ -104,11 +97,6 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+                 QUOTA_INV_ID);
+     }
+ 
+-    private Map<String, Object> physicalInventoryRow() {
+-        return jdbcTemplate.queryForMap(
+-                "SELECT surplus_qty, issued_qty FROM physical_inventory WHERE inv_id = ?", QUOTA_INV_ID);
+-    }
+-
+     private long detailCount(String table, String invColumn, long invId, int state) {
+         var count = jdbcTemplate.queryForObject(
+                 "SELECT COUNT(*) FROM " + table + " WHERE " + invColumn + " = ? AND state = ?",
+@@ -147,23 +135,20 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+     }
+ 
+     @Test
+-    @DisplayName("兑换确认：waiting 减 / issued 增，出入库台账落 OUT 行并递减 surplus")
++    @DisplayName("兑换确认：waiting 减 / issued 增，台账总量不变（纯转移，不再双扣 surplus）")
+     void confirmIssued_transfersWaitingToIssued() {
+         inventoryWarmupService.warmupPhysical(QUOTA_INV_ID);
+         assertThat(physicalQuotaService.preDeduct(QUOTA_INV_ID, 3)).isTrue();
+         inventoryMergeService.mergeOnce();
++        assertThat(((Number) quotaRow().get("waiting_qty")).longValue()).isEqualTo(3L);
+ 
+         physicalQuotaService.confirmIssued(QUOTA_INV_ID, REDEEM_ORDER_ID, 3);
+ 
+-        assertThat(((Number) quotaRow().get("waiting_qty")).longValue()).isZero();
+-        assertThat(((Number) quotaRow().get("issued_qty")).longValue()).isEqualTo(3L);
+-        assertThat(((Number) physicalInventoryRow().get("surplus_qty")).longValue()).isEqualTo(47L);
+-        assertThat(((Number) physicalInventoryRow().get("issued_qty")).longValue()).isEqualTo(3L);
+-        Map<String, Object> outRow = jdbcTemplate.queryForMap(
+-                "SELECT quantity, type, ref_id FROM physical_inventory_detail WHERE inv_id = ?", QUOTA_INV_ID);
+-        assertThat(outRow.get("type")).isEqualTo("OUT");
+-        assertThat(((Number) outRow.get("quantity")).longValue()).isEqualTo(-3L);
+-        assertThat(((Number) outRow.get("ref_id")).longValue()).isEqualTo(REDEEM_ORDER_ID);
++        Map<String, Object> quota = quotaRow();
++        assertThat(((Number) quota.get("waiting_qty")).longValue()).as("等待确认量转走").isZero();
++        assertThat(((Number) quota.get("issued_qty")).longValue()).as("确认后计入 issued").isEqualTo(3L);
++        assertThat(((Number) quota.get("surplus_qty")).longValue())
++                .as("合并已扣过 surplus，确认不再扣（总量不变）").isEqualTo(97L);
+     }
+ 
+     @Test
+diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/RaffleApiTestBase.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/RaffleApiTestBase.java
+index 64bdd1a..4a91e7b 100644
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/RaffleApiTestBase.java
++++ b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/RaffleApiTestBase.java
+@@ -94,7 +94,6 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
+                         "draw_count_bucket", "draw_count_detail",
+                         "points_bucket", "points_detail",
+                         "virtual_inventory", "virtual_inventory_bucket", "virtual_inventory_detail",
+-                        "physical_inventory", "physical_inventory_detail",
+                         "physical_marketing_quota", "physical_marketing_quota_bucket",
+                         "physical_marketing_quota_detail",
+                         "outbox_message")
+@@ -178,25 +177,12 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
+                         """, invId, bucketId, redisQty);
+     }
+ 
+-    /**
+-     * 实物库存台账（physical_inventory）：卖的是「配额」、出的是「库存」，两张表各一行同 inv_id。
+-     * 兑换确认（waiting → issued）要同时递减库存台账，故实物相关用例都得铺这一行。
+-     */
+-    protected void insertPhysicalInventory(long invId, String name, long surplusQty, long issuedQty) {
+-        jdbcTemplate.update("""
+-                        INSERT INTO physical_inventory (inv_id, name, decr, surplus_qty, issued_qty,
+-                                                        state, create_time, update_time)
+-                        VALUES (?, ?, NULL, ?, ?, 'open', NOW(), NOW())
+-                        """, invId, name, surplusQty, issuedQty);
+-    }
+-
+-    /** 标准库存布局：积分池 100×20 / 实物配额 10 + 实物库存 10 / 兜底权益 100×5，并预热全部 Redis 桶 */
++    /** 标准库存布局：积分池 100×20 / 实物配额 10 / 兜底权益 100×5，并预热全部 Redis 桶 */
+     protected void prepareInventory() {
+         insertVirtualInventory(POINTS_INV_ID, "积分发放池", "POINTS", 20, 100L, 0L, "open");
+         insertVirtualBucket(POINTS_INV_ID, 0, 100L);
+         insertQuota(QUOTA_INV_ID, "实物营销配额", 10L, 0L, 0L, "open");
+         insertQuotaBucket(QUOTA_INV_ID, 0, 10L);
+-        insertPhysicalInventory(QUOTA_INV_ID, "实物礼包库存", 10L, 0L);
+         insertVirtualInventory(FALLBACK_INV_ID, "兜底权益池", "POINTS", 5, 100L, 0L, "open");
+         insertVirtualBucket(FALLBACK_INV_ID, 0, 100L);
+         inventoryWarmupService.warmupAll();
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/adapter/repository/IInventoryRepository.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/adapter/repository/IInventoryRepository.java
+index 1448f74..45c0054 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/adapter/repository/IInventoryRepository.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/adapter/repository/IInventoryRepository.java
+@@ -1,7 +1,5 @@
+ package com.betterschool.marketing.domain.inventory.adapter.repository;
+ 
+-import com.betterschool.marketing.domain.inventory.model.entity.PhysicalInventoryDetailEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.PhysicalInventoryEntity;
+ import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaBucketEntity;
+ import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaDetailEntity;
+ import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaEntity;
+@@ -14,7 +12,7 @@ import java.util.List;
+ 
+ /**
+  * 库存域唯一仓储（一域一仓储）：虚拟权益池（virtual_inventory 三张表）与实物营销配额
+- * （physical_marketing_quota 三张表 + physical_inventory 出入库两表）两段合成一个接口。
++ * （physical_marketing_quota 三张表）两段合成一个接口。
+  * 两段同构（预扣 / 合并 / 预热 / 对账），分叉只在 waiting_qty 与兑换确认——分叉语义留在域服务里，
+  * 本接口只呈现数据访问面。
+  * <p>
+@@ -22,7 +20,7 @@ import java.util.List;
+  * {@link #queryVirtualInventory} / {@link #queryQuota}）；实物侧沿用既有的 {@code Quota} 限定。
+  * <p>
+  * 事务：合并骨架「一组一事务」的写面（{@link #settleVirtualInventory} /
+- * {@link #markVirtualDetailsMerged} 与实物孪生）与兑换确认的多步写面（{@link #confirmIssued}）
++ * {@link #markVirtualDetailsMerged} 与实物孪生）与兑换确认的守卫转移（{@link #confirmIssued}）
+  * 由仓储自己用 {@code TransactionTemplate}（REQUIRED）收成一个原子用例；其余单步方法是
+  * 单条 SQL，无需开启事务。
+  */
+@@ -108,25 +106,16 @@ public interface IInventoryRepository {
+     // ---- 实物营销配额：兑换确认（waiting_qty → issued_qty，发货成功后调用） ----
+ 
+     /**
+-     * 兑换确认的全部写面，**同一事务**内完成：waiting_qty ≥ qty 守卫下转移 → 出库台账扣减 →
+-     * 落一行 OUT 出入库明细。任一步 0 行即抛（异常点与改造前一致）并整笔回滚，不留半截出库。
++     * 兑换确认：{@code waiting_qty ≥ qty} 守卫下做一次转移（waiting 减、issued 加）。
++     * 0 行 = 没有足够的悬挂预扣可确认，抛 {@code INVENTORY_WAITING_SHORTAGE}。
+      *
+-     * @param redeemOrderId 兑换单 id，落出入库明细的 ref_id
++     * @param redeemOrderId 兑换单 id（= 抽奖记录 id），仅用于日志
+      */
+     void confirmIssued(Long invId, Long redeemOrderId, long quantity);
+ 
+     /** waiting_qty >= qty 的行上做转移（waiting 减、issued 加）；返回 0 行 = 没有足够的悬挂预扣 */
+     int transferWaitingToIssued(Long invId, long quantity);
+ 
+-    /** 出入库台账行（physical_inventory，兑换确认要同步落 OUT 发放记录）；不存在返回 null */
+-    PhysicalInventoryEntity queryPhysicalInventory(Long invId);
+-
+-    /** 发放出库：surplus_qty 不是 -1 时递减；返回 0 行 = 台账余量不足（不变量被破坏） */
+-    int issueInventory(Long invId, long quantity);
+-
+-    /** 落一行出入库明细（OUT，quantity 为负，ref_id = 兑换单 id） */
+-    void insertInventoryDetail(PhysicalInventoryDetailEntity detail);
+-
+     // ---- 实物营销配额：预热 / 对账 ----
+ 
+     /** 全部 open 的实物配额（预热入口） */
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalInventoryDetailEntity.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalInventoryDetailEntity.java
+deleted file mode 100644
+index fa5803a..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalInventoryDetailEntity.java
++++ /dev/null
+@@ -1,23 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.model.entity;
+-
+-import lombok.Data;
+-
+-import java.time.LocalDateTime;
+-
+-/** 实物库存出入库明细行（physical_inventory_detail）：对 physical_inventory 的增减记录 */
+-@Data
+-public class PhysicalInventoryDetailEntity {
+-
+-    private Long id;
+-    private Long invId;
+-    /** 变动数量（入库为正、发放为负） */
+-    private Long quantity;
+-    /** 变动类型 IN(入库) / OUT(发放) / ADJUST(盘点调整) */
+-    private String type;
+-    /** 关联业务 ID（发放 = 兑换单 id；入库/盘点为空） */
+-    private Long refId;
+-    /** 操作人用户 ID（后台入库/调整写入；系统发放为空） */
+-    private Long operatorId;
+-    private LocalDateTime createTime;
+-    private LocalDateTime updateTime;
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalInventoryEntity.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalInventoryEntity.java
+deleted file mode 100644
+index df66912..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/entity/PhysicalInventoryEntity.java
++++ /dev/null
+@@ -1,23 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.model.entity;
+-
+-import lombok.Data;
+-
+-import java.time.LocalDateTime;
+-
+-/** 实物库存行（physical_inventory）：出入库台账 */
+-@Data
+-public class PhysicalInventoryEntity {
+-
+-    private Long id;
+-    private Long invId;
+-    private String name;
+-    private String decr;
+-    /** 剩余可发份数，-1=不限量 */
+-    private Long surplusQty;
+-    /** 累计已发放份数（对账/预算） */
+-    private Long issuedQty;
+-    /** open/closed/exhausted */
+-    private String state;
+-    private LocalDateTime createTime;
+-    private LocalDateTime updateTime;
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IPhysicalQuotaService.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IPhysicalQuotaService.java
+index 45586d3..d5c47bd 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IPhysicalQuotaService.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IPhysicalQuotaService.java
+@@ -26,9 +26,8 @@ public interface IPhysicalQuotaService {
+     DeductOutcomeVO preDeductWithFallback(Long invId, Long fallbackInvId, long quantity);
+ 
+     /**
+-     * 兑换确认：waiting_qty → issued_qty（票 14 发货成功后调用），并在 physical_inventory
+-     * 落一笔 OUT 出库明细、同步递减其 surplus_qty。幂等边界 = 兑换单号由调用方保证只确认一次
+-     * （本方法按数量转移，不做单号去重——去重点是票 14 的发货消费幂等键）。
++     * 兑换确认：waiting_qty → issued_qty（票 14 发货成功后调用）。幂等边界 = 兑换单号由调用方保证
++     * 只确认一次（本方法按数量转移，不做单号去重——去重点是票 14 的发货消费幂等键）。
+      *
+      * @throws com.betterschool.marketing.types.common.AppException 配额不存在或 waiting_qty 不足本次确认量
+      */
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/PhysicalQuotaServiceImpl.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/PhysicalQuotaServiceImpl.java
+index d3b9151..8098504 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/PhysicalQuotaServiceImpl.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/PhysicalQuotaServiceImpl.java
+@@ -2,7 +2,6 @@ package com.betterschool.marketing.domain.inventory.service;
+ 
+ import com.betterschool.marketing.domain.inventory.adapter.port.IInventoryBucketPort;
+ import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
+-import com.betterschool.marketing.domain.inventory.model.entity.PhysicalInventoryEntity;
+ import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaDetailEntity;
+ import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaEntity;
+ import com.betterschool.marketing.domain.inventory.model.valobj.DeductOutcomeVO;
+@@ -17,7 +16,7 @@ import java.util.List;
+ 
+ /**
+  * 实物营销配额两段式实现。预扣与虚拟段同构（孪生，分叉只在仓储与桶 key 前缀）；
+- * 分叉语义在这里：合并进 waiting_qty（合并服务负责）与兑换确认 waiting → issued + 出库台账（本类）。
++ * 分叉语义在这里：合并进 waiting_qty（合并服务负责）与兑换确认 waiting → issued（本类）。
+  * 兜底（preDeductWithFallback）只组合两段的预扣——配额段零写入由「兜底路径根本不碰配额仓储」保证。
+  */
+ @Slf4j
+@@ -92,13 +91,8 @@ public class PhysicalQuotaServiceImpl implements IPhysicalQuotaService {
+             throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),
+                     "实物营销配额不存在 invId=" + invId);
+         }
+-        PhysicalInventoryEntity inventory = inventoryRepository.queryPhysicalInventory(invId);
+-        if (inventory == null) {
+-            throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),
+-                    "实物库存台账不存在 invId=" + invId);
+-        }
+-        // 转移 + 出库 + 流水一个域内事务（仓储方法内 REQUIRED）：任一步失败整体回滚，不留半截出库
++        // 守卫转移一个域内事务（仓储方法内 REQUIRED）：0 行 = 没有足够的悬挂预扣，抛 4312 整笔回滚
+         inventoryRepository.confirmIssued(invId, redeemOrderId, quantity);
+-        log.info("兑换确认出库 invId={} redeemOrderId={} quantity={}", invId, redeemOrderId, quantity);
++        log.info("兑换确认转移 invId={} redeemOrderId={} quantity={}", invId, redeemOrderId, quantity);
+     }
+ }
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/adapter/port/inventory/IQuotaConfirmPort.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/adapter/port/inventory/IQuotaConfirmPort.java
+index 0b2f9fd..67cfd12 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/adapter/port/inventory/IQuotaConfirmPort.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/adapter/port/inventory/IQuotaConfirmPort.java
+@@ -2,7 +2,7 @@ package com.betterschool.marketing.domain.raffle.adapter.port.inventory;
+ 
+ /**
+  * 库存域**兑换确认**端口（票 14 新增，票 12 的 {@code IPhysicalQuotaService.confirmIssued} 的抽奖域视图）：
+- * 把实物营销配额的悬挂预扣转成正式占用（{@code waiting_qty → issued_qty}），并在实物库存台账落一笔 OUT。
++ * 把实物营销配额的悬挂预扣转成正式占用（{@code waiting_qty → issued_qty}），是一次纯转移。
+  * <p>
+  * 为什么是端口的第二个方法而不是塞进 {@link IInventoryDeductPort}：预扣与确认是发放的两段，
+  * 一个在抽奖主链路、一个在发货闭环，调用方与时机都不同；同域跨边界的两个动作放在同一个端口上也说得通，
+diff --git a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/adapter/repository/InventoryRepository.java b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/adapter/repository/InventoryRepository.java
+index 0f1901f..24bad37 100644
+--- a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/adapter/repository/InventoryRepository.java
++++ b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/adapter/repository/InventoryRepository.java
+@@ -1,8 +1,6 @@
+ package com.betterschool.marketing.infrastructure.inventory.adapter.repository;
+ 
+ import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
+-import com.betterschool.marketing.domain.inventory.model.entity.PhysicalInventoryDetailEntity;
+-import com.betterschool.marketing.domain.inventory.model.entity.PhysicalInventoryEntity;
+ import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaBucketEntity;
+ import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaDetailEntity;
+ import com.betterschool.marketing.domain.inventory.model.entity.PhysicalMarketingQuotaEntity;
+@@ -12,8 +10,6 @@ import com.betterschool.marketing.domain.inventory.model.entity.VirtualInventory
+ import com.betterschool.marketing.domain.inventory.model.valobj.UnmergedDetailVO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.IPhysicalQuotaDao;
+ import com.betterschool.marketing.infrastructure.inventory.dao.IVirtualInventoryDao;
+-import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalInventoryDetailPO;
+-import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalInventoryPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaBucketPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaDetailPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaPO;
+@@ -184,16 +180,6 @@ public class InventoryRepository implements IInventoryRepository {
+                 throw new AppException(ResponseCode.INVENTORY_WAITING_SHORTAGE.getCode(),
+                         "没有待确认的预扣库存 invId=" + invId + " quantity=" + quantity);
+             }
+-            if (issueInventory(invId, quantity) == 0) {
+-                throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),
+-                        "实物库存台账余量不足 invId=" + invId + " quantity=" + quantity);
+-            }
+-            PhysicalInventoryDetailEntity outDetail = new PhysicalInventoryDetailEntity();
+-            outDetail.setInvId(invId);
+-            outDetail.setQuantity(-quantity);
+-            outDetail.setType("OUT");
+-            outDetail.setRefId(redeemOrderId);
+-            insertInventoryDetail(outDetail);
+         });
+     }
+ 
+@@ -202,27 +188,6 @@ public class InventoryRepository implements IInventoryRepository {
+         return physicalQuotaDao.transferWaitingToIssued(invId, quantity);
+     }
+ 
+-    @Override
+-    public PhysicalInventoryEntity queryPhysicalInventory(Long invId) {
+-        return toInventoryEntity(physicalQuotaDao.selectInventory(invId));
+-    }
+-
+-    @Override
+-    public int issueInventory(Long invId, long quantity) {
+-        return physicalQuotaDao.issueInventory(invId, quantity);
+-    }
+-
+-    @Override
+-    public void insertInventoryDetail(PhysicalInventoryDetailEntity detail) {
+-        PhysicalInventoryDetailPO detailPO = new PhysicalInventoryDetailPO();
+-        detailPO.setInvId(detail.getInvId());
+-        detailPO.setQuantity(detail.getQuantity());
+-        detailPO.setType(detail.getType());
+-        detailPO.setRefId(detail.getRefId());
+-        detailPO.setOperatorId(detail.getOperatorId());
+-        physicalQuotaDao.insertInventoryDetail(detailPO);
+-    }
+-
+     @Override
+     public List<PhysicalMarketingQuotaEntity> listOpenQuotas() {
+         return physicalQuotaDao.selectOpenQuotas().stream().map(this::toQuotaEntity).toList();
+@@ -287,23 +252,6 @@ public class InventoryRepository implements IInventoryRepository {
+         return entity;
+     }
+ 
+-    private PhysicalInventoryEntity toInventoryEntity(PhysicalInventoryPO po) {
+-        if (po == null) {
+-            return null;
+-        }
+-        PhysicalInventoryEntity entity = new PhysicalInventoryEntity();
+-        entity.setId(po.getId());
+-        entity.setInvId(po.getInvId());
+-        entity.setName(po.getName());
+-        entity.setDecr(po.getDecr());
+-        entity.setSurplusQty(po.getSurplusQty());
+-        entity.setIssuedQty(po.getIssuedQty());
+-        entity.setState(po.getState());
+-        entity.setCreateTime(po.getCreateTime());
+-        entity.setUpdateTime(po.getUpdateTime());
+-        return entity;
+-    }
+-
+     private PhysicalMarketingQuotaBucketEntity toBucketEntity(PhysicalMarketingQuotaBucketPO po) {
+         PhysicalMarketingQuotaBucketEntity entity = new PhysicalMarketingQuotaBucketEntity();
+         entity.setId(po.getId());
+diff --git a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/IPhysicalQuotaDao.java b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/IPhysicalQuotaDao.java
+index e572bf1..355cfb3 100644
+--- a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/IPhysicalQuotaDao.java
++++ b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/IPhysicalQuotaDao.java
+@@ -1,7 +1,5 @@
+ package com.betterschool.marketing.infrastructure.inventory.dao;
+ 
+-import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalInventoryDetailPO;
+-import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalInventoryPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaBucketPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaDetailPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaPO;
+@@ -11,7 +9,7 @@ import org.apache.ibatis.annotations.Param;
+ import java.util.List;
+ 
+ /**
+- * 实物营销配额 Mapper（physical_marketing_quota 三张表 + physical_inventory 出入库两表）。
++ * 实物营销配额 Mapper（physical_marketing_quota 三张表）。
+  * SQL 定义在 marketing-app 模块 resources/mybatis/mapper/inventory/PhysicalQuotaMapper.xml。
+  * 写侧语句（合并 / 兑换确认）假定在仓储方法（{@code InventoryRepository}）的事务内调用。
+  */
+@@ -45,13 +43,6 @@ public interface IPhysicalQuotaDao {
+     /** waiting_qty >= qty 守卫下的转移：返回 0 行 = 没有足够的悬挂预扣 */
+     int transferWaitingToIssued(@Param("invId") Long invId, @Param("quantity") long quantity);
+ 
+-    PhysicalInventoryPO selectInventory(@Param("invId") Long invId);
+-
+-    /** 发放出库：限量（surplus_qty != -1）递减，返回 0 行 = 台账余量不足 */
+-    int issueInventory(@Param("invId") Long invId, @Param("quantity") long quantity);
+-
+-    int insertInventoryDetail(PhysicalInventoryDetailPO detailPO);
+-
+     // ---- 预热 / 对账 ----
+ 
+     List<PhysicalMarketingQuotaPO> selectOpenQuotas();
+diff --git a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/po/PhysicalInventoryDetailPO.java b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/po/PhysicalInventoryDetailPO.java
+deleted file mode 100644
+index c3eb53c..0000000
+--- a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/po/PhysicalInventoryDetailPO.java
++++ /dev/null
+@@ -1,19 +0,0 @@
+-package com.betterschool.marketing.infrastructure.inventory.dao.po;
+-
+-import lombok.Data;
+-
+-import java.time.LocalDateTime;
+-
+-/** 实物库存出入库明细行（physical_inventory_detail） */
+-@Data
+-public class PhysicalInventoryDetailPO {
+-
+-    private Long id;
+-    private Long invId;
+-    private Long quantity;
+-    private String type;
+-    private Long refId;
+-    private Long operatorId;
+-    private LocalDateTime createTime;
+-    private LocalDateTime updateTime;
+-}
+diff --git a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/po/PhysicalInventoryPO.java b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/po/PhysicalInventoryPO.java
+deleted file mode 100644
+index 9c81662..0000000
+--- a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/po/PhysicalInventoryPO.java
++++ /dev/null
+@@ -1,20 +0,0 @@
+-package com.betterschool.marketing.infrastructure.inventory.dao.po;
+-
+-import lombok.Data;
+-
+-import java.time.LocalDateTime;
+-
+-/** 实物库存行（physical_inventory） */
+-@Data
+-public class PhysicalInventoryPO {
+-
+-    private Long id;
+-    private Long invId;
+-    private String name;
+-    private String decr;
+-    private Long surplusQty;
+-    private Long issuedQty;
+-    private String state;
+-    private LocalDateTime createTime;
+-    private LocalDateTime updateTime;
+-}
+diff --git a/backend/marketing/sql/schema.sql b/backend/marketing/sql/schema.sql
+index 10752ee..e9ecb23 100644
+--- a/backend/marketing/sql/schema.sql
++++ b/backend/marketing/sql/schema.sql
+@@ -232,35 +232,6 @@ CREATE TABLE IF NOT EXISTS virtual_inventory_detail (
+     KEY idx_scan (inv_id, bucket_id, state, quantity)
+ ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '虚拟库存扣减明细（Redis 桶 → DB 的异步合并台账）';
+ 
+-CREATE TABLE IF NOT EXISTS physical_inventory (
+-    id          BIGINT       NOT NULL AUTO_INCREMENT,
+-    inv_id      BIGINT       NOT NULL COMMENT '业务 ID（库存全局唯一标识）',
+-    name        VARCHAR(128) NOT NULL COMMENT '库存/权益名称，如「暑期实物礼包」',
+-    decr        VARCHAR(255) NULL     COMMENT '库存说明',
+-    surplus_qty BIGINT       NOT NULL DEFAULT -1 COMMENT '剩余可发份数，-1=不限量',
+-    issued_qty  BIGINT       NOT NULL DEFAULT 0 COMMENT '累计已发放份数，用于对账/预算',
+-    state       VARCHAR(12)  NOT NULL DEFAULT 'open' COMMENT 'open/closed/exhausted',
+-    create_time DATETIME     NOT NULL COMMENT '创建时间',
+-    update_time DATETIME     NOT NULL COMMENT '更新时间',
+-    PRIMARY KEY (id),
+-    UNIQUE KEY uk_inv_id (inv_id),
+-    KEY idx_state (state),
+-    CONSTRAINT chk_physical_inventory CHECK (surplus_qty >= -1)
+-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '实物库存（出入库台账）';
+-
+-CREATE TABLE IF NOT EXISTS physical_inventory_detail (
+-    id          BIGINT      NOT NULL AUTO_INCREMENT,
+-    inv_id      BIGINT      NOT NULL COMMENT '库存业务 ID',
+-    quantity    BIGINT      NOT NULL COMMENT '变动数量（入库为正、发放为负）',
+-    type        VARCHAR(20) NOT NULL COMMENT '变动类型 IN(入库) / OUT(发放) / ADJUST(盘点调整)',
+-    ref_id      BIGINT      NULL COMMENT '关联业务 ID（发放 = 兑换单 id；入库/盘点为空）',
+-    operator_id BIGINT      NULL COMMENT '操作人用户 ID（后台入库/调整写入；系统发放为空）',
+-    create_time DATETIME    NOT NULL COMMENT '创建时间',
+-    update_time DATETIME    NOT NULL COMMENT '更新时间',
+-    PRIMARY KEY (id),
+-    KEY idx_inv_created (inv_id, create_time)
+-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '实物库存出入库明细（对 physical_inventory 的增减记录）';
+-
+ CREATE TABLE IF NOT EXISTS physical_marketing_quota (
+     id          BIGINT       NOT NULL AUTO_INCREMENT,
+     inv_id      BIGINT       NOT NULL COMMENT '业务 ID（配额全局唯一标识）',

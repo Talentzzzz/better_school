@@ -2,17 +2,12 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.betterschool.infrastructure.dao.productorder.IProductOrderDao">
 
-    <!-- 商品信息全部为下单时快照列（此后不可变）：跳转/反查仍用 product_id，展示不再回 JOIN product
+    <!-- 商品信息全部为下单时快照列（此后不可变）：跳转/反查仍用 product_id，展示不回查 product 表
          （商品行可被编辑/软删，订单详情必须稳定） -->
     <sql id="baseColumns">
         po.id, po.product_order_id, po.buyer_id, po.seller_id, po.product_id, po.price,
         po.product_title, po.product_description, po.product_images, po.product_trade_location, po.product_category,
         po.state, po.create_time, po.update_time
-    </sql>
-
-    <sql id="userJoinColumns">
-        bu.nickname AS buyer_nickname, bu.avatar AS buyer_avatar,
-        su.nickname AS seller_nickname, su.avatar AS seller_avatar
     </sql>
 
     <!-- uuid-biz-id 票 05：业务 ID 发号在 repository 落库前生成（IIdGenerator.nextId），随行一次写入，
@@ -26,11 +21,10 @@
                 #{state}, #{createTime}, #{updateTime})
     </insert>
 
+    <!-- 纯 product_order 单表：买卖双方昵称头像由仓储查 bs_user 批量回查拼装（SQL 层零 JOIN） -->
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO">
-        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
+        SELECT <include refid="baseColumns"/>
         FROM product_order po
-        LEFT JOIN bs_user bu ON po.buyer_id = bu.user_id
-        LEFT JOIN bs_user su ON po.seller_id = su.user_id
         WHERE po.product_order_id = #{orderId}
     </select>
 
@@ -79,10 +73,8 @@
     </update>
 
     <select id="selectMineByBuyer" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO">
-        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
+        SELECT <include refid="baseColumns"/>
         FROM product_order po
-        LEFT JOIN bs_user bu ON po.buyer_id = bu.user_id
-        LEFT JOIN bs_user su ON po.seller_id = su.user_id
         WHERE po.buyer_id = #{userId}
         ORDER BY po.create_time DESC, po.id DESC
         LIMIT #{offset}, #{limit}
@@ -95,10 +87,8 @@
     </select>
 
     <select id="selectMineBySeller" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO">
-        SELECT <include refid="baseColumns"/>, <include refid="userJoinColumns"/>
+        SELECT <include refid="baseColumns"/>
         FROM product_order po
-        LEFT JOIN bs_user bu ON po.buyer_id = bu.user_id
-        LEFT JOIN bs_user su ON po.seller_id = su.user_id
         WHERE po.seller_id = #{userId}
         ORDER BY po.create_time DESC, po.id DESC
         LIMIT #{offset}, #{limit}

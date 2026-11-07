@@ -68,7 +68,7 @@ public class ChatSendServiceImpl implements IChatSendService {
             // 建会话 + 两名成员 + 配对行是一个原子用例（仓储内事务，配对行收尾兜幂等）
             return chatRepository.createDirectRoom(room, targetUserId);
         } catch (DuplicateKeyException e) {
-            // 并发建会话撞 direct_room_pair.uk_pair：幂等返回既有 room
+            // 并发建会话撞 user_pair_room.uk_pair：幂等返回既有 room
             return chatRepository.findDirectRoom(pairKey.getUserMin(), pairKey.getUserMax());
         }
     }

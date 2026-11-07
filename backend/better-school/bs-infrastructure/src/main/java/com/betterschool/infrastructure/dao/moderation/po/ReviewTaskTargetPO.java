@@ -4,7 +4,8 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 
-/** 工单详情内容素材跨表直查统一结果 PO（post/post_comment/product/errand_order 各查各的，字段求同 + 类型专属上下文） */
+/** 工单详情内容素材统一结果 PO（post/post_comment/product/errand_order 单表直查，字段求同 + 类型专属上下文；
+ * authorNickname/authorAvatar 与评论的 contextPostTitle/contextParentContent 由仓储二次回查拼装） */
 @Data
 public class ReviewTaskTargetPO {
 

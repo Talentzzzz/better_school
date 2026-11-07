@@ -16,7 +16,9 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Repository
 @RequiredArgsConstructor
@@ -32,7 +34,18 @@ public class NotificationRepository implements INotificationRepository {
     @Override
     public List<NotificationEntity> pageList(String userId, NotificationScopeVO scope, int offset, int limit) {
         String scopeName = scope == null ? null : scope.name();
-        return notificationDao.selectPage(userId, scopeName, offset, limit).stream().map(this::toEntity).toList();
+        List<NotificationPO> rows = notificationDao.selectPage(userId, scopeName, offset, limit);
+        // is_read（原 LEFT JOIN notification_read 的计算列）：页内 scope 集逐 scope 查水位后 Java 计算
+        // ——水位每 user_id × scope 一行，scope 个数有界（当前两个），不随页大小增长
+        Map<String, Long> watermarks = new HashMap<>();
+        for (String rowScope : rows.stream().map(NotificationPO::getScope).distinct().toList()) {
+            Long lastReadSeq = notificationDao.selectLastReadSeq(userId, rowScope);
+            watermarks.put(rowScope, lastReadSeq == null ? 0L : lastReadSeq);
+        }
+        for (NotificationPO row : rows) {
+            row.setIsRead(row.getSeq() != null && row.getSeq() <= watermarks.getOrDefault(row.getScope(), 0L));
+        }
+        return rows.stream().map(this::toEntity).toList();
     }
 
     @Override

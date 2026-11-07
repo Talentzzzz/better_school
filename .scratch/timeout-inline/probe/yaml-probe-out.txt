@@ -1,0 +1,87 @@
+﻿13:30:20.126 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Starting...
+13:30:20.272 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@139982de
+13:30:20.273 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Start completed.
+13:30:20.510 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Starting...
+13:30:20.516 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-2 - Added connection com.mysql.cj.jdbc.ConnectionImpl@158a3b2e
+13:30:20.516 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Start completed.
+java.exe : 2026-10-16 13:30:20.723 [main] INFO  com.cedarsoftware.util.MultiKeyMap - MultiKeyMap stripe configuration: 
+64 locks for 32 cores
+所在位置 行:7 字符: 1
++ & "$env:JAVA_HOME\bin\java.exe" "-Dfile.encoding=UTF-8" "-Duser.langu ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-10-16 13:3...ks for 32 cores:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+13:30:22.119 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:30:22.119 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: 37d89417-716e-4be4-bcf0-1fbde32f2586, IP: 26.144.150.84
+[info] driver datasource = org.apache.shardingsphere.driver.jdbc.core.connection.ShardingSphereConnection
+[info] DriverDataSourceCache entries = [jdbc:shardingsphere:classpath:probe-sharding.yaml]
+[info]   cached DS class = org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource
+
+-------- A. RULES AS LOADED BY THE DRIVER (is there an implicit SingleRule?) --------
+  [info] resolved metadata database name = information_schema
+  [info] getRules() runtime type = org.apache.shardingsphere.infra.metadata.database.rule.RuleMetaData$CacheInvalidatingCopyOnWriteArrayList
+  [info] metadata database = information_schema
+  [info] allDatabaseNames = [information_schema, performance_schema, sys, shardingsphere, logic_db, mysql]
+  [info] storageUnits = {}
+  [info] schema objects = 1
+  [info] schema class = org.apache.shardingsphere.infra.metadata.database.schema.model.ShardingSphereSchema
+  [info] schema methods = [getName, isEmpty, getTable, getAllViews, getAllTables, getProtocolType, containsTable, getView, putView, putTable, getVisibleColumnAndIndexMap, getVisibleColumnNames, removeView, containsIndex, containsView, removeTable, equals, toString, hashCode, getClass, notify, notifyAll, wait]
+  [info] schema.getName -> information_schema
+
+-------- B. UNCONFIGURED TABLES under the driver --------
+  [FAIL] SELECT  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'user_account' does not exist.
+  [FAIL] INSERT  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] UPDATE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] JOIN  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] COUNT review_task  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'review_task' does not exist.
+  [PASS] unconfigured DDL CREATE passthrough  ::  ok
+  [PASS] unconfigured DDL DROP passthrough  ::  ok
+  [FAIL] schema-qualified  ::  org.apache.shardingsphere.database.exception.core.exception.syntax.database.UnknownDatabaseException
+  [FAIL] physical shard  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'timeout_task_01' does not exist.
+  [FAIL] unknown table  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'nope_xyz' does not exist.
+
+-------- C. HINT routing + mixed statements --------
+  [FAIL] hint + unconfigured mixed  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'timeout_task_03' does not exist.
+  [PASS] sharded WRITE without hint -> fails fast  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[], startIndex=0)], sqlStatementContext=org.apache.shardingsphere.infra.binder.context.statement.type.dml.InsertStatementContext@1009c4d, rule=org.apache.shardingsphere.sharding.rule.ShardingRule@329b8371, subqueryContainsShardingCondition=true)' to avoid same record in table 'time...
+  [PASS] sharded READ without hint -> 16-table broadcast  ::  count=1
+  [PASS] hint write to a DIFFERENT shard than the row lives in  ::  0 rows expected
+  [PASS] hint write to the correct shard  ::  rows=1
+
+-------- D. TRANSACTION: sharded + unsharded in one local tx --------
+  [FAIL] same-tx rollback  ::  java.sql.SQLException: Table or view 'product_order' does not exist.
+  [FAIL] same-tx commit  ::  java.sql.SQLException: Table or view 'product_order' does not exist.
+  [FAIL] physical connection reuse probe  ::  org.apache.shardingsphere.database.exception.core.exception.syntax.database.UnknownDatabaseException
+  [FAIL] one tx across two shards  ::  java.sql.SQLException: Table or view 'product_order' does not exist.
+  [PASS] CONNECTION_ID() stable across sharded+unsharded statements in one tx  ::  shard=27 biz=27
+
+-------- E. JDBC feature matrix --------
+  [PASS] SQL ok: SELECT 1  ::  rows=1
+  [PASS] SQL ok: SELECT @@version  ::  rows=1
+  [PASS] SQL ok: SHOW TABLES  ::  rows=5
+  [PASS] SQL ok: SHOW CREATE TABLE product_order  ::  rows=1
+  [PASS] SQL ok: SHOW INDEX FROM product_order  ::  rows=2
+  [PASS] SQL ok: DESC product_order  ::  rows=5
+  [FAIL] SQL ok: EXPLAIN SELECT * FROM product_order  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] SQL ok: SET SESSION autocommit = 1  ::  updateCount=0
+  [PASS] SQL ok: SET NAMES utf8mb4  ::  updateCount=0
+  [PASS] SQL ok: SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_S...  ::  updateCount=-1
+  [PASS] SQL ok: SELECT DATABASE()  ::  rows=1
+  [FAIL] SQL ok: SELECT COUNT(*) FROM (SELECT id FROM product_order) t  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] SQL ok: SELECT 1 UNION SELECT 2  ::  rows=2
+  [FAIL] SQL ok: SELECT * FROM product_order FOR UPDATE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] SQL ok: INSERT INTO product_order (order_no,user_id,status,msg) VALUES...  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] SQL ok: INSERT IGNORE INTO product_order (order_no,user_id,status,msg)...  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] SQL ok: SELECT id FROM product_order WHERE order_no IN ('OK-1','BASE-1...  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] SQL ok: UPDATE product_order SET msg = CASE order_no WHEN 'OK-1' THEN ...  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] SQL ok: SELECT LAST_INSERT_ID()  ::  rows=1
+  [FAIL] SQL ok: TRUNCATE TABLE review_task  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'review_task' does not exist.
+  [FAIL] SQL ok: SELECT id FROM product_order p, user_account u WHERE p.user_id...  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] SQL ok: INSERT INTO product_order (order_no,user_id,status,msg) SELECT...  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [FAIL] useGeneratedKeys / LAST_INSERT_ID  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] sharded multi-value IN batch CASE UPDATE with hint  ::  updateCount=0
+  [FAIL] sharded batch UPDATE WITHOUT hint -> must fail  ::  succeeded, updateCount=0
+  [FAIL] HintManager is ThreadLocal  ::  child isInstantiated=true
+  [PASS] HintManager cleared after close()  ::  isInstantiated=false
+
+=== YAML PROBE RESULT: PASS=21 FAIL=26 ===

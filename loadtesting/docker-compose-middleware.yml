@@ -1,0 +1,214 @@
+# ============================================================================
+# 库存扣减压测 · 中间件 compose（MySQL + Redis + RocketMQ namesrv/broker）
+# 部署在中间件机（公网 47.93.120.76 / 内网 172.31.88.255）
+#
+#   docker compose -f docker-compose-middleware.yml up -d
+#   可选：加上 dashboard 看消息堆积
+#     docker compose -f docker-compose-middleware.yml --profile tools up -d rocketmq-dashboard
+#
+# 本文件自包含：所有参数（IP / 端口 / 密码 / 调参 / broker 配置）都写在文件里，
+# 不挂载任何宿主机文件，也不需要 .env —— 机器上有镜像就能起来。
+# 参数只为压测口径服务：MySQL 异步刷盘、关 binlog；Redis 保持默认持久化。
+# ============================================================================
+name: lt-inventory
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "100m"
+    max-file: "3"
+
+services:
+  mysql:
+    container_name: lt-mysql
+    image: mysql:9.7
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: lt123456
+      MYSQL_ROOT_HOST: "%"
+      # 建库；表由应用启动时执行 schema.sql 自动创建（幂等）
+      MYSQL_DATABASE: lt_inventory
+      TZ: Asia/Shanghai
+    # ===== 压测调参（等价于原 my.cnf，直接作为 mysqld 参数）=====
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+08:00
+      # 连接：压测端连接池 120，预留足够余量
+      - --max-connections=2000
+      - --max-connect-errors=100000
+      - --wait-timeout=600
+      - --interactive-timeout=600
+      # 缓冲池：8G 机器给 2G（数据集很小，主要留给系统页缓存）
+      - --innodb-buffer-pool-size=2G
+      - --innodb-buffer-pool-instances=4
+      - --innodb-log-buffer-size=64M
+      - --innodb-redo-log-capacity=1G
+      # 写路径：2 = 每秒刷一次 redo，事务提交不等 fsync（压测口径）
+      - --innodb-flush-log-at-trx-commit=2
+      - --sync-binlog=0
+      - --skip-log-bin
+      - --innodb-flush-method=O_DIRECT
+      - --innodb-io-capacity=2000
+      - --innodb-io-capacity-max=4000
+      # 行锁：单热点场景不会死锁，关掉死锁检测的开销，允许更长等锁
+      - --innodb-deadlock-detect=OFF
+      - --innodb-lock-wait-timeout=50
+      - --innodb-thread-concurrency=0
+      # 元数据与统计开销：压测期间不需要 performance_schema
+      - --performance-schema=OFF
+      - --table-open-cache=4000
+      - --table-definition-cache=2000
+      - --innodb-autoinc-lock-mode=2
+    ports:
+      - "3306:3306"
+    volumes:
+      - lt-mysql-data:/var/lib/mysql
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -plt123456 --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 40s
+    logging: *default-logging
+    networks:
+      - lt-net
+
+  redis:
+    container_name: lt-redis
+    image: redis:8.8.0
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    # 持久化保持 Redis 默认（RDB 快照，官方镜像默认开启），数据目录挂卷，容器重建不丢。
+    # 只调大连接数与 backlog，其余全部走官方默认配置。
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass lt123456 --maxclients 20000 --tcp-backlog 4096 --protected-mode no
+    ports:
+      - "6379:6379"
+    volumes:
+      - lt-redis-data:/data
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a lt123456 --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    logging: *default-logging
+    networks:
+      - lt-net
+
+  rocketmq-namesrv:
+    container_name: lt-rocketmq-namesrv
+    image: apache/rocketmq:5.5.0
+    restart: unless-stopped
+    environment:
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn256m"
+      TZ: Asia/Shanghai
+    command: ["sh", "mqnamesrv"]
+    ports:
+      - "9876:9876"
+    healthcheck:
+      # 镜像里是 bash，可以用 /dev/tcp 探活
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/9876"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    logging: *default-logging
+    networks:
+      - lt-net
+
+  rocketmq-broker:
+    container_name: lt-rocketmq-broker
+    image: apache/rocketmq:5.5.0
+    restart: unless-stopped
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      # ⚠️ 写死为中间件机内网 IP，应用机必须能直连它，否则客户端连不上 broker
+      BROKER_IP: 172.31.88.255
+      # 4C8G 中间件机：MySQL 占 2G buffer pool，broker 给 1.5G 堆，留出页缓存
+      JAVA_OPT_EXT: "-Xms1536m -Xmx1536m"
+      TZ: Asia/Shanghai
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    ports:
+      - "10911:10911"
+      - "10909:10909"
+    # broker 配置在容器启动时写出来，不依赖宿主机文件。
+    # brokerIP1 用 BROKER_IP 覆盖成内网 IP；单 master + 异步刷盘，压测只看吞吐与延迟。
+    command:
+      - sh
+      - -c
+      - |
+        cat > /home/rocketmq/broker.conf <<'EOF'
+        brokerClusterName = DefaultCluster
+        brokerName = broker-a
+        brokerId = 0
+        brokerIP1 = 127.0.0.1
+        namesrvAddr = rocketmq-namesrv:9876
+        brokerRole = ASYNC_MASTER
+        flushDiskType = ASYNC_FLUSH
+        deleteWhen = 04
+        fileReservedTime = 24
+        mappedFileSizeCommitLog = 1073741824
+        sendMessageThreadPoolNums = 64
+        putMessageThreadPoolNums = 64
+        pullMessageThreadPoolNums = 64
+        useReentrantLockWhenPutMessage = true
+        autoCreateTopicEnable = true
+        autoCreateSubscriptionGroup = true
+        defaultTopicQueueNums = 4
+        maxTransferBytesOnMessageInMemory = 262144
+        osPageCacheBusyTimeOutMills = 2000
+        transientStorePoolEnable = false
+        EOF
+        sed -i -E "s/^brokerIP1 *=.*/brokerIP1 = $$BROKER_IP/" /home/rocketmq/broker.conf &&
+        exec sh mqbroker -c /home/rocketmq/broker.conf
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/10911"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    logging: *default-logging
+    networks:
+      - lt-net
+
+  # 可选：看消息堆积用，不随默认启动
+  #   docker compose -f docker-compose-middleware.yml --profile tools up -d rocketmq-dashboard
+  rocketmq-dashboard:
+    profiles: ["tools"]
+    container_name: lt-rocketmq-dashboard
+    image: apacherocketmq/rocketmq-dashboard:latest
+    restart: unless-stopped
+    environment:
+      JAVA_OPTS: "-Drocketmq.namesrv.addr=rocketmq-namesrv:9876 -Xms256m -Xmx256m"
+      TZ: Asia/Shanghai
+    ports:
+      - "8180:8080"
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    logging: *default-logging
+    networks:
+      - lt-net
+
+volumes:
+  # MySQL 官方镜像启动时会把数据目录 chown 给 mysql 用户，命名卷没问题。
+  # RocketMQ 镜像不会 chown，所以 broker 不挂数据卷。
+  lt-mysql-data:
+  lt-redis-data:
+
+networks:
+  lt-net:
+    driver: bridge

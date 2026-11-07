@@ -1,0 +1,57 @@
+# 超时中心分片配置（开发库 bs_timeout）——spec §5.2。
+#
+# 5.5.x 的用法是「JDBC 驱动 + YAML」：spring.datasource.url 指向本文件
+# （jdbc:shardingsphere:classpath:sharding.yaml），由 ShardingSphereDriver 解析。
+# 代价是库地址写在 YAML 里、Spring 的 ${} 占位符到不了这一层——所以测试侧另有一份
+# sharding-test.yaml（同内容、jdbcUrl 指 bs_timeout_test），两处都要跟着 schema 改。
+#
+# 表名逐张列出而不用 ${0..15} 内联表达式：内联表达式生成的是 timeout_task_0..
+# 没有两位零填充，与 DDL 的 timeout_task_00..15 对不上。
+#
+# ── 分片策略为什么是 hint 而不是 complex（2026-09-19 票 08 实测改） ──
+# spec §5.2 原打算「写入走 complex 算法（按 task_type + biz_id）、扫描走 HintManager 强制路由」，
+# 实测在 5.5.3 上做不到：
+#   ① 一张表只能配一个 tableStrategy，两套分片算法无法共存于同一张表；
+#   ② complex 表上 HintManager 完全不生效——把 hint 指到错误的槽位，扫描照样从 16 张表里
+#      把那行捞了回来（ShardingStandardRouteEngine 只在 hint 策略下读 HintManager，
+#      见其 isRoutingByShardingConditions / isGettingShardingValuesFromHint 两个判据）。
+# 所以整张表统一走 hint 强制路由：**每一次 DAO 调用都由仓储层算好槽位号塞进 HintManager**
+# （写入按自然键、扫描按槽位），两个方向共用 TimeoutTaskShardSlots 的同一个公式——
+# 「两算法同一编号空间」那条核心约束因此收敛成单点函数，不可能算岔。
+# 漏塞 hint 的后果是响的：写语句被 ShardingSphere 的 Insert/Update 路由校验当场拒掉
+# （不会静默写错表）；扫描语句退化成 16 表广播——结果仍对（业务方幂等吸收重复），
+# 但每个实例都会处理全部分片的行：白读一遍 + 跨实例重复回调，表级归属（spec §5.5 ①）失效。
+dataSources:
+  timeout_center:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://localhost:3306/bs_timeout?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: bs123456
+    # 内层池 = 直连 MySQL 的并发上限（外层还有一层 Spring 的 Hikari 包住 ShardingSphere）。
+    # 扫描 fan-out 一槽位一虚拟线程 = 16（spec §5.3），内层要给足 ≥ 外层池：
+    # 每个外层 ShardingSphereConnection 干活时都要占一条内层连接。24 见 application.yml 的说明。
+    maximumPoolSize: 24
+    minimumIdle: 4
+    connectionTimeout: 3000
+
+rules:
+  - !SHARDING
+    tables:
+      # 逻辑表 timeout_task 的 16 张物理分表；槽位（0..15）由 HintManager 显式给出
+      timeout_task:
+        actualDataNodes: timeout_center.timeout_task_00,timeout_center.timeout_task_01,timeout_center.timeout_task_02,timeout_center.timeout_task_03,timeout_center.timeout_task_04,timeout_center.timeout_task_05,timeout_center.timeout_task_06,timeout_center.timeout_task_07,timeout_center.timeout_task_08,timeout_center.timeout_task_09,timeout_center.timeout_task_10,timeout_center.timeout_task_11,timeout_center.timeout_task_12,timeout_center.timeout_task_13,timeout_center.timeout_task_14,timeout_center.timeout_task_15
+        tableStrategy:
+          hint:
+            shardingAlgorithmName: timeout-task-hint
+    shardingAlgorithms:
+      # CLASS_BASED：算法类是普通 Java 类（不是 Spring Bean），由 ShardingSphere 反射实例化。
+      # 槽位 → 物理表名走 TimeoutTaskShardSlots.tableNameOf，与仓储层算槽位用的是同一个类。
+      timeout-task-hint:
+        type: CLASS_BASED
+        props:
+          strategy: HINT
+          algorithmClassName: com.betterschool.timeout.infrastructure.sharding.TimeoutTaskHintShardingAlgorithm
+
+props:
+  sql-show: false

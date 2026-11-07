@@ -1,0 +1,68 @@
+﻿13:38:56.505 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Starting...
+13:38:56.660 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@139982de
+13:38:56.661 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Start completed.
+13:38:57.001 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Shutdown initiated...
+13:38:57.007 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Shutdown completed.
+13:38:57.008 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Starting...
+13:38:57.011 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-2 - Added connection com.mysql.cj.jdbc.ConnectionImpl@3571b748
+13:38:57.011 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Start completed.
+13:38:57.323 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Shutdown initiated...
+13:38:57.323 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Shutdown completed.
+
+################ A production-shape (ss_a / probe-r-a.yaml) ################
+13:38:57.324 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-3 - Starting...
+13:38:57.327 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-3 - Added connection com.mysql.cj.jdbc.ConnectionImpl@568ff82
+13:38:57.327 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-3 - Start completed.
+13:38:57.510 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-4 - Starting...
+13:38:57.514 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-4 - Added connection com.mysql.cj.jdbc.ConnectionImpl@4983159f
+13:38:57.515 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-4 - Start completed.
+java.exe : 2026-10-16 13:38:57.714 [main] INFO  com.cedarsoftware.util.MultiKeyMap - MultiKeyMap stripe configuration: 
+64 locks for 32 cores
+所在位置 行:6 字符: 1
++ & "$jdk\bin\java.exe" "-Dfile.encoding=UTF-8" "-Duser.language=en" -c ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-10-16 13:3...ks for 32 cores:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+13:38:59.045 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:38:59.045 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: 38fad7e2-9f14-499d-8abe-72e85243f200, IP: 26.144.150.84
+  [info] meta dump failed: java.lang.ClassCastException: class org.apache.shardingsphere.infra.metadata.database.schema.model.ShardingSphereTable cannot be cast to class java.lang.Comparable (org.apache.shardingsphere.infra.metadata.database.schema.model.ShardingSphereTable is in unnamed module of loader 'app'; java.lang.Comparable is in module java.base of loader 'bootstrap')
+  [info] hint see =[timeout_task_03] exhausted=true
+  [PASS] hinted write via logical table  ::  updateCount=1
+  [PASS] physical row landed in timeout_task_03  ::  raw count=1
+  [FAIL] read physical table timeout_task_03  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'timeout_task_03' does not exist.
+  [FAIL] hinted write round 0 -> timeout_task_00  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[], startIndex=0)], sqlStatementContext=org.apache.shardingsphere.infra.binder.context.statement.type.dml.InsertStatementContext@3b540156, rule=org.apache.shardingsphere.sharding.rule.ShardingRule@6eaa21d8, subqueryContainsShardingCondition=true)' to avoid same record in table 'timeout_task' routing to multiple data nodes.
+  [FAIL] hinted write round 1 -> timeout_task_01  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[], startIndex=0)], sqlStatementContext=org.apache.shardingsphere.infra.binder.context.statement.type.dml.InsertStatementContext@6eac0047, rule=org.apache.shardingsphere.sharding.rule.ShardingRule@6eaa21d8, subqueryContainsShardingCondition=true)' to avoid same record in table 'timeout_task' routing to multiple data nodes.
+  [FAIL] hinted write round 2 -> timeout_task_02  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[], startIndex=0)], sqlStatementContext=org.apache.shardingsphere.infra.binder.context.statement.type.dml.InsertStatementContext@4a213aa, rule=org.apache.shardingsphere.sharding.rule.ShardingRule@6eaa21d8, subqueryContainsShardingCondition=true)' to avoid same record in table 'timeout_task' routing to multiple data nodes.
+  [FAIL] hinted write round 3 -> timeout_task_03  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[], startIndex=0)], sqlStatementContext=org.apache.shardingsphere.infra.binder.context.statement.type.dml.InsertStatementContext@187ed6a8, rule=org.apache.shardingsphere.sharding.rule.ShardingRule@6eaa21d8, subqueryContainsShardingCondition=true)' to avoid same record in table 'timeout_task' routing to multiple data nodes.
+  [FAIL] hinted write round 4 -> timeout_task_04  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[], startIndex=0)], sqlStatementContext=org.apache.shardingsphere.infra.binder.context.statement.type.dml.InsertStatementContext@3ad52e50, rule=org.apache.shardingsphere.sharding.rule.ShardingRule@6eaa21d8, subqueryContainsShardingCondition=true)' to avoid same record in table 'timeout_task' routing to multiple data nodes.
+  [PASS] hinted read logical table -> shard 00  ::  count=1
+  [PASS] unhinted broadcast read logical table  ::  count=1
+  [PASS] unhinted write fails fast  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[]...
+  [FAIL] business table user_account reachable  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'user_account' does not exist.
+
+################ B singleStar      (ss_b / probe-r-b.yaml) ################
+13:39:00.713 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-5 - Starting...
+13:39:00.717 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-5 - Added connection com.mysql.cj.jdbc.ConnectionImpl@4ba4c254
+13:39:00.717 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-5 - Start completed.
+13:39:00.753 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-6 - Starting...
+13:39:00.757 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-6 - Added connection com.mysql.cj.jdbc.ConnectionImpl@19356ffa
+13:39:00.757 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-6 - Start completed.
+13:39:01.064 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:39:01.064 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: a3d0ad39-9bf3-416a-a73f-4879629b07fc, IP: 26.144.150.84
+  [info] meta dump failed: java.lang.ClassCastException: class org.apache.shardingsphere.infra.metadata.database.schema.model.ShardingSphereTable cannot be cast to class java.lang.Comparable (org.apache.shardingsphere.infra.metadata.database.schema.model.ShardingSphereTable is in unnamed module of loader 'app'; java.lang.Comparable is in module java.base of loader 'bootstrap')
+  [info] hint see =[timeout_task_03] exhausted=true
+  [PASS] hinted write via logical table  ::  updateCount=1
+  [PASS] physical row landed in timeout_task_03  ::  raw count=1
+  [FAIL] read physical table timeout_task_03  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'timeout_task_03' does not exist.
+  [FAIL] hinted write round 0 -> timeout_task_00  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[], startIndex=0)], sqlStatementContext=org.apache.shardingsphere.infra.binder.context.statement.type.dml.InsertStatementContext@5d4b3ca2, rule=org.apache.shardingsphere.sharding.rule.ShardingRule@519e7f19, subqueryContainsShardingCondition=true)' to avoid same record in table 'timeout_task' routing to multiple data nodes.
+  [FAIL] hinted write round 1 -> timeout_task_01  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[], startIndex=0)], sqlStatementContext=org.apache.shardingsphere.infra.binder.context.statement.type.dml.InsertStatementContext@7fe551f7, rule=org.apache.shardingsphere.sharding.rule.ShardingRule@519e7f19, subqueryContainsShardingCondition=true)' to avoid same record in table 'timeout_task' routing to multiple data nodes.
+  [FAIL] hinted write round 2 -> timeout_task_02  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[], startIndex=0)], sqlStatementContext=org.apache.shardingsphere.infra.binder.context.statement.type.dml.InsertStatementContext@5219cb9, rule=org.apache.shardingsphere.sharding.rule.ShardingRule@519e7f19, subqueryContainsShardingCondition=true)' to avoid same record in table 'timeout_task' routing to multiple data nodes.
+  [FAIL] hinted write round 3 -> timeout_task_03  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[], startIndex=0)], sqlStatementContext=org.apache.shardingsphere.infra.binder.context.statement.type.dml.InsertStatementContext@29c1233a, rule=org.apache.shardingsphere.sharding.rule.ShardingRule@519e7f19, subqueryContainsShardingCondition=true)' to avoid same record in table 'timeout_task' routing to multiple data nodes.
+  [FAIL] hinted write round 4 -> timeout_task_04  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[], startIndex=0)], sqlStatementContext=org.apache.shardingsphere.infra.binder.context.statement.type.dml.InsertStatementContext@79ae6d4b, rule=org.apache.shardingsphere.sharding.rule.ShardingRule@519e7f19, subqueryContainsShardingCondition=true)' to avoid same record in table 'timeout_task' routing to multiple data nodes.
+  [PASS] hinted read logical table -> shard 00  ::  count=1
+  [PASS] unhinted broadcast read logical table  ::  count=1
+  [PASS] unhinted write fails fast  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[]...
+  [PASS] business table user_account reachable  ::  count=1
+
+=== HINTWRITE RESULT: PASS=11 FAIL=13 ===

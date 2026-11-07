@@ -1,0 +1,31 @@
+﻿
+################ HintManager thread transmission ################
+  [info] HINT_MANAGER_HOLDER = com.alibaba.ttl.TransmittableThreadLocal
+  [PASS] plain new Thread (created in scope) sees parent hint  ::  child sees [timeout_task_11]
+  [FAIL] plain new Thread (created BEFORE scope) sees parent hint  ::  child sees []
+  [PASS] pooled worker sees parent hint  ::  worker sees [timeout_task_15]
+  [PASS] hint does not survive into next task on reused worker  ::  next task isInstantiated=false
+  [PASS] no hint transmitted to a thread created after close()  ::  child sees []
+13:44:36.158 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Starting...
+13:44:36.169 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@6b00f608
+13:44:36.170 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Start completed.
+java.exe : 2026-10-16 13:44:36.357 [main] INFO  com.cedarsoftware.util.MultiKeyMap - MultiKeyMap stripe configuration: 
+64 locks for 32 cores
+所在位置 行:8 字符: 1
++ & "$jdk\bin\java.exe" "-Dfile.encoding=UTF-8" "-Duser.language=en" -c ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-10-16 13:4...ks for 32 cores:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+13:44:37.700 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:44:37.700 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: f0fdb15e-5db0-4a51-84b4-5e72ba8582d8, IP: 26.144.150.84
+
+################ repo-shape replica (ss_t / probe-r-t.yaml, NO !SINGLE) ################
+  [info] logical db 'logic_db' -> visible tables(1): [timeout_task]
+  ---- unconfigured business tables ----
+  [PASS] all 20 unconfigured business tables unreachable  ::  dead=20/20
+  ---- logical sharded table still works ----
+  [PASS] hinted write via logical table (no !SINGLE config)  ::  updateCount=1
+  [PASS] row physically in timeout_task_03  ::  raw=1
+
+=== VERIFY RESULT: PASS=7 FAIL=1 ===

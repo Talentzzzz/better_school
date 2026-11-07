@@ -1,0 +1,2318 @@
+diff --git a/.scratch/timeout-inline/archive/test_timeout_cutover_migrate.py b/.scratch/timeout-inline/archive/test_timeout_cutover_migrate.py
+new file mode 100644
+index 0000000..8757742
+--- /dev/null
++++ b/.scratch/timeout-inline/archive/test_timeout_cutover_migrate.py
+@@ -0,0 +1,385 @@
++#!/usr/bin/env python3
++"""`timeout-cutover-migrate.py` 的离线单测（不需要 MySQL）。
++
++运行：
++
++    python backend/scripts/test_timeout_cutover_migrate.py -v
++
++槽位夹具由 JDK 21 直接跑 `String.hashCode()` 得到（见票 07 的 Answer），
++不是用 Python 反推的——这个文件的唯一价值就是钉住「Python 工具与 Java 运行时逐字节一致」。
++"""
++
++from __future__ import annotations
++
++import importlib.util
++import sys
++import unittest
++from pathlib import Path
++
++MODULE_PATH = Path(__file__).with_name("timeout-cutover-migrate.py")
++SPEC = importlib.util.spec_from_file_location("timeout_cutover_migrate", MODULE_PATH)
++assert SPEC and SPEC.loader
++migrate = importlib.util.module_from_spec(SPEC)
++sys.modules[SPEC.name] = migrate
++SPEC.loader.exec_module(migrate)
++
++
++def row(
++    task_type: str,
++    biz_id: str,
++    status: str = "WAITING",
++    *,
++    table: str = "timeout_task_00",
++    action_time: str = "2026-10-17 12:00:00",
++    next_fire_time: str | None = None,
++    retry_count: int = 0,
++    origin: str = "center",
++) -> "migrate.TaskRow":
++    return migrate.TaskRow(
++        table=table,
++        task_type=task_type,
++        biz_id=biz_id,
++        action_time=action_time,
++        next_fire_time=next_fire_time or action_time,
++        status=status,
++        retry_count=retry_count,
++        created_at="2026-10-17 11:45:00",
++        updated_at="2026-10-17 11:45:00",
++        origin=origin,
++    )
++
++
++class JavaHashTest(unittest.TestCase):
++    """夹具：Java 21 `String.hashCode()` / `String.length()` 的实测输出。"""
++
++    def test_ascii_hash(self) -> None:
++        self.assertEqual(migrate.java_hash("1001"), 1507424)
++        self.assertEqual(migrate.java_hash("3003:1"), 1505896535)
++        self.assertEqual(migrate.java_hash("4004:2"), 1534526648)
++
++    def test_cjk_hash(self) -> None:
++        self.assertEqual(migrate.java_hash("订单-测试"), -711078908)
++
++    def test_surrogate_pair_hash(self) -> None:
++        # Java String.length() 数 UTF-16 code unit：emoji 是 2，不是 1。
++        self.assertEqual(migrate.java_hash("😀:7"), 1703757792)
++        self.assertEqual(migrate.java_length("😀:7"), 4)
++
++    def test_cjk_length(self) -> None:
++        self.assertEqual(migrate.java_length("订单-测试"), 5)
++
++    def test_old_slot_fixtures(self) -> None:
++        cases = [
++            ("PRODUCT_ORDER_PAY_TIMEOUT", "1001", 2),
++            ("ERRAND_PAY_TIMEOUT", "2002", 0),
++            ("ERRAND_LOCK_TIMEOUT", "3003:1", 15),
++            ("REVIEW_LEASE_TIMEOUT", "4004:2", 9),
++            ("PRODUCT_ORDER_PAY_TIMEOUT", "订单-测试", 2),
++            ("ERRAND_LOCK_TIMEOUT", "😀:7", 8),
++        ]
++        for task_type, biz_id, expected in cases:
++            with self.subTest(task_type=task_type, biz_id=biz_id):
++                self.assertEqual(migrate.old_slot(task_type, biz_id), expected)
++
++    def test_new_slot_fixtures(self) -> None:
++        cases = [
++            ("1001", 0),
++            ("2002", 0),
++            ("3003:1", 7),
++            ("4004:2", 8),
++            ("订单-测试", 4),
++            ("😀:7", 0),
++        ]
++        for biz_id, expected in cases:
++            with self.subTest(biz_id=biz_id):
++                self.assertEqual(migrate.new_slot(biz_id), expected)
++
++    def test_physical_table_zero_pads(self) -> None:
++        self.assertEqual(migrate.physical_table(0), "timeout_task_00")
++        self.assertEqual(migrate.physical_table(15), "timeout_task_15")
++        with self.assertRaises(migrate.MigrationError):
++            migrate.physical_table(16)
++
++
++class ForwardPlanTest(unittest.TestCase):
++
++    def test_missing_key_is_inserted_into_new_slot(self) -> None:
++        source = [row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_15")]
++        plan = migrate.plan_forward(source, [], [])
++        self.assertEqual(len(plan.inserts), 1)
++        self.assertEqual(plan.inserts[0].target_table, "timeout_task_07")
++        self.assertFalse(plan.skips)
++
++    def test_existing_target_wins(self) -> None:
++        source = [row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_15")]
++        target = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="RETRYING",
++                      table="timeout_task_07", retry_count=3)]
++        plan = migrate.plan_forward(source, [], target)
++        self.assertFalse(plan.inserts)
++        self.assertEqual(len(plan.skips), 1)
++        self.assertEqual(plan.skips[0].target_table, "timeout_task_07")
++        self.assertIn("保留目标行", plan.skips[0].reason)
++
++    def test_outbox_row_is_migrated_when_center_lost_it(self) -> None:
++        outbox = [row("PRODUCT_ORDER_PAY_TIMEOUT", "1001", origin="outbox",
++                      table="timeout_register_outbox")]
++        plan = migrate.plan_forward([], outbox, [])
++        self.assertEqual(len(plan.inserts), 1)
++        self.assertEqual(plan.inserts[0].row.origin, "outbox")
++        self.assertEqual(plan.inserts[0].target_table, "timeout_task_00")
++
++    def test_outbox_row_skipped_when_center_already_has_key(self) -> None:
++        source = [row("PRODUCT_ORDER_PAY_TIMEOUT", "1001")]
++        outbox = [row("PRODUCT_ORDER_PAY_TIMEOUT", "1001", origin="outbox",
++                      table="timeout_register_outbox")]
++        plan = migrate.plan_forward(source, outbox, [])
++        self.assertEqual(len(plan.inserts), 1)
++        self.assertEqual(plan.inserts[0].row.origin, "center")
++        self.assertEqual(len(plan.skips), 1)
++        self.assertIn("outbox", plan.skips[0].reason)
++
++    def test_outbox_row_skipped_when_center_terminal_and_outbox_is_stale(self) -> None:
++        outbox = [row("PRODUCT_ORDER_PAY_TIMEOUT", "1001", origin="outbox",
++                      table="timeout_register_outbox", action_time="2026-10-17 12:00:00")]
++        old = row("PRODUCT_ORDER_PAY_TIMEOUT", "1001", status="SUCCESS",
++                  table="timeout_task_00", action_time="2026-10-17 13:00:00")
++        plan = migrate.plan_forward(
++            [], outbox, [],
++            source_by_key={("PRODUCT_ORDER_PAY_TIMEOUT", "1001"): old},
++        )
++        self.assertFalse(plan.inserts)
++        self.assertEqual(len(plan.skips), 1)
++        self.assertIn("SUCCESS", plan.skips[0].reason)
++        self.assertIn("残留", plan.skips[0].reason)
++
++    def test_outbox_row_migrated_when_center_terminal_but_outbox_is_newer(self) -> None:
++        # outbox uk 会复位 PENDING：终态旧行 + 更晚 action_time = 新一轮注册，不能丢。
++        outbox = [row("PRODUCT_ORDER_PAY_TIMEOUT", "1001", origin="outbox",
++                      table="timeout_register_outbox", action_time="2026-10-17 14:00:00")]
++        old = row("PRODUCT_ORDER_PAY_TIMEOUT", "1001", status="SUCCESS",
++                  table="timeout_task_00", action_time="2026-10-17 13:00:00")
++        plan = migrate.plan_forward(
++            [], outbox, [],
++            source_by_key={("PRODUCT_ORDER_PAY_TIMEOUT", "1001"): old},
++        )
++        self.assertEqual(len(plan.inserts), 1)
++        self.assertEqual(plan.inserts[0].row.origin, "outbox")
++        self.assertFalse(plan.skips)
++
++    def test_duplicate_source_key_is_fatal(self) -> None:
++        source = [
++            row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_15"),
++            row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_08"),
++        ]
++        with self.assertRaises(migrate.MigrationError):
++            migrate.plan_forward(source, [], [])
++
++    def test_failed_dead_letter_is_carried_over(self) -> None:
++        source = [row("REVIEW_LEASE_TIMEOUT", "4004:2", status="FAILED", retry_count=16)]
++        plan = migrate.plan_forward(source, [], [])
++        self.assertEqual(plan.inserts[0].row.status, "FAILED")
++        self.assertEqual(plan.inserts[0].row.retry_count, 16)
++
++    def test_verify_forward_does_not_require_terminal_outbox_row(self) -> None:
++        outbox = [row("ERRAND_LOCK_TIMEOUT", "3003:1", origin="outbox",
++                      table="timeout_register_outbox", action_time="2026-10-17 12:00:00")]
++        old = row("ERRAND_LOCK_TIMEOUT", "3003:1", status="SUCCESS",
++                  table="timeout_task_15", action_time="2026-10-17 13:00:00")
++        plan = migrate.plan_forward(
++            [], outbox, [],
++            source_by_key={("ERRAND_LOCK_TIMEOUT", "3003:1"): old},
++        )
++        self.assertEqual(migrate.verify_forward(migrate.Config(), plan, []), [])
++
++    def test_verify_forward_reports_missing_source_row(self) -> None:
++        source = [row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_15")]
++        plan = migrate.plan_forward(source, [], [])
++        errors = migrate.verify_forward(migrate.Config(), plan, [])
++        self.assertTrue(any("未出现在目标库" in error for error in errors))
++
++
++class ReversePlanTest(unittest.TestCase):
++
++    def test_new_target_row_is_inserted_into_old_slot(self) -> None:
++        target = [row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_07")]
++        plan = migrate.plan_reverse(target, [])
++        self.assertEqual(len(plan.inserts), 1)
++        self.assertEqual(plan.inserts[0].target_table, "timeout_task_15")
++
++    def test_old_active_row_is_not_duplicated(self) -> None:
++        target = [row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_07")]
++        old = [row("ERRAND_LOCK_TIMEOUT", "3003:1", table="timeout_task_15", retry_count=2)]
++        plan = migrate.plan_reverse(target, old)
++        self.assertFalse(plan.inserts)
++        self.assertEqual(len(plan.skips), 1)
++        self.assertIn("旧中心已有在途行", plan.skips[0].reason)
++
++    def test_old_terminal_row_is_revived(self) -> None:
++        target = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="RETRYING",
++                      table="timeout_task_07", retry_count=3)]
++        old = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="SUCCESS",
++                   table="timeout_task_15")]
++        plan = migrate.plan_reverse(target, old)
++        self.assertEqual(len(plan.revives), 1)
++        self.assertEqual(plan.revives[0].target_table, "timeout_task_15")
++
++    def test_target_success_cancels_stale_old_active_row(self) -> None:
++        target = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="SUCCESS",
++                      table="timeout_task_07")]
++        old = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="WAITING",
++                   table="timeout_task_15")]
++        plan = migrate.plan_reverse(target, old)
++        self.assertEqual(len(plan.cancels), 1)
++        self.assertFalse(plan.inserts)
++
++    def test_stale_cancel_can_be_disabled(self) -> None:
++        target = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="SUCCESS",
++                      table="timeout_task_07")]
++        old = [row("ERRAND_LOCK_TIMEOUT", "3003:1", status="WAITING",
++                   table="timeout_task_15")]
++        plan = migrate.plan_reverse(target, old, cancel_stale_old=False)
++        self.assertFalse(plan.cancels)
++        self.assertEqual(len(plan.skips), 1)
++
++    def test_old_active_row_is_kept_when_target_is_failed(self) -> None:
++        target = [row("REVIEW_LEASE_TIMEOUT", "4004:2", status="FAILED",
++                      table="timeout_task_08", retry_count=16)]
++        old = [row("REVIEW_LEASE_TIMEOUT", "4004:2", status="RETRYING",
++                   table="timeout_task_09", retry_count=5)]
++        plan = migrate.plan_reverse(target, old)
++        self.assertFalse(plan.inserts)
++        self.assertFalse(plan.revives)
++        self.assertEqual(len(plan.skips), 1)
++        self.assertIn("继续重试", plan.skips[0].reason)
++
++    def test_failed_target_without_old_row_is_inserted(self) -> None:
++        target = [row("REVIEW_LEASE_TIMEOUT", "4004:2", status="FAILED",
++                      table="timeout_task_08", retry_count=16)]
++        plan = migrate.plan_reverse(target, [])
++        self.assertEqual(len(plan.inserts), 1)
++        self.assertEqual(plan.inserts[0].target_table, "timeout_task_09")
++
++    def test_failed_target_with_old_terminal_keeps_old_terminal(self) -> None:
++        # 旧中心已结算（SUCCESS/CANCELED）时不拿新死信覆盖：业务事实已发生。
++        target = [row("REVIEW_LEASE_TIMEOUT", "4004:2", status="FAILED",
++                      table="timeout_task_08", retry_count=16)]
++        old = [row("REVIEW_LEASE_TIMEOUT", "4004:2", status="SUCCESS",
++                   table="timeout_task_09")]
++        plan = migrate.plan_reverse(target, old)
++        self.assertFalse(plan.inserts)
++        self.assertFalse(plan.revives)
++        self.assertEqual(len(plan.skips), 1)
++        self.assertIn("保留旧终态", plan.skips[0].reason)
++
++
++class JobGuardTest(unittest.TestCase):
++    """扫描 job 前置守卫：读不到 xxl 默认拒绝，两个 job 启用都阻塞。"""
++
++    def test_unreadable_xxl_requires_force(self) -> None:
++        with self.assertRaises(migrate.MigrationError):
++            migrate.check_job_statuses(migrate.Config(), None, "forward")
++
++    def test_unreadable_xxl_allowed_with_force(self) -> None:
++        warnings = migrate.check_job_statuses(migrate.Config(force=True), None, "forward")
++        self.assertTrue(any("--force" in warning for warning in warnings))
++
++    def test_old_job_enabled_blocks_forward(self) -> None:
++        with self.assertRaises(migrate.MigrationError):
++            migrate.check_job_statuses(
++                migrate.Config(), {"timeoutTaskScanJob": 1, "timeoutTaskScan": 0}, "forward"
++            )
++
++    def test_old_job_enabled_blocks_reverse(self) -> None:
++        with self.assertRaises(migrate.MigrationError):
++            migrate.check_job_statuses(
++                migrate.Config(), {"timeoutTaskScanJob": 1, "timeoutTaskScan": 0}, "reverse"
++            )
++
++    def test_new_job_enabled_blocks_forward(self) -> None:
++        with self.assertRaises(migrate.MigrationError):
++            migrate.check_job_statuses(
++                migrate.Config(), {"timeoutTaskScanJob": 0, "timeoutTaskScan": 1}, "forward"
++            )
++
++    def test_missing_new_job_warns_seed(self) -> None:
++        warnings = migrate.check_job_statuses(
++            migrate.Config(), {"timeoutTaskScanJob": 0}, "forward"
++        )
++        self.assertTrue(any("xxl-job-tasks.sql" in warning for warning in warnings))
++
++    def test_no_jobs_warns(self) -> None:
++        warnings = migrate.check_job_statuses(migrate.Config(), {}, "forward")
++        self.assertTrue(any("没有" in warning for warning in warnings))
++
++
++class SqlGenerationTest(unittest.TestCase):
++    def test_sql_text_uses_hex_literal(self) -> None:
++        self.assertEqual(
++            migrate.sql_text("订单-测试"),
++            "CONVERT(X'"
++            + "订单-测试".encode("utf-8").hex()
++            + "' USING utf8mb4)",
++        )
++
++    def test_forward_insert_has_no_callback_group(self) -> None:
++        cfg = migrate.Config()
++        item = migrate.PlannedInsert("timeout_task_00", row("PRODUCT_ORDER_PAY_TIMEOUT", "1001"))
++        sql = migrate.insert_forward_sql(cfg, item)
++        self.assertNotIn("callback_group", sql)
++        self.assertIn("`better_school`.`timeout_task_00`", sql)
++
++    def test_reverse_insert_has_callback_group(self) -> None:
++        cfg = migrate.Config(callback_group="better-school")
++        item = migrate.PlannedInsert("timeout_task_02", row("PRODUCT_ORDER_PAY_TIMEOUT", "1001"))
++        sql = migrate.insert_reverse_sql(cfg, item)
++        self.assertIn("callback_group", sql)
++        self.assertIn(migrate.sql_text("better-school"), sql)
++
++    def test_outbox_select_uses_real_column_names(self) -> None:
++        # 回归：outbox 列名是 type/state/create_time/update_time（票 03 删表前的 DDL），
++        # 不是分表的 task_type/status/created_at/updated_at。
++        sql = migrate.select_outbox_sql("better_school")
++        self.assertIn("HEX(type)", sql)
++        self.assertIn("state = 'PENDING'", sql)
++        self.assertIn("create_time", sql)
++        self.assertIn("update_time", sql)
++        self.assertNotIn("task_type", sql)
++        self.assertNotIn("status =", sql)
++        self.assertNotIn("created_at", sql)
++        self.assertNotIn("updated_at", sql)
++
++    def test_revive_reverse_sql_guards_terminal_status(self) -> None:
++        cfg = migrate.Config()
++        item = migrate.PlannedInsert(
++            "timeout_task_15", row("ERRAND_LOCK_TIMEOUT", "3003:1", status="RETRYING")
++        )
++        sql = migrate.revive_reverse_sql(cfg, item)
++        self.assertIn("`bs_timeout`.`timeout_task_15`", sql)
++        self.assertIn("AND status IN ('SUCCESS', 'FAILED', 'CANCELED')", sql)
++        self.assertIn(migrate.sql_text("3003:1"), sql)
++
++    def test_cancel_reverse_sql_only_hits_active_rows(self) -> None:
++        cfg = migrate.Config()
++        item = migrate.PlannedInsert(
++            "timeout_task_15", row("ERRAND_LOCK_TIMEOUT", "3003:1", status="SUCCESS")
++        )
++        sql = migrate.cancel_reverse_sql(cfg, item)
++        self.assertIn("status = 'CANCELED'", sql)
++        self.assertIn("AND status IN ('WAITING', 'RETRYING')", sql)
++
++    def test_forward_script_is_one_transaction(self) -> None:
++        cfg = migrate.Config()
++        plan = migrate.ForwardPlan(
++            inserts=[
++                migrate.PlannedInsert(
++                    "timeout_task_00", row("PRODUCT_ORDER_PAY_TIMEOUT", "1001")
++                )
++            ]
++        )
++        sql = migrate.forward_script(cfg, plan)
++        self.assertTrue(sql.startswith("SET NAMES utf8mb4;\nSTART TRANSACTION;"))
++        self.assertTrue(sql.rstrip().endswith("COMMIT;"))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/.scratch/timeout-inline/archive/timeout-cutover-migrate.py b/.scratch/timeout-inline/archive/timeout-cutover-migrate.py
+new file mode 100644
+index 0000000..bbbeb6c
+--- /dev/null
++++ b/.scratch/timeout-inline/archive/timeout-cutover-migrate.py
+@@ -0,0 +1,1199 @@
++#!/usr/bin/env python3
++"""超时中心内嵌化切换的数据搬迁工具（一次性，票 07）。
++
++把 `bs_timeout.timeout_task_*` 里的存量在途/死信行搬进
++`better_school.timeout_task_*`，并支持回滚方向的逆向搬迁。
++
++为什么需要它（而不是直接 `INSERT ... SELECT`）：
++
++* **槽位公式变了**。旧中心 `slot = floorMod(hash(len(taskType)+":"+taskType+bizId), 16)`，
++  新单体 `slot = floorMod(hash(bizId), 16)`。目标分表号必须按新公式重算，否则新扫描器
++  永远看不到这一行（写错表 = 静默丢失，不是报错）。
++* **目标表里可能已有新代码写入的行**。新代码先滚动上线再搬迁时，同键以目标行为准
++  （目标行是新一代注册的事实源），搬迁只补缺、不覆盖。
++* **`timeout_register_outbox` 里可能还有 PENDING 残留**。新代码不再有 outbox 发送器；
++  这些行如果只留在旧表里，部署完成后就永远发不出去，必须一并搬。
++
++安全边界（脚本会做/不会做的事）：
++
++* 前置检查旧扫描 job `timeoutTaskScanJob` 必须已停（`trigger_status = 0`），
++  新扫描 job `timeoutTaskScan` 也必须已停（前向搬迁/校验期间不能让新代码把刚搬进去的行结算掉），
++  除非显式 `--force`。这一条是「搬迁期间到点」竞态的主要防线。
++* 前向搬迁只搬 `WAITING` / `RETRYING` / `FAILED`：前两者是未完成动作，`FAILED` 是死信，
++  搬过去才能在单体的死信管理面里继续重发/取消。`SUCCESS` / `CANCELED` 是历史，
++  随 `bs_timeout` 留档，不搬。
++* 不修改源库。搬迁可重复执行：同键已存在就跳过并记入报告。
++* 整个写入在一个事务里；任一条失败回滚全部，重跑安全。
++
++用法见 `backend/docs/ops/timeout-inline-cutover.md`。
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import os
++import subprocess
++import sys
++from dataclasses import dataclass, field
++from datetime import datetime, timezone
++from typing import Iterable, Sequence
++
++SCRIPT_VERSION = "1.0.0"
++SHARD_COUNT = 16
++TABLE_PREFIX = "timeout_task"
++ACTIVE_STATUSES = ("WAITING", "RETRYING")
++MIGRATED_STATUSES = ("WAITING", "RETRYING", "FAILED")
++ALL_STATUSES = ("WAITING", "RETRYING", "SUCCESS", "FAILED", "CANCELED")
++OLD_SCAN_HANDLER = "timeoutTaskScanJob"
++NEW_SCAN_HANDLER = "timeoutTaskScan"
++OUTBOX_TABLE = "timeout_register_outbox"
++SOURCE_KEY_CHUNK = 200  # 旧中心按键查状态时单条 SQL 的键数上限（16 表 UNION）
++
++EXIT_OK = 0
++EXIT_PREFLIGHT = 2
++EXIT_VERIFY = 3
++
++
++class MigrationError(RuntimeError):
++    """可预期的操作失败：打印后以非零码退出，不抛栈。"""
++
++
++# ---------------------------------------------------------------------------
++# 槽位公式（必须与 Java 实现逐字节一致）
++# ---------------------------------------------------------------------------
++
++def java_hash(text: str) -> int:
++    """`java.lang.String.hashCode()`：按 UTF-16 code unit 计算，返回有符号 32 位。"""
++    units = text.encode("utf-16-be")
++    value = 0
++    for index in range(0, len(units), 2):
++        unit = (units[index] << 8) | units[index + 1]
++        value = (31 * value + unit) & 0xFFFFFFFF
++    return value - 0x100000000 if value >= 0x80000000 else value
++
++
++def java_length(text: str) -> int:
++    """`java.lang.String.length()`：UTF-16 code unit 数（不是 Unicode code point 数）。"""
++    return len(text.encode("utf-16-be")) // 2
++
++
++def old_slot(task_type: str, biz_id: str) -> int:
++    """旧中心槽位：`floorMod(hash(len(taskType) + ":" + taskType + bizId), 16)`。"""
++    key = f"{java_length(task_type)}:{task_type}{biz_id}"
++    return java_hash(key) % SHARD_COUNT
++
++
++def new_slot(biz_id: str) -> int:
++    """新单体槽位：`floorMod(hash(bizId), 16)`（`TimeoutTaskShardSlots.slotOf`）。"""
++    return java_hash(biz_id) % SHARD_COUNT
++
++
++def physical_table(slot: int) -> str:
++    if not 0 <= slot < SHARD_COUNT:
++        raise MigrationError(f"槽位越界：{slot}")
++    return f"{TABLE_PREFIX}_{slot:02d}"
++
++
++# ---------------------------------------------------------------------------
++# SQL 拼装：字符串一律走 UTF-8 hex，避免引号/反斜杠/换行注入
++# ---------------------------------------------------------------------------
++
++def qi(identifier: str) -> str:
++    """MySQL 标识符引用。"""
++    return "`" + identifier.replace("`", "``") + "`"
++
++
++def qname(schema: str, table: str) -> str:
++    return f"{qi(schema)}.{qi(table)}"
++
++
++def sql_text(value: str) -> str:
++    """安全的 utf8mb4 字符串字面量（用于 WHERE / information_schema / 时间列等）。"""
++    return "CONVERT(X'" + value.encode("utf-8").hex() + "' USING utf8mb4)"
++
++
++def sql_datetime(value: str) -> str:
++    # DATE_FORMAT 产出的固定形态，直接引用无注入面；保留引号是为了让 SQL 可读。
++    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
++
++
++def require_datetime(value: str, context: str) -> str:
++    """拒绝 NULL / 零值日期：写成 `'NULL'` 会在目标端静默变成 0000-00-00 或被拒。"""
++    if value in ("", "NULL", "0000-00-00 00:00:00"):
++        raise MigrationError(f"{context} 的日期列为空/零值：{value!r}")
++    return value
++
++
++# ---------------------------------------------------------------------------
++# MySQL CLI 封装（仓库/生产都已有 mysql 客户端，不额外装 Python 驱动）
++# ---------------------------------------------------------------------------
++
++@dataclass
++class SqlClient:
++    mysql_bin: str
++    host: str
++    port: int
++    user: str
++    password: str | None
++
++    def _command(self) -> list[str]:
++        command = [
++            self.mysql_bin,
++            "--default-character-set=utf8mb4",
++            "--batch",
++            "--skip-column-names",
++            "-h", self.host,
++            "-P", str(self.port),
++            "-u", self.user,
++        ]
++        return command
++
++    def run(self, sql: str) -> str:
++        env = os.environ.copy()
++        if self.password is not None:
++            env["MYSQL_PWD"] = self.password
++        try:
++            completed = subprocess.run(
++                self._command(),
++                input=sql,
++                text=True,
++                capture_output=True,
++                encoding="utf-8",
++                errors="replace",
++                env=env,
++                check=False,
++            )
++        except FileNotFoundError as exc:
++            raise MigrationError(
++                f"找不到 mysql 客户端：{self.mysql_bin!r}；用 --mysql 指定路径"
++            ) from exc
++        if completed.returncode != 0:
++            detail = (completed.stderr or completed.stdout or "").strip()
++            raise MigrationError(f"mysql 执行失败（exit {completed.returncode}）：{detail}")
++        return completed.stdout
++
++    def query(self, sql: str) -> list[list[str]]:
++        output = self.run(sql)
++        rows: list[list[str]] = []
++        for line in output.splitlines():
++            if not line.strip():
++                continue
++            rows.append(line.rstrip("\r").split("\t"))
++        return rows
++
++
++# ---------------------------------------------------------------------------
++# 数据模型
++# ---------------------------------------------------------------------------
++
++@dataclass(frozen=True)
++class TaskRow:
++    table: str
++    task_type: str
++    biz_id: str
++    action_time: str
++    next_fire_time: str
++    status: str
++    retry_count: int
++    created_at: str
++    updated_at: str
++    origin: str = "center"
++
++    @property
++    def key(self) -> tuple[str, str]:
++        return self.task_type, self.biz_id
++
++
++@dataclass
++class Config:
++    mysql_bin: str = "mysql"
++    host: str = "127.0.0.1"
++    port: int = 3306
++    user: str = "root"
++    password: str | None = None
++    source_schema: str = "bs_timeout"
++    target_schema: str = "better_school"
++    xxl_schema: str = "xxl_job"
++    callback_group: str = "better-school"
++    dry_run: bool = False
++    force: bool = False
++    allow_existing_target: bool = False
++    cancel_stale_old: bool = True
++    report_path: str | None = None
++
++
++@dataclass
++class PlannedInsert:
++    target_table: str
++    row: TaskRow
++
++
++@dataclass
++class PlannedSkip:
++    row: TaskRow
++    target_table: str | None
++    reason: str
++
++
++@dataclass
++class ForwardPlan:
++    inserts: list[PlannedInsert] = field(default_factory=list)
++    skips: list[PlannedSkip] = field(default_factory=list)
++    source_rows: list[TaskRow] = field(default_factory=list)
++    outbox_rows: list[TaskRow] = field(default_factory=list)
++
++
++@dataclass
++class ReversePlan:
++    inserts: list[PlannedInsert] = field(default_factory=list)
++    revives: list[PlannedInsert] = field(default_factory=list)
++    cancels: list[PlannedInsert] = field(default_factory=list)
++    skips: list[PlannedSkip] = field(default_factory=list)
++    target_rows: list[TaskRow] = field(default_factory=list)
++
++
++# ---------------------------------------------------------------------------
++# 查询
++# ---------------------------------------------------------------------------
++
++def timeout_table_names() -> list[str]:
++    return [physical_table(slot) for slot in range(SHARD_COUNT)]
++
++
++def existing_tables(client: SqlClient, schema: str) -> set[str]:
++    names = timeout_table_names()
++    in_list = ", ".join(sql_text(name) for name in names)
++    rows = client.query(
++        "SELECT table_name FROM information_schema.tables "
++        f"WHERE table_schema = {sql_text(schema)} AND table_name IN ({in_list})"
++    )
++    return {row[0] for row in rows if row}
++
++
++def table_count(client: SqlClient, schema: str, table: str) -> int:
++    rows = client.query(f"SELECT COUNT(*) FROM {qname(schema, table)}")
++    return int(rows[0][0]) if rows else 0
++
++
++def ensure_timeout_tables(
++    client: SqlClient, schema: str, label: str, hint: str = ""
++) -> None:
++    existing = existing_tables(client, schema)
++    missing = [name for name in timeout_table_names() if name not in existing]
++    if missing:
++        raise MigrationError(f"{label} {schema} 缺少分表：{', '.join(missing)}{hint}")
++
++
++def job_statuses(client: SqlClient, schema: str) -> dict[str, int] | None:
++    """读扫描 job 的 trigger_status；整个 xxl 库/表读不到时返回 None（调用方决定是否放行）。"""
++    try:
++        rows = client.query(
++            "SELECT executor_handler, trigger_status FROM "
++            f"{qname(schema, 'xxl_job_info')} WHERE executor_handler IN "
++            f"({sql_text(OLD_SCAN_HANDLER)}, {sql_text(NEW_SCAN_HANDLER)})"
++        )
++    except MigrationError:
++        return None
++    return {row[0]: int(row[1]) for row in rows if len(row) >= 2}
++
++
++def check_job_statuses(
++    cfg: Config, statuses: dict[str, int] | None, mode: str
++) -> list[str]:
++    """两个扫描 job 的前置守卫；读不到 xxl 库时默认拒绝，`--force` 才放行。"""
++    warnings: list[str] = []
++    if statuses is None:
++        if not cfg.force:
++            raise MigrationError(
++                f"读不到 {cfg.xxl_schema}.xxl_job_info，无法确认扫描 job 已停。"
++                "先核对 --xxl-schema 与连接权限；确认要跳过这项检查再加 --force。"
++            )
++        warnings.append(
++            f"⚠️ 读不到 {cfg.xxl_schema}.xxl_job_info，已按 --force 越过；无法确认 job 已停"
++        )
++        return warnings
++
++    if not statuses:
++        warnings.append(
++            f"xxl-job 中没有 {OLD_SCAN_HANDLER}/{NEW_SCAN_HANDLER} 行；确认 seed/清理状态"
++        )
++        return warnings
++
++    old_status = statuses.get(OLD_SCAN_HANDLER)
++    if old_status is None:
++        warnings.append(f"xxl-job 中没有 {OLD_SCAN_HANDLER} 行（可能已清理）")
++    elif old_status == 1 and not cfg.force:
++        if mode == "reverse":
++            raise MigrationError(
++                f"逆向前旧扫描 job {OLD_SCAN_HANDLER} 仍为启用状态（trigger_status=1）。"
++                "回滚期间它会把刚写回旧库的行结算掉；先停旧 job 并等过一个 10s 周期，"
++                "确需并发可加 --force。"
++            )
++        raise MigrationError(
++            f"旧扫描 job {OLD_SCAN_HANDLER} 仍为启用状态（trigger_status=1）。"
++            "先把它的 trigger_status 置 0 并等过至少一个 10s 周期，再用 --force 才可越过。"
++        )
++    elif old_status == 1:
++        warnings.append(f"⚠️ {OLD_SCAN_HANDLER} 仍启用，已按 --force 越过（有并发到点风险）")
++
++    new_status = statuses.get(NEW_SCAN_HANDLER)
++    if new_status is None:
++        warnings.append(
++            f"xxl-job 中没有 {NEW_SCAN_HANDLER} 行：Phase 3 前需执行 "
++            "better-school/sql/xxl-job-tasks.sql（幂等）"
++        )
++    elif new_status == 1 and not cfg.force:
++        if mode == "reverse":
++            raise MigrationError(
++                f"新扫描 job {NEW_SCAN_HANDLER} 仍启用（trigger_status=1）。回滚前先禁用它并"
++                "停掉新版本实例，否则搬迁读到的行会被并发结算。确已停止可加 --force。"
++            )
++        raise MigrationError(
++            f"新扫描 job {NEW_SCAN_HANDLER} 仍为启用状态（trigger_status=1）。"
++            "前向搬迁 + 校验期间必须关掉它：否则新代码会在校验前把刚搬进去的行结算掉，"
++            "验证读到的状态会漂移（不是搬迁失败）。停掉并等过一个 10s 周期后再跑；"
++            "确需并发扫描可加 --force。"
++        )
++    elif new_status == 1:
++        warnings.append(
++            f"⚠️ {NEW_SCAN_HANDLER} 仍启用，已按 --force 越过；"
++            "校验可能因新扫描器就地结算而误报状态漂移"
++        )
++
++    return warnings
++
++
++def _select_rows_sql(schema: str, tables: Sequence[str], statuses: Sequence[str]) -> str:
++    status_list = ", ".join(sql_text(status) for status in statuses)
++    selects = []
++    for table in tables:
++        selects.append(
++            f"SELECT {sql_text(table)}, HEX(task_type), HEX(biz_id), "
++            f"DATE_FORMAT(action_time, '%Y-%m-%d %H:%i:%s'), "
++            f"DATE_FORMAT(next_fire_time, '%Y-%m-%d %H:%i:%s'), "
++            f"status, retry_count, "
++            f"DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), "
++            f"DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') "
++            f"FROM {qname(schema, table)} WHERE status IN ({status_list})"
++        )
++    return "\nUNION ALL\n".join(selects)
++
++
++def task_row_from_values(values: Sequence[str], origin: str) -> TaskRow:
++    """解析 `task_type/biz_id/...` 九列查询结果（分表与按键查询共用）。"""
++    if len(values) != 9:
++        raise MigrationError(f"查询结果列数不符（期望 9，实际 {len(values)}）：{values!r}")
++    try:
++        task_type = bytes.fromhex(values[1]).decode("utf-8")
++        biz_id = bytes.fromhex(values[2]).decode("utf-8")
++    except (ValueError, UnicodeDecodeError) as exc:
++        raise MigrationError(f"无法解码 {values[0]} 的行：{values!r}") from exc
++    try:
++        retry_count = int(values[6])
++    except ValueError as exc:
++        raise MigrationError(
++            f"{values[0]} 的 retry_count 不是整数：{values[6]!r}"
++        ) from exc
++    return TaskRow(
++        table=values[0],
++        task_type=task_type,
++        biz_id=biz_id,
++        action_time=require_datetime(values[3], f"{values[0]} action_time"),
++        next_fire_time=require_datetime(values[4], f"{values[0]} next_fire_time"),
++        status=values[5],
++        retry_count=retry_count,
++        created_at=require_datetime(values[7], f"{values[0]} created_at"),
++        updated_at=require_datetime(values[8], f"{values[0]} updated_at"),
++        origin=origin,
++    )
++
++
++def fetch_rows(
++    client: SqlClient,
++    schema: str,
++    tables: Sequence[str],
++    statuses: Sequence[str],
++    origin: str,
++) -> list[TaskRow]:
++    if not tables:
++        return []
++    rows = client.query(_select_rows_sql(schema, tables, statuses))
++    return [task_row_from_values(values, origin) for values in rows]
++
++
++def outbox_exists(client: SqlClient, schema: str) -> bool:
++    rows = client.query(
++        "SELECT COUNT(*) FROM information_schema.tables "
++        f"WHERE table_schema = {sql_text(schema)} AND table_name = {sql_text(OUTBOX_TABLE)}"
++    )
++    return bool(rows and int(rows[0][0]) > 0)
++
++
++def select_outbox_sql(schema: str) -> str:
++    """outbox 的列名是 `type/state/create_time/update_time`（不是分表的 `task_type/status/...`）。
++
++    票 03 删表前的 DDL 与 `TimeoutRegisterOutboxMapper.xml` 都以此为准；写错列名会让
++    `forward` 在真实生产库上直接报 Unknown column，而不是搬错数据。
++    """
++    return (
++        "SELECT HEX(type), HEX(biz_id), "
++        "DATE_FORMAT(action_time, '%Y-%m-%d %H:%i:%s'), "
++        "DATE_FORMAT(create_time, '%Y-%m-%d %H:%i:%s'), "
++        "DATE_FORMAT(update_time, '%Y-%m-%d %H:%i:%s') "
++        f"FROM {qname(schema, OUTBOX_TABLE)} WHERE state = 'PENDING'"
++    )
++
++
++def fetch_outbox_rows(client: SqlClient, schema: str) -> list[TaskRow]:
++    rows = client.query(select_outbox_sql(schema))
++    result: list[TaskRow] = []
++    for values in rows:
++        if len(values) != 5:
++            raise MigrationError(f"outbox 查询列数不符：{values!r}")
++        try:
++            task_type = bytes.fromhex(values[0]).decode("utf-8")
++            biz_id = bytes.fromhex(values[1]).decode("utf-8")
++        except (ValueError, UnicodeDecodeError) as exc:
++            raise MigrationError(f"无法解码 outbox 行：{values!r}") from exc
++        # outbox 的 action_time 就是中心的到期时刻；new code 注册时 next_fire_time = action_time
++        result.append(
++            TaskRow(
++                table=OUTBOX_TABLE,
++                task_type=task_type,
++                biz_id=biz_id,
++                action_time=require_datetime(values[2], f"{OUTBOX_TABLE} action_time"),
++                next_fire_time=require_datetime(values[2], f"{OUTBOX_TABLE} action_time"),
++                status="WAITING",
++                retry_count=0,
++                created_at=require_datetime(values[3], f"{OUTBOX_TABLE} created_at"),
++                updated_at=require_datetime(values[4], f"{OUTBOX_TABLE} updated_at"),
++                origin="outbox",
++            )
++        )
++    return result
++
++
++def fetch_source_rows_by_key(
++    client: SqlClient, schema: str, keys: Iterable[tuple[str, str]]
++) -> dict[tuple[str, str], TaskRow]:
++    """查旧中心这些键的完整行（含 SUCCESS/CANCELED 等终态）。
++
++    `forward` 只搬非终态行，但 outbox 冲突不能只看「有没有行」：outbox 的 `uk(type,biz_id)`
++    upsert 会把同一行复位成 `PENDING`，所以 PENDING 也可能是**新一轮注册**（旧中心会把终态行
++    复活）。必须拿到旧行的状态与 `action_time` 才能区分「陈旧残留」与「新意图」。
++    """
++    unique = list(dict.fromkeys(keys))
++    result: dict[tuple[str, str], TaskRow] = {}
++    for start in range(0, len(unique), SOURCE_KEY_CHUNK):
++        chunk = unique[start:start + SOURCE_KEY_CHUNK]
++        pairs = ", ".join(
++            f"({sql_text(task_type)}, {sql_text(biz_id)})" for task_type, biz_id in chunk
++        )
++        selects = [
++            f"SELECT {sql_text(table)}, HEX(task_type), HEX(biz_id), "
++            "DATE_FORMAT(action_time, '%Y-%m-%d %H:%i:%s'), "
++            "DATE_FORMAT(next_fire_time, '%Y-%m-%d %H:%i:%s'), "
++            "status, retry_count, "
++            "DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s'), "
++            "DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') "
++            f"FROM {qname(schema, table)} WHERE (task_type, biz_id) IN ({pairs})"
++            for table in timeout_table_names()
++        ]
++        for values in client.query("\nUNION ALL\n".join(selects)):
++            row = task_row_from_values(values, "center")
++            result[row.key] = row
++    return result
++
++
++# ---------------------------------------------------------------------------
++# 计划（纯函数，便于单测）
++# ---------------------------------------------------------------------------
++
++def outbox_is_new_registration(outbox_row: TaskRow, center_row: TaskRow) -> bool:
++    """PENDING outbox 是否代表「新一轮注册」而不是陈旧残留（同键 upsert 会复位 PENDING）。
++
++    旧中心的注册语义：在途同键不改期、终态同键复活。所以 outbox 的 `action_time` 比旧中心行更晚
++    时，它只可能是新注册；否则视为发送失败的残留，按旧中心为准。
++    """
++    return outbox_row.action_time > center_row.action_time
++
++
++def plan_forward(
++    source_rows: Sequence[TaskRow],
++    outbox_rows: Sequence[TaskRow],
++    target_rows: Sequence[TaskRow],
++    source_by_key: dict[tuple[str, str], TaskRow] | None = None,
++) -> ForwardPlan:
++    plan = ForwardPlan(source_rows=list(source_rows), outbox_rows=list(outbox_rows))
++    existing_targets = {row.key: row for row in target_rows}
++    seen_source: dict[tuple[str, str], TaskRow] = {}
++
++    for row in source_rows:
++        previous = seen_source.get(row.key)
++        if previous is not None:
++            raise MigrationError(
++                "源库存在重复 (task_type, biz_id)，先人工核对："
++                f"{row.key!r} 同时在 {previous.table} 与 {row.table}"
++            )
++        seen_source[row.key] = row
++
++    # 默认只认识待迁移的非终态行；真实调用会额外传入终态行（见 fetch_source_rows_by_key）。
++    known_source = dict(source_by_key) if source_by_key is not None else {
++        row.key: row for row in source_rows
++    }
++
++    candidates: list[TaskRow] = list(source_rows)
++    for row in outbox_rows:
++        old = known_source.get(row.key)
++        if old is None:
++            candidates.append(row)
++        elif old.status in ACTIVE_STATUSES:
++            plan.skips.append(
++                PlannedSkip(
++                    row,
++                    None,
++                    f"outbox 行已在旧中心在途（status={old.status}），以中心行为准",
++                )
++            )
++        elif outbox_is_new_registration(row, old):
++            # 旧中心会复活终态行；这是 legit 的新一轮注册，不能当残留丢掉。
++            candidates.append(row)
++        else:
++            plan.skips.append(
++                PlannedSkip(
++                    row,
++                    None,
++                    f"旧中心同键已是终态（status={old.status}）且 outbox 不更新，按残留跳过",
++                )
++            )
++
++    for row in candidates:
++        target = existing_targets.get(row.key)
++        if target is not None:
++            plan.skips.append(
++                PlannedSkip(
++                    row,
++                    target.table,
++                    f"目标已有同键行（status={target.status}），保留目标行",
++                )
++            )
++            continue
++        plan.inserts.append(PlannedInsert(physical_table(new_slot(row.biz_id)), row))
++
++    return plan
++
++
++def plan_reverse(
++    target_rows: Sequence[TaskRow],
++    old_rows: Sequence[TaskRow],
++    cancel_stale_old: bool = True,
++) -> ReversePlan:
++    plan = ReversePlan(target_rows=list(target_rows))
++    existing_old = {row.key: row for row in old_rows}
++
++    for row in target_rows:
++        old = existing_old.get(row.key)
++        if row.status in ACTIVE_STATUSES:
++            if old is None:
++                plan.inserts.append(PlannedInsert(physical_table(old_slot(row.task_type, row.biz_id)), row))
++            elif old.status in ACTIVE_STATUSES:
++                plan.skips.append(
++                    PlannedSkip(row, old.table, f"旧中心已有在途行（status={old.status}）")
++                )
++            else:
++                plan.revives.append(
++                    PlannedInsert(physical_table(old_slot(row.task_type, row.biz_id)), row)
++                )
++        elif row.status == "FAILED":
++            if old is None:
++                plan.inserts.append(PlannedInsert(physical_table(old_slot(row.task_type, row.biz_id)), row))
++            elif old.status == "FAILED":
++                plan.skips.append(PlannedSkip(row, old.table, "旧中心已有同键死信"))
++            elif old.status in ACTIVE_STATUSES:
++                plan.skips.append(
++                    PlannedSkip(row, old.table, "旧中心在途行继续重试（不用新死信覆盖）")
++                )
++            else:
++                plan.skips.append(
++                    PlannedSkip(
++                        row,
++                        old.table,
++                        f"旧中心同键已是终态（status={old.status}）；业务已结算，保留旧终态",
++                    )
++                )
++        elif row.status in ("SUCCESS", "CANCELED"):
++            if old is not None and old.status in ACTIVE_STATUSES and cancel_stale_old:
++                plan.cancels.append(
++                    PlannedInsert(physical_table(old_slot(row.task_type, row.biz_id)), row)
++                )
++            else:
++                plan.skips.append(PlannedSkip(row, old.table if old else None, "无需逆向的终态行"))
++        else:
++            plan.skips.append(PlannedSkip(row, old.table if old else None, f"未知状态 {row.status}"))
++
++    return plan
++
++
++# ---------------------------------------------------------------------------
++# SQL 生成
++# ---------------------------------------------------------------------------
++
++def insert_forward_sql(cfg: Config, item: PlannedInsert) -> str:
++    row = item.row
++    return (
++        f"INSERT INTO {qname(cfg.target_schema, item.target_table)} "
++        "(task_type, biz_id, action_time, next_fire_time, status, retry_count, created_at, updated_at) "
++        "VALUES ("
++        f"{sql_text(row.task_type)}, {sql_text(row.biz_id)}, "
++        f"{sql_datetime(row.action_time)}, {sql_datetime(row.next_fire_time)}, "
++        f"{sql_text(row.status)}, {row.retry_count}, "
++        f"{sql_datetime(row.created_at)}, {sql_datetime(row.updated_at)});"
++    )
++
++
++def insert_reverse_sql(cfg: Config, item: PlannedInsert) -> str:
++    row = item.row
++    return (
++        f"INSERT INTO {qname(cfg.source_schema, item.target_table)} "
++        "(task_type, callback_group, biz_id, action_time, next_fire_time, status, retry_count, created_at, updated_at) "
++        "VALUES ("
++        f"{sql_text(row.task_type)}, {sql_text(cfg.callback_group)}, {sql_text(row.biz_id)}, "
++        f"{sql_datetime(row.action_time)}, {sql_datetime(row.next_fire_time)}, "
++        f"{sql_text(row.status)}, {row.retry_count}, "
++        f"{sql_datetime(row.created_at)}, {sql_datetime(row.updated_at)});"
++    )
++
++
++def revive_reverse_sql(cfg: Config, item: PlannedInsert) -> str:
++    row = item.row
++    return (
++        f"UPDATE {qname(cfg.source_schema, item.target_table)} SET "
++        f"status = {sql_text(row.status)}, "
++        f"action_time = {sql_datetime(row.action_time)}, "
++        f"next_fire_time = {sql_datetime(row.next_fire_time)}, "
++        f"retry_count = {row.retry_count}, "
++        f"updated_at = {sql_datetime(row.updated_at)} "
++        f"WHERE task_type = {sql_text(row.task_type)} AND biz_id = {sql_text(row.biz_id)} "
++        "AND status IN ('SUCCESS', 'FAILED', 'CANCELED');"
++    )
++
++
++def cancel_reverse_sql(cfg: Config, item: PlannedInsert) -> str:
++    row = item.row
++    return (
++        f"UPDATE {qname(cfg.source_schema, item.target_table)} SET "
++        "status = 'CANCELED', updated_at = NOW() "
++        f"WHERE task_type = {sql_text(row.task_type)} AND biz_id = {sql_text(row.biz_id)} "
++        "AND status IN ('WAITING', 'RETRYING');"
++    )
++
++
++def forward_script(cfg: Config, plan: ForwardPlan) -> str:
++    statements = ["SET NAMES utf8mb4;", "START TRANSACTION;"]
++    statements.extend(insert_forward_sql(cfg, item) for item in plan.inserts)
++    statements.append("COMMIT;")
++    return "\n".join(statements) + "\n"
++
++
++def reverse_script(cfg: Config, plan: ReversePlan) -> str:
++    statements = ["SET NAMES utf8mb4;", "START TRANSACTION;"]
++    statements.extend(insert_reverse_sql(cfg, item) for item in plan.inserts)
++    statements.extend(revive_reverse_sql(cfg, item) for item in plan.revives)
++    statements.extend(cancel_reverse_sql(cfg, item) for item in plan.cancels)
++    statements.append("COMMIT;")
++    return "\n".join(statements) + "\n"
++
++
++# ---------------------------------------------------------------------------
++# 校验
++# ---------------------------------------------------------------------------
++
++def verify_forward(
++    cfg: Config,
++    plan: ForwardPlan,
++    target_rows: Sequence[TaskRow],
++) -> list[str]:
++    errors: list[str] = []
++    target_by_key = {row.key: row for row in target_rows}
++
++    # 源行必须都在目标库；outbox 行只有「本次插入」或「目标已有同键」才要求出现——
++    # 被旧中心终态行挡掉的 outbox 残留本来就不该出现在目标库。
++    expected_keys = {row.key for row in plan.source_rows}
++    expected_keys |= {item.row.key for item in plan.inserts}
++    expected_keys |= {row.key for row in plan.outbox_rows if row.key in target_by_key}
++    for key in expected_keys:
++        if key not in target_by_key:
++            errors.append(f"源行未出现在目标库：task_type={key[0]!r}, biz_id={key[1]!r}")
++
++    for item in plan.inserts:
++        actual = target_by_key.get(item.row.key)
++        if actual is None:
++            errors.append(f"本次插入的行未读到：{item.row.key!r} -> {item.target_table}")
++            continue
++        if actual.table != item.target_table:
++            errors.append(
++                f"插入落表不符：{item.row.key!r} 预期 {item.target_table}，实际 {actual.table}"
++            )
++        if actual.status != item.row.status:
++            errors.append(
++                f"状态不符：{item.row.key!r} 预期 {item.row.status}，实际 {actual.status}"
++            )
++        if actual.action_time != item.row.action_time:
++            errors.append(
++                f"action_time 不符：{item.row.key!r} 预期 {item.row.action_time}，"
++                f"实际 {actual.action_time}"
++            )
++
++    # 全量不变量：目标表每一行的物理表都必须等于新槽位。错表 = 扫描器永远看不到。
++    for row in target_rows:
++        expected_table = physical_table(new_slot(row.biz_id))
++        if row.table != expected_table:
++            errors.append(
++                f"目标行槽位错误（扫描器会漏掉）：{row.key!r} 在 {row.table}，应在 {expected_table}"
++            )
++
++    return errors
++
++
++def verify_reverse(
++    cfg: Config,
++    plan: ReversePlan,
++    old_rows: Sequence[TaskRow],
++    target_rows: Sequence[TaskRow],
++) -> list[str]:
++    errors: list[str] = []
++    old_by_key = {row.key: row for row in old_rows}
++    target_by_key = {row.key: row for row in target_rows}
++    expected_tables = {
++        row.key: physical_table(old_slot(row.task_type, row.biz_id))
++        for row in target_rows
++    }
++
++    accounted = set()
++    for item in plan.inserts + plan.revives:
++        accounted.add(item.row.key)
++        actual = old_by_key.get(item.row.key)
++        if actual is None:
++            errors.append(f"逆向搬迁的行未读到：{item.row.key!r} -> {item.target_table}")
++            continue
++        if actual.table != item.target_table:
++            errors.append(
++                f"逆向落表不符：{item.row.key!r} 预期 {item.target_table}，实际 {actual.table}"
++            )
++        if actual.status != item.row.status:
++            errors.append(
++                f"逆向状态不符：{item.row.key!r} 预期 {item.row.status}，实际 {actual.status}"
++            )
++        if actual.action_time != item.row.action_time:
++            errors.append(
++                f"逆向 action_time 不符：{item.row.key!r} 预期 {item.row.action_time}，"
++                f"实际 {actual.action_time}"
++            )
++
++    for item in plan.cancels:
++        actual = old_by_key.get(item.row.key)
++        if actual is None:
++            errors.append(f"取消陈旧旧行失败（行不存在）：{item.row.key!r}")
++        elif actual.status != "CANCELED":
++            errors.append(
++                f"旧行未置取消：{item.row.key!r} 实际 status={actual.status}（新中心已终态）"
++            )
++
++    # 旧中心的行必须按旧公式落表；否则旧扫描器漏行。
++    for key, expected_table in expected_tables.items():
++        old = old_by_key.get(key)
++        if old is not None and old.table != expected_table:
++            errors.append(
++                f"旧中心行槽位错误（旧扫描器会漏掉）：{key!r} 在 {old.table}，应在 {expected_table}"
++            )
++
++    for row in target_rows:
++        if row.status in ACTIVE_STATUSES or row.status == "FAILED":
++            if row.key not in accounted and row.key not in old_by_key:
++                errors.append(f"目标行未逆向到旧中心：{row.key!r}（status={row.status}）")
++
++    return errors
++
++
++# ---------------------------------------------------------------------------
++# 报告
++# ---------------------------------------------------------------------------
++
++def count_by_status(rows: Iterable[TaskRow]) -> dict[str, int]:
++    counts: dict[str, int] = {}
++    for row in rows:
++        counts[row.status] = counts.get(row.status, 0) + 1
++    return dict(sorted(counts.items()))
++
++
++def count_by_table(rows: Iterable[TaskRow]) -> dict[str, int]:
++    counts: dict[str, int] = {}
++    for row in rows:
++        counts[row.table] = counts.get(row.table, 0) + 1
++    return dict(sorted(counts.items()))
++
++
++def build_report(
++    mode: str,
++    cfg: Config,
++    *,
++    warnings: Sequence[str] = (),
++    summary: dict | None = None,
++    conflicts: Sequence[PlannedSkip] = (),
++    verification_errors: Sequence[str] = (),
++) -> dict:
++    return {
++        "script_version": SCRIPT_VERSION,
++        "mode": mode,
++        "generated_at": datetime.now(timezone.utc).isoformat(),
++        "dry_run": cfg.dry_run,
++        "source_schema": cfg.source_schema,
++        "target_schema": cfg.target_schema,
++        "counts": summary or {},
++        "warnings": list(warnings),
++        "conflicts": [
++            {
++                "origin": skip.row.origin,
++                "source_table": skip.row.table,
++                "target_table": skip.target_table,
++                "task_type": skip.row.task_type,
++                "biz_id": skip.row.biz_id,
++                "status": skip.row.status,
++                "reason": skip.reason,
++            }
++            for skip in list(conflicts)[:200]
++        ],
++        "conflict_total": len(conflicts),
++        "verification": {
++            "ok": not verification_errors,
++            "errors": list(verification_errors),
++        },
++    }
++
++
++def write_report(path: str | None, report: dict) -> None:
++    if not path:
++        return
++    directory = os.path.dirname(os.path.abspath(path))
++    try:
++        if directory:
++            os.makedirs(directory, exist_ok=True)
++        with open(path, "w", encoding="utf-8") as handle:
++            json.dump(report, handle, ensure_ascii=False, indent=2)
++            handle.write("\n")
++    except OSError as exc:
++        # 报告是辅助产物；写失败不应把已提交的搬迁误报成失败（退出码仍由校验决定）。
++        print(f"[warn] 报告写入失败（{path}）：{exc}", file=sys.stderr)
++
++
++# ---------------------------------------------------------------------------
++# 命令
++# ---------------------------------------------------------------------------
++
++def print_preflight(cfg: Config, client: SqlClient) -> list[str]:
++    warnings: list[str] = []
++
++    ensure_timeout_tables(client, cfg.source_schema, "源库")
++    ensure_timeout_tables(
++        client, cfg.target_schema, "目标库", "（先执行 better-school/sql/schema.sql）"
++    )
++
++    target_count = sum(table_count(client, cfg.target_schema, table) for table in timeout_table_names())
++    if target_count > 0 and not cfg.allow_existing_target:
++        raise MigrationError(
++            f"目标库已有 {target_count} 行超时任务。滚动上线后这是正常的（新代码先写入），"
++            "确认后加 --allow-existing-target 再跑；否则请先核对 schema 是否指错。"
++        )
++    if target_count > 0:
++        warnings.append(f"目标库已有 {target_count} 行（同键以目标行为准，只补缺不覆盖）")
++
++    statuses = job_statuses(client, cfg.xxl_schema)
++    warnings.extend(check_job_statuses(cfg, statuses, "forward"))
++
++    if outbox_exists(client, cfg.target_schema):
++        # COUNT(*) 是全表；PENDING 行数单独查
++        rows = client.query(
++            f"SELECT COUNT(*) FROM {qname(cfg.target_schema, OUTBOX_TABLE)} WHERE state = 'PENDING'"
++        )
++        pending = int(rows[0][0]) if rows else 0
++        warnings.append(f"{OUTBOX_TABLE} 存在，PENDING={pending}（会一并搬入）")
++    else:
++        warnings.append(f"{OUTBOX_TABLE} 不存在（已清理或全新库），跳过 outbox 搬迁")
++
++    return warnings
++
++
++def read_all_for_forward(
++    cfg: Config, client: SqlClient
++) -> tuple[list[TaskRow], list[TaskRow], list[TaskRow], dict[tuple[str, str], TaskRow]]:
++    source_rows = fetch_rows(
++        client, cfg.source_schema, timeout_table_names(), MIGRATED_STATUSES, "center"
++    )
++    outbox_rows = (
++        fetch_outbox_rows(client, cfg.target_schema)
++        if outbox_exists(client, cfg.target_schema)
++        else []
++    )
++    source_by_key = {row.key: row for row in source_rows}
++    missing_keys = [row.key for row in outbox_rows if row.key not in source_by_key]
++    if missing_keys:
++        source_by_key.update(
++            fetch_source_rows_by_key(client, cfg.source_schema, missing_keys)
++        )
++    target_rows = fetch_rows(
++        client,
++        cfg.target_schema,
++        timeout_table_names(),
++        ALL_STATUSES,
++        "target",
++    )
++    return source_rows, outbox_rows, target_rows, source_by_key
++
++
++def command_forward(cfg: Config) -> int:
++    client = SqlClient(cfg.mysql_bin, cfg.host, cfg.port, cfg.user, cfg.password)
++    warnings = print_preflight(cfg, client)
++
++    source_rows, outbox_rows, target_rows, source_by_key = read_all_for_forward(cfg, client)
++    plan = plan_forward(source_rows, outbox_rows, target_rows, source_by_key)
++
++    summary = {
++        "source_rows": len(source_rows),
++        "source_by_status": count_by_status(source_rows),
++        "outbox_rows": len(outbox_rows),
++        "target_rows_before": len(target_rows),
++        "planned_inserts": len(plan.inserts),
++        "planned_inserts_by_status": count_by_status(item.row for item in plan.inserts),
++        "planned_inserts_by_table": count_by_table(item.row for item in plan.inserts),
++        "skipped": len(plan.skips),
++    }
++
++    print(
++        f"[forward] 源 {len(source_rows)} 行 {summary['source_by_status']}，"
++        f"outbox PENDING {len(outbox_rows)} 行，目标现有 {len(target_rows)} 行"
++    )
++    print(
++        f"[forward] 计划插入 {len(plan.inserts)} 行，跳过 {len(plan.skips)} 行"
++        + ("（dry-run，不写库）" if cfg.dry_run else "")
++    )
++
++    if plan.inserts and not cfg.dry_run:
++        client.run(forward_script(cfg, plan))
++        try:
++            target_rows_after = fetch_rows(
++                client,
++                cfg.target_schema,
++                timeout_table_names(),
++                ALL_STATUSES,
++                "target",
++            )
++        except MigrationError as exc:
++            print(f"[error] 搬迁事务已提交，但校验查询失败：{exc}", file=sys.stderr)
++            print("[forward] 数据可能已写入；重跑安全（只增不改），先人工核对目标表", file=sys.stderr)
++            return EXIT_VERIFY
++    else:
++        target_rows_after = target_rows
++
++    verification_errors = (
++        [] if cfg.dry_run else verify_forward(cfg, plan, target_rows_after)
++    )
++    summary["target_rows_after"] = len(target_rows_after)
++    summary["target_by_status_after"] = count_by_status(target_rows_after)
++
++    report = build_report(
++        "forward",
++        cfg,
++        warnings=warnings,
++        summary=summary,
++        conflicts=plan.skips,
++        verification_errors=verification_errors,
++    )
++    write_report(cfg.report_path, report)
++
++    for warning in warnings:
++        print(f"[warn] {warning}")
++    for error in verification_errors:
++        print(f"[verify] {error}", file=sys.stderr)
++    if verification_errors:
++        print(f"[forward] 校验失败：{len(verification_errors)} 项", file=sys.stderr)
++        return EXIT_VERIFY
++
++    print("[forward] 完成" + ("（dry-run：未写库，未校验落库）" if cfg.dry_run else "且校验通过"))
++    return EXIT_OK
++
++
++def command_reverse(cfg: Config) -> int:
++    client = SqlClient(cfg.mysql_bin, cfg.host, cfg.port, cfg.user, cfg.password)
++    warnings: list[str] = []
++
++    ensure_timeout_tables(client, cfg.source_schema, "源库")
++    ensure_timeout_tables(client, cfg.target_schema, "目标库")
++
++    statuses = job_statuses(client, cfg.xxl_schema)
++    warnings.extend(check_job_statuses(cfg, statuses, "reverse"))
++
++    target_rows = fetch_rows(
++        client,
++        cfg.target_schema,
++        timeout_table_names(),
++        ALL_STATUSES,
++        "target",
++    )
++    old_rows = fetch_rows(
++        client,
++        cfg.source_schema,
++        timeout_table_names(),
++        ALL_STATUSES,
++        "center",
++    )
++    plan = plan_reverse(target_rows, old_rows, cancel_stale_old=cfg.cancel_stale_old)
++
++    summary = {
++        "target_rows": len(target_rows),
++        "target_by_status": count_by_status(target_rows),
++        "old_rows_before": len(old_rows),
++        "planned_inserts": len(plan.inserts),
++        "planned_revives": len(plan.revives),
++        "planned_cancels": len(plan.cancels),
++        "skipped": len(plan.skips),
++    }
++    print(
++        f"[reverse] 新库 {len(target_rows)} 行 {summary['target_by_status']}，"
++        f"旧库现有 {len(old_rows)} 行"
++    )
++    print(
++        f"[reverse] 计划插入 {len(plan.inserts)}、复活 {len(plan.revives)}、"
++        f"取消陈旧旧行 {len(plan.cancels)}、跳过 {len(plan.skips)}"
++        + ("（dry-run，不写库）" if cfg.dry_run else "")
++    )
++
++    if (plan.inserts or plan.revives or plan.cancels) and not cfg.dry_run:
++        client.run(reverse_script(cfg, plan))
++        try:
++            old_rows_after = fetch_rows(
++                client,
++                cfg.source_schema,
++                timeout_table_names(),
++                ALL_STATUSES,
++                "center",
++            )
++        except MigrationError as exc:
++            print(f"[error] 回滚事务已提交，但校验查询失败：{exc}", file=sys.stderr)
++            print("[reverse] 数据可能已写回旧库；重跑安全（只增不改），先人工核对旧表", file=sys.stderr)
++            return EXIT_VERIFY
++    else:
++        old_rows_after = old_rows
++
++    verification_errors = (
++        [] if cfg.dry_run else verify_reverse(cfg, plan, old_rows_after, target_rows)
++    )
++    summary["old_rows_after"] = len(old_rows_after)
++    summary["old_by_status_after"] = count_by_status(old_rows_after)
++
++    report = build_report(
++        "reverse",
++        cfg,
++        warnings=warnings,
++        summary=summary,
++        conflicts=plan.skips,
++        verification_errors=verification_errors,
++    )
++    write_report(cfg.report_path, report)
++
++    for warning in warnings:
++        print(f"[warn] {warning}")
++    for error in verification_errors:
++        print(f"[verify] {error}", file=sys.stderr)
++    if verification_errors:
++        print(f"[reverse] 校验失败：{len(verification_errors)} 项", file=sys.stderr)
++        return EXIT_VERIFY
++
++    print("[reverse] 完成" + ("（dry-run：未写库，未校验落库）" if cfg.dry_run else "且校验通过"))
++    return EXIT_OK
++
++
++# ---------------------------------------------------------------------------
++# CLI
++# ---------------------------------------------------------------------------
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(
++        description="超时中心内嵌化：bs_timeout <-> better_school 的一次性数据搬迁（票 07）",
++        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
++    )
++    subparsers = parser.add_subparsers(dest="mode", required=True)
++
++    def add_common(sub: argparse.ArgumentParser) -> None:
++        sub.add_argument("--mysql", default=os.environ.get("MYSQL_BIN", "mysql"),
++                         help="mysql 客户端路径")
++        sub.add_argument("--host", default=os.environ.get("MYSQL_HOST", "127.0.0.1"))
++        sub.add_argument("--port", type=int, default=int(os.environ.get("MYSQL_TCP_PORT", "3306")))
++        sub.add_argument("--user", default=os.environ.get("MYSQL_USER", "root"))
++        sub.add_argument("--password", default=os.environ.get("MYSQL_PWD"),
++                         help="不传则沿用 MYSQL_PWD 环境变量")
++        sub.add_argument("--source-schema", default="bs_timeout",
++                         help="旧中心库（forward 的源 / reverse 的目标）")
++        sub.add_argument("--target-schema", default="better_school",
++                         help="业务库（forward 的目标 / reverse 的源）")
++        sub.add_argument("--xxl-schema", default="xxl_job",
++                         help="xxl-job admin 库（用于检查扫描 job 是否已停）")
++        sub.add_argument("--callback-group", default="better-school",
++                         help="仅 reverse 用：旧中心的回调 group（= 单体应用名）")
++        sub.add_argument("--dry-run", action="store_true", help="只打印计划，不写库")
++        sub.add_argument("--force", action="store_true",
++                         help="越过扫描 job 状态的保护（慎用，会记入报告）")
++        sub.add_argument("--allow-existing-target", action="store_true",
++                         help="forward 时允许目标库已有行（新代码已滚动上线时必然如此）")
++        sub.add_argument("--report", dest="report_path", default=None,
++                         help="把预检/计划/校验结果写成 JSON 报告")
++
++    forward = subparsers.add_parser("forward", help="旧中心 -> 业务库")
++    add_common(forward)
++
++    reverse = subparsers.add_parser("reverse", help="业务库 -> 旧中心（回滚）")
++    add_common(reverse)
++    reverse.add_argument("--keep-stale-old", dest="cancel_stale_old", action="store_false",
++                         default=True,
++                         help="不把「新中心已终态、旧中心仍存活」的旧行置取消（默认会取消）")
++
++    return parser
++
++
++def config_from_args(args: argparse.Namespace) -> Config:
++    return Config(
++        mysql_bin=args.mysql,
++        host=args.host,
++        port=args.port,
++        user=args.user,
++        password=args.password,
++        source_schema=args.source_schema,
++        target_schema=args.target_schema,
++        xxl_schema=args.xxl_schema,
++        callback_group=args.callback_group,
++        dry_run=args.dry_run,
++        force=args.force,
++        allow_existing_target=args.allow_existing_target,
++        cancel_stale_old=getattr(args, "cancel_stale_old", True),
++        report_path=args.report_path,
++    )
++
++
++def main(argv: Sequence[str] | None = None) -> int:
++    parser = build_parser()
++    args = parser.parse_args(argv)
++    cfg = config_from_args(args)
++    try:
++        if args.mode == "forward":
++            return command_forward(cfg)
++        if args.mode == "reverse":
++            return command_reverse(cfg)
++        parser.error(f"未知模式：{args.mode}")
++        return EXIT_PREFLIGHT
++    except MigrationError as exc:
++        print(f"[error] {exc}", file=sys.stderr)
++        return EXIT_PREFLIGHT
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/.scratch/timeout-inline/archive/timeout-inline-cutover.md b/.scratch/timeout-inline/archive/timeout-inline-cutover.md
+new file mode 100644
+index 0000000..82c8f0a
+--- /dev/null
++++ b/.scratch/timeout-inline/archive/timeout-inline-cutover.md
+@@ -0,0 +1,518 @@
++# 超时中心内嵌化：上线 / 回滚清单（票 07）
++
++> 状态：定稿（2026-10-17）。适用改造：`backend/timeout-center/` 的存量在途任务切换到
++> `better-school` 进程内超时中心（[`timeout-inline`](../../../.scratch/timeout-inline/map.md)）。
++> 执行工具：[`backend/scripts/timeout-cutover-migrate.py`](../../scripts/timeout-cutover-migrate.py)；
++> 背景与决策见[票 07](../../../.scratch/timeout-inline/issues/07-inflight-migration.md)。
++
++## 0. 结论（先看这 8 行）
++
++1. **不做双跑**。旧中心继续跑需要业务侧继续暴露 Dubbo 回调 Provider；票 05 已把它删掉
++   （`TimeoutTaskCallbackDubboService` + `timeout-center-api` 依赖），双跑窗口里的回调会全部
++   `No provider available`，把在途行重试进死信。旧口径「一次性下线、不留双跑」维持。
++2. **不做丢弃重注册**。`productTimeoutScan` / `ProductPayTimeoutConsumer` 已在票 03 删除，
++   商品支付超时没有业务侧兜底；跑腿虽有 MQ 延迟消息兜底，但锁单/审核租约（复合 `bizId`）没有。
++   丢弃会让订单/锁/租约卡死。**必须搬。**
++3. **选一次性搬迁**：旧扫描 job 先停 → 新代码滚动上线 → 新扫描 job 也停 → 把
++   `bs_timeout.timeout_task_*` 的 `WAITING/RETRYING/FAILED` 和新代码上线前残留的
++   `timeout_register_outbox.PENDING` 搬进 `better_school.timeout_task_*` → 校验 → 开新扫描 job
++   → 停旧中心 → 观察 → 清理。
++4. **必须按新公式重算分表号**：旧 `slot = floorMod(hash(len(taskType)+":"+taskType+bizId),16)`，
++   新 `slot = floorMod(hash(bizId),16)`。**直接 `INSERT ... SELECT` 按旧表号搬会写错表，
++   新扫描器永远扫不到（静默丢失）**。工具已实现两个公式（单测夹具由 JDK 21 实测值钉住）。
++5. **搬 `FAILED` 死信，不搬 `SUCCESS/CANCELED`**：前者要在单体死信管理面继续重发/取消；
++   后者是历史，留在 `bs_timeout` 归档里。业务状态机才是业务事实源。
++6. **目标已有同键行时保留目标行**（新代码的注册是新一代事实源）。搬迁只补缺、不覆盖；
++   重复执行安全。
++7. **旧中心只在验收后清理**：先停 job、停进程、摘 Nacos、留 7 天回滚窗口；`bs_timeout` 先 dump
++   + restore drill，留 30 天再 DROP。`backend/timeout-center/` 的删除归票 09，且必须在验收之后。
++8. **窗口内旧回调暂停**：从停旧 job 到开新 job 之间，旧的支付/锁单/租约超时任务不触发。
++   尽量把窗口压到 30 分钟内；业务状态机有守卫，延迟触发不会把已支付订单再关一次。
++
++## 1. 搬迁映射（工具替你做的事）
++
++| 旧位置 | 新位置 | 过滤/规则 |
++| --- | --- | --- |
++| `bs_timeout.timeout_task_00..15` | `better_school.timeout_task_{newSlot:02d}` | 只搬 `WAITING` / `RETRYING` / `FAILED`；`slot` 按 `hash(biz_id) % 16` 重算 |
++| `better_school.timeout_register_outbox`（`PENDING` 残留） | `better_school.timeout_task_{newSlot:02d}` | 新代码没有发送器了；不搬就永远发不出去。`action_time` 原样，`next_fire_time = action_time`，`retry_count = 0` |
++| 旧行 `callback_group` | 丢弃 | 新表没有这一列；进程内分发按 `taskType` 走 |
++| `SUCCESS` / `CANCELED` | 不搬 | 历史留在 `bs_timeout` 归档 |
++
++冲突规则：
++
++- 目标已有同键行（新代码已经写过）→ **保留目标行，跳过旧行**；报告里逐条记录。
++- 旧中心行与 outbox 同键时，按旧中心状态 + `action_time` 判断：
++  - 旧中心在途（`WAITING/RETRYING`）→ 跳过 outbox（在途同键不改期）；
++  - 旧中心终态、outbox 的 `action_time` **更晚** → 这是 outbox 复位后的**新一轮注册**
++    （旧中心本会复活终态行），按 outbox 搬；
++  - 旧中心终态、outbox 不更新 → 视为发送失败的残留，跳过。
++- 源库出现重复 `(task_type, biz_id)` → 工具报错退出，先人工核对，不自动选一行。
++- 前向搬迁是**只增不改**的；失败/中断后直接重跑，不会覆盖已有目标行。
++
++工具的前置保护（不满足会直接退出）：
++
++- 源/目标各有 16 张分表；目标表不存在时提示先执行 `better-school/sql/schema.sql`。
++- 旧扫描 job `timeoutTaskScanJob` 必须 `trigger_status = 0`；新扫描 job `timeoutTaskScan` 也必须 `0`
++  （校验期间不能让新代码把刚搬进去的行结算掉，否则校验读到的是漂移后的状态）。
++- 目标库已有行时，必须显式 `--allow-existing-target`（滚动上线后这是正常状态）。
++- `--force` 只用于「确认过风险」的越过（例如 xxl 库读不到、或你确实要并发扫描）；
++  正常上线不要用。
++
++## 2. 前置准备（T-1 天）
++
++### 2.1 版本与工件
++
++- [ ] `better-school` 新版本已构建、制品可部署；`marketing` 不受影响。
++- [ ] 旧 `timeout-center` 的 jar/镜像、启动命令、旧配置**保留至少 30 天**，回滚要用。
++- [ ] 确认 `backend/timeout-center/` 源码尚未按票 09 删除（删除必须在验收之后）。
++- [ ] 确认新版本启动日志里有 `ShardingSelfCheck` 通过、`timeoutTaskScan` handler 注册成功。
++
++### 2.2 数据库
++
++- [ ] 对生产 `better_school` 执行 `better-school/sql/schema.sql`（`CREATE TABLE IF NOT EXISTS`，
++      老代码不受影响）。确认 16 张分表存在：
++
++```sql
++SELECT COUNT(*) AS tables_ok
++FROM information_schema.tables
++WHERE table_schema = 'better_school'
++  AND table_name REGEXP '^timeout_task_(0[0-9]|1[0-5])$';
++-- 期望 16
++```
++
++- [ ] 确认 `bs_timeout` 与 `better_school` 在**同一个 MySQL 实例**上（同一连接能 schema 限定访问）。
++      若生产不是同实例，先把 `bs_timeout` dump 恢复到业务实例的临时 schema，再执行工具。
++- [ ] 备份（两个都要）：
++
++```bash
++mysqldump --single-transaction --routines --triggers bs_timeout \
++  > bs_timeout-pre-cutover-$(date +%Y%m%d%H%M).sql
++mysqldump --single-transaction better_school timeout_register_outbox \
++  > outbox-pre-cutover-$(date +%Y%m%d%H%M).sql
++sha256sum bs_timeout-pre-cutover-*.sql outbox-pre-cutover-*.sql
++```
++
++- [ ] 记录源库各状态量（后面用来对账）：
++
++```sql
++SELECT SUM(status = 'WAITING')  AS waiting,
++       SUM(status = 'RETRYING') AS retrying,
++       SUM(status = 'FAILED')   AS failed,
++       SUM(status = 'SUCCESS')  AS success,
++       SUM(status = 'CANCELED') AS canceled
++FROM (
++    SELECT status FROM bs_timeout.timeout_task_00
++    UNION ALL SELECT status FROM bs_timeout.timeout_task_01
++    -- ... 一直 UNION 到 timeout_task_15
++) t;
++```
++
++- [ ] 记录 outbox 残留：
++
++```sql
++-- 列名注意：该表是 type/state/create_time/update_time，不是分表的 task_type/status/created_at/updated_at
++SELECT state, COUNT(*) FROM better_school.timeout_register_outbox GROUP BY state;
++```
++
++### 2.3 xxl-job / 端口 / Nacos
++
++- [ ] 记录旧 job 与新 job 的 `id`、`job_group`、`trigger_status`：
++
++```sql
++SELECT id, job_group, executor_handler, trigger_status, schedule_conf, executor_route_strategy
++FROM xxl_job.xxl_job_info
++WHERE executor_handler IN ('timeoutTaskScanJob', 'timeoutTaskScan');
++SELECT id, app_name, title, address_list, update_time
++FROM xxl_job.xxl_job_group
++WHERE app_name IN ('timeout-center-executor', 'better-school-executor');
++```
++
++- [ ] 确认新 job seed 已执行（`timeoutTaskScan` 行存在）。没有就先执行
++      `better-school/sql/xxl-job-tasks.sql`（幂等）；否则 Phase 3 没有 job 可开。
++
++- [ ] 确认旧中心端口：HTTP `8083`、Dubbo `50054`、xxl executor `9996`。
++- [ ] 确认新单体端口：HTTP `8080`、Dubbo `50051`、xxl executor `9999`（与旧中心不冲突）。
++- [ ] 确认 Nacos 上旧服务名 `timeout-center` 与 `ITimeoutTaskRegister` 的 Provider 清单（回滚时核对）。
++- [ ] 通知：窗口内支付超时关单、跑腿锁单释放、审核租约回收会延迟，不丢单。
++
++## 3. 切换步骤
++
++所有 SQL 用同一个高权限连接执行；`mysql` 参数按环境替换。下文用
++`$MYSQL` 代表 `mysql -h <host> -P <port> -u <user> -p`。
++
++### Phase 0：停旧扫描（T0）
++
++```sql
++UPDATE xxl_job.xxl_job_info
++SET trigger_status = 0
++WHERE executor_handler = 'timeoutTaskScanJob';
++```
++
++- [ ] 等 **60 秒**（6 个 10s 周期），确认 xxl-job admin 里旧任务无「运行中」实例；
++      旧中心日志不再出现 `timeoutTaskScanJob` 的扫描完成行。
++- [ ] 此后旧中心只保留注册 Provider（给还没下线的旧业务实例发注册），不再触发任何回调。
++- [ ] 记录 T0。
++
++**回滚点 0**：把 `trigger_status` 改回 `1` 即恢复；无数据变化。
++
++### Phase 1：滚动上线新版本（T0 → T1）
++
++- [ ] 按正常发布流程滚动 `better-school`。新实例的效果：
++      - 新下单/抢单/领单在业务事务内直插 `better_school.timeout_task_*`；
++      - 本进程的 `timeoutTaskScan` 此时仍启用，只扫到新代码自己写入的新行（旧在途行还在
++        `bs_timeout`，它看不见）；Phase 2 开始前必须停掉它，再做前向搬迁与校验；
++      - 旧实例仍写 `timeout_register_outbox` 并调旧中心，旧中心扫描已停，所以只积压不触发。
++- [ ] 等所有实例都切到新版本（发布平台确认，不能有旧实例继续服务）。
++- [ ] 等 outbox 不再增长（老实例停完后没有新写入；通常在 30s 内稳定）：
++
++```sql
++SELECT COUNT(*) AS pending FROM better_school.timeout_register_outbox WHERE state = 'PENDING';
++-- 连续两次（间隔 30s）相同即可；>0 也没关系，搬迁会一起处理
++```
++
++- [ ] 记录 T1。
++
++**回滚点 1**：把业务版本回退到旧代码；旧中心仍在，数据没动，恢复旧 job 即可。
++如果部分新实例已经写入过目标表，先按第 5 节 `reverse` 把这些行搬回旧中心，再回退。
++
++### Phase 2：停新扫描 + 前向搬迁（T1 → T2）
++
++先停新扫描（前向搬迁/校验期间不允许结算目标行）：
++
++```sql
++UPDATE xxl_job.xxl_job_info
++SET trigger_status = 0
++WHERE executor_handler = 'timeoutTaskScan';
++```
++
++- [ ] 等 10s，确认新 job 无运行中实例。如果 `timeoutTaskScan` 行还不存在（seed 未执行），跳过本步。
++- [ ] 预检 + dry-run（不写库）：
++
++```bash
++python backend/scripts/timeout-cutover-migrate.py forward \
++  --host <host> --port <port> --user <user> \
++  --source-schema bs_timeout --target-schema better_school --xxl-schema xxl_job \
++  --allow-existing-target --dry-run \
++  --report /tmp/timeout-cutover-forward-dry.json
++```
++
++看三件事：
++
++1. `[forward] 源 N 行 ...` 与第 2.2 节记录的非终态量对得上（`WAITING+RETRYING+FAILED`）；
++2. `outbox PENDING` 与第 2.2 节记录一致；
++3. `[error]` 没有；`[warn]` 里的目标已有行数能解释（新代码上线后下的单）。
++
++- [ ] 正式搬迁：
++
++```bash
++python backend/scripts/timeout-cutover-migrate.py forward \
++  --host <host> --port <port> --user <user> \
++  --source-schema bs_timeout --target-schema better_school --xxl-schema xxl_job \
++  --allow-existing-target \
++  --report /tmp/timeout-cutover-forward.json
++```
++
++- [ ] 退出码必须为 `0`，报告里 `"verification": {"ok": true}`。工具会校验：
++      - 每条源行/outbox 行都在目标库有同键行；
++      - 本次插入的行状态、`action_time` 与源一致；
++      - **目标库每一行的物理表号都等于新公式槽位**（这是「扫描器不漏行」的硬约束）。
++
++如果失败：
++
++- 旧中心数据还在，**不要继续**；
++- 按报告修数据后直接重跑（只增不改，安全）；
++- 若报「源库存在重复键」或「目标槽位错误」，先人工核对，不要用 `--force` 掩盖。
++- 若报 `Duplicate entry ... for key 'uk_type_biz'`：这是「读取目标的快照之后，新代码刚好写入同键」
++  的窄窗口。整个事务已回滚，**不要手工删目标行**，直接重跑即可（新目标行会被判为「目标已有」而跳过）。
++
++- [ ] 独立抽查：
++
++```sql
++-- 抽几条源行，确认目标同键存在且在新公式表里
++SELECT task_type, biz_id, status, action_time
++FROM better_school.timeout_task_00
++WHERE biz_id IN ('<源 bizId 1>', '<源 bizId 2>');
++
++-- 目标死信是否包含旧 FAILED
++SELECT COUNT(*) AS failed FROM (
++    SELECT status FROM better_school.timeout_task_00
++    UNION ALL SELECT status FROM better_school.timeout_task_01
++    -- ... 到 _15
++) t WHERE status = 'FAILED';
++```
++
++- [ ] 记录 T2。
++
++**回滚点 2**：目标表只增不改，旧中心数据完整。停新 job、回退业务版本、恢复旧 job
++即可；新代码期间产生的目标行用第 5 节 `reverse` 搬回。
++
++### Phase 3：开新扫描，验证回调（T2 → T3）
++
++```sql
++UPDATE xxl_job.xxl_job_info
++SET trigger_status = 1
++WHERE executor_handler = 'timeoutTaskScan';
++```
++
++- [ ] 观察 2–3 个 10s 周期，确认 `timeoutTaskScan` 执行成功、日志出现：
++      `扫描完成：槽位 N 个、批次 M、任务 K 条（成功 x / 重试 y / 进死信 z）`。
++- [ ] 已经到期的旧行应在下一个周期被回调：业务状态应从待支付/锁定/待领变成目标终态；
++      已支付/已取消的陈旧行按幂等成功落 `SUCCESS`。
++- [ ] 打开管理面 `GET /api/admin/timeout-tasks/dead-letters`（ADMIN），确认旧 `FAILED` 能看到。
++- [ ] 记录 T3。
++
++**回滚点 3**：此时旧中心仍完整、只停扫描。回退步骤同回滚点 2。
++
++### Phase 4：停旧中心（T3 → T4）
++
++- [ ] 优雅停掉旧中心进程（不要先删库/删 job）。
++- [ ] 确认端口释放：
++
++```bash
++ss -lntp | grep -E ':(8083|50054|9996)\b'   # 期望无输出
++```
++
++- [ ] 确认 Nacos 上无 `timeout-center` 实例（Nacos 控制台或
++      `GET /nacos/v1/ns/instance/list?serviceName=timeout-center`）；如有残留实例，手工下线。
++- [ ] 确认旧 job `trigger_status = 0`。
++- [ ] 记录 T4。
++
++**回滚点 4**：重新启动旧中心 + 第 5 节 `reverse` + 恢复旧 job。
++
++### Phase 5：观察期（T4 + 24h / 7d）
++
++- [ ] 24h 内每 10s 扫描无异常；`[超时中心告警]` 日志为 0 或可解释。
++- [ ] `WAITING/RETRYING` 数量回落到正常水位；没有持续增长的单一 `taskType`。
++- [ ] 死信数量不异常增长；旧 `FAILED` 搬过来的行可按需重发/取消。
++- [ ] 四个 `taskType` 各抽一单做业务验收：
++      `PRODUCT_ORDER_PAY_TIMEOUT` / `ERRAND_PAY_TIMEOUT` / `ERRAND_LOCK_TIMEOUT` / `REVIEW_LEASE_TIMEOUT`。
++- [ ] 旧库 `bs_timeout` 已无新写入（`MAX(updated_at)` 停在 T4 之前）。
++- [ ] 7 天后验收通过，进入清理。
++
++## 4. 清理口径（验收后）
++
++### 4.1 xxl-job
++
++先归档（留档到发布记录/工单），再删。**先删 `xxl_job_info`，再删 `xxl_job_group`**：
++
++```sql
++-- 归档
++SELECT * FROM xxl_job.xxl_job_info WHERE executor_handler = 'timeoutTaskScanJob'\G
++SELECT * FROM xxl_job.xxl_job_group WHERE app_name = 'timeout-center-executor'\G
++
++-- 删除
++DELETE FROM xxl_job.xxl_job_info WHERE executor_handler = 'timeoutTaskScanJob';
++DELETE FROM xxl_job.xxl_job_group WHERE app_name = 'timeout-center-executor';
++```
++
++保留：
++
++- `xxl_job_info` 的 `timeoutTaskScan`（新扫描 job，启用）；
++- `xxl_job_group` 的 `better-school-executor`（新执行器）。
++
++`xxl_job_log` 旧 job 的历史日志可保留到日志保留期结束；不要为了删 job 顺手清全表。
++
++### 4.2 Nacos
++
++- [ ] 旧中心进程停止后应自动摘除；检查 `timeout-center` 应用与
++      `providers:com.betterschool.timeout.api.task.ITimeoutTaskRegister` 的残留实例。
++- [ ] 手工删除残留实例（控制台或
++      `DELETE /nacos/v1/ns/instance?serviceName=...&ip=...&port=...`）。
++- [ ] 旧中心的 Nacos 配置（dataId/group）确认无其他服务引用后再删除；不确定就留档。
++
++### 4.3 端口 / 监控 / 网关
++
++- [ ] 防火墙/安全组关闭 `8083`、`50054`、`9996` 的入站（旧中心已停）。
++- [ ] 从监控、告警、日志采集、负载均衡/反代中移除 `timeout-center`。
++- [ ] 确认新单体 `8080` / `50051` / `9999` 的监控已就位。
++
++### 4.4 `bs_timeout` 库：留档 30 天再 DROP
++
++- [ ] 停旧中心后再做一次最终 dump（旧库已无写入）：
++
++```bash
++mysqldump --single-transaction --routines --triggers bs_timeout \
++  > bs_timeout-final-$(date +%Y%m%d).sql
++sha256sum bs_timeout-final-*.sql
++```
++
++- [ ] 做一次恢复演练（证明 dump 可用）：
++
++```bash
++mysql -e 'DROP DATABASE IF EXISTS bs_timeout_restore; CREATE DATABASE bs_timeout_restore'
++mysql bs_timeout_restore < bs_timeout-final-YYYYMMDD.sql
++mysql -e "SELECT COUNT(*) FROM bs_timeout_restore.timeout_task_00"
++```
++
++- [ ] dump 存到备份仓库/工单附件，保留 **30 天**。
++- [ ] 30 天后、且验收无回滚需求，执行：
++
++```sql
++DROP DATABASE IF EXISTS bs_timeout;
++DROP DATABASE IF EXISTS bs_timeout_test;   -- 测试/预发环境
++```
++
++- [ ] 同步票 09 的 `dev-stack.ps1` / `test-env.sh` 清理项（不再建 `bs_timeout`）。
++
++### 4.5 `timeout_register_outbox`
++
++票 03 已把它从 `better-school/sql/schema.sql` 删除，但生产库里的实体表还在。验收后：
++
++```sql
++-- 先归档
++SELECT * FROM better_school.timeout_register_outbox;   -- 或 mysqldump 单表
++-- 再删
++DROP TABLE better_school.timeout_register_outbox;
++```
++
++确认没有其他代码/报表引用后再删；`grep -r timeout_register_outbox` 应只剩历史 `.scratch/**`、
++本清单与迁移工具（后两者是历史追溯用的文档/脚本，不是运行时引用）。
++
++### 4.6 工程与文档
++
++- [ ] 票 09：删除 `backend/timeout-center/` 整目录、改 `backend/CLAUDE.md` 的「三个工程」为两个、
++      改写 `backend/docs/architecture/timeout-center.md`、补 ADR/词条。
++- [ ] 本清单与工具保留在 `backend/docs/ops/`、`backend/scripts/`（历史追溯用；不属于运行时代码）。
++- [ ] 确认根 `pom.xml` 无 `timeout-center-api` 残留、本地仓库说明已更新。
++
++## 5. 回滚
++
++### 5.1 阶段矩阵
++
++| 当前阶段 | 回滚动作 | 数据动作 |
++| --- | --- | --- |
++| Phase 0（旧 job 已停，未发版） | 旧 job `trigger_status=1` | 无 |
++| Phase 1（发版中/刚发完，未搬迁） | 停新 job、停新实例；回退业务版本；最后恢复旧 job `1` | 新实例若写过目标表，先 `reverse`（旧 job 必须仍为 `0`） |
++| Phase 2（前向搬迁已跑/校验失败） | 停新 job、停新实例；回退业务版本；最后恢复旧 job `1` | 目标表只增不改，旧中心数据完整；新代码期间产生的目标行按需 `reverse` |
++| Phase 3（新 job 已开） | 停新 job、停新实例；回退业务版本；最后恢复旧 job `1` | 先 `reverse` 再恢复旧 job，避免新代码期间的行丢 |
++| Phase 4（旧中心已停） | 起旧中心；回退业务版本 | 先 `reverse`（旧中心在停着时插入），再起旧中心、恢复旧 job |
++| Phase 5/清理后 | 从 `bs_timeout` dump 恢复；重新部署旧中心工件 | 先恢复 dump，再 `reverse` 新表在途/死信；最后恢复旧 job |
++
++### 5.2 `reverse` 命令（业务库 → 旧中心）
++
++前提：
++
++1. 新扫描 job `timeoutTaskScan` 置 `0`；
++2. 旧扫描 job `timeoutTaskScanJob` 也置 `0`（回滚期间它会把刚写回旧库的行结算掉）；
++3. 停掉所有新版本业务实例（不再写目标表、不再扫描）；
++4. 旧中心可以还没起；工具只写 `bs_timeout`，不依赖旧进程。
++
++```bash
++# dry-run
++python backend/scripts/timeout-cutover-migrate.py reverse \
++  --host <host> --port <port> --user <user> \
++  --source-schema bs_timeout --target-schema better_school --xxl-schema xxl_job \
++  --callback-group better-school --dry-run \
++  --report /tmp/timeout-cutover-reverse-dry.json
++
++# 正式
++python backend/scripts/timeout-cutover-migrate.py reverse \
++  --host <host> --port <port> --user <user> \
++  --source-schema bs_timeout --target-schema better_school --xxl-schema xxl_job \
++  --callback-group better-school \
++  --report /tmp/timeout-cutover-reverse.json
++```
++
++`reverse` 的规则：
++
++- 目标 `WAITING/RETRYING` → 按**旧公式**写回 `bs_timeout`；
++- 旧中心已有同键在途行 → 跳过（不重复触发）；
++- 旧中心同键是终态、目标是在途 → 复活旧行（状态/`action_time`/`next_fire_time`/`retry_count` 以目标为准）；
++- 目标已经 `SUCCESS/CANCELED`、旧中心还是 `WAITING/RETRYING` → 把旧行置 `CANCELED`
++  （业务动作已经发生，避免回滚后重复回调；不想要这个行为加 `--keep-stale-old`）；
++- 目标 `FAILED`：
++  - 旧中心没有同键行 → 插入死信行（保留新中心的人工重发能力）；
++  - 旧中心同键死信 → 保留旧行；
++  - 旧中心同键在途 → 保留旧在途继续重试，不拿死信覆盖；
++  - 旧中心同键已 `SUCCESS/CANCELED` → **保留旧终态**，不把新死信覆盖回去
++    （业务动作在旧中心已经结算；报告里逐条记录）。
++
++`reverse` 完成后：
++
++1. 部署旧版业务代码（恢复 Dubbo 回调 Provider）；
++2. 启动旧中心（如果已停）；
++3. 旧 job `trigger_status=1`；
++4. 观察旧 job 扫到搬回的行并回调成功。
++
++### 5.3 回滚后的清理
++
++- 新代码在目标表里留下的行不用删（旧代码不读它）；确认旧中心接管后，按下一轮改造重新评估。
++- 不要把 `reverse` 与 `forward` 同时跑；两个方向都要求对方扫描 job 停止。
++- 若已经执行了 4.4 的 DROP，先恢复 dump 再 `reverse`。
++
++## 6. 验收 / 观察指标
++
++| 指标 | 正常 | 异常处理 |
++| --- | --- | --- |
++| `timeoutTaskScan` 10s 执行成功 | 连续成功 | 看日志 `[超时中心告警]`；旧 job 不得为 1 |
++| `WAITING + RETRYING` 总量 | 与改造前水位相当、无持续增长 | 按 `taskType` 分解，查业务注册点 |
++| `FAILED` 数量 | 不异常增长；旧死信可见 | 管理面重发/取消 |
++| 回调并发 / Hikari 活跃连接 | ≤ 4 / ≤ 4（池 10 留 ≥6） | 调 `timeout.scan.parallelism`，不要动池 |
++| `bs_timeout` 写入 | `MAX(updated_at)` 停在 T4 前 | 有写入 = 旧代码/旧 job 未停干净 |
++| 旧端口 8083/50054/9996 | 无监听 | 有监听 = 旧进程未停 |
++| Nacos `timeout-center` | 无实例 | 手工下线 |
++
++## 7. 已知风险与对策
++
++| 风险 | 对策 |
++| --- | --- |
++| 窗口内旧回调暂停，支付/锁单/租约超时延迟 | 窗口压到 30min 内；业务状态机幂等守卫；延迟触发不会重复关单/释放 |
++| 分表号用错（按旧表号搬） | 工具强制新公式；校验目标每行槽位；禁止 `INSERT ... SELECT` 直接搬 |
++| outbox PENDING 残留被遗忘 | 工具默认搬；预检报告 PENDING 数；验收后 DROP 旧表 |
++| 搬迁时新代码刚好写入同键 | 读取快照后撞 `uk_type_biz` 会整批回滚；不要手工删目标行，直接重跑（目标已有键会被跳过） |
++| 新扫描器在校验期间结算目标行 | 前向搬迁前停 `timeoutTaskScan`；工具前置检查；校验通过再开 |
++| 旧中心停不干净（job/进程/端口） | Phase 0 停 job、Phase 4 停进程并验端口/Nacos；旧库 `MAX(updated_at)` 再确认 |
++| 回滚漏掉新代码期间产生的行 | `reverse` 覆盖目标 `WAITING/RETRYING`；目标 `FAILED` 无旧行时插死信，有旧行时保留旧中心事实 |
++| `bs_timeout` 未归档就 DROP | 先 dump + restore drill + 30 天保留；票 09 才删工程 |
++| 生产不是同一 MySQL 实例 | 工具要求同一连接；不同实例先把 `bs_timeout` 恢复到业务实例临时 schema |
++| 误用 `--force` | 只在确认 job 状态/并发风险后使用；报告会记录 warning |
++
++## 8. 工具速查
++
++```bash
++python backend/scripts/timeout-cutover-migrate.py --help
++python backend/scripts/timeout-cutover-migrate.py forward --help
++python backend/scripts/timeout-cutover-migrate.py reverse --help
++
++# 离线单测（不需要 MySQL）
++python backend/scripts/test_timeout_cutover_migrate.py -v
++```
++
++连接参数优先取环境变量：`MYSQL_BIN` / `MYSQL_HOST` / `MYSQL_TCP_PORT` / `MYSQL_USER` / `MYSQL_PWD`，
++也可以用 `--mysql/--host/--port/--user/--password` 覆盖。脚本只依赖 `mysql` 客户端，
++不额外安装 Python 驱动。
++
++这是**数据搬迁**工具，不是 DDL 迁移：`schema.sql` 仍是唯一 DDL 来源（`backend/CLAUDE.md` §10）。
++
++**退出码**：
++
++- `0`：成功（dry-run 也返回 0，但报告里 `dry_run=true`、`verification` 未执行）；
++- `2`：预检失败或执行失败——没有写库，或写入事务已整体回滚；
++- `3`：**写入已 COMMIT，但落库/槽位校验失败**。不要立刻重跑掩盖问题：先看报告
++  `verification.errors`，人工核对目标表；修好后重跑是安全的（只增不改），但要先确认
++  失败原因不是「新扫描器在搬迁期间结算了行」。
++
++报告字段：
++
++- `counts`：源/目标各状态量、计划/实际插入、跳过；
++- `conflicts`：逐条跳过原因（目标已有键、outbox 已在旧中心等）；
++- `verification.ok` / `errors`：落库与槽位校验结果；
++- `warnings`：job 状态、目标已有行、outbox 存在等操作提醒。
++
++## 9. 口径对照（为什么不是另外两个候选）
++
++- **(a) 双跑**：需要旧中心继续回调业务方。票 05 已删除业务侧
++  `TimeoutTaskCallbackDubboService`、`ITimeoutTaskCallback` DTO 与 `timeout-center-api` 依赖，
++  旧中心的动态 `ReferenceConfig` 找不到 Provider；要继续双跑就得把刚删掉的 Dubbo 回调边加回来，
++  同时保留三工程/两套扫描，和「一次性下线」的方向相反。**否决。**
++- **(c) 丢弃重注册**：商品支付超时的 `productTimeoutScan` / `ProductPayTimeoutConsumer` 已在票 03 删除，
++  没有业务侧兜底；跑腿锁单/审核租约的复合 `bizId` 也没有可重放的业务事件来源。**会卡死，否决。**
++- **(b) 一次性搬迁**：就是本清单。代价是一次短暂的旧回调暂停和一次数据搬迁；换来旧中心可以真正停掉、
++  不留双跑、不恢复已删的回调边。
++
++## 10. 与票 09 的边界
++
++- 本清单负责：**切换顺序、数据搬迁工具、回滚、清理口径**。
++- 票 09 负责：删 `backend/timeout-center/`、改写 `backend/docs/architecture/timeout-center.md`、
++  改 `backend/CLAUDE.md` 工程数、补 ADR/词条、`dev-stack.ps1` / `test-env.sh` 的 `bs_timeout` 清理。
++- 顺序：**先按本清单验收，再开工票 09**；票 09 删除工程后，旧中心回滚工件只能靠已保留的 jar/镜像。
+diff --git a/.scratch/timeout-inline/issues/03-in-transaction-registration.md b/.scratch/timeout-inline/issues/03-in-transaction-registration.md
+index 667292a..809cc15 100644
+--- a/.scratch/timeout-inline/issues/03-in-transaction-registration.md
++++ b/.scratch/timeout-inline/issues/03-in-transaction-registration.md
+@@ -1,9 +1,25 @@
+ # 03 四个接入方改同事务直插 + 删注册通道 + 旧链路下线
+ 
+ Type: task
+-Status: claimed
++Status: resolved
+ Blocked by: 02
+ 
++## Answer
++
++**已落地（2026-10-16）。**
++
++**三分支幂等**：域接口新增 `ITimeoutRepository.register(task)`，实现收在 `TimeoutRepository.register`——`insertIfAbsent` 撞 `uk_type_biz` 即转 `reviveTerminal`（条件 UPDATE 只打 SUCCESS/FAILED/CANCELED、刷新 action_time/next_fire_time、retry_count 清零）；没打中 = 在途（WAITING/RETRYING）= 幂等成功不改期。裁决权全在库上（撞键翻返回值 + 条件 UPDATE），与读-判-写时序无关。四个接入方（`TradeRepository.schedulePayTimeout`、`ErrandRepository.schedulePayTimeout/scheduleLockTimeout`、`ReviewTaskPoolStore.claim`）各一行 `timeoutRepository.register(TimeoutTaskEntity.newWaiting(...))`，原 outbox upsert 与 afterCommit 挂钩消失；outbox 的「同键复位 PENDING」语义由三分支接管（「先 cancel 再复位」纪律随通道消失，`cancelAsync` 本就无生产调用方，一并删除）。
++
++**删注册通道**：`timeout_register_outbox` DDL（schema.sql）、`TimeoutRegisterOutboxStore`、`TimeoutRegisterOutboxSender`（含 `@XxlJob("timeoutRegisterOutboxScan")`）、`TimeoutRegisterOutboxMapper.xml`、`ITimeoutRegisterOutboxDao`/PO、`TimeoutTaskRegisterPort`/`ITimeoutTaskRegisterPort`、xxl-job seed 行、`application.yml` 的 `timeout-center.register.*` 配置块、bs-infrastructure 的 `timeout-center-api` 与 dubbo 依赖（port 已删后全模块零 Dubbo 引用）。`grep timeoutRegister|timeout_register_outbox` 生产代码零命中。
++
++**删旧链路死代码**：`ProductTimeoutScanJob`、`ProductPayTimeoutConsumer`、`productTimeoutScan` seed 行，连带孤儿链一并删净——`ProductOrderCase.scanPayTimeouts`、`IProductOrderService/TradeRepository/Dao` 的 `listPayTimeoutOrderIds`/`selectPayTimeoutOrderIds`（+ mapper XML）、`ProductOrderTimeoutMessage` valobj、`PRODUCT_PAY_TIMEOUT_TOPIC` 常量（生产者早已不存在，全链无存活引用）。
++
++**同事务验收（新 `TimeoutInTransactionRegistrationIntegrationTest`）**：提交即可见（HTTP 下单/发布后立刻能查到 WAITING 行、action_time ≈ +15min）；业务事务回滚超时行不落库；同一 `TransactionTemplate` 里业务行与超时行同生同死（提交侧双行、`setRollbackOnly` 侧双无）；三分支各有用例（在途不改期 / 终态复活刷新 action_time）。4 个接入点的 action_time 取值、复合 bizId（`{orderId}:{lockSeq}`、`{taskId}:{claimSeq}`）、计时起点不变——`ErrandLockTimeout`/`ReviewTaskLease`/`ErrandDraftFlow` 的注册断言已改查 `timeout_task`（广播 COUNT 合并；删掉假端口与即时注册轮询断言）。
++
++**坑记录（重要）**：基类 `CommunityApiTestBase` 原本只 TRUNCATE 业务表——**业务表 TRUNCATE 会重置自增 id，而 `timeout_task` 残留行不清**，下一用例的同 biz_id 注册被三分支幂等（在途不改期）静默吸收，计数/时间窗断言被陈旧行污染（首轮联调 4 个假失败全源于此）。已改为每用例用裸 MySQL 连接 TRUNCATE 16 张分表（物理名经 SS 连接查不到，复用票 02 的裸连处方）。另：`ConsumeHandlerVirtualThreadIntegrationTest` 的消费者容器计数 15→14（`ProductPayTimeoutConsumer` 下线）。
++
++**与票面的偏差**：bs-trigger 的 `timeout-center-api` 依赖与 `TimeoutTaskCallbackDubboService` **保留**——Dubbo 回调边的删除是票 05 的明确工作项，现在删会让旧中心在途任务的回调无处落地、并打破回调向集成测试；root pom 的 dependencyManagement 条目同理待票 05 收。`sql.md` 已同步（29 张业务表口径）；`docs/db/*` 与 `docs/api/errand.md` 的 outbox 表述已最小同步，CONTEXT.md 词条与 arch doc 整体改写留给票 09。评审判断题记录：三个业务仓储注入他域 `ITimeoutRepository` 是同事务设计的直接后果（跨域许可建议在 backend/CLAUDE.md §1/§3 补记，随票 09 文档收口处理）；跑腿侧 `errandTimeoutScan`/`ErrandPayTimeoutConsumer` 旧链是 MQ 延迟消息的域内兜底（map Notes 8 明确不收编），保留。
++
+ ## What to build
+ 
+ **接入方改直插**（把现在的 outbox upsert 换成事务内直插 `timeout_task`）：
+diff --git a/.scratch/timeout-inline/issues/09-closeout.md b/.scratch/timeout-inline/issues/09-closeout.md
+index b59f3f0..940f024 100644
+--- a/.scratch/timeout-inline/issues/09-closeout.md
++++ b/.scratch/timeout-inline/issues/09-closeout.md
+@@ -1,7 +1,7 @@
+ # 09 收口：工程下线 + 文档/词条/ADR + 验证
+ 
+ Type: task
+-Status: open
++Status: resolved
+ Blocked by: 03, 04, 05
+ 
+ ## What to build
+@@ -22,4 +22,33 @@ Blocked by: 03, 04, 05
+ 
+ ## Answer
+ 
+-（待填）
++**已落地（2026-10-17）。票 09 收口完成，01–08 的决策未重开。**
++
++**删工程与归档**
++- `backend/timeout-center/` 整目录（七模块 + `sql/` + `docs/` + 两份 `sharding.yaml` + 旧测试）已删；旧架构文档 `backend/docs/architecture/timeout-center.md` 同步删除。
++- 一次性迁移产物（runbook + 迁移脚本 + 39 个离线单测）从 `backend/` 移入 `.scratch/timeout-inline/archive/`：`timeout-inline-cutover.md`、`timeout-cutover-migrate.py`、`test_timeout_cutover_migrate.py`。原因：验收要求全仓（除 `.scratch/**`）旧 token 零命中，而这三份文件天生含旧表名/旧工程名。
++
++**文档 / 词条 / ADR**
++- 新建 `backend/docs/architecture/timeout.md`：内嵌形态、模块落位、两处规范例外、16 分表/槽位/ShardingSphere、同事务注册三分支、xxl 分片广播 + `parallelism=4`、分桶结算/退避/死信、进程内回调、管理面、多实例 0/2、1/2、接入步骤、测试、切换历史、坑速查。
++- `sql.md` 删 §3 旧独立库整段；文首表数纠正为 **29 + 16 + 22 = 67**（票面「30 + 16」是票 03 删注册意图表之前的旧口径，第 30 张已随票 03 删除）；§1 timeout 段改为内嵌口径。
++- `backend/CLAUDE.md`：三工程 → 两工程、适用范围；§1 增「超时注册显式例外」；§4 用「回调端口实现落 case 层」替换旧的注册边/outbox 例外。
++- `backend/docs/README.md`、`architecture/marketing-services.md`、两工程 `docs/db|api`、`docker-compose.yml`、`dev-stack.ps1`、`test-env.sh`、`run-app.sh` 全部改为两库/两工程/两服务；`bs_timeout` 的建库、DDL、xxl seed 步骤删除；`backend/docs/README.md` 顺带纠正「dev-stack 挂 JFR」的旧说法（JFR 在 `run-app.sh`）。
++- `CONTEXT.md`：改写「超时任务」为内嵌形态、删除「注册 outbox」、新增「超时槽位」与「死信」；票 08 的「过期落账」未动。
++- 新建 `docs/adr/0010-embedded-timeout.md`（难逆 / 反直觉 / 真权衡 + Alternatives + Consequences）。
++
++**验证证据**
++- 构建：`backend/better-school` 与 `backend/marketing` 均 `mvn -o clean package -DskipTests` **BUILD SUCCESS**。
++- 全量集成测试：`cd backend/better-school; mvn -o test` → **328 tests, 0 failures, 0 errors, 0 skipped**（MySQL 容器未崩，无需环境事故记录）。
++- 新增 / 修改用例：
++  - `TimeoutTaskScanIntegrationTest` 补「两个实例各认领一半槽位」：先 `scan(0,2)` 再 `scan(1,2)`，两次合计 16 行、回调恰好 16 条且 bizId 无重复、全部 `SUCCESS`（该类 13 用例全绿）。
++  - 新建 `TimeoutTaskEndToEndIntegrationTest`（6 用例）：四个 taskType 各走「注册 → 到点 → 真实扫描 → 真实进程内分发 → 业务状态落定」——商品支付超时（订单 `CANCELLED` / 商品 `ON_SALE`）、跑腿支付超时（`CANCELLED`）、跑腿锁单超时（`PUBLISHED` / `taker_id` null）、审核租约超时（`PENDING` / `recycle_count=1`）；退避（`RETRYING`、`retry_count=1`、`next_fire_time ≈ now+30s`）与死信（`FAILED`、`retry_count=16`、下一轮不再捞）。
++- 反查：`git grep -n -E "timeout-center|timeout_register_outbox|callback_group|bs_timeout" -- ':!*.scratch*'` **零命中**；`ITimeoutTaskCallback\b` **零命中**（保留的 `ITimeoutTaskCallbackPort` 用词边界不误伤）；未跟踪文件同口径扫描 **零命中**。
++- DDL 对照：脚本解析 `sql.md` 与两份 `schema.sql`，归一化空白/大小写/`IF NOT EXISTS` 后逐表逐列、索引、约束全等——`sql.md` §1 30 张（29 业务 + 逻辑 `timeout_task` 1 份）vs `better-school/schema.sql` 45 张（29 + 16，16 张分表互等）；§2 22 张 vs `marketing/schema.sql` 22 张。
++- 表数：`better_school` / `better_school_test` 均 **45 = 29 业务 + 16 超时**；`bs_marketing` / `bs_marketing_test` 各 22（未落超时表）。
++- 多实例：新 0/2、1/2 用例验收，另保留既有 1/3 用例。
++
++**与票面的偏差**
++1. 表数 **30 + 16 → 29 + 16**：第 30 张注册意图表已随票 03 删除（票面 charting 时点较早）。
++2. cutover 产物归档到 `.scratch/timeout-inline/archive/`，不留在 `backend/`（否则旧 token 无法零命中）。
++3. `sql.md` §1 只写 1 张 timeout 分表是既有约定（16 张同构），不算缺失。
++
+diff --git a/.scratch/timeout-inline/map.md b/.scratch/timeout-inline/map.md
+index 21799fc..03570c6 100644
+--- a/.scratch/timeout-inline/map.md
++++ b/.scratch/timeout-inline/map.md
+@@ -45,14 +45,16 @@ Label: wayfinder:map
+ - **票 07（存量在途任务收尾与切换顺序）→ 落地，选 (b) 一次性搬迁，不做双跑/不丢弃**：(a) 双跑被否——票 05 已删业务侧 Dubbo 回调 Provider，旧中心继续扫会把在途行重试进死信；(c) 丢弃被否——商品支付超时无业务侧兜底、跑腿复合 `bizId` 无可重放事件源。范围：`WAITING/RETRYING/FAILED` + `timeout_register_outbox.PENDING`，不搬 `SUCCESS/CANCELED`；目标同键保留目标行、只补缺不覆盖；outbox 同键按旧中心状态 + `action_time` 判定：在途跳过、终态且 outbox 更晚算新一轮注册（搬）、终态且 outbox 不更新算残留（跳过）。**关键坑**：槽位公式从 `hash(len(taskType)+":"+taskType+bizId)` 改为 `hash(bizId)`，必须按新公式重算（按旧表号搬 = 静默漏扫），工具已实现并校验目标每行物理表号。顺序：停旧 job → 滚动上线 → 停新 job → forward + 校验 → 开新 job → 停旧中心 → 观察 24h/7d → 清理；回滚用同一工具 `reverse`（含复活/取消陈旧旧行，reverse 前旧/新 job 都必须停）。`bs_timeout` 最终 dump + restore drill、留档 30 天再 DROP；`xxl_job_info`/`xxl_job_group` 先归档后删（先 info 后 group），`timeout-center/` 目录删除归票 09。产出 `backend/scripts/timeout-cutover-migrate.py` + 39 个离线单测 + [runbook](../../backend/docs/ops/timeout-inline-cutover.md)；干净 E2E（真实 outbox 列名）forward 5 插入/3 跳过、重跑幂等、reverse 2 插入/1 复活/1 取消、错表退出码 3 全通过。执行中纠正了 outbox 列名、outbox 终态键的新旧轮次判定、xxl 读不到静默放行三处缺陷。→ [票 07](issues/07-inflight-migration.md)
+ - **票 08（营销侧规格）→ 落地（纯文档，零表零码）**：新建 [`backend/marketing/docs/architecture/timeout.md`](../../backend/marketing/docs/architecture/timeout.md) 把「将来要落时怎么落」定死——16 张 `timeout_task_00..15` 进 `marketing/sql/schema.sql`（`DB_COUNT=1`、列与主体同构含 `created_at/updated_at`，落表时登记为营销库 naming 的第二处例外）；超时按**技术域**在 `types/domain/infrastructure/usecase/trigger` 各占 `timeout` 段，`marketing-api` 只放管理面 DTO、不建 Dubbo 契约；注册走业务域自己的仓储方法（同事务直插），回调端口在域层、Dispatcher 在 case 层；SS 5.5.3 + 显式 `!SINGLE` + hint，xxl 分片广播 + `parallelism=4`/池 10；管理面路径用营销前缀 `/api/marketing/timeout-tasks/**`（`/api/admin` 前端代理到 8080，不能照抄；照 `/api/marketing/config` 先例不设 `/admin` 段）。三个既有扫描 job（`pointsExpireScan`/`drawCountBucketExpireScan`/`inventoryMerge`）**不收编**：前两个是懒过期 + 批量落账（读路径 `expire_at > NOW()`），`inventoryMerge` 是每秒结算流水线；判据与「每个积分桶一条超时任务 → 行数随入账笔数放大」反例入档。`CONTEXT.md` 只新增「过期落账」词条——「超时任务」「注册 outbox」两条归票 09 改写，两票不碰同一词条。→ [票 08](issues/08-marketing-side-spec.md)
+ 
++- **票 09（收口）→ 落地**：删除 `backend/timeout-center/` 整工程与旧架构文档；一次性 cutover 产物（runbook + 迁移脚本 + 离线单测）归档到 `.scratch/timeout-inline/archive/`；新建 `backend/docs/architecture/timeout.md`；`sql.md` 删 §3 旧独立库整段、表数纠正为 **29+16+22=67**；`CONTEXT.md` 改写「超时任务」、删除「注册 outbox」、新增「超时槽位」「死信」；ADR 0010；`backend/CLAUDE.md` 两工程口径 + 两处规范例外；`dev-stack.ps1`/`test-env.sh`/`run-app.sh`/`docker-compose.yml` 收口两库两服务。验收：两工程 `mvn -o clean package -DskipTests` SUCCESS、全量 **328** 测试全绿（新增 0/2、1/2 多实例用例与四 taskType E2E + 退避/死信）、四个旧 token 全仓零命中、`sql.md` 与两份 `schema.sql` 逐表逐列全等、`better_school` 45 = 29+16。→ [票 09](issues/09-closeout.md)
++
+ ## Not yet specified
+ 
+ - ~~**池大小与 `timeout.scan.parallelism` 的最终取值**~~：**票 04 已定稿**——池保持 10（全应用共享，抬它等于抬用户请求的并发上限），`timeout.scan.parallelism = 4`；实测 16 张表全认领时回调并发峰值 = 4、扫描期 Hikari 活跃连接峰值 ≤ 4，给业务留 ≥6 条。结论与实测见[票 04 的 Answer](issues/04-scan-and-parallelism.md)。
+ - **超时任务行的归档口径**：spec 原写「首版不归档、终态行永久保留」，量级论证是「独立库 20MB/年」；现在表进了业务库，业务库要不要归档、按什么口径（`updated_at` 搬历史表？）需要重新确认。
+-- **`sql.md` 的表数口径**：现在是「共 52 张 = 30 + 22」，**整个漏掉了 `timeout_task`**；改造后口径如何写（并注意 `sql.md:3` 还留着一个不存在的 referral 域、`:4` 说营销抽奖/库存「尚未落库」与 `marketing/sql/schema.sql` 矛盾）。
++- ~~**`sql.md` 的表数口径**~~：**票 09 已收口**——统一写成「29（单体业务）+ 16（单体超时分表）+ 22（营销）= 67」，并删掉旧独立库的 §3；第 30 张注册意图表随票 03 删除。见[票 09](issues/09-closeout.md)。
+ - ~~**`bs_timeout` 库的去留**~~：**票 07 已定稿**——停写后做最终 dump + 恢复演练，留档 30 天再 DROP（含 `bs_timeout_test`）；`backend/timeout-center/` 目录删除归票 09，且必须在验收之后。见[票 07 的 Answer](issues/07-inflight-migration.md) 与 [上线/回滚清单](../../backend/docs/ops/timeout-inline-cutover.md)。
+ - **改造后是否顺手修两处已知文档/配置漂移**：`marketing` 测试 profile 没设独立 `xxl.job.executor.appname`（测试 JVM 会注册成生产 appname）、`reviewDispatchObservation` 没有 seed 行。都在本次改动路径附近，但**不属于本 effort 的终点**，执行时若不顺手就单列。
+-- **回调端口实现在 case 层的规范回写**：`TimeoutTaskCallbackDispatcher` 实现 domain 端口 `ITimeoutTaskCallbackPort` 却落在 case 层（分发要调其它域 case，infrastructure 看不到 case 层），是 `backend/CLAUDE.md` §1/§3「端口由 infrastructure 实现」的一处例外。主体票 04/05 只在实现类 javadoc 写了理由，**没回写规范**；票 08 的营销规格也沿用了它并注明落码时要补。票 09 收口时应把它写进 `backend/CLAUDE.md` §4 的例外说明或 ADR，否则这条例外永远是口头约定。
++- ~~**回调端口实现在 case 层的规范回写**~~：**票 09 已收口**——写进 `backend/CLAUDE.md` §4 的显式例外（端口接口仍在 domain，实现落 `usecase.timeout.TimeoutTaskCallbackDispatcher`，不反向把 case 依赖灌进 infrastructure）。
+ 
+ ## Out of scope
+ 
+diff --git a/backend/better-school/docs/api/README.md b/backend/better-school/docs/api/README.md
+index d3e6b4e..0d3b1ad 100644
+--- a/backend/better-school/docs/api/README.md
++++ b/backend/better-school/docs/api/README.md
+@@ -16,6 +16,6 @@
+ | 站内搜索 | [search.md](search.md) | `/api/search` |
+ | 虚拟钱包 | [wallet.md](wallet.md) | `/api/wallet` |
+ | 信用分 | [credit.md](credit.md) | `/api/credit` |
+-| 超时中心管理面（死信，运维面） | [timeout.md](timeout.md) | `/api/admin/timeout-tasks` |
++| 内嵌超时中心管理面（死信，运维面） | [timeout.md](timeout.md) | `/api/admin/timeout-tasks` |
+ 
+-营销服务接口文档在 `backend/marketing/docs/api/`；超时中心在 `backend/timeout-center/docs/api/`。
++营销服务接口文档在 `backend/marketing/docs/api/`。超时任务没有业务 HTTP/Dubbo 接口——注册与回调都在进程内。
+diff --git a/backend/better-school/docs/api/timeout.md b/backend/better-school/docs/api/timeout.md
+index 9b5fcc5..652efc1 100644
+--- a/backend/better-school/docs/api/timeout.md
++++ b/backend/better-school/docs/api/timeout.md
+@@ -1,7 +1,7 @@
+-# 超时中心管理面（死信）
++# 内嵌超时中心管理面（死信）
+ 
+ > 业务：超时中心（内嵌于单体，内嵌化票 06）；归属模块：`bs-trigger/http/timeout`。
+-> 业务注册/回调不经 HTTP——对业务全在进程内（ Dubbo 边与 8083 已随内嵌化删除）；
++> 业务注册/回调不经 HTTP——对业务全在进程内（原跨进程边与专用端口已随内嵌化删除）；
+ > 这套是**唯一的运维面**：回调连续失败 16 次进 `FAILED` 死信后的人工出口。
+ 
+ ## 鉴权
+diff --git a/backend/better-school/docs/db/README.md b/backend/better-school/docs/db/README.md
+index d881674..a0ce55c 100644
+--- a/backend/better-school/docs/db/README.md
++++ b/backend/better-school/docs/db/README.md
+@@ -2,7 +2,7 @@
+ 
+ 营销库总览在根 `backend/docs/db/README.md`（票 06 起积分、票 07 起抽奖，两域随 `backend/marketing/` 落位为同一个库 `bs_marketing`；票 09 起只余这两域）。
+ 
+-**DDL 唯一来源**：`sql/schema.sql`（业务表见下方清单，另含 16 张 `timeout_task_00..15` 超时分表——票 05 按根 `sql.md` 重建、超时中心内嵌化票 02 增分表）。`sql/init-dev.sql` / `sql/init-test.sql` 只建库与 `USE`，**必须与 `schema.sql` 按序拼接喂给同一个连接**才建得出表；票 05 起不再有增量迁移脚本（`sql/migrations/` 与迁移测试已整体删除），改表 = 直接改 `schema.sql` + 重建库。
++**DDL 唯一来源**：`sql/schema.sql`（业务表见下方清单，另含 16 张 `timeout_task_00..15` 超时分表——票 05 按根 `sql.md` 重建、超时中心内嵌化票 02 增分表）。`sql/init-dev.sql` / `sql/init-test.sql` 只建库与 `USE`，**必须与 `schema.sql` 按序拼接喂给同一个连接**才建得出表；票 05 起不再有增量迁移脚本（`sql/migrations/` 与迁移测试已整体删除），改表 = 直接改 `schema.sql` + 重建库。**物理表数 = 29 张业务表 + 16 张超时分表 = 45**（原第 30 张注册意图表随内嵌化票 03 删除）。
+ 
+ | 库 | 归属 | DDL 来源 | 表文档 |
+ | --- | --- | --- | --- |
+@@ -44,7 +44,7 @@
+ 
+ ## 全库口径（票 05 起）
+ 
+-- **时间戳**：每表以 `create_time` / `update_time` 收尾，**不带 DB 默认值**（应用写入），全库无 `created_at` / `updated_at`。**唯一例外**：`timeout_task_00..15` 的 `created_at` / `updated_at`（按原样自 `bs_timeout` 迁入，改名要动 16 份 DDL + mapper XML + 存量迁移，收益只有命名整齐）。
++- **时间戳**：每表以 `create_time` / `update_time` 收尾，**不带 DB 默认值**（应用写入），全库无 `created_at` / `updated_at`。**唯一例外**：`timeout_task_00..15` 的 `created_at` / `updated_at`（按原样自原独立超时库迁入，改名要动 16 份 DDL + mapper XML + 存量迁移，收益只有命名整齐）。
+ - **状态列**：统一叫 `state`（`bs_user` / `post` / `post_comment` / `product` / `errand_order` / `product_order` / `message` / `outbox_message`）。**例外**：`content_report` 的状态列仍叫 `status`（PENDING/PROCESSED/IGNORED）。同名不同型注意：业务表 `state` 是 varchar 枚举名，`outbox_message.state` 是 tinyint 数字码（0/1/2）。
+ - **主键**：`id` 恒为无业务含义的物理自增；对外与跨表引用一律用业务 ID 列并配 `uk_*` 唯一键（`user_id` / `post_id` / `comment_id` / `product_id` / `product_order_id` / `errand_order_id` / `room_id` / `msg_id` / `notification_id` / `wallet_id`）。写入口径：业务列先插 0，同事务 `UPDATE t SET biz_col = id WHERE id = ?` 回写。
+ - **开发/测试库名隔离**：单体 `better_school` / `better_school_test`（测试栈 host 端口 +10000）。
+diff --git a/backend/better-school/docs/db/outbox.md b/backend/better-school/docs/db/outbox.md
+index d2db04c..132826f 100644
+--- a/backend/better-school/docs/db/outbox.md
++++ b/backend/better-school/docs/db/outbox.md
+@@ -2,7 +2,7 @@
+ 
+ > 业务：事务性本地消息表（RocketMQ 最终一致）；归属模块：outbox（infrastructure）
+ > DDL 唯一事实源：`sql/schema.sql`（票 05 全库重写）。**`delay_outbox_message` / `DelayOutboxMessageStore` / `DelayOutboxMessageSender` 整条延迟 outbox 链路已删除，无此表、无此代码**
+-> **`timeout_register_outbox` / `TimeoutRegisterOutboxStore` / `TimeoutRegisterOutboxSender` 整条注册 outbox 链路也已删除（超时中心内嵌化票 03）**：注册改为业务事务内直插 `timeout_task` 分表（16 张，见 schema.sql），三分支幂等在 `TimeoutRepository.register`。用法见 [`backend/docs/architecture/timeout-center.md`](../../../docs/architecture/timeout-center.md)
++> **原来的超时注册意图表 / `TimeoutRegisterOutboxStore` / `TimeoutRegisterOutboxSender` 整条注册 outbox 链路已删除（超时内嵌化票 03）**：注册改为业务事务内直插 `timeout_task` 分表（16 张，见 schema.sql），三分支幂等在 `TimeoutRepository.register`。用法见 [`backend/docs/architecture/timeout.md`](../../../docs/architecture/timeout.md)
+ 
+ # outbox_message（本地消息表 outbox）
+ 
+diff --git a/backend/better-school/docs/db/timeout.md b/backend/better-school/docs/db/timeout.md
+index b840cf5..11a208f 100644
+--- a/backend/better-school/docs/db/timeout.md
++++ b/backend/better-school/docs/db/timeout.md
+@@ -1,7 +1,7 @@
+ # timeout 域表（timeout_task_00 .. timeout_task_15）
+ 
+-> 业务：超时中心内嵌化（原独立工程 `backend/timeout-center/`，域与存储落地见 `.scratch/timeout-inline/issues/02-embedded-timeout-domain.md`）；归属模块：timeout（domain.timeout + infrastructure）
+-> DDL 唯一事实源：`sql/schema.sql`（16 张分表逐张写出）。逻辑表形状与运维口径另见根目录 [`sql.md`](../../../../../sql.md) §1、架构见 [`backend/docs/architecture/timeout-center.md`](../../architecture/timeout-center.md) §0
++> 业务：内嵌在单体里的超时中心（原独立工程已随内嵌化下线，域与存储落地见 `.scratch/timeout-inline/issues/02-embedded-timeout-domain.md`）；归属模块：timeout（domain.timeout + infrastructure）
++> DDL 唯一事实源：`sql/schema.sql`（16 张分表逐张写出）。逻辑表形状与运维口径另见根目录 [`sql.md`](../../../../../sql.md) §1、架构见 [`backend/docs/architecture/timeout.md`](../../../docs/architecture/timeout.md)
+ 
+ ## timeout_task_00 .. 15（16 张同构分表）
+ 
+@@ -16,7 +16,7 @@
+ |next_fire_time|datetime|NOT NULL|下次可触发时刻（注册时=action_time；失败重试后=now+退避）|
+ |status|varchar(16)|NOT NULL|WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，**无 PROCESSING**）|
+ |retry_count|int|NOT NULL, DEFAULT 0|已重试次数（16 次封顶进 FAILED）|
+-|created_at|datetime|NOT NULL|创建时间（**全库 create_time/update_time 口径的唯一例外**：按原样自 bs_timeout 迁入）|
++|created_at|datetime|NOT NULL|创建时间（**全库 create_time/update_time 口径的唯一例外**：按原样自原独立超时库迁入）|
+ |updated_at|datetime|NOT NULL|更新时间|
+ 
+ ## 索引
+@@ -30,7 +30,8 @@
+ - **不加 `user_id` 列**（票 02 显式结论，理由入档）
+ 
+ ## 注意
+-- **谁在写**：票 03 起为业务仓储在**业务事务内直插**（超时行与业务行同生同死）；当前票 02 只有按键四原语（`TimeoutRepository`），注册语义未接管
+-- **谁在读**：扫描/结算/死信在票 04/06 落地；`selectDueBatch` 等按槽位捞批的语句由仓储统一塞 hint，**别绕开仓储直接调 `ITimeoutTaskDao`**——漏塞 hint 时写语句被路由校验拒掉、读语句退化成 16 表广播
++- **谁在写**：业务仓储在**业务事务内直插**（超时行与业务行同生同死）：`TradeRepository.createOrderWithLock`、`ErrandRepository.createWithPayTimeout / submitDraftWithPayTimeout / grabWithLockTimeout`、`ReviewTaskPoolStore.claim`；三分支幂等在 `TimeoutRepository.register`
++- **谁在读**：扫描/结算（`TimeoutTaskScanCase` + `TimeoutTaskScanService`）与死信管理面（`TimeoutTaskAdminController`）；`selectDueBatch` 等按槽位捞批的语句由仓储统一塞 hint，**别绕开仓储直接调 `ITimeoutTaskDao`**——漏塞 hint 时写语句被路由校验拒掉、读语句退化成 16 表广播
++- 死信没有独立表：回调失败到上限的行留在本表置 `FAILED`，管理面 `/api/admin/timeout-tasks/dead-letters` 直接读它（列表是唯一允许跨 16 表广播的查询）
+ - hint 是 TransmittableThreadLocal：纪律是「**hint 作用域先于子线程的创建/提交**」（票 01 界定），不是「必须同线程」
+ - 集成测试（`TimeoutShardingRouteIntegrationTest`）用裸 MySQL 连接逐张断言「槽位 = 实际落库物理表」；物理断言必须绕过 SS

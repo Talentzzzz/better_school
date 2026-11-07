@@ -22,7 +22,7 @@ public class ContentReportPO {
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 
-    /** 查询冗余字段：举报人/被举报人昵称（列表 JOIN 填充） */
+    /** 查询冗余字段：举报人/被举报人昵称（仓储查 bs_user 批量回查填充，SQL 层零 JOIN） */
     private String reporterNickname;
     private String authorNickname;
 }

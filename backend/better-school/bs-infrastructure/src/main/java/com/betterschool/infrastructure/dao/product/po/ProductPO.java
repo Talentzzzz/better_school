@@ -23,12 +23,13 @@ public class ProductPO {
     private Integer reviewRound;
     /** 最近一次进入待审时间（24h 待审超时提醒扫描用） */
     private LocalDateTime reviewEnteredAt;
+    /** 查询投影列：浏览 UV 加速列（product_view_count 仓储批量回查填充，非 product 行列） */
     private Integer viewCount;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
     private LocalDateTime expireAt;
 
-    /** 查询冗余字段：卖家昵称/头像（JOIN bs_user 填充） */
+    /** 查询冗余字段：卖家昵称/头像（仓储查 bs_user 批量回查填充，SQL 层零 JOIN） */
     private String sellerNickname;
     private String sellerAvatar;
 }

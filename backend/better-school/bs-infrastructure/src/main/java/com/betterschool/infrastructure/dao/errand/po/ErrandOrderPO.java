@@ -28,12 +28,12 @@ public class ErrandOrderPO {
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 
-    /** 查询冗余字段：下单方/接单方昵称头像（JOIN bs_user 填充） */
+    /** 查询冗余字段：下单方/接单方昵称头像（仓储查 bs_user 批量回查填充，SQL 层零 JOIN） */
     private String publisherNickname;
     private String publisherAvatar;
     private String takerNickname;
     private String takerAvatar;
 
-    /** 查询冗余字段：浏览 UV 数（公开列表 LEFT JOIN errand_view_count 填充；其余查询为 null，详情另走计数窄表） */
+    /** 查询冗余字段：浏览 UV 数（仓储从 errand_view_count 批量回查填充；其余查询为 null，详情另走计数窄表） */
     private Integer viewCount;
 }

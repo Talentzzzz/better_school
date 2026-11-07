@@ -5,7 +5,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 会话列表项（服务端拼装展示字段）：unread = last_seq_copy − last_read_seq（O(1) 无 COUNT，
+ * 会话列表项（服务端拼装展示字段）：unread = room.last_seq − last_read_seq（服务端拼装，
  * 都在用户维度成员行上就地可算）；服务端拼对方 userId+昵称+头像。
  * source / peerRole 供市集消息页按域筛与出角色标签（peerRole 按请求者现算，不落库）
  */

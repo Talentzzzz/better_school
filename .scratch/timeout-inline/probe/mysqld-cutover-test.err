@@ -1,0 +1,7 @@
+2026-10-17T09:50:25.729769Z 0 [System] [MY-010116] [Server] C:\Code\MySQL\MySQL Server 8.0\bin\mysqld.exe (mysqld 8.0.43) starting as process 4648
+2026-10-17T09:50:25.751451Z 1 [System] [MY-013576] [InnoDB] InnoDB initialization has started.
+2026-10-17T09:50:27.749130Z 1 [System] [MY-013577] [InnoDB] InnoDB initialization has ended.
+2026-10-17T09:50:28.657701Z 0 [Warning] [MY-010068] [Server] CA certificate ca.pem is self signed.
+2026-10-17T09:50:28.658636Z 0 [System] [MY-013602] [Server] Channel mysql_main configured to support TLS. Encrypted connections are now supported for this channel.
+2026-10-17T09:50:29.243885Z 0 [System] [MY-010931] [Server] C:\Code\MySQL\MySQL Server 8.0\bin\mysqld.exe: ready for connections. Version: '8.0.43'  socket: ''  port: 3307  MySQL Community Server - GPL.
+2026-10-17T09:50:29.243913Z 0 [System] [MY-011323] [Server] X Plugin ready for connections. Bind-address: '::' port: 33060

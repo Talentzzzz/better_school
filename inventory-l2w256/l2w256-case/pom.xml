@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>cn.inventory</groupId>
+        <artifactId>inventory-l2w256</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>l2w256-case</artifactId>
+    <name>l2w256-case</name>
+    <description>用例编排层：扣减 / 重置 / 概览的顺序编排（无跨域事务）</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>cn.inventory</groupId>
+            <artifactId>l2w256-domain</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>cn.inventory</groupId>
+            <artifactId>l2w256-types</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+</project>

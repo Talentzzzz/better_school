@@ -1,0 +1,879 @@
+diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/InventoryMergeEngineIntegrationTest.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/InventoryMergeEngineIntegrationTest.java
+deleted file mode 100644
+index 08e3922..0000000
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/InventoryMergeEngineIntegrationTest.java
++++ /dev/null
+@@ -1,550 +0,0 @@
+-package com.betterschool.marketing.integration.inventory;
+-
+-import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
+-import com.betterschool.marketing.domain.inventory.model.valobj.InventoryMergeKeyVO;
+-import com.betterschool.marketing.domain.inventory.model.valobj.MergeKeyResultVO;
+-import com.betterschool.marketing.domain.inventory.service.IInventoryMergeService;
+-import com.betterschool.marketing.infrastructure.inventory.dao.IPhysicalQuotaDao;
+-import com.betterschool.marketing.integration.support.TestingEnvironment;
+-import com.betterschool.marketing.trigger.inventory.listener.InventoryMergeConsumer;
+-import com.betterschool.marketing.types.inventory.Constants;
+-import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+-import com.xxl.job.core.executor.impl.XxlJobSpringExecutor;
+-import org.junit.jupiter.api.BeforeAll;
+-import org.junit.jupiter.api.BeforeEach;
+-import org.junit.jupiter.api.DisplayName;
+-import org.junit.jupiter.api.Test;
+-import org.junit.jupiter.api.extension.ExtendWith;
+-import org.mybatis.spring.SqlSessionTemplate;
+-import org.springframework.beans.factory.annotation.Autowired;
+-import org.springframework.boot.test.context.SpringBootTest;
+-import org.springframework.boot.test.mock.mockito.MockBean;
+-import org.springframework.boot.test.mock.mockito.SpyBean;
+-import org.springframework.boot.test.system.CapturedOutput;
+-import org.springframework.boot.test.system.OutputCaptureExtension;
+-import org.springframework.jdbc.core.JdbcTemplate;
+-import org.springframework.test.context.ActiveProfiles;
+-
+-import javax.sql.DataSource;
+-import java.sql.Connection;
+-import java.sql.PreparedStatement;
+-import java.time.LocalDateTime;
+-import java.util.List;
+-import java.util.Map;
+-import java.util.concurrent.atomic.AtomicLong;
+-
+-import static org.assertj.core.api.Assertions.assertThat;
+-import static org.mockito.ArgumentMatchers.any;
+-import static org.mockito.Mockito.doAnswer;
+-
+-/**
+- * 时间格合并引擎用例（票 05 按「格绑定工单」重写）：消息路径固定合 {@code cellTime} 与它后一秒两格，
+- * 兜底路径仍按最老格循环 ≤ 10 格；**两条路径都不发消息**（续命已删）。
+- * <p>
+- * 夹具把 {@code create_time} 写成相对 DB {@code NOW()} 的偏移：负数 = 已封口（过去秒），
+- * 正数 = 未封口（未来 / 当前这一秒还在长行）。这样既不用真等 1 秒，也不会踩秒边界抖动。
+- * 消息的 {@code cellTime} 一律从明细行回读（{@link #detailCreateTime}）——应用时钟算出来的值
+- * 差几毫秒就会指向错的格，那正是票 03 要消灭的东西。
+- */
+-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+-@ActiveProfiles("test")
+-@ExtendWith(OutputCaptureExtension.class)
+-@DisplayName("库存合并 · 两格工单与兜底")
+-class InventoryMergeEngineIntegrationTest extends TestingEnvironment {
+-
+-    private static final long QUOTA_INV_ID = 9601L;
+-    private static final long VIRTUAL_INV_ID = 9602L;
+-    private static final int BUCKET_ID = 0;
+-    private static final long BUCKET_QTY = 100L;
+-    private static final long LEDGER_QTY = 100L;
+-
+-    private static final AtomicLong BIZ_ID_SEQ = new AtomicLong(970_000L);
+-
+-    @BeforeAll
+-    static void prepareEnvironment() {
+-        TestingEnvironment.ensureEnvironment();
+-    }
+-
+-    @Autowired
+-    private JdbcTemplate jdbcTemplate;
+-    @Autowired
+-    private IInventoryMergeService inventoryMergeService;
+-    @Autowired
+-    private IInventoryRepository inventoryRepository;
+-    @Autowired
+-    private InventoryMergeConsumer inventoryMergeConsumer;
+-    @Autowired
+-    private DataSource dataSource;
+-    /** 只为在「聚合之后、翻转之前」插入一条已提交的并发改动（见 affectedMismatch 用例） */
+-    @SpyBean
+-    private IPhysicalQuotaDao physicalQuotaDao;
+-    /** 绕过 spy 调真实的 mapper（同事务内），见 affectedMismatch 用例 */
+-    @Autowired
+-    private SqlSessionTemplate sqlSessionTemplate;
+-    /**
+-     * 本类因为 spy 会另起一个 Spring 上下文；xxl 执行器的 handler 注册表是进程级静态 map，
+-     * 第二个上下文再注册同名 handler 会直接起不来。测试不需要调度器，mock 掉即可。
+-     */
+-    @MockBean
+-    private XxlJobSpringExecutor xxlJobSpringExecutor;
+-
+-    @BeforeEach
+-    void resetFixtures() {
+-        List.of("virtual_inventory_quota", "virtual_inventory_quota_bucket", "virtual_inventory_quota_detail",
+-                "physical_marketing_quota", "physical_marketing_quota_bucket", "physical_marketing_quota_detail",
+-                "outbox_message")
+-                .forEach(table -> jdbcTemplate.execute("TRUNCATE TABLE " + table));
+-        jdbcTemplate.update("""
+-                        INSERT INTO physical_marketing_quota (inv_id, name, surplus_qty, waiting_qty, issued_qty,
+-                                                              state, create_time, update_time)
+-                        VALUES (?, '合并引擎用例配额', ?, 0, 0, 'open', NOW(), NOW())
+-                        """,
+-                QUOTA_INV_ID, LEDGER_QTY);
+-        jdbcTemplate.update("""
+-                        INSERT INTO physical_marketing_quota_bucket (inv_id, bucket_id, redis_qty, create_time, update_time)
+-                        VALUES (?, ?, ?, NOW(), NOW())
+-                        """,
+-                QUOTA_INV_ID, BUCKET_ID, BUCKET_QTY);
+-    }
+-
+-    // ---------- 夹具 ----------
+-
+-    /** 落一行实物明细（create_time 先给 NOW()，由 {@link #pinQuotaDetailTime} 统一造格） */
+-    private long insertQuotaDetail(int type, long quantity) {
+-        long bizId = BIZ_ID_SEQ.incrementAndGet();
+-        String bizType = type == Constants.DETAIL_TYPE_CLAIM ? "LOTTERY_CLAIM" : "LOTTERY_DRAW";
+-        jdbcTemplate.update("""
+-                        INSERT INTO physical_marketing_quota_detail (inv_id, bucket_id, quantity, type, biz_type, biz_id,
+-                                                                     state, create_time, update_time)
+-                        VALUES (?, ?, ?, ?, ?, ?, 0, NOW(), NOW())
+-                        """,
+-                QUOTA_INV_ID, BUCKET_ID, quantity, type, bizType, bizId);
+-        return bizId;
+-    }
+-
+-    /**
+-     * 把同一条 UPDATE 命中的明细钉到同一个秒格（一次 NOW() 求值），避免多行分几次 INSERT 时
+-     * 恰好跨秒、把「同一格」拆成两格（会让用例偶发不稳）。offset 负数 = 已封口，正数 = 未封口。
+-     */
+-    private void pinQuotaDetailTime(int offsetSeconds, Long... bizIds) {
+-        String placeholders = String.join(",", java.util.Collections.nCopies(bizIds.length, "?"));
+-        Object[] args = new Object[bizIds.length + 1];
+-        args[0] = offsetSeconds;
+-        System.arraycopy(bizIds, 0, args, 1, bizIds.length);
+-        jdbcTemplate.update("""
+-                UPDATE physical_marketing_quota_detail
+-                SET create_time = TIMESTAMPADD(SECOND, ?, NOW())
+-                WHERE biz_id IN (%s)
+-                """.formatted(placeholders), args);
+-    }
+-
+-    /** 虚拟段的台账 + 桶副本（明细另落，方便铺「两个格」） */
+-    private void insertVirtualLedger() {
+-        jdbcTemplate.update("""
+-                        INSERT INTO virtual_inventory_quota (inv_id, name, type, value, surplus_qty, issued_qty,
+-                                                             state, create_time, update_time)
+-                        VALUES (?, '合并引擎用例虚拟池', 'POINTS', 10, ?, 0, 'open', NOW(), NOW())
+-                        """,
+-                VIRTUAL_INV_ID, LEDGER_QTY);
+-        jdbcTemplate.update("""
+-                        INSERT INTO virtual_inventory_quota_bucket (inv_id, bucket_id, redis_qty, create_time, update_time)
+-                        VALUES (?, ?, ?, NOW(), NOW())
+-                        """,
+-                VIRTUAL_INV_ID, BUCKET_ID, BUCKET_QTY);
+-    }
+-
+-    private void insertVirtualFixtures(long quantity, int offsetSeconds) {
+-        insertVirtualLedger();
+-        jdbcTemplate.update("""
+-                        INSERT INTO virtual_inventory_quota_detail (inv_id, bucket_id, quantity, biz_type, biz_id,
+-                                                                    state, create_time, update_time)
+-                        VALUES (?, ?, ?, 'LOTTERY_DRAW', ?, 0, TIMESTAMPADD(SECOND, ?, NOW()), NOW())
+-                        """,
+-                VIRTUAL_INV_ID, BUCKET_ID, quantity, BIZ_ID_SEQ.incrementAndGet(), offsetSeconds);
+-    }
+-
+-    /** 只落一条虚拟明细（同一个池 + 同一个桶，用于「一条消息合两格」的对称用例） */
+-    private void insertVirtualDetail(long quantity, int offsetSeconds) {
+-        jdbcTemplate.update("""
+-                        INSERT INTO virtual_inventory_quota_detail (inv_id, bucket_id, quantity, biz_type, biz_id,
+-                                                                    state, create_time, update_time)
+-                        VALUES (?, ?, ?, 'LOTTERY_DRAW', ?, 0, TIMESTAMPADD(SECOND, ?, NOW()), NOW())
+-                        """,
+-                VIRTUAL_INV_ID, BUCKET_ID, quantity, BIZ_ID_SEQ.incrementAndGet(), offsetSeconds);
+-    }
+-
+-    /** 一条已经「发出」的合并消息（只为验「消费不续命」：行数只能少不能多） */
+-    private long seedMergeOutboxRow() {
+-        jdbcTemplate.update("""
+-                        INSERT INTO outbox_message (msg_id, destination, payload, delay_level, delay_ms, state,
+-                                                    retry_count, create_time, update_time)
+-                        VALUES (?, ?, '{}', 0, ?, 0, 0, NOW(), NOW())
+-                        """,
+-                "seed-" + BIZ_ID_SEQ.incrementAndGet(), Constants.INVENTORY_MERGE_TOPIC,
+-                Constants.MERGE_DELIVER_DELAY_MILLIS);
+-        return jdbcTemplate.queryForObject("SELECT MAX(id) FROM outbox_message", Long.class);
+-    }
+-
+-    private long detailCount(int state) {
+-        Long count = jdbcTemplate.queryForObject(
+-                "SELECT COUNT(*) FROM physical_marketing_quota_detail WHERE inv_id = ? AND state = ?",
+-                Long.class, QUOTA_INV_ID, state);
+-        return count == null ? 0 : count;
+-    }
+-
+-    private Map<String, Object> quotaRow() {
+-        return jdbcTemplate.queryForMap(
+-                "SELECT surplus_qty, waiting_qty, issued_qty FROM physical_marketing_quota WHERE inv_id = ?",
+-                QUOTA_INV_ID);
+-    }
+-
+-    private long bucketRowQty() {
+-        Long qty = jdbcTemplate.queryForObject(
+-                "SELECT redis_qty FROM physical_marketing_quota_bucket WHERE inv_id = ? AND bucket_id = ?",
+-                Long.class, QUOTA_INV_ID, BUCKET_ID);
+-        return qty == null ? 0 : qty;
+-    }
+-
+-    private long longOf(Map<String, Object> row, String column) {
+-        return ((Number) row.get(column)).longValue();
+-    }
+-
+-    private int mergeOutboxCount() {
+-        Integer count = jdbcTemplate.queryForObject(
+-                "SELECT COUNT(*) FROM outbox_message WHERE destination = ?",
+-                Integer.class, Constants.INVENTORY_MERGE_TOPIC);
+-        return count == null ? 0 : count;
+-    }
+-
+-    /** 某条明细的 {@code create_time}（DB 写的秒值）：消息的 {@code cellTime} 必须逐字等于它 */
+-    private LocalDateTime detailCreateTime(long bizId) {
+-        return jdbcTemplate.queryForObject(
+-                "SELECT create_time FROM physical_marketing_quota_detail WHERE inv_id = ? AND biz_id = ?",
+-                LocalDateTime.class, QUOTA_INV_ID, bizId);
+-    }
+-
+-    /** 一格的明细：{@code s} 格预扣 5、{@code s + 1} 格确认 3（等待态留 2，好断「waiting → issued」） */
+-    private LocalDateTime insertDeductAndClaimCells() {
+-        long deductBizId = insertQuotaDetail(Constants.DETAIL_TYPE_DEDUCT, 5);
+-        long claimBizId = insertQuotaDetail(Constants.DETAIL_TYPE_CLAIM, 3);
+-        pinQuotaDetailTime(-5, deductBizId);
+-        pinQuotaDetailTime(-4, claimBizId);
+-        return detailCreateTime(deductBizId);
+-    }
+-
+-    // ---------- 消息路径：一条消息合两格 ----------
+-
+-    @Test
+-    @DisplayName("一条消息合两格：cellTime=s 落库后 s、s+1 都 state=1，waiting 5→2、issued 0→3")
+-    void mergePair_mergesBothCellsOfOneMessage() {
+-        LocalDateTime cellTime = insertDeductAndClaimCells();
+-
+-        MergeKeyResultVO result = inventoryMergeService.mergePair(
+-                InventorySegmentVO.QUOTA, QUOTA_INV_ID, BUCKET_ID, cellTime);
+-
+-        assertThat(result.cells()).as("两格都合掉").isEqualTo(2);
+-        assertThat(result.details()).isEqualTo(2);
+-        assertThat(detailCount(0)).as("两格没有剩下未合行").isZero();
+-        assertThat(detailCount(1)).isEqualTo(2);
+-        assertThat(longOf(quotaRow(), "waiting_qty")).as("预扣 5 进 waiting 后被确认 3 转走").isEqualTo(2L);
+-        assertThat(longOf(quotaRow(), "issued_qty")).isEqualTo(3L);
+-        assertThat(longOf(quotaRow(), "surplus_qty")).as("只有预扣那格扣台账").isEqualTo(LEDGER_QTY - 5);
+-        assertThat(bucketRowQty()).as("只有预扣那格扣桶副本").isEqualTo(BUCKET_QTY - 5);
+-    }
+-
+-    @Test
+-    @DisplayName("虚拟段同样合两格：两格的量都直接进 issued")
+-    void mergePair_virtualSegment_mergesBothCells() {
+-        insertVirtualLedger();
+-        insertVirtualDetail(4, -5);
+-        insertVirtualDetail(6, -4);
+-        LocalDateTime cellTime = jdbcTemplate.queryForObject("""
+-                SELECT MIN(create_time) FROM virtual_inventory_quota_detail WHERE inv_id = ? AND state = 0
+-                """, LocalDateTime.class, VIRTUAL_INV_ID);
+-
+-        MergeKeyResultVO result = inventoryMergeService.mergePair(
+-                InventorySegmentVO.VIRTUAL, VIRTUAL_INV_ID, BUCKET_ID, cellTime);
+-
+-        assertThat(result.cells()).isEqualTo(2);
+-        assertThat(result.details()).isEqualTo(2);
+-        Map<String, Object> virtualRow = jdbcTemplate.queryForMap(
+-                "SELECT surplus_qty, issued_qty FROM virtual_inventory_quota WHERE inv_id = ?", VIRTUAL_INV_ID);
+-        assertThat(longOf(virtualRow, "issued_qty")).isEqualTo(10L);
+-        assertThat(longOf(virtualRow, "surplus_qty")).isEqualTo(LEDGER_QTY - 10);
+-    }
+-
+-    @Test
+-    @DisplayName("第二格空转：同 key 后一条消息（cellTime=s+1）两次 mergeCell 都返回 0，台账与桶零变化")
+-    void mergePair_secondCellIdlesOnFollowingMessage(CapturedOutput output) {
+-        LocalDateTime cellTime = insertDeductAndClaimCells();
+-        MergeKeyResultVO first = inventoryMergeService.mergePair(
+-                InventorySegmentVO.QUOTA, QUOTA_INV_ID, BUCKET_ID, cellTime);
+-        assertThat(first.cells()).isEqualTo(2);
+-        Map<String, Object> settled = quotaRow();
+-        long bucketAfterFirst = bucketRowQty();
+-
+-        // s+1 那一格自己的消息随后到达：s+1 已被前一条合走、s+2 本来就没有行 → 两格都空转。
+-        MergeKeyResultVO second = inventoryMergeService.mergePair(
+-                InventorySegmentVO.QUOTA, QUOTA_INV_ID, BUCKET_ID, cellTime.plusSeconds(1));
+-
+-        assertThat(second.cells()).isZero();
+-        assertThat(second.details()).isZero();
+-        // 逐次确认「两次 mergeCell 各自返回 0」：不是第一次 0 就跳过第二次
+-        assertThat(inventoryRepository.mergeCell(InventorySegmentVO.QUOTA, QUOTA_INV_ID, BUCKET_ID,
+-                cellTime.plusSeconds(1))).as("本格已由前一条消息合并").isZero();
+-        assertThat(inventoryRepository.mergeCell(InventorySegmentVO.QUOTA, QUOTA_INV_ID, BUCKET_ID,
+-                cellTime.plusSeconds(2))).as("这一秒本来就没有行").isZero();
+-        assertThat(quotaRow()).as("空转不动台账").isEqualTo(settled);
+-        assertThat(bucketRowQty()).as("空转不动桶副本").isEqualTo(bucketAfterFirst);
+-        assertThat(output.getAll())
+-                .as("空转是常态：debug 措辞是「已由前一条消息合并」，不是异常")
+-                .doesNotContain("合并桶守卫不过");
+-    }
+-
+-    @Test
+-    @DisplayName("顺序保证：s+1 的兑换确认先合会被 waiting 守卫挡住，先 s 后 s+1 才通过")
+-    void mergePair_mergesDeductCellBeforeClaimCell(CapturedOutput output) {
+-        long deductBizId = insertQuotaDetail(Constants.DETAIL_TYPE_DEDUCT, 5);
+-        long claimBizId = insertQuotaDetail(Constants.DETAIL_TYPE_CLAIM, 5);
+-        pinQuotaDetailTime(-5, deductBizId);
+-        pinQuotaDetailTime(-4, claimBizId);
+-        LocalDateTime cellTime = detailCreateTime(deductBizId);
+-
+-        // 反证：waiting_qty 还是 0 就去做 waiting → issued，守卫必须挡住（这就是「顺序不是可选项」）
+-        assertThat(inventoryRepository.mergeCell(InventorySegmentVO.QUOTA, QUOTA_INV_ID, BUCKET_ID,
+-                cellTime.plusSeconds(1))).as("waiting 不足，确认格合不动").isZero();
+-        assertThat(output.getAll()).contains("合并兑换确认守卫不过");
+-        assertThat(detailCount(1)).as("被守卫挡下的格整格回滚").isZero();
+-
+-        MergeKeyResultVO result = inventoryMergeService.mergePair(
+-                InventorySegmentVO.QUOTA, QUOTA_INV_ID, BUCKET_ID, cellTime);
+-
+-        assertThat(result.cells()).as("先 s（预扣进 waiting）再 s+1（waiting → issued）").isEqualTo(2);
+-        assertThat(detailCount(0)).isZero();
+-        assertThat(longOf(quotaRow(), "waiting_qty")).isZero();
+-        assertThat(longOf(quotaRow(), "issued_qty")).isEqualTo(5L);
+-        assertThat(bucketRowQty()).isEqualTo(BUCKET_QTY - 5);
+-    }
+-
+-    @Test
+-    @DisplayName("不续命：消费完（含空转那一跳）不产生任何新的 outbox 行")
+-    void mergePair_neverEnqueuesAnotherMessage() {
+-        long seededOutboxId = seedMergeOutboxRow();
+-        LocalDateTime cellTime = insertDeductAndClaimCells();
+-
+-        inventoryMergeService.mergePair(InventorySegmentVO.QUOTA, QUOTA_INV_ID, BUCKET_ID, cellTime);
+-        inventoryMergeService.mergePair(InventorySegmentVO.QUOTA, QUOTA_INV_ID, BUCKET_ID, cellTime.plusSeconds(1));
+-
+-        assertThat(mergeOutboxCount()).as("续命已删：合完就结束，一条新消息都不落").isEqualTo(1);
+-        assertThat(jdbcTemplate.queryForObject("SELECT MAX(id) FROM outbox_message", Long.class))
+-                .as("仅存的那一行还是先前那条，没被新行顶掉").isEqualTo(seededOutboxId);
+-    }
+-
+-    @Test
+-    @DisplayName("消费者直调：按 cellTime 合两格；坏载荷 / 缺 cellTime 丢弃不抛；重复投递空跑")
+-    void consumer_mergesByPayload_andDropsPayloadWithoutCellTime(CapturedOutput output) {
+-        long deductBizId = insertQuotaDetail(Constants.DETAIL_TYPE_DEDUCT, 3);
+-        long claimBizId = insertQuotaDetail(Constants.DETAIL_TYPE_CLAIM, 3);
+-        pinQuotaDetailTime(-5, deductBizId);
+-        pinQuotaDetailTime(-4, claimBizId);
+-        String validPayload = """
+-                {"segment":"quota","invId":%d,"bucketId":%d,"cellTime":"%s"}
+-                """.formatted(QUOTA_INV_ID, BUCKET_ID, detailCreateTime(deductBizId));
+-
+-        inventoryMergeConsumer.onMessage("not-json");
+-        inventoryMergeConsumer.onMessage("null");
+-        inventoryMergeConsumer.onMessage("{\"segment\":\"quota\",\"invId\":%d}".formatted(QUOTA_INV_ID));
+-        inventoryMergeConsumer.onMessage(
+-                "{\"segment\":\"unknown\",\"invId\":%d,\"bucketId\":%d}".formatted(QUOTA_INV_ID, BUCKET_ID));
+-        // 缺 cellTime 的旧格式载荷（续命那代）：定位不了时间格 → 丢弃，不在这里退化去查 MIN
+-        inventoryMergeConsumer.onMessage(
+-                "{\"segment\":\"quota\",\"invId\":%d,\"bucketId\":%d}".formatted(QUOTA_INV_ID, BUCKET_ID));
+-
+-        assertThat(detailCount(0)).as("坏载荷不触发合并").isEqualTo(2);
+-        assertThat(longOf(quotaRow(), "waiting_qty")).isZero();
+-        assertThat(output.getAll()).as("缺 cellTime 要留 error 便于观测").contains("载荷缺 cellTime");
+-
+-        inventoryMergeConsumer.onMessage(validPayload);
+-
+-        assertThat(detailCount(1)).as("载荷驱动合并，两格都翻").isEqualTo(2);
+-        assertThat(longOf(quotaRow(), "waiting_qty")).isZero();
+-        assertThat(longOf(quotaRow(), "issued_qty")).isEqualTo(3L);
+-
+-        Map<String, Object> settled = quotaRow();
+-        long bucketAfterFirst = bucketRowQty();
+-        inventoryMergeConsumer.onMessage(validPayload);
+-
+-        assertThat(quotaRow()).as("重复投递空跑：affected == cnt 判重").isEqualTo(settled);
+-        assertThat(bucketRowQty()).isEqualTo(bucketAfterFirst);
+-    }
+-
+-    // ---------- 兜底路径：消息整条丢了也能收口 ----------
+-
+-    @Test
+-    @DisplayName("兜底仍工作：一条消息都没消费，backstopOnce() 也能把 s 与 s+1 两格合掉")
+-    void backstopOnce_mergesBothCellsWhenMessageIsLost() {
+-        insertDeductAndClaimCells();
+-
+-        var result = inventoryMergeService.backstopOnce();
+-
+-        assertThat(result.quotaKeys()).as("一个 key 有未合明细").isEqualTo(1);
+-        assertThat(result.virtualKeys()).isZero();
+-        assertThat(result.details()).as("两格两行").isEqualTo(2);
+-        assertThat(detailCount(0)).as("兜底把两格都收口").isZero();
+-        assertThat(longOf(quotaRow(), "waiting_qty")).isEqualTo(2L);
+-        assertThat(longOf(quotaRow(), "issued_qty")).isEqualTo(3L);
+-        assertThat(bucketRowQty()).isEqualTo(BUCKET_QTY - 5);
+-        assertThat(mergeOutboxCount()).as("兜底只合不发").isZero();
+-    }
+-
+-    @Test
+-    @DisplayName("兜底失败即停：最老格合完后新格撞桶守卫即停（不先合新格、不发消息、不抛）")
+-    void mergeKey_stopsOnGuardFailure(CapturedOutput output) {
+-        // 桶副本只有 3：只够最老那格（3），新格（5）必然撞守卫
+-        jdbcTemplate.update("UPDATE physical_marketing_quota_bucket SET redis_qty = 3 WHERE inv_id = ?",
+-                QUOTA_INV_ID);
+-        long oldest = insertQuotaDetail(Constants.DETAIL_TYPE_DEDUCT, 3);
+-        long newCellA = insertQuotaDetail(Constants.DETAIL_TYPE_DEDUCT, 2);
+-        long newCellB = insertQuotaDetail(Constants.DETAIL_TYPE_DEDUCT, 3);
+-        pinQuotaDetailTime(-5, oldest);
+-        pinQuotaDetailTime(-2, newCellA, newCellB);
+-
+-        MergeKeyResultVO result = inventoryMergeService.mergeKey(
+-                InventorySegmentVO.QUOTA, QUOTA_INV_ID, BUCKET_ID);
+-
+-        assertThat(result.cells()).as("最老一格合掉，第二格守卫不过即停").isEqualTo(1);
+-        assertThat(result.details()).isEqualTo(1);
+-        assertThat(detailCount(1)).as("只有最老格翻走").isEqualTo(1);
+-        assertThat(detailCount(0)).as("新格整格留在 state=0").isEqualTo(2);
+-        assertThat(longOf(quotaRow(), "waiting_qty")).as("只结算最老格").isEqualTo(3L);
+-        assertThat(output.getAll()).as("桶守卫不过只 log.error，不抛").contains("合并桶守卫不过");
+-        assertThat(mergeOutboxCount()).as("兜底不续命：一条消息都不落").isZero();
+-    }
+-
+-    @Test
+-    @DisplayName("兜底 10 格上限：一次最多合最老的 10 格，剩余格留 state=0")
+-    void mergeKey_capsAtTenCells() {
+-        for (int index = 0; index < 12; index++) {
+-            // 12 行、数量 1…12；create_time 由下面一条 UPDATE 统一分配成 12 个不同秒
+-            insertQuotaDetail(Constants.DETAIL_TYPE_DEDUCT, index + 1);
+-        }
+-        jdbcTemplate.update("""
+-                UPDATE physical_marketing_quota_detail
+-                SET create_time = TIMESTAMPADD(SECOND, -14 + quantity, NOW())
+-                WHERE inv_id = ? AND state = 0
+-                """, QUOTA_INV_ID);
+-
+-        MergeKeyResultVO result = inventoryMergeService.mergeKey(
+-                InventorySegmentVO.QUOTA, QUOTA_INV_ID, BUCKET_ID);
+-
+-        assertThat(result.cells()).isEqualTo(Constants.MERGE_MAX_CELLS_PER_KEY);
+-        assertThat(result.details()).isEqualTo(Constants.MERGE_MAX_CELLS_PER_KEY);
+-        assertThat(detailCount(1)).as("最老 10 格已合并").isEqualTo(10);
+-        assertThat(detailCount(0)).as("最新两格（11 + 12）留着下一轮兜底").isEqualTo(2);
+-        assertThat(longOf(quotaRow(), "waiting_qty")).as("1+…+10").isEqualTo(55L);
+-        assertThat(mergeOutboxCount()).as("兜底只合不发").isZero();
+-    }
+-
+-    @Test
+-    @DisplayName("affected != cnt：整格回滚，未被抢走的行留 state=0，台账与桶副本不动")
+-    void affectedMismatch_rollsBackWholeCell() throws Exception {
+-        long firstBizId = insertQuotaDetail(Constants.DETAIL_TYPE_DEDUCT, 3);
+-        long secondBizId = insertQuotaDetail(Constants.DETAIL_TYPE_DEDUCT, 5);
+-        pinQuotaDetailTime(-5, firstBizId, secondBizId);
+-        Long secondId = jdbcTemplate.queryForObject(
+-                "SELECT id FROM physical_marketing_quota_detail WHERE inv_id = ? AND biz_id = ?",
+-                Long.class, QUOTA_INV_ID, secondBizId);
+-        assertThat(secondId).isNotNull();
+-
+-        // 在「聚合之后、翻转之前」让另一条已提交的路径先翻走一行：
+-        // 聚合仍看到 2 行（快照读），翻转只匹配到 1 行 → affected != cnt → 整格回滚。
+-        // 用独立连接（自动提交）模拟并发消费者已提交，而不是把改动混进本事务。
+-        doAnswer(invocation -> {
+-            try (Connection connection = dataSource.getConnection();
+-                 PreparedStatement winner = connection.prepareStatement(
+-                         "UPDATE physical_marketing_quota_detail SET state = 1 WHERE id = ?")) {
+-                winner.setLong(1, secondId);
+-                assertThat(winner.executeUpdate()).isEqualTo(1);
+-            }
+-            // 走真实 mapper（同一事务的 SqlSession），让条件翻转只匹配到剩下那一行
+-            return sqlSessionTemplate.getMapper(IPhysicalQuotaDao.class).flipUnmergedCell(
+-                    invocation.getArgument(0), invocation.getArgument(1), invocation.getArgument(2));
+-        }).when(physicalQuotaDao).flipUnmergedCell(any(), any(), any());
+-
+-        MergeKeyResultVO result = inventoryMergeService.mergePair(
+-                InventorySegmentVO.QUOTA, QUOTA_INV_ID, BUCKET_ID, detailCreateTime(firstBizId));
+-
+-        assertThat(result.cells()).as("翻转行数对不上 → 这一格不算合成功（s+1 本来就没有行）").isZero();
+-        assertThat(result.details()).isZero();
+-        assertThat(detailCount(1)).as("并发赢家那一行已 state=1").isEqualTo(1);
+-        assertThat(detailCount(0)).as("本事务整格回滚，另一行仍是 state=0").isEqualTo(1);
+-        assertThat(longOf(quotaRow(), "waiting_qty")).as("整格回滚，台账不动").isZero();
+-        assertThat(bucketRowQty()).as("桶副本也不动").isEqualTo(BUCKET_QTY);
+-    }
+-
+-    @Test
+-    @DisplayName("兜底 key 选取：两段都按最老未合时间升序、单轮 LIMIT 200")
+-    void listUnmergedMergeKeys_isAscendingAndCappedAtLimitForBothSegments() {
+-        for (int bucketId = 0; bucketId <= Constants.MERGE_BACKSTOP_KEY_LIMIT; bucketId++) {
+-            int offsetSeconds = bucketId - (Constants.MERGE_BACKSTOP_KEY_LIMIT + 1);
+-            jdbcTemplate.update("""
+-                            INSERT INTO physical_marketing_quota_detail (inv_id, bucket_id, quantity, type, biz_type,
+-                                                                         biz_id, state, create_time, update_time)
+-                            VALUES (?, ?, 1, 1, 'LOTTERY_DRAW', ?, 0, TIMESTAMPADD(SECOND, ?, NOW()), NOW())
+-                            """,
+-                    QUOTA_INV_ID, bucketId, BIZ_ID_SEQ.incrementAndGet(), offsetSeconds);
+-            jdbcTemplate.update("""
+-                            INSERT INTO virtual_inventory_quota_detail (inv_id, bucket_id, quantity, biz_type, biz_id,
+-                                                                        state, create_time, update_time)
+-                            VALUES (?, ?, 1, 'LOTTERY_DRAW', ?, 0, TIMESTAMPADD(SECOND, ?, NOW()), NOW())
+-                            """,
+-                    VIRTUAL_INV_ID, bucketId, BIZ_ID_SEQ.incrementAndGet(), offsetSeconds);
+-        }
+-
+-        for (InventorySegmentVO segment : List.of(InventorySegmentVO.QUOTA, InventorySegmentVO.VIRTUAL)) {
+-            List<InventoryMergeKeyVO> keys = inventoryRepository.listUnmergedMergeKeys(
+-                    segment, Constants.MERGE_BACKSTOP_KEY_LIMIT);
+-
+-            assertThat(keys).as("段 %s 单轮封顶", segment.getCode())
+-                    .hasSize(Constants.MERGE_BACKSTOP_KEY_LIMIT);
+-            assertThat(keys.get(0).bucketId()).as("段 %s 最老未合时间升序", segment.getCode()).isZero();
+-            assertThat(keys.get(keys.size() - 1).bucketId())
+-                    .isEqualTo(Constants.MERGE_BACKSTOP_KEY_LIMIT - 1);
+-            assertThat(keys).extracting(InventoryMergeKeyVO::bucketId)
+-                    .as("段 %s 最年轻的 key 被 LIMIT 截掉", segment.getCode())
+-                    .doesNotContain(Constants.MERGE_BACKSTOP_KEY_LIMIT);
+-        }
+-    }
+-
+-    @Test
+-    @DisplayName("兜底一轮：两段各取 key、逐 key 直调合并（quotaKeys / virtualKeys / details 可观察）")
+-    void backstopOnce_mergesKeysOfBothSegments() {
+-        long firstKeyBizId = insertQuotaDetail(Constants.DETAIL_TYPE_DEDUCT, 3);
+-        pinQuotaDetailTime(-5, firstKeyBizId);
+-        jdbcTemplate.update("""
+-                        INSERT INTO physical_marketing_quota_bucket (inv_id, bucket_id, redis_qty, create_time, update_time)
+-                        VALUES (?, 1, ?, NOW(), NOW())
+-                        """,
+-                QUOTA_INV_ID, BUCKET_QTY);
+-        long secondKeyBizId = BIZ_ID_SEQ.incrementAndGet();
+-        jdbcTemplate.update("""
+-                        INSERT INTO physical_marketing_quota_detail (inv_id, bucket_id, quantity, type, biz_type, biz_id,
+-                                                                     state, create_time, update_time)
+-                        VALUES (?, 1, 2, 1, 'LOTTERY_DRAW', ?, 0, TIMESTAMPADD(SECOND, -5, NOW()), NOW())
+-                        """,
+-                QUOTA_INV_ID, secondKeyBizId);
+-        insertVirtualFixtures(4, -5);
+-
+-        var result = inventoryMergeService.backstopOnce();
+-
+-        assertThat(result.quotaKeys()).as("实物段两个 key").isEqualTo(2);
+-        assertThat(result.virtualKeys()).as("虚拟段一个 key").isEqualTo(1);
+-        assertThat(result.details()).as("两段三行明细").isEqualTo(3);
+-        assertThat(longOf(quotaRow(), "waiting_qty")).as("实物段 3 + 2").isEqualTo(5L);
+-        assertThat(detailCount(0)).isZero();
+-        Map<String, Object> virtualRow = jdbcTemplate.queryForMap(
+-                "SELECT surplus_qty, issued_qty FROM virtual_inventory_quota WHERE inv_id = ?", VIRTUAL_INV_ID);
+-        assertThat(longOf(virtualRow, "issued_qty")).as("虚拟段合并直接进 issued").isEqualTo(4L);
+-        assertThat(longOf(virtualRow, "surplus_qty")).isEqualTo(LEDGER_QTY - 4);
+-    }
+-}
+diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/PhysicalQuotaIntegrationTest.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/PhysicalQuotaIntegrationTest.java
+index 3cb9c79..598e7f5 100644
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/PhysicalQuotaIntegrationTest.java
++++ b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/PhysicalQuotaIntegrationTest.java
+@@ -131,26 +131,13 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+         return count == null ? 0 : count;
+     }
+ 
+-    private int mergeOutboxCount() {
++    /** 预扣 / 确认都不该写 outbox（合并消息已随票 08 退休）：全表应为 0 行 */
++    private int outboxRowCount() {
+         Integer count = jdbcTemplate.queryForObject(
+-                "SELECT COUNT(*) FROM outbox_message WHERE destination = ?",
+-                Integer.class, Constants.INVENTORY_MERGE_TOPIC);
++                "SELECT COUNT(*) FROM outbox_message", Integer.class);
+         return count == null ? 0 : count;
+     }
+ 
+-    /**
+-     * 旧对账读数按「已合并」口径读 {@code state = 1} 的 type=1 行：新预扣行不写 {@code state}
+-     * （列默认 0），这里钉成 1 让旧读数维持恒等式——票 08 读数瘦身删掉旧字段时随本夹具一起拆。
+-     */
+-    private void pinDeductDetailMerged(long recordId) {
+-        jdbcTemplate.update("""
+-                        UPDATE physical_marketing_quota_detail
+-                        SET state = 1
+-                        WHERE inv_id = ? AND type = ? AND biz_id = ?
+-                        """,
+-                QUOTA_INV_ID, Constants.DETAIL_TYPE_DEDUCT, recordId);
+-    }
+-
+     @Test
+     @DisplayName("预扣返回即台账已动：surplus -= N、waiting += N、明细一行 type=1，三列守恒")
+     void preDeduct_commitsWaitingImmediately() {
+@@ -263,7 +250,7 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+         assertThat(longOf(quota, "waiting_qty")).as("确认返回即 waiting 转走（没有第二步）").isZero();
+         assertThat(longOf(quota, "issued_qty")).as("确认返回即计入 issued").isEqualTo(3L);
+         assertThat(longOf(quota, "surplus_qty")).as("预扣已扣过 surplus，确认不再扣（总量不变）").isEqualTo(97L);
+-        assertThat(mergeOutboxCount()).as("确认不再发合并消息").isZero();
++        assertThat(outboxRowCount()).as("确认不再发合并消息").isZero();
+ 
+         // B2 三列守恒：初值 100 = surplus + waiting + issued
+         assertThat(longOf(quota, "surplus_qty") + longOf(quota, "waiting_qty") + longOf(quota, "issued_qty"))
+@@ -282,7 +269,7 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+         var quota = quotaRow();
+         assertThat(longOf(quota, "issued_qty")).as("转移只发生一次（第二笔撞键回放，不再转）").isEqualTo(1L);
+         assertThat(longOf(quota, "waiting_qty")).isZero();
+-        assertThat(mergeOutboxCount()).as("不发合并消息").isZero();
++        assertThat(outboxRowCount()).as("不发合并消息").isZero();
+     }
+ 
+     @Test
+@@ -296,7 +283,7 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+                 .isEqualTo(ResponseCode.SYSTEM_ERROR.getCode());
+ 
+         assertThat(claimRowCount(RECORD_ID)).as("整组回滚，不落确认行").isZero();
+-        assertThat(mergeOutboxCount()).as("不发消息").isZero();
++        assertThat(outboxRowCount()).as("不发消息").isZero();
+         assertThat(longOf(quotaRow(), "waiting_qty")).isZero();
+         assertThat(longOf(quotaRow(), "issued_qty")).isZero();
+     }
+@@ -321,32 +308,30 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
+         assertThat(longOf(quota, "waiting_qty")).as("台账不动").isEqualTo(1L);
+         assertThat(longOf(quota, "issued_qty")).isZero();
+         assertThat(output.getAll()).as("不变量破坏要人看：error 日志").contains("兑换确认守卫不过");
+-        assertThat(mergeOutboxCount()).as("不留半组、不落状态，也不发消息").isZero();
++        assertThat(outboxRowCount()).as("不留半组、不落状态，也不发消息").isZero();
+     }
+ 
+     @Test
+-    @DisplayName("对账：统一恒等式 waiting + issued == merged(type=1)；确认返回即在台账两列之间搬完（和不变）")
+-    void audit_unifiedIdentity_separatesPendingClaim() {
++    @DisplayName("对账（票 08）：读数瘦成台账三列直读——surplus / waiting / issued，确认返回即在台账两列之间搬完")
++    void audit_readsLedgerColumnsDirectly() {
+         assertThat(preDeduct(3, RECORD_ID)).isTrue();
+-        pinDeductDetailMerged(RECORD_ID);
+ 
+-        var merged = inventoryAuditService.audit(InventorySegmentVO.QUOTA, QUOTA_INV_ID);
+-        assertThat(merged.isLedgerConsistent()).as("waiting + issued == 已合并预扣和").isTrue();
+-        assertThat(merged.getPendingDeductQty()).as("预扣已全部合并").isZero();
+-        assertThat(merged.getPendingClaimQty()).isZero();
+-        assertThat(merged.getMergedDeductQty()).isEqualTo(3L);
+-        assertThat(merged.getLedgerWaitingQty()).isEqualTo(3L);
+-        assertThat(merged.getLedgerIssuedQty()).isZero();
++        var before = inventoryAuditService.audit(InventorySegmentVO.QUOTA, QUOTA_INV_ID);
++        assertThat(before.getInvId()).isEqualTo(QUOTA_INV_ID);
++        assertThat(before.getSurplusQty()).as("surplus 直读台账").isEqualTo(QUOTA_SURPLUS - 3);
++        assertThat(before.getLedgerWaitingQty()).isEqualTo(3L);
++        assertThat(before.getLedgerIssuedQty()).isZero();
+ 
+         // 确认返回即在两列之间搬完：waiting -2 / issued +2（B6，没有第二步）
+         inventoryQuotaService.confirmIssued(QUOTA_INV_ID, InventoryBizTypes.LOTTERY_CLAIM, RECORD_ID, 2);
+ 
+-        var claimed = inventoryAuditService.audit(InventorySegmentVO.QUOTA, QUOTA_INV_ID);
+-        assertThat(claimed.getLedgerWaitingQty()).isEqualTo(1L);
+-        assertThat(claimed.getLedgerIssuedQty()).isEqualTo(2L);
+-        assertThat(claimed.isLedgerConsistent()).as("type=2 只在台账两列之间搬，和不变").isTrue();
+-        assertThat(claimed.getPendingDeductQty()).as("type=2 不算预扣").isZero();
+-        assertThat(claimed.getMergedDeductQty()).as("type=2 不算已合并预扣").isEqualTo(3L);
++        var after = inventoryAuditService.audit(InventorySegmentVO.QUOTA, QUOTA_INV_ID);
++        assertThat(after.getLedgerWaitingQty()).isEqualTo(1L);
++        assertThat(after.getLedgerIssuedQty()).isEqualTo(2L);
++        assertThat(after.getSurplusQty()).as("确认不碰 surplus（总量不变）").isEqualTo(QUOTA_SURPLUS - 3);
++        // B2：读数本身就是台账三列，守恒等式由这四列直读验证
++        assertThat(after.getSurplusQty() + after.getLedgerWaitingQty() + after.getLedgerIssuedQty())
++                .isEqualTo(QUOTA_SURPLUS);
+     }
+ 
+     @Test
+diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/VirtualInventoryIntegrationTest.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/VirtualInventoryIntegrationTest.java
+index f4eb3f7..fbb69f9 100644
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/VirtualInventoryIntegrationTest.java
++++ b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/inventory/VirtualInventoryIntegrationTest.java
+@@ -21,8 +21,8 @@ import static org.assertj.core.api.Assertions.assertThat;
+ /**
+  * 虚拟权益池（积分 / 抽奖次数）预扣集成用例（票 06）：预扣进进程内合并器，**返回即台账已动**——
+  * {@code surplus -= N, issued += N} 已提交、明细恰好一行，没有第二步、没有 Redis 桶（桶层已删，
+- * 台账三列是唯一真相）。合并引擎与兜底另有 {@code InventoryMergeEngineIntegrationTest}，
+- * 只对切换前的存量行有意义（票 08 退休）。
++ * 台账三列是唯一真相）。旧合并机制（时间格 / 兜底 / 消息）已随票 08 整条删除，
++ * 守恒与明细等式由 {@code InventoryQuotaConservationIntegrationTest}（B2 / B3）锁住。
+  */
+ @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+ @ActiveProfiles("test")
+diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/raffle/RaffleShippingConsumerIntegrationTest.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/raffle/RaffleShippingConsumerIntegrationTest.java
+index 457024b..d4ec4eb 100644
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/raffle/RaffleShippingConsumerIntegrationTest.java
++++ b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/raffle/RaffleShippingConsumerIntegrationTest.java
+@@ -108,7 +108,7 @@ public class RaffleShippingConsumerIntegrationTest extends RaffleApiTestBase {
+         assertThat(afterConfirm.get("waiting_qty")).as("确认返回即 waiting 转走").isEqualTo(0L);
+         assertThat(afterConfirm.get("issued_qty")).as("确认返回即计入 issued").isEqualTo(1L);
+         assertThat(afterConfirm.get("surplus_qty")).as("台账总量不变（9 份剩余）").isEqualTo(9L);
+-        assertThat(outboxCount(Constants.INVENTORY_MERGE_TOPIC)).as("确认不再发合并消息（没有第二步）").isZero();
++        assertThat(outboxCountOtherThanLotteryDrawn()).as("确认不再发合并消息（没有第二步）").isZero();
+ 
+         // 确认收货：已发货 → 已完成
+         JsonNode received = confirmReceived(USER, recordId);
+diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/raffle/RaffleShippingOutboxIntegrationTest.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/raffle/RaffleShippingOutboxIntegrationTest.java
+index f7f08e8..241c468 100644
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/raffle/RaffleShippingOutboxIntegrationTest.java
++++ b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/raffle/RaffleShippingOutboxIntegrationTest.java
+@@ -33,9 +33,6 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
+     private static final long USER = 3101L;
+     private static final long OTHER_USER = 3102L;
+     private static final String TOKEN = "b6d4f0a0-2222-4bbb-8ccc-000000000002";
+-    /** 库存合并 topic 的最终值在票 09 落进 types.inventory.Constants；本票只验共享件能力。 */
+-    private static final String INVENTORY_MERGE_TOPIC =
+-            com.betterschool.marketing.types.inventory.Constants.INVENTORY_MERGE_TOPIC;
+ 
+     @Autowired
+     private IOutboxDao outboxDao;
+@@ -245,7 +242,7 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
+                         + " (msg_id, destination, payload, delay_level, delay_ms, state, retry_count,"
+                         + " create_time, update_time)"
+                         + " VALUES (?, ?, ?, 0, 2000, ?, 0, NOW(), NOW())",
+-                msgId, INVENTORY_MERGE_TOPIC,
++                msgId, "uk-probe-destination",
+                 "{\"segment\":\"quota\",\"invId\":1,\"bucketId\":0,\"cellTime\":\"2026-10-20T10:00:10\"}",
+                 OutboxStatus.PENDING.getCode());
+     }
+diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/InventoryMergeTestSupport.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/InventoryMergeTestSupport.java
+index 2928d93..4864d91 100644
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/InventoryMergeTestSupport.java
++++ b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/InventoryMergeTestSupport.java
+@@ -1,33 +1,25 @@
+ package com.betterschool.marketing.integration.support;
+ 
+-import org.springframework.jdbc.core.JdbcTemplate;
++import com.betterschool.marketing.infrastructure.inventory.merge.QuotaMergeBuffer;
+ 
+ /**
+- * 合并用例的公共夹具：把「这一秒刚落的」明细行造旧，模拟**秒已封口**。
+- * <p>
+- * 用途只剩**兜底路径**：{@code mergeKey} 自己查 {@code MIN(create_time)} 且要求
+- * {@code create_time < NOW()}，用例里预扣后立刻驱动兜底，不能真等 1 秒（慢且抖动），
+- * 所以直接把当前未合行的 {@code create_time} 前移 2 秒——语义等价于「这一秒已经过去」。
+- * <p>
+- * <b>消息路径不要用这个夹具</b>：{@code mergePair} 合的是消息载荷里那个 {@code cellTime}，
+- * 把明细行的时间改掉之后消息就指不到它了（会变成「格是空的、消息空转」）。要走消息路径的用例
+- * 自己钉两格（{@code s} 与 {@code s + 1}）并把钉出来的值当 {@code cellTime} 传给服务。
++ * 合并用例的公共夹具（票 08 改写）：旧合并机制（时间格 / 兜底 / 消息）已整条删除，
++ * 这里只剩「等进程内合并器把缓冲排空」一件事——fire-and-forget 不存在于库存侧
++ * （两个 {@code submitAndWait} 都等结果），用例返回时事务已提交；本工具只服务
++ * 「跨请求确认排空」与将来可能的异步入口，给守恒断言一个稳定的观察点。
+  */
+ public final class InventoryMergeTestSupport {
+ 
+     private InventoryMergeTestSupport() {
+     }
+ 
+-    public static void sealUnmergedDetails(JdbcTemplate jdbcTemplate) {
+-        jdbcTemplate.update("""
+-                UPDATE virtual_inventory_quota_detail
+-                SET create_time = DATE_SUB(create_time, INTERVAL 2 SECOND)
+-                WHERE state = 0
+-                """);
+-        jdbcTemplate.update("""
+-                UPDATE physical_marketing_quota_detail
+-                SET create_time = DATE_SUB(create_time, INTERVAL 2 SECOND)
+-                WHERE state = 0
+-                """);
++    /** 等待合并器排空（缓冲清零且无在途 flush）；超时返回 false，用例据此快速失败 */
++    public static boolean awaitDrained(QuotaMergeBuffer buffer, long timeoutMs) {
++        return buffer.awaitIdle(timeoutMs);
++    }
++
++    /** 当前积压件数（含在途 flush）：非 0 即还有件没落库 */
++    public static int pendingOf(QuotaMergeBuffer buffer) {
++        return buffer.pending();
+     }
+ }
+diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/RaffleApiTestBase.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/RaffleApiTestBase.java
+index dfa0308..6fe4caf 100644
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/RaffleApiTestBase.java
++++ b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/integration/support/RaffleApiTestBase.java
+@@ -1,12 +1,9 @@
+ package com.betterschool.marketing.integration.support;
+ 
+-import com.betterschool.marketing.domain.inventory.service.IInventoryMergeService;
+ import com.betterschool.marketing.domain.raffle.service.IRaffleShippingService;
+ import com.betterschool.marketing.domain.raffle.service.warmup.IRaffleWarmupService;
+ import com.betterschool.marketing.infrastructure.common.outbox.OutboxMessageSender;
+ import com.betterschool.marketing.trigger.raffle.listener.LotteryShippingConsumer;
+-import com.betterschool.marketing.types.inventory.Constants;
+-import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+ import com.fasterxml.jackson.databind.JsonNode;
+ import com.fasterxml.jackson.databind.ObjectMapper;
+ import org.junit.jupiter.api.BeforeAll;
+@@ -75,8 +72,6 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
+     @Autowired
+     protected IRaffleWarmupService raffleWarmupService;
+     @Autowired
+-    protected IInventoryMergeService inventoryMergeService;
+-    @Autowired
+     protected IRaffleShippingService raffleShippingService;
+     @Autowired
+     protected LotteryShippingConsumer lotteryShippingConsumer;    @Autowired
+@@ -316,6 +311,14 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
+         return count == null ? 0 : count;
+     }
+ 
++    /** 中奖事件之外不应再有别的 outbox 行（库存合并消息已随票 08 退休，确认不再产生第二步） */
++    protected int outboxCountOtherThanLotteryDrawn() {
++        Integer count = jdbcTemplate.queryForObject(
++                "SELECT COUNT(*) FROM outbox_message WHERE destination <> ?",
++                Integer.class, com.betterschool.marketing.types.common.Constants.LOTTERY_DRAWN_TOPIC);
++        return count == null ? 0 : count;
++    }
++
+     protected Map<String, Object> quotaOf(long invId) {
+         return jdbcTemplate.queryForMap(
+                 "SELECT surplus_qty, waiting_qty, issued_qty FROM physical_marketing_quota WHERE inv_id = ?", invId);
+diff --git a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/unit/inventory/InventoryMergeMessageTest.java b/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/unit/inventory/InventoryMergeMessageTest.java
+deleted file mode 100644
+index 06f384e..0000000
+--- a/backend/marketing/marketing-app/src/test/java/com/betterschool/marketing/unit/inventory/InventoryMergeMessageTest.java
++++ /dev/null
+@@ -1,65 +0,0 @@
+-package com.betterschool.marketing.unit.inventory;
+-
+-import com.betterschool.marketing.types.inventory.InventoryMergeMessage;
+-import com.fasterxml.jackson.databind.JsonNode;
+-import com.fasterxml.jackson.databind.ObjectMapper;
+-import com.fasterxml.jackson.databind.SerializationFeature;
+-import org.junit.jupiter.api.DisplayName;
+-import org.junit.jupiter.api.Test;
+-import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
+-
+-import java.time.LocalDateTime;
+-
+-import static org.assertj.core.api.Assertions.assertThat;
+-
+-/**
+- * 票 03：合并消息的线上形状——`cellTime` 是**无时区**的 ISO 秒串（{@code 2026-10-20T10:00:10}），
+- * 与 {@code create_time DATETIME} 一一对应；序列化 / 反序列化都必须原样往返。
+- * <p>
+- * 裸 {@code new ObjectMapper()} 会把 {@code LocalDateTime} 写成数组：{@code WRITE_DATES_AS_TIMESTAMPS}
+- * 默认是开的，是 Boot 的 {@code JacksonAutoConfiguration} 把它关掉（以及注册 JavaTimeModule）。
+- * 这里照抄那一档配置，断的才是线上形状；真 mapper 由集成测试的载荷断言兜底。
+- */
+-@DisplayName("库存合并消息 · 载荷形状（票 03）")
+-class InventoryMergeMessageTest {
+-
+-    private static final LocalDateTime CELL_TIME = LocalDateTime.of(2026, 10, 20, 10, 0, 10);
+-
+-    private final ObjectMapper objectMapper = Jackson2ObjectMapperBuilder.json()
+-            .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+-            .build();
+-
+-    @Test
+-    @DisplayName("cellTime 序列化成无时区秒串，四个字段原样往返")
+-    void cellTime_roundTripsAsZonelessSecondString() throws Exception {
+-        String json = objectMapper.writeValueAsString(
+-                new InventoryMergeMessage("quota", 9101L, 0, CELL_TIME));
+-
+-        JsonNode payload = objectMapper.readTree(json);
+-        assertThat(payload.size()).as("定位三字段 + 责任起点秒").isEqualTo(4);
+-        assertThat(payload.path("cellTime").asText())
+-                .as("无时区字符串，不是 epoch、也没有 +08:00 后缀")
+-                .isEqualTo("2026-10-20T10:00:10");
+-
+-        InventoryMergeMessage back = objectMapper.readValue(json, InventoryMergeMessage.class);
+-        assertThat(back.getSegment()).isEqualTo("quota");
+-        assertThat(back.getInvId()).isEqualTo(9101L);
+-        assertThat(back.getBucketId()).isZero();
+-        assertThat(back.getCellTime()).isEqualTo(CELL_TIME);
+-    }
+-
+-    @Test
+-    @DisplayName("只给定位时 cellTime 为 null（由仓储回填）；withCellTime 返回新实例、不改入参")
+-    void locatorOnlyMessage_fillsCellTimeThroughWithCellTime() {
+-        InventoryMergeMessage locatorOnly = new InventoryMergeMessage("virtual", 9001L, 3);
+-        assertThat(locatorOnly.getCellTime()).as("域层给不出 DB 的时间").isNull();
+-
+-        InventoryMergeMessage stamped = locatorOnly.withCellTime(CELL_TIME);
+-
+-        assertThat(stamped.getCellTime()).isEqualTo(CELL_TIME);
+-        assertThat(stamped.getSegment()).isEqualTo("virtual");
+-        assertThat(stamped.getInvId()).isEqualTo(9001L);
+-        assertThat(stamped.getBucketId()).isEqualTo(3);
+-        assertThat(locatorOnly.getCellTime()).as("不回写入参").isNull();
+-    }
+-}

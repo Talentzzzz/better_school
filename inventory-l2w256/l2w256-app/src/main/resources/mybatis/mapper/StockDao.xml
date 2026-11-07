@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.inventory.infrastructure.dao.IStockDao">
+
+    <!--
+      热点行的核心语句：一条 UPDATE 扣 N 件，把 N 次「加锁-提交-解锁」压成 1 次。
+      qty >= #{qty} 是正确性兜底：并发下唯一能保证「不扣成负数」的地方是 DB 自己，
+      应用层的任何判断都会被并发穿透。affected=0 即库存不足。
+    -->
+    <update id="deduct">
+        UPDATE stock
+        SET qty         = qty - #{qty},
+            update_time = CURRENT_TIMESTAMP(3)
+        WHERE sku_id = #{skuId}
+          AND qty &gt;= #{qty}
+    </update>
+
+    <!--
+      流水先行：INSERT IGNORE 撞 uk_biz_no 时静默跳过，返回值 = 实际新增行数。
+      幂等裁决完全交给唯一键——这是跨实例、跨重启、跨重放都能成立的唯一做法。
+    -->
+    <insert id="batchInsertDetail">
+        INSERT IGNORE INTO stock_detail (biz_no, sku_id, qty, status)
+        VALUES
+        <foreach collection="list" item="item" separator=",">
+            (#{item.bizNo}, #{item.skuId}, #{item.qty}, #{item.status})
+        </foreach>
+    </insert>
+
+    <!-- 仅在批量 INSERT 后发现新增行数 < 批大小时调用：捞回已存在的流水（它们的 qty 已经扣过） -->
+    <select id="listDetailsByBizNos" resultType="cn.inventory.infrastructure.dao.po.StockDetailPO">
+        SELECT id, biz_no, sku_id, qty, status, created_at
+        FROM stock_detail
+        WHERE biz_no IN
+        <foreach collection="bizNos" item="bizNo" separator="," open="(" close=")">
+            #{bizNo}
+        </foreach>
+    </select>
+
+    <select id="getQty" resultType="java.lang.Integer">
+        SELECT qty FROM stock WHERE sku_id = #{skuId}
+    </select>
+
+    <!-- upsert：用 8.0.19+ 的行别名写法（AS new），VALUES(qty) 在 MySQL 9.x 上已是弃用语法 -->
+    <update id="upsertStock">
+        INSERT INTO stock (sku_id, qty, update_time)
+        VALUES (#{skuId}, #{qty}, CURRENT_TIMESTAMP(3)) AS new
+        ON DUPLICATE KEY UPDATE qty = new.qty, update_time = CURRENT_TIMESTAMP(3)
+    </update>
+
+    <delete id="clearDetailBatch">
+        DELETE FROM stock_detail WHERE sku_id = #{skuId} LIMIT #{limit}
+    </delete>
+
+</mapper>

@@ -16,7 +16,7 @@ import java.util.List;
  */
 public interface IChatService {
 
-    /** 建/取 1v1 会话：direct_room_pair.uk_pair 幂等返回既有 room */
+    /** 建/取 1v1 会话：user_pair_room.uk_pair 幂等返回既有 room */
     Response<ChatRoomResponseDTO> createDirectRoom(CreateDirectRoomRequestDTO request);
 
     /** 发送消息：200 返回完整消息体（含 roomId/seq），重复提交同 clientMsgId 收敛同一条 */

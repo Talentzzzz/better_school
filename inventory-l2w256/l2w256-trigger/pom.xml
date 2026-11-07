@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>cn.inventory</groupId>
+        <artifactId>inventory-l2w256</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>l2w256-trigger</artifactId>
+    <name>l2w256-trigger</name>
+    <description>触发层：HTTP 入口 + 结果码映射 + 进程内计数，只依赖 case / api / domain</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>cn.inventory</groupId>
+            <artifactId>l2w256-case</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>cn.inventory</groupId>
+            <artifactId>l2w256-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>cn.inventory</groupId>
+            <artifactId>l2w256-domain</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>cn.inventory</groupId>
+            <artifactId>l2w256-types</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+        </dependency>
+        <!-- spring-web 的 HttpMediaType*Exception 继承自 jakarta.servlet.ServletException，
+             编译期需要这个 API（运行期由内嵌容器提供，所以是 provided） -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.validation</groupId>
+            <artifactId>jakarta.validation-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+</project>

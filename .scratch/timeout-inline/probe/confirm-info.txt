@@ -1,0 +1,20 @@
+﻿
+  [info] logical db 'logic_db' units={ds0=org.apache.shardingsphere.infra.metadata.database.resource.unit.StorageUnit@2
+132b483}
+  [info]   rule ShardingRule :: org.apache.shardingsphere.sharding.api.config.ShardingRuleConfiguration@37efd131
+  [info]   rule SingleRule :: org.apache.shardingsphere.single.config.SingleRuleConfiguration@5cdd09b1
+  [info]   singleTableDataNodes (0) keys=[]
+  [info] logical db 'probe' units={ds0=org.apache.shardingsphere.infra.metadata.database.resource.unit.StorageUnit@48a7
+0b4}
+  [info]   rule ShardingRule :: org.apache.shardingsphere.sharding.api.config.ShardingRuleConfiguration@da8bd0d
+  [info]   rule SingleRule :: org.apache.shardingsphere.single.config.SingleRuleConfiguration@4982fc4a
+  [info]   singleTableDataNodes (4) keys=[errand_order, product_order, review_task, user_account]
+  [info] logical db 'probe' units={ds0=org.apache.shardingsphere.infra.metadata.database.resource.unit.StorageUnit@34d2
+ab1f}
+  [info]   rule ShardingRule :: org.apache.shardingsphere.sharding.api.config.ShardingRuleConfiguration@d3588ae
+  [info]   rule SingleRule :: org.apache.shardingsphere.single.config.SingleRuleConfiguration@48fe184c
+  [info]   singleTableDataNodes (0) keys=[]
+  [info] HINT_MANAGER_HOLDER class = com.alibaba.ttl.TransmittableThreadLocal
+  [info] ThreadLocal impl class = java.lang.ThreadLocal
+
+

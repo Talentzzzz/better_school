@@ -1,0 +1,1632 @@
+diff --git a/CONTEXT.md b/CONTEXT.md
+index fa07930..e018957 100644
+--- a/CONTEXT.md
++++ b/CONTEXT.md
+@@ -247,7 +247,7 @@ _Avoid_: 驳回
+ _Avoid_: 点赞数（那是展示字段名，不是这条口径）、近似计数、互动计数（已拆分）
+ 
+ **浏览量**：
+-帖子、闲置商品与跑腿订单浏览的 UV 数：按用户去重，一人一对象只计一次（三域同构：明细表一人一对象一行即事实源，计数加速列同事务推进、恒等于明细行数——是**精确值**）。INSERT 成功才算一次新浏览，重复进详情只刷新最近浏览时刻、不加数；**匿名访问（未登录）不计入**——明细主键的一半是 user_id，无主无处可落（商品是语义变更：旧口径匿名也计、纯累加 PV 近似值，随市集 UV 体系上线作废，`product.view_count` 旧 PV 列退役）。仍是异步合并写入（允许短暂滞后与极端丢失），但重复浏览天然幂等，无需对账回补。浏览明细同时是「我的浏览历史」、主页 feed 与市集两域推荐页（闲置 / 跑腿 tab）已读灰显（viewed 标记）的数据源；「我的浏览历史」页保持帖子专属，闲置与跑腿的浏览痕迹只在市集页以整卡灰显呈现，不另设历史列表入口。
++帖子、闲置商品与跑腿订单浏览的 UV 数：按用户去重，一人一对象只计一次（三域同构：明细表一人一对象一行即事实源，计数加速列同事务推进、恒等于明细行数——是**精确值**）。INSERT 成功才算一次新浏览，重复进详情只刷新最近浏览时刻、不加数；**匿名访问（未登录）不计入**——明细主键的一半是 user_id，无主无处可落（商品是语义变更：旧口径匿名也计、纯累加 PV 近似值，随市集 UV 体系上线作废，`product.view_count` 旧 PV 列已删列）。仍是异步合并写入（允许短暂滞后与极端丢失），但重复浏览天然幂等，无需对账回补。浏览明细同时是「我的浏览历史」、主页 feed 与市集两域推荐页（闲置 / 跑腿 tab）已读灰显（viewed 标记）的数据源；「我的浏览历史」页保持帖子专属，闲置与跑腿的浏览痕迹只在市集页以整卡灰显呈现，不另设历史列表入口。
+ _Avoid_: 互动计数（已拆分）、纯累加值（三域口径均已是 UV）、PV（那是按次累加，商品旧口径）
+ 
+ **热度**：
+diff --git a/backend/better-school/bs-app/src/main/resources/mybatis/mapper/ErrandMapper.xml b/backend/better-school/bs-app/src/main/resources/mybatis/mapper/ErrandMapper.xml
+index 6d68902..e12c332 100644
+--- a/backend/better-school/bs-app/src/main/resources/mybatis/mapper/ErrandMapper.xml
++++ b/backend/better-school/bs-app/src/main/resources/mybatis/mapper/ErrandMapper.xml
+@@ -576,4 +576,59 @@
+         WHERE errand_order_id = #{orderId}
+     </update>
+ 
++    <!-- ── feed 索引全量重建（market-feed-uv 票 06：兜底恢复手段，照帖子 IPostDao 的 rebuildFeedIndex 样板手动触发）── -->
++
++    <!-- 重建第一步：清空索引表。用 DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉与重灌语句的原子性 -->
++    <delete id="clearFeedIndex">
++        DELETE FROM errand_feed_index
++    </delete>
++
++    <!-- 重灌：一单一行 1:1 投影。行集 = PUBLISHED 订单 ∪ 有过审批通过的订单（行常驻口径：通过事务才诞生行、
++         之后 13 态流转只翻快照、行永不删除；审核通过前的草稿/待支付/待审/驳回订单不凭空进索引）。
++         feed_time 取审核记录里最近一次 APPROVE 时刻（与票 01 回填脚本同口径），查不到审批流水的存量老单取
++         create_time 兜底；price = reward；view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步
++         同时把「过审前被浏览、旁路命中 0 行」漏计的那部分追平 -->
++    <insert id="rebuildFeedIndexProjection">
++        INSERT INTO errand_feed_index (errand_order_id, state, feed_time, price, view_count, update_time)
++        SELECT e.errand_order_id,
++               e.state,
++               COALESCE((SELECT MAX(cr.create_time)
++                           FROM content_review cr
++                          WHERE cr.target_type = 'ERRAND'
++                            AND cr.target_id = e.errand_order_id
++                            AND cr.action = 'APPROVE'),
++                        e.create_time),
++               e.reward,
++               COALESCE(evc.view_count, 0),
++               NOW()
++          FROM errand_order e
++          LEFT JOIN errand_view_count evc ON evc.errand_order_id = e.errand_order_id
++         WHERE e.state = 'PUBLISHED'
++            OR EXISTS (SELECT 1
++                         FROM content_review cr2
++                        WHERE cr2.target_type = 'ERRAND'
++                          AND cr2.target_id = e.errand_order_id
++                          AND cr2.action = 'APPROVE')
++    </insert>
++
++    <!-- 浏览 UV 加速列校准第一步：清掉没有明细行的孤儿计数行（懒建行口径：无浏览不建行） -->
++    <delete id="deleteViewCountsMissingHistory">
++        DELETE FROM errand_view_count
++         WHERE NOT EXISTS (SELECT 1
++                             FROM errand_view_history h
++                            WHERE h.errand_order_id = errand_view_count.errand_order_id)
++    </delete>
++
++    <!-- 重灌：errand_view_count 重投影 = errand_view_history 行数（ODKU：缺行补建、漂移值刷新、
++         已对齐的行落回同值，幂等不动点） -->
++    <insert id="recalibrateViewCounts">
++        INSERT INTO errand_view_count (errand_order_id, view_count, create_time, update_time)
++        SELECT h.errand_order_id, COUNT(*), NOW(), NOW()
++          FROM errand_view_history h
++         GROUP BY h.errand_order_id
++        ON DUPLICATE KEY UPDATE
++            view_count  = VALUES(view_count),
++            update_time = NOW()
++    </insert>
++
+ </mapper>
+diff --git a/backend/better-school/bs-app/src/main/resources/mybatis/mapper/ProductMapper.xml b/backend/better-school/bs-app/src/main/resources/mybatis/mapper/ProductMapper.xml
+index c27d35b..c9f0e50 100644
+--- a/backend/better-school/bs-app/src/main/resources/mybatis/mapper/ProductMapper.xml
++++ b/backend/better-school/bs-app/src/main/resources/mybatis/mapper/ProductMapper.xml
+@@ -2,8 +2,8 @@
+ <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+ <mapper namespace="com.betterschool.infrastructure.dao.product.IProductDao">
+ 
+-    <!-- 读路径换源（market-feed-uv 票 02）：viewCount 从主表列 p.view_count 换到计数表 product_view_count
+-         （UV 加速列，真源 product_view_history）；主表列停读不删列（删列随收口票 06）。未浏览过的商品
++    <!-- 读路径换源（market-feed-uv 票 02）：viewCount 从主表列换到计数表 product_view_count
++         （UV 加速列，真源 product_view_history）；主表旧 PV 列已随票 06 删列。未浏览过的商品
+          计数行不存在，IFNULL 归 0。所有带本片段的查询必须带 pvc 的 LEFT JOIN -->
+     <sql id="baseColumns">
+         p.id, p.product_id, p.user_id, p.title, p.description, p.images, p.price, p.trade_location,
+@@ -16,14 +16,15 @@
+         LEFT JOIN product_view_count pvc ON pvc.product_id = p.product_id
+     </sql>
+ 
++    <!-- 主表不再有浏览列（market-feed-uv 票 06 删列）：浏览 UV 只落 product_view_history + product_view_count -->
+     <insert id="insert" parameterType="com.betterschool.infrastructure.dao.product.po.ProductPO"
+             useGeneratedKeys="true" keyProperty="id">
+         INSERT INTO product (product_id, user_id, title, description, images, price, trade_location,
+                              category, state, review_round, review_entered_at,
+-                             view_count, create_time, update_time, expire_at)
++                             create_time, update_time, expire_at)
+         VALUES (0, #{userId}, #{title}, #{description}, #{images}, #{price}, #{tradeLocation},
+                 #{category}, #{state}, #{reviewRound}, #{reviewEnteredAt},
+-                #{viewCount}, #{createTime}, #{updateTime}, #{expireAt})
++                #{createTime}, #{updateTime}, #{expireAt})
+     </insert>
+ 
+     <!-- 业务 ID 回写：product_id = id（同事务，见 sql.md 主键口径） -->
+@@ -484,4 +485,59 @@
+         WHERE product_id = #{productId}
+     </update>
+ 
++    <!-- ── feed 索引全量重建（market-feed-uv 票 06：兜底恢复手段，照帖子 IPostDao 的 rebuildFeedIndex 样板手动触发）── -->
++
++    <!-- 重建第一步：清空索引表。用 DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉与重灌语句的原子性 -->
++    <delete id="clearFeedIndex">
++        DELETE FROM product_feed_index
++    </delete>
++
++    <!-- 重灌：一商品一行 1:1 投影。行集 = ON_SALE 商品 ∪ 有过审批通过的商品（运行期语义：通过事务才诞生行、
++         之后 state 跟随流转、行不消失；从未通过审的待审/驳回/草稿商品不凭空进索引）。feed_time 取审核记录
++         里最近一次 APPROVE 时刻（与票 01 回填脚本同口径），查不到审批流水的存量老商品取 create_time 兜底；
++         view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步同时把「过审前被浏览、旁路命中 0 行」
++         漏计的那部分追平（运行期旁路只在本行存在后累加），也与热度排序键的读口径一致 -->
++    <insert id="rebuildFeedIndexProjection">
++        INSERT INTO product_feed_index (product_id, state, feed_time, price, view_count, update_time)
++        SELECT p.product_id,
++               p.state,
++               COALESCE((SELECT MAX(cr.create_time)
++                           FROM content_review cr
++                          WHERE cr.target_type = 'PRODUCT'
++                            AND cr.target_id = p.product_id
++                            AND cr.action = 'APPROVE'),
++                        p.create_time),
++               p.price,
++               COALESCE(pvc.view_count, 0),
++               NOW()
++          FROM product p
++          LEFT JOIN product_view_count pvc ON pvc.product_id = p.product_id
++         WHERE p.state = 'ON_SALE'
++            OR EXISTS (SELECT 1
++                         FROM content_review cr2
++                        WHERE cr2.target_type = 'PRODUCT'
++                          AND cr2.target_id = p.product_id
++                          AND cr2.action = 'APPROVE')
++    </insert>
++
++    <!-- 浏览 UV 加速列校准第一步：清掉没有明细行的孤儿计数行（懒建行口径：无浏览不建行） -->
++    <delete id="deleteViewCountsMissingHistory">
++        DELETE FROM product_view_count
++         WHERE NOT EXISTS (SELECT 1
++                             FROM product_view_history h
++                            WHERE h.product_id = product_view_count.product_id)
++    </delete>
++
++    <!-- 重灌：product_view_count 重投影 = product_view_history 行数（ODKU：缺行补建、漂移值刷新、
++         已对齐的行落回同值，幂等不动点） -->
++    <insert id="recalibrateViewCounts">
++        INSERT INTO product_view_count (product_id, view_count, create_time, update_time)
++        SELECT h.product_id, COUNT(*), NOW(), NOW()
++          FROM product_view_history h
++         GROUP BY h.product_id
++        ON DUPLICATE KEY UPDATE
++            view_count  = VALUES(view_count),
++            update_time = NOW()
++    </insert>
++
+ </mapper>
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/errand/ErrandFeedIndexRebuildIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/errand/ErrandFeedIndexRebuildIntegrationTest.java
+new file mode 100644
+index 0000000..6efcdd3
+--- /dev/null
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/errand/ErrandFeedIndexRebuildIntegrationTest.java
+@@ -0,0 +1,277 @@
++package com.betterschool.integration.errand;
++
++import com.betterschool.domain.errand.adapter.repository.IErrandRepository;
++import com.betterschool.infrastructure.adapter.merge.CountAction;
++import com.betterschool.infrastructure.adapter.merge.CountEvent;
++import com.betterschool.infrastructure.adapter.merge.ICountFlushHandler;
++import com.betterschool.integration.support.CommunityApiTestBase;
++import com.betterschool.trigger.job.MarketFeedIndexRebuildJob;
++import org.junit.jupiter.api.DisplayName;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++
++import java.sql.Timestamp;
++import java.time.LocalDateTime;
++import java.util.Arrays;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.atomic.AtomicLong;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++/**
++ * market-feed-uv 票 06：跑腿 feed 索引全量重建 job——兜底恢复手段。
++ * 经 trigger 层 handler（xxl-job 入口）调真实链路，断言只看外部可观察状态：重建后 errand_feed_index 与
++ * errand_order / content_review / errand_view_count 严格一致、errand_view_count 恒等于
++ * errand_view_history 行数；行常驻口径下「通过前流转点 0 行」「浏览旁路命中 0 行」的缺行与跨表直改的
++ * 漂移人工制造后由重建修复；重跑是幂等不动点（照帖子 {@code FeedIndexRebuildIntegrationTest} 先例）。
++ */
++@DisplayName("跑腿 feed 索引全量重建：严格一致 / 缺行与漂移修复 / 计数校准 / 幂等")
++class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
++
++    private static final long PUBLISHER_ID = 999L;
++
++    /** 夹具业务 ID 序列：同一用例内多次直插不撞 uk_errand_order_id */
++    private static final AtomicLong SEQ = new AtomicLong();
++
++    @Autowired
++    private MarketFeedIndexRebuildJob rebuildJob;
++
++    @Autowired
++    private IErrandRepository errandRepository;
++
++    @Autowired
++    private ICountFlushHandler flushHandler;
++
++    @Test
++    @DisplayName("重建后索引行与订单状态/悬赏/feed_time/热度严格一致，并修复缺行与跨表直改的漂移")
++    void 重建后索引与源表严格一致且修复缺行漂移() {
++        // 真实链路四态：通过（有审批流水）、通过后取消（有行的不可见态）、从未通过审（不该有行）、
++        // 存量在厅单（直插 PUBLISHED、无审批流水，feed_time 取 create_time 兜底）
++        long approvedId = insertOrder("PENDING_REVIEW", "8.50");
++        approve(approvedId);
++        long cancelledId = insertOrder("PENDING_REVIEW", "5.00");
++        approve(cancelledId);
++        assertThat(errandRepository.cancelByPublisher(cancelledId, PUBLISHER_ID)).as("发布方取消").isTrue();
++        long draftId = insertOrder("PENDING_PAYMENT", "3.00");
++        long legacyId = insertLegacyPublishedOrder("6.00");
++
++        // 缺行边角：索引行被删后浏览——旁路 UPDATE 命中 0 行、窄表照涨；再把窄表直改成 99 制造漂移
++        long missingRowId = insertOrder("PENDING_REVIEW", "9.00");
++        approve(missingRowId);
++        jdbcTemplate.update("DELETE FROM errand_feed_index WHERE errand_order_id = ?", missingRowId);
++        flushViews(missingRowId, 501L);
++        jdbcTemplate.update("UPDATE errand_view_count SET view_count = 99 WHERE errand_order_id = ?", missingRowId);
++
++        // 过审前被发布方浏览：明细与窄表已记、索引行彼时不存在（0 行 warn 交重建）——重建把这段漏计追平
++        long preViewId = insertOrder("PENDING_REVIEW", "7.00");
++        flushViews(preViewId, 502L);
++        approve(preViewId);
++        assertThat(indexViewCountOf(preViewId)).as("过审前浏览旁路命中 0 行，索引热度键未计").isZero();
++
++        // 孤儿计数行：无浏览明细却建了行（懒建行口径下不该存在）
++        long orphanId = insertOrder("PENDING_REVIEW", "4.00");
++        approve(orphanId);
++        jdbcTemplate.update("INSERT INTO errand_view_count (errand_order_id, view_count, create_time, update_time) "
++                + "VALUES (?, 7, NOW(), NOW())", orphanId);
++
++        rebuildJob.rebuildErrand(null);
++
++        // 缺行修复：行重生，热度键按明细真值（不是被直改的窄表 99）落回
++        Map<String, Object> repaired = feedRow(missingRowId);
++        assertThat(repaired).as("缺失的索引行由重建补回").isNotNull();
++        assertThat(repaired.get("state")).isEqualTo("PUBLISHED");
++        assertThat(((Number) repaired.get("view_count")).intValue())
++                .as("窄表直改的漂移校准回明细行数（1 条明细）").isEqualTo(1);
++        assertThat(acceleratedCountOf(missingRowId)).as("计数窄表同步校准").isEqualTo(1);
++
++        // 不可见态行保留（行常驻口径）：通过过再取消的订单有行，state 快照 = errand_order.state
++        assertThat(feedState(cancelledId)).as("取消订单的索引行保留且不可见化").isEqualTo("CANCELLED");
++
++        // 从未通过审的订单不凭空进索引
++        assertThat(feedRow(draftId)).as("从未通过审的订单不进索引").isNull();
++
++        // 存量在厅单：无审批流水，feed_time 兜底 = create_time
++        assertThat(queryFeedTime(legacyId)).as("无审批流水时 feed_time 兜底 create_time")
++                .isEqualTo(queryCreateTime(legacyId));
++
++        // 过审前浏览的漏计追平；孤儿计数行清掉
++        assertThat(indexViewCountOf(preViewId)).as("过审前浏览的漏计追平到明细真值").isEqualTo(1);
++        assertThat(countRowExists(orphanId)).as("孤儿计数行清掉（无浏览不建行）").isFalse();
++
++        // 全表扫严格一致：state / price / view_count / feed_time 四列逐行对齐
++        assertThat(inconsistentIndexOrderIds()).as("索引行与 errand_order/content_review/窄表逐行一致").isEmpty();
++        assertThat(ordersWithoutIndexRow()).as("每行该有的订单都有索引行").isEmpty();
++        assertThat(viewCountRowsMismatchingHistory()).as("加速列与明细行数严格一致").isEmpty();
++        assertThat(historyOrdersWithoutCountRow()).as("有明细的订单都有计数行").isEmpty();
++
++        // 重跑 = 幂等不动点
++        rebuildJob.rebuildErrand(null);
++        assertThat(inconsistentIndexOrderIds()).isEmpty();
++        assertThat(ordersWithoutIndexRow()).isEmpty();
++        assertThat(viewCountRowsMismatchingHistory()).isEmpty();
++        assertThat(((Number) feedRow(missingRowId).get("view_count")).intValue()).isEqualTo(1);
++        assertThat(feedRow(draftId)).isNull();
++    }
++
++    @Test
++    @DisplayName("浏览加速列校准为明细行数：漂移刷回、缺行补建、孤儿清掉，索引热度键同步追平")
++    void 浏览加速列校准为明细行数并清孤儿补缺行() {
++        long viewedId = insertOrder("PENDING_REVIEW", "8.00");
++        approve(viewedId);
++        flushViews(viewedId, 601L, 602L, 601L); // 重复浏览：明细只刷 viewed_at，UV 不加数
++        long lostRowId = insertOrder("PENDING_REVIEW", "6.00");
++        approve(lostRowId);
++        flushViews(lostRowId, 601L);
++        long orphanId = insertOrder("PENDING_REVIEW", "5.00");
++        approve(orphanId); // 无浏览，人为插计数行
++
++        // 漂移：直接改加速列（明细行数的真值是 2）
++        jdbcTemplate.update("UPDATE errand_view_count SET view_count = 999 WHERE errand_order_id = ?", viewedId);
++        // 缺行：真实浏览有明细，计数行被误删
++        jdbcTemplate.update("DELETE FROM errand_view_count WHERE errand_order_id = ?", lostRowId);
++        // 孤儿：无浏览却建了计数行（懒建行口径下不该存在）
++        jdbcTemplate.update("INSERT INTO errand_view_count (errand_order_id, view_count, create_time, update_time) "
++                + "VALUES (?, 7, NOW(), NOW())", orphanId);
++
++        rebuildJob.rebuildErrand(null);
++
++        assertThat(acceleratedCountOf(viewedId)).as("漂移值校准回明细行数").isEqualTo(2);
++        assertThat(acceleratedCountOf(lostRowId)).as("缺失的计数行由重建补回").isEqualTo(1);
++        assertThat(countRowExists(orphanId)).as("孤儿计数行清掉（无浏览不建行）").isFalse();
++        assertThat(indexViewCountOf(viewedId)).as("索引热度键随校准后的窄表追平").isEqualTo(2);
++        assertThat(indexViewCountOf(lostRowId)).isEqualTo(1);
++
++        // 全表扫：加速列 ≡ 明细行数投影（一行不多、一行不少、值恒等）
++        assertThat(viewCountRowsMismatchingHistory()).as("加速列与明细行数严格一致").isEmpty();
++        assertThat(historyOrdersWithoutCountRow()).as("有明细的订单都有计数行").isEmpty();
++    }
++
++    // ---------- 夹具与可观察状态 ----------
++
++    /** 直插一行指定态订单（deadline 落未来），返回业务 ID */
++    private long insertOrder(String state, String reward) {
++        long orderId = 930_000L + SEQ.incrementAndGet();
++        jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
++                        + "pickup_location, delivery_location, reward, time_limit_hours, state, deadline, "
++                        + "create_time, update_time) "
++                        + "VALUES (?, ?, 'EXPRESS_PICKUP', '重建夹具', '驿站', '南门', ?, 4, ?, "
++                        + "DATE_ADD(NOW(), INTERVAL 1 DAY), NOW(), NOW())",
++                orderId, PUBLISHER_ID, reward, state);
++        return orderId;
++    }
++
++    /** 直插一行存量 PUBLISHED 订单（无审批流水），create_time 拨回两天前供 feed_time 兜底断言 */
++    private long insertLegacyPublishedOrder(String reward) {
++        long orderId = 930_000L + SEQ.incrementAndGet();
++        Timestamp twoDaysAgo = Timestamp.valueOf(LocalDateTime.now().minusDays(2));
++        jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
++                        + "pickup_location, delivery_location, reward, time_limit_hours, state, deadline, "
++                        + "create_time, update_time) "
++                        + "VALUES (?, ?, 'EXPRESS_PICKUP', '重建存量单', '驿站', '南门', ?, 4, 'PUBLISHED', "
++                        + "DATE_ADD(NOW(), INTERVAL 1 DAY), ?, ?)",
++                orderId, PUBLISHER_ID, reward, twoDaysAgo, twoDaysAgo);
++        return orderId;
++    }
++
++    /**
++     * 审核通过（真实仓储链路：状态流转 + 索引行诞生）并补一条 APPROVE 审核流水。
++     * 真实链路里「审核记录」与「索引 feed_time」出自同一事件（秒级精度下可能跨秒），夹具按索引落下的
++     * 时刻补记录，让「feed_time = MAX(APPROVE) 兜底 create_time」这条投影口径在数据上严格成立
++     */
++    private void approve(long orderId) {
++        assertThat(errandRepository.reviewApproveById(orderId, 1L)).as("待审订单通过").isTrue();
++        LocalDateTime feedTime = queryFeedTime(orderId);
++        jdbcTemplate.update("INSERT INTO content_review (target_type, target_id, author_id, review_round, "
++                        + "action, operator_id, create_time, update_time) "
++                        + "VALUES ('ERRAND', ?, ?, 1, 'APPROVE', 1, ?, ?)",
++                orderId, PUBLISHER_ID, Timestamp.valueOf(feedTime), Timestamp.valueOf(feedTime));
++    }
++
++    /** 一组浏览落库（同步合并，等价于合并窗口过后的三步 + 索引旁路） */
++    private void flushViews(long orderId, long... userIds) {
++        List<CountEvent> events = Arrays.stream(userIds)
++                .mapToObj(userId -> new CountEvent(CountAction.ERRAND_VIEW, orderId, userId))
++                .toList();
++        flushHandler.flushGroup(CountAction.ERRAND_VIEW, orderId, events);
++    }
++
++    /** 索引行整行（无行 = null） */
++    private Map<String, Object> feedRow(long orderId) {
++        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
++                "SELECT state, feed_time, price, view_count FROM errand_feed_index WHERE errand_order_id = ?", orderId);
++        return rows.isEmpty() ? null : rows.get(0);
++    }
++
++    private String feedState(long orderId) {
++        Map<String, Object> row = feedRow(orderId);
++        return row == null ? null : (String) row.get("state");
++    }
++
++    private LocalDateTime queryFeedTime(long orderId) {
++        return ((LocalDateTime) feedRow(orderId).get("feed_time"));
++    }
++
++    private LocalDateTime queryCreateTime(long orderId) {
++        return jdbcTemplate.queryForObject(
++                "SELECT create_time FROM errand_order WHERE errand_order_id = ?", Timestamp.class, orderId)
++                .toLocalDateTime();
++    }
++
++    private int indexViewCountOf(long orderId) {
++        return ((Number) feedRow(orderId).get("view_count")).intValue();
++    }
++
++    private int acceleratedCountOf(long orderId) {
++        List<Integer> rows = jdbcTemplate.queryForList(
++                "SELECT view_count FROM errand_view_count WHERE errand_order_id = ?", Integer.class, orderId);
++        return rows.isEmpty() ? 0 : rows.get(0);
++    }
++
++    private boolean countRowExists(long orderId) {
++        Long count = jdbcTemplate.queryForObject(
++                "SELECT COUNT(*) FROM errand_view_count WHERE errand_order_id = ?", Long.class, orderId);
++        return count != null && count > 0;
++    }
++
++    /** 逐行扫一致性破坏者：state ≠ errand_order.state、price ≠ reward、view_count ≠ 窄表（无行 = 0），
++     *  或 feed_time ≠ 最近通过（兜底 create_time）的索引行 */
++    private List<Long> inconsistentIndexOrderIds() {
++        return jdbcTemplate.queryForList(
++                "SELECT fi.errand_order_id FROM errand_feed_index fi "
++                        + "JOIN errand_order e ON e.errand_order_id = fi.errand_order_id "
++                        + "LEFT JOIN errand_view_count evc ON evc.errand_order_id = fi.errand_order_id "
++                        + "WHERE fi.state <> e.state OR fi.price <> e.reward "
++                        + "OR fi.view_count <> COALESCE(evc.view_count, 0) "
++                        + "OR fi.feed_time <> COALESCE((SELECT MAX(cr.create_time) FROM content_review cr "
++                        + "  WHERE cr.target_type = 'ERRAND' AND cr.target_id = fi.errand_order_id "
++                        + "    AND cr.action = 'APPROVE'), e.create_time)", Long.class);
++    }
++
++    /** 覆盖破坏者：该有行而没有行的订单（在厅 ∪ 通过过审） */
++    private List<Long> ordersWithoutIndexRow() {
++        return jdbcTemplate.queryForList(
++                "SELECT e.errand_order_id FROM errand_order e "
++                        + "LEFT JOIN errand_feed_index fi ON fi.errand_order_id = e.errand_order_id "
++                        + "WHERE fi.errand_order_id IS NULL AND (e.state = 'PUBLISHED' "
++                        + "  OR EXISTS (SELECT 1 FROM content_review cr WHERE cr.target_type = 'ERRAND' "
++                        + "       AND cr.target_id = e.errand_order_id AND cr.action = 'APPROVE'))", Long.class);
++    }
++
++    /** 投影破坏者：view_count ≠ 明细行数的加速列行 */
++    private List<Long> viewCountRowsMismatchingHistory() {
++        return jdbcTemplate.queryForList(
++                "SELECT vc.errand_order_id FROM errand_view_count vc "
++                        + "LEFT JOIN (SELECT errand_order_id, COUNT(*) AS cnt FROM errand_view_history "
++                        + "  GROUP BY errand_order_id) h ON h.errand_order_id = vc.errand_order_id "
++                        + "WHERE vc.view_count <> COALESCE(h.cnt, 0)", Long.class);
++    }
++
++    /** 覆盖破坏者：有浏览明细却没有计数行的订单 */
++    private List<Long> historyOrdersWithoutCountRow() {
++        return jdbcTemplate.queryForList(
++                "SELECT DISTINCT h.errand_order_id FROM errand_view_history h "
++                        + "LEFT JOIN errand_view_count vc ON vc.errand_order_id = h.errand_order_id "
++                        + "WHERE vc.errand_order_id IS NULL", Long.class);
++    }
++}
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/job/JobFanoutVirtualThreadIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/job/JobFanoutVirtualThreadIntegrationTest.java
+index ccf272c..810df9d 100644
+--- a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/job/JobFanoutVirtualThreadIntegrationTest.java
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/job/JobFanoutVirtualThreadIntegrationTest.java
+@@ -89,8 +89,8 @@ class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
+ 
+     /** 直插一行在售商品（业务列 NOT NULL 无默认值：插 0 后绑到物理 id，应用 bindBizId 的同口径） */
+     private void insertOnSaleProduct(long userId) {
+-        jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, category, state, view_count, "
+-                + "create_time, update_time) VALUES (0, ?, '扇出商品', 'BOOKS', 'ON_SALE', 0, NOW(), NOW())", userId);
++        jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, category, state, "
++                + "create_time, update_time) VALUES (0, ?, '扇出商品', 'BOOKS', 'ON_SALE', NOW(), NOW())", userId);
+         jdbcTemplate.update("UPDATE product SET product_id = id WHERE product_id = 0");
+     }
+ 
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/job/SearchIndexRebuildJobIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/job/SearchIndexRebuildJobIntegrationTest.java
+index a23d1f5..a1cb501 100644
+--- a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/job/SearchIndexRebuildJobIntegrationTest.java
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/job/SearchIndexRebuildJobIntegrationTest.java
+@@ -58,8 +58,8 @@ class SearchIndexRebuildJobIntegrationTest extends CommunityApiTestBase {
+      */
+     private long insertProduct(long userId, String state) {
+         // category 必须给：索引文档要 category.name()（线上由发布用例保证非空，这里摆真数据）
+-        jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, category, state, view_count, "
+-                + "create_time, update_time) VALUES (0, ?, '重建商品', 'BOOKS', ?, 0, NOW(), NOW())", userId, state);
++        jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, category, state, "
++                + "create_time, update_time) VALUES (0, ?, '重建商品', 'BOOKS', ?, NOW(), NOW())", userId, state);
+         jdbcTemplate.update("UPDATE product SET product_id = id WHERE product_id = 0");
+         return jdbcTemplate.queryForObject("SELECT MAX(id) FROM product", Long.class);
+     }
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/job/UnboundedQueryCursorIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/job/UnboundedQueryCursorIntegrationTest.java
+index 2571f8d..9ac49d0 100644
+--- a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/job/UnboundedQueryCursorIntegrationTest.java
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/job/UnboundedQueryCursorIntegrationTest.java
+@@ -105,8 +105,8 @@ class UnboundedQueryCursorIntegrationTest extends CommunityApiTestBase {
+      * （应用侧 {@code bindBizId} 的同口径复刻），保证「业务 id == 游标 id」这条前提在本用例成立。
+      */
+     private long insertProductFixture(long userId) {
+-        jdbcTemplate.update("INSERT INTO product (product_id, user_id, category, state, view_count, "
+-                + "create_time, update_time) VALUES (0, ?, 'BOOKS', 'ON_SALE', 0, NOW(), NOW())", userId);
++        jdbcTemplate.update("INSERT INTO product (product_id, user_id, category, state, "
++                + "create_time, update_time) VALUES (0, ?, 'BOOKS', 'ON_SALE', NOW(), NOW())", userId);
+         jdbcTemplate.update("UPDATE product SET product_id = id WHERE product_id = 0");
+         return jdbcTemplate.queryForObject("SELECT MAX(id) FROM product", Long.class);
+     }
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/MarketFeedUvBackfillIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/MarketFeedUvBackfillIntegrationTest.java
+index 55c733e..5743ecb 100644
+--- a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/MarketFeedUvBackfillIntegrationTest.java
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/MarketFeedUvBackfillIntegrationTest.java
+@@ -17,36 +17,35 @@ import static org.assertj.core.api.Assertions.assertThat;
+ 
+ /**
+  * market-feed-uv 票 01：市集（闲置 + 跑腿）两张 feed 索引表的存量回填脚本
+- * （backend/better-school/sql/backfill/market-feed-uv-backfill.sql）与商品存量 PV 清零脚本
+- * （market-feed-uv-view-count-reset.sql）。
++ * （backend/better-school/sql/backfill/market-feed-uv-backfill.sql）。
+  *
+  * <p>回填口径钉死——行集 = 商品 ON_SALE / 跑腿 PUBLISHED（大厅公开口径，前端大厅恒传 status=PUBLISHED）、
+- * feed_time 取审核记录里最近一次通过时刻（查不到审批流水取 create_time 兜底）、价格从主表抄入、
+- * 商品 view_count 抄主表 PV 列（切码前重跑追平窗口期累加）；清零脚本把主表列与索引热度键归零
+- * 且不碰 UV 三表（切码后禁跑，脚本头圈禁）。两脚本直接对测试库执行文件本身（不内联复制语句，防漂移）；
+- * 开发库/测试库平时不跑回填（由 schema.sql 重建），本测试是把线上库的一次性操作当被测对象钉住。
++ * feed_time 取审核记录里最近一次通过时刻（查不到审批流水取 create_time 兜底）、价格从主表抄入；
++ * 索引热度键**不抄存量 PV**（票 06 删列后 product.view_count 已不存在，索引行按默认 0 起，切码后由
++ * 浏览旁路累计——存量 PV 本就要在切码前清零，抄不抄都落 0）。脚本直接对测试库执行文件本身
++ * （不内联复制语句，防漂移）；开发库/测试库平时不跑回填（由 schema.sql 重建），
++ * 本测试是把线上库的一次性操作当被测对象钉住。
+  */
+-@DisplayName("市集 feed 索引存量回填：大厅口径行集 / feed_time 最近通过 / PV 抄入清零 / 幂等追平")
++@DisplayName("市集 feed 索引存量回填：大厅口径行集 / feed_time 最近通过 / 价格抄入 / 幂等追平")
+ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
+ 
+     private static final String BACKFILL_RELATIVE = Paths.get("sql", "backfill", "market-feed-uv-backfill.sql").toString();
+-    private static final String RESET_RELATIVE = Paths.get("sql", "backfill", "market-feed-uv-view-count-reset.sql").toString();
+ 
+     @Test
+     void 商品回填只收ON_SALE且feed_time取最近一次通过时刻() {
+         Session author = registerAndLogin("13900001501", "商品回填作者");
+ 
+         // 无审批流水的存量老商品（直插 ON_SALE，绕过审核链路）——feed_time 兜底 create_time
+-        long legacyProductId = insertProduct(author.userId(), "ON_SALE", "5.00", 0);
+-        // 有存量 PV 的在售商品——view_count 从主表抄入
+-        long viewedProductId = insertProduct(author.userId(), "ON_SALE", "12.50", 7);
++        long legacyProductId = insertProduct(author.userId(), "ON_SALE", "5.00");
++        // 有审批流水但无按人明细的在售商品——索引热度键不抄存量 PV，按默认 0 起
++        long viewedProductId = insertProduct(author.userId(), "ON_SALE", "12.50");
+         // 多轮审核：第一轮三天前通过、第二轮一小时前重提再通过——feed_time 应取最近一次
+-        long reapprovedProductId = insertProduct(author.userId(), "ON_SALE", "8.00", 0);
++        long reapprovedProductId = insertProduct(author.userId(), "ON_SALE", "8.00");
+         insertApproveReview("PRODUCT", reapprovedProductId, author.userId(), 1, ts(-3 * 24));
+         insertApproveReview("PRODUCT", reapprovedProductId, author.userId(), 2, ts(-1));
+         // 非 ON_SALE 商品不进索引（售出/被拒）
+-        long soldProductId = insertProduct(author.userId(), "SOLD", "9.99", 3);
+-        long rejectedProductId = insertProduct(author.userId(), "REJECTED", "1.00", 0);
++        long soldProductId = insertProduct(author.userId(), "SOLD", "9.99");
++        long rejectedProductId = insertProduct(author.userId(), "REJECTED", "1.00");
+ 
+         runScript(BACKFILL_RELATIVE);
+ 
+@@ -64,7 +63,7 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
+         assertThat(queryIndexPrice("product_feed_index", "product_id", viewedProductId))
+                 .as("price 自主表抄入").isEqualTo("12.50");
+         assertThat(indexViewCountOf("product_feed_index", "product_id", viewedProductId))
+-                .as("view_count 自主表 PV 抄入").isEqualTo(7);
++                .as("索引热度键不抄存量 PV（列已删），从默认 0 起").isZero();
+         assertThat(indexViewCountOf("product_feed_index", "product_id", legacyProductId))
+                 .as("无 PV = view_count 0").isZero();
+     }
+@@ -104,16 +103,15 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
+     @Test
+     void 脚本可重复执行且重跑追平窗口期漂移() {
+         Session author = registerAndLogin("13900001503", "幂等作者");
+-        // 仍在售的商品：窗口期改价、PV 涨——重跑追平
+-        long productId = insertProduct(author.userId(), "ON_SALE", "10.00", 1);
++        // 仍在售的商品：窗口期改价——重跑追平
++        long productId = insertProduct(author.userId(), "ON_SALE", "10.00");
+         // 离场商品：窗口期售出——收口段同步不可见
+-        long soldProductId = insertProduct(author.userId(), "ON_SALE", "4.00", 0);
++        long soldProductId = insertProduct(author.userId(), "ON_SALE", "4.00");
+         long errandId = insertErrand(author.userId(), "PUBLISHED", "7.00");
+ 
+         runScript(BACKFILL_RELATIVE);
+-        // 首跑后的"窗口期"：旧代码还在写旧表——改价、PV 涨、商品售出、跑腿被锁定
++        // 首跑后的"窗口期"：旧代码还在写旧表——改价、商品售出、跑腿被锁定
+         jdbcTemplate.update("UPDATE product SET price = 66.00 WHERE product_id = ?", productId);
+-        jdbcTemplate.update("UPDATE product SET view_count = 15 WHERE product_id = ?", productId);
+         jdbcTemplate.update("UPDATE product SET state = 'SOLD' WHERE product_id = ?", soldProductId);
+         jdbcTemplate.update("UPDATE errand_order SET state = 'LOCKED' WHERE errand_order_id = ?", errandId);
+ 
+@@ -121,8 +119,6 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
+ 
+         assertThat(queryIndexPrice("product_feed_index", "product_id", productId))
+                 .as("重跑追平改价漂移").isEqualTo("66.00");
+-        assertThat(indexViewCountOf("product_feed_index", "product_id", productId))
+-                .as("重跑追平 PV 累加漂移").isEqualTo(15);
+         assertThat(jdbcTemplate.queryForObject(
+                 "SELECT state FROM product_feed_index WHERE product_id = ?", String.class, soldProductId))
+                 .as("收口段把离开 ON_SALE 的索引行同步成不可见").isEqualTo("SOLD");
+@@ -133,7 +129,6 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
+         // 再跑一遍：已对齐的行 UPDATE 落回同值，业务列不动（幂等不动点）
+         runScript(BACKFILL_RELATIVE);
+         assertThat(queryIndexPrice("product_feed_index", "product_id", productId)).isEqualTo("66.00");
+-        assertThat(indexViewCountOf("product_feed_index", "product_id", productId)).isEqualTo(15);
+         assertThat(jdbcTemplate.queryForList(
+                 "SELECT product_id FROM product_feed_index WHERE state = 'ON_SALE'", Long.class))
+                 .as("幂等不动点：商品索引行不再漂移").containsExactly(productId);
+@@ -142,36 +137,6 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
+                 .as("幂等不动点：跑腿索引行不再漂移").isEmpty();
+     }
+ 
+-    @Test
+-    void 清零脚本归零主表列与索引热度键且不碰UV三表() {
+-        Session author = registerAndLogin("13900001504", "清零作者");
+-        long productId = insertProduct(author.userId(), "ON_SALE", "20.00", 7);
+-
+-        runScript(BACKFILL_RELATIVE);
+-        assertThat(indexViewCountOf("product_feed_index", "product_id", productId))
+-                .as("清零前：索引 view_count = 抄入的存量 PV").isEqualTo(7);
+-
+-        // 切码后的 UV 形态（新表已有真值）——清零脚本不得触碰
+-        jdbcTemplate.update("INSERT INTO product_view_count (product_id, view_count, create_time, update_time) "
+-                + "VALUES (?, 3, NOW(), NOW())", productId);
+-        jdbcTemplate.update("INSERT INTO product_view_history (user_id, product_id, viewed_at) "
+-                + "VALUES (?, ?, NOW())", author.userId(), productId);
+-
+-        runScript(RESET_RELATIVE);
+-
+-        assertThat(jdbcTemplate.queryForObject(
+-                "SELECT view_count FROM product WHERE product_id = ?", Integer.class, productId))
+-                .as("主表 PV 列归零（切码前清，残留累加无读方）").isZero();
+-        assertThat(indexViewCountOf("product_feed_index", "product_id", productId))
+-                .as("索引热度键归零，热度排序从 UV 起点重新累计").isZero();
+-        assertThat(jdbcTemplate.queryForObject(
+-                "SELECT view_count FROM product_view_count WHERE product_id = ?", Integer.class, productId))
+-                .as("UV 加速列不是真相源也不是清零对象，不被触碰").isEqualTo(3);
+-        Integer historyRows = jdbcTemplate.queryForObject(
+-                "SELECT COUNT(*) FROM product_view_history WHERE product_id = ?", Integer.class, productId);
+-        assertThat(historyRows).as("UV 明细事实源不被触碰").isEqualTo(1);
+-    }
+-
+     // ---------- 夹具与脚本执行 ----------
+ 
+     /** 高位段业务 ID 取号：nanoTime 低位做起点 + 递增，同测试内连续直插不会撞 uk（nanoTime 直接取模会撞） */
+@@ -181,15 +146,15 @@ class MarketFeedUvBackfillIntegrationTest extends CommunityApiTestBase {
+             new java.util.concurrent.atomic.AtomicLong(System.nanoTime() % 10_000L);
+ 
+     /** 直插一行指定态商品（存量形态；业务 ID 取高位段避开应用自增 id，口径同 ProductViewMergeIntegrationTest） */
+-    private long insertProduct(long userId, String state, String price, int viewCount) {
++    private long insertProduct(long userId, String state, String price) {
+         long productId = 920_000L + PRODUCT_SEQ.incrementAndGet() % 10_000L;
+         // 时间参数 Java 侧算好再绑：ShardingSphere 解析 NOW() - INTERVAL n DAY 会 bad SQL grammar
+         Timestamp threeDaysAgo = ts(-3 * 24);
+         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
+-                        + "trade_location, category, state, view_count, create_time, update_time, expire_at) "
+-                        + "VALUES (?, ?, '回填存量商品', '存量描述', ?, '驿站', 'BOOKS', ?, ?, ?, ?, "
++                        + "trade_location, category, state, create_time, update_time, expire_at) "
++                        + "VALUES (?, ?, '回填存量商品', '存量描述', ?, '驿站', 'BOOKS', ?, ?, ?, "
+                         + "DATE_ADD(NOW(), INTERVAL 30 DAY))",
+-                productId, userId, price, state, viewCount, threeDaysAgo, threeDaysAgo);
++                productId, userId, price, state, threeDaysAgo, threeDaysAgo);
+         return productId;
+     }
+ 
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductFeedCursorPagingIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductFeedCursorPagingIntegrationTest.java
+index d8e7810..7fc5b5c 100644
+--- a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductFeedCursorPagingIntegrationTest.java
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductFeedCursorPagingIntegrationTest.java
+@@ -186,8 +186,8 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
+             String category = i % 2 == 0 ? "BOOKS" : "DIGITAL";
+             int viewCount = (i % 3) * 2;
+             jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
+-                            + "trade_location, category, state, review_round, view_count, create_time, update_time, "
+-                            + "expire_at) VALUES (?, ?, ?, '夹具描述', ?, '驿站', ?, 'ON_SALE', 1, 0, NOW(), NOW(), "
++                            + "trade_location, category, state, review_round, create_time, update_time, "
++                            + "expire_at) VALUES (?, ?, ?, '夹具描述', ?, '驿站', ?, 'ON_SALE', 1, NOW(), NOW(), "
+                             + "DATE_ADD(NOW(), INTERVAL 30 DAY))",
+                     productId, seller.userId(), "闲置游标夹具" + i, price, category);
+             jdbcTemplate.update("INSERT INTO product_feed_index (product_id, state, feed_time, price, view_count, "
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductFeedIndexRebuildIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductFeedIndexRebuildIntegrationTest.java
+new file mode 100644
+index 0000000..e6d46b6
+--- /dev/null
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductFeedIndexRebuildIntegrationTest.java
+@@ -0,0 +1,271 @@
++package com.betterschool.integration.trade;
++
++import com.betterschool.domain.trade.adapter.repository.ITradeRepository;
++import com.betterschool.infrastructure.adapter.merge.CountAction;
++import com.betterschool.infrastructure.adapter.merge.CountEvent;
++import com.betterschool.infrastructure.adapter.merge.ICountFlushHandler;
++import com.betterschool.integration.support.CommunityApiTestBase;
++import com.betterschool.trigger.job.MarketFeedIndexRebuildJob;
++import org.junit.jupiter.api.DisplayName;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++
++import java.sql.Timestamp;
++import java.time.LocalDateTime;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.atomic.AtomicLong;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++/**
++ * market-feed-uv 票 06：商品 feed 索引全量重建 job——兜底恢复手段。
++ * 经 trigger 层 handler（xxl-job 入口）调真实链路，断言只看外部可观察状态：重建后 product_feed_index 与
++ * product / content_review / product_view_count 严格一致、product_view_count 恒等于 product_view_history
++ * 行数；同步写路径的两类已知损伤（浏览旁路命中 0 行的缺行、跨表被绕过直改的漂移）人工制造后由重建修复；
++ * 重跑是幂等不动点（照帖子 {@code FeedIndexRebuildIntegrationTest} 先例）。
++ */
++@DisplayName("商品 feed 索引全量重建：严格一致 / 缺行与漂移修复 / 计数校准 / 幂等")
++class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
++
++    /** 夹具业务 ID 序列：同一用例内多次直插不撞 uk_product_id */
++    private static final AtomicLong SEQ = new AtomicLong();
++
++    @Autowired
++    private MarketFeedIndexRebuildJob rebuildJob;
++
++    @Autowired
++    private ITradeRepository tradeRepository;
++
++    @Autowired
++    private ICountFlushHandler flushHandler;
++
++    @Test
++    @DisplayName("重建后索引行与商品状态/价格/feed_time/热度严格一致，并修复缺行与跨表直改的漂移")
++    void 重建后索引与源表严格一致且修复缺行漂移() {
++        // 真实链路四态：通过（有审批流水）、通过后软删（有行的不可见态）、从未通过审（不该有行）、
++        // 存量在售（直插 ON_SALE、无审批流水，feed_time 取 create_time 兜底）
++        long approvedId = insertProduct("PENDING_REVIEW", "10.00");
++        approve(approvedId);
++        long deletedId = insertProduct("PENDING_REVIEW", "20.00");
++        approve(deletedId);
++        tradeRepository.deleteById(deletedId); // 通过后软删：索引行保留、快照翻 DELETED
++        long pendingId = insertProduct("PENDING_REVIEW", "30.00");
++        long legacyId = insertLegacyOnSaleProduct("40.00");
++
++        // 缺行边角：索引行被删后浏览——旁路 UPDATE 命中 0 行、窄表照涨；再把窄表直改成 99 制造漂移
++        long missingRowId = insertProduct("PENDING_REVIEW", "50.00");
++        approve(missingRowId);
++        jdbcTemplate.update("DELETE FROM product_feed_index WHERE product_id = ?", missingRowId);
++        flushViews(missingRowId, 301L);
++        jdbcTemplate.update("UPDATE product_view_count SET view_count = 99 WHERE product_id = ?", missingRowId);
++
++        // 过审前被浏览：明细与窄表已记、索引行彼时不存在（0 行 warn 交重建）——重建把这段漏计追平
++        long preViewId = insertProduct("PENDING_REVIEW", "60.00");
++        flushViews(preViewId, 302L);
++        approve(preViewId);
++        assertThat(indexViewCountOf(preViewId)).as("过审前浏览旁路命中 0 行，索引热度键未计").isZero();
++
++        // 孤儿计数行：无浏览明细却建了行（懒建行口径下不该存在）
++        long orphanId = insertProduct("PENDING_REVIEW", "70.00");
++        approve(orphanId);
++        jdbcTemplate.update("INSERT INTO product_view_count (product_id, view_count, create_time, update_time) "
++                + "VALUES (?, 7, NOW(), NOW())", orphanId);
++
++        rebuildJob.rebuildProduct(null);
++
++        // 缺行修复：行重生，热度键按明细真值（不是被直改的窄表 99）落回
++        Map<String, Object> repaired = feedRow(missingRowId);
++        assertThat(repaired).as("缺失的索引行由重建补回").isNotNull();
++        assertThat(repaired.get("state")).isEqualTo("ON_SALE");
++        assertThat(((Number) repaired.get("view_count")).intValue())
++                .as("窄表直改的漂移校准回明细行数（1 条明细）").isEqualTo(1);
++        assertThat(acceleratedCountOf(missingRowId)).as("计数窄表同步校准").isEqualTo(1);
++
++        // 不可见态行保留：通过过再软删的商品有行，state 快照 = product.state
++        assertThat(feedState(deletedId)).as("软删商品的索引行保留且不可见化").isEqualTo("DELETED");
++
++        // 从未通过审的商品不凭空进索引
++        assertThat(feedRow(pendingId)).as("从未通过审的商品不进索引").isNull();
++
++        // 存量在售商品：无审批流水，feed_time 兜底 = create_time
++        assertThat(queryFeedTime(legacyId)).as("无审批流水时 feed_time 兜底 create_time")
++                .isEqualTo(queryCreateTime(legacyId));
++
++        // 过审前浏览的漏计追平；孤儿计数行清掉
++        assertThat(indexViewCountOf(preViewId)).as("过审前浏览的漏计追平到明细真值").isEqualTo(1);
++        assertThat(countRowExists(orphanId)).as("孤儿计数行清掉（无浏览不建行）").isFalse();
++
++        // 全表扫严格一致：state / price / view_count / feed_time 四列逐行对齐
++        assertThat(inconsistentIndexProductIds()).as("索引行与 product/content_review/窄表逐行一致").isEmpty();
++        assertThat(productsWithoutIndexRow()).as("每行该有的商品都有索引行").isEmpty();
++        assertThat(viewCountRowsMismatchingHistory()).as("加速列与明细行数严格一致").isEmpty();
++        assertThat(historyProductsWithoutCountRow()).as("有明细的商品都有计数行").isEmpty();
++
++        // 重跑 = 幂等不动点
++        rebuildJob.rebuildProduct(null);
++        assertThat(inconsistentIndexProductIds()).isEmpty();
++        assertThat(productsWithoutIndexRow()).isEmpty();
++        assertThat(viewCountRowsMismatchingHistory()).isEmpty();
++        assertThat(((Number) feedRow(missingRowId).get("view_count")).intValue()).isEqualTo(1);
++        assertThat(feedRow(pendingId)).isNull();
++    }
++
++    @Test
++    @DisplayName("浏览加速列校准为明细行数：漂移刷回、缺行补建、孤儿清掉，索引热度键同步追平")
++    void 浏览加速列校准为明细行数并清孤儿补缺行() {
++        long viewedId = insertProduct("PENDING_REVIEW", "10.00");
++        approve(viewedId);
++        flushViews(viewedId, 401L, 402L, 401L); // 重复浏览：明细只刷 viewed_at，UV 不加数
++        long lostRowId = insertProduct("PENDING_REVIEW", "20.00");
++        approve(lostRowId);
++        flushViews(lostRowId, 401L);
++        long orphanId = insertProduct("PENDING_REVIEW", "30.00");
++        approve(orphanId); // 无浏览，人为插计数行
++
++        // 漂移：直接改加速列（明细行数的真值是 2）
++        jdbcTemplate.update("UPDATE product_view_count SET view_count = 999 WHERE product_id = ?", viewedId);
++        // 缺行：真实浏览有明细，计数行被误删
++        jdbcTemplate.update("DELETE FROM product_view_count WHERE product_id = ?", lostRowId);
++        // 孤儿：无浏览却建了计数行（懒建行口径下不该存在）
++        jdbcTemplate.update("INSERT INTO product_view_count (product_id, view_count, create_time, update_time) "
++                + "VALUES (?, 7, NOW(), NOW())", orphanId);
++
++        rebuildJob.rebuildProduct(null);
++
++        assertThat(acceleratedCountOf(viewedId)).as("漂移值校准回明细行数").isEqualTo(2);
++        assertThat(acceleratedCountOf(lostRowId)).as("缺失的计数行由重建补回").isEqualTo(1);
++        assertThat(countRowExists(orphanId)).as("孤儿计数行清掉（无浏览不建行）").isFalse();
++        assertThat(indexViewCountOf(viewedId)).as("索引热度键随校准后的窄表追平").isEqualTo(2);
++        assertThat(indexViewCountOf(lostRowId)).isEqualTo(1);
++
++        // 全表扫：两域加速列 ≡ 明细行数投影（一行不多、一行不少、值恒等）
++        assertThat(viewCountRowsMismatchingHistory()).as("加速列与明细行数严格一致").isEmpty();
++        assertThat(historyProductsWithoutCountRow()).as("有明细的商品都有计数行").isEmpty();
++    }
++
++    // ---------- 夹具与可观察状态 ----------
++
++    /** 直插一行指定态商品（存量形态），返回业务 ID */
++    private long insertProduct(String state, String price) {
++        long productId = 910_000L + SEQ.incrementAndGet();
++        jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
++                        + "trade_location, category, state, review_round, create_time, update_time, expire_at) "
++                        + "VALUES (?, 999, '重建夹具', '夹具描述', ?, '驿站', 'BOOKS', ?, 1, NOW(), NOW(), "
++                        + "DATE_ADD(NOW(), INTERVAL 30 DAY))",
++                productId, price, state);
++        return productId;
++    }
++
++    /** 直插一行存量 ON_SALE 商品（绕过审核链路：无审批流水），create_time 拨回两天前供 feed_time 兜底断言 */
++    private long insertLegacyOnSaleProduct(String price) {
++        long productId = 910_000L + SEQ.incrementAndGet();
++        Timestamp twoDaysAgo = Timestamp.valueOf(LocalDateTime.now().minusDays(2));
++        jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
++                        + "trade_location, category, state, review_round, create_time, update_time, expire_at) "
++                        + "VALUES (?, 999, '重建存量商品', '夹具描述', ?, '驿站', 'BOOKS', 'ON_SALE', 1, ?, ?, "
++                        + "DATE_ADD(NOW(), INTERVAL 30 DAY))",
++                productId, price, twoDaysAgo, twoDaysAgo);
++        return productId;
++    }
++
++    /**
++     * 审核通过（真实仓储链路：状态流转 + 索引行诞生）并补一条 APPROVE 审核流水。
++     * 真实链路里「审核记录」与「索引 feed_time」出自同一事件（秒级精度下可能跨秒），夹具按索引落下的
++     * 时刻补记录，让「feed_time = MAX(APPROVE) 兜底 create_time」这条投影口径在数据上严格成立
++     */
++    private void approve(long productId) {
++        assertThat(tradeRepository.reviewApproveById(productId)).as("待审商品通过").isTrue();
++        LocalDateTime feedTime = queryFeedTime(productId);
++        jdbcTemplate.update("INSERT INTO content_review (target_type, target_id, author_id, review_round, "
++                        + "action, operator_id, create_time, update_time) "
++                        + "VALUES ('PRODUCT', ?, 999, 1, 'APPROVE', 1, ?, ?)",
++                productId, Timestamp.valueOf(feedTime), Timestamp.valueOf(feedTime));
++    }
++
++    /** 一组浏览落库（同步合并，等价于合并窗口过后的三步 + 索引旁路） */
++    private void flushViews(long productId, long... userIds) {
++        List<CountEvent> events = java.util.Arrays.stream(userIds)
++                .mapToObj(userId -> new CountEvent(CountAction.PRODUCT_VIEW, productId, userId))
++                .toList();
++        flushHandler.flushGroup(CountAction.PRODUCT_VIEW, productId, events);
++    }
++
++    /** 索引行整行（无行 = null） */
++    private Map<String, Object> feedRow(long productId) {
++        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
++                "SELECT state, feed_time, price, view_count FROM product_feed_index WHERE product_id = ?", productId);
++        return rows.isEmpty() ? null : rows.get(0);
++    }
++
++    private String feedState(long productId) {
++        Map<String, Object> row = feedRow(productId);
++        return row == null ? null : (String) row.get("state");
++    }
++
++    private LocalDateTime queryFeedTime(long productId) {
++        return ((LocalDateTime) feedRow(productId).get("feed_time"));
++    }
++
++    private LocalDateTime queryCreateTime(long productId) {
++        return jdbcTemplate.queryForObject(
++                "SELECT create_time FROM product WHERE product_id = ?", Timestamp.class, productId).toLocalDateTime();
++    }
++
++    private int indexViewCountOf(long productId) {
++        return ((Number) feedRow(productId).get("view_count")).intValue();
++    }
++
++    private int acceleratedCountOf(long productId) {
++        List<Integer> rows = jdbcTemplate.queryForList(
++                "SELECT view_count FROM product_view_count WHERE product_id = ?", Integer.class, productId);
++        return rows.isEmpty() ? 0 : rows.get(0);
++    }
++
++    private boolean countRowExists(long productId) {
++        Long count = jdbcTemplate.queryForObject(
++                "SELECT COUNT(*) FROM product_view_count WHERE product_id = ?", Long.class, productId);
++        return count != null && count > 0;
++    }
++
++    /** 逐行扫一致性破坏者：state ≠ product.state、price ≠ product.price、view_count ≠ 窄表（无行 = 0），
++     *  或 feed_time ≠ 最近通过（兜底 create_time）的索引行 */
++    private List<Long> inconsistentIndexProductIds() {
++        return jdbcTemplate.queryForList(
++                "SELECT fi.product_id FROM product_feed_index fi "
++                        + "JOIN product p ON p.product_id = fi.product_id "
++                        + "LEFT JOIN product_view_count pvc ON pvc.product_id = fi.product_id "
++                        + "WHERE fi.state <> p.state OR fi.price <> p.price "
++                        + "OR fi.view_count <> COALESCE(pvc.view_count, 0) "
++                        + "OR fi.feed_time <> COALESCE((SELECT MAX(cr.create_time) FROM content_review cr "
++                        + "  WHERE cr.target_type = 'PRODUCT' AND cr.target_id = fi.product_id "
++                        + "    AND cr.action = 'APPROVE'), p.create_time)", Long.class);
++    }
++
++    /** 覆盖破坏者：该有行而没有行的商品（在售 ∪ 通过过审） */
++    private List<Long> productsWithoutIndexRow() {
++        return jdbcTemplate.queryForList(
++                "SELECT p.product_id FROM product p "
++                        + "LEFT JOIN product_feed_index fi ON fi.product_id = p.product_id "
++                        + "WHERE fi.product_id IS NULL AND (p.state = 'ON_SALE' "
++                        + "  OR EXISTS (SELECT 1 FROM content_review cr WHERE cr.target_type = 'PRODUCT' "
++                        + "       AND cr.target_id = p.product_id AND cr.action = 'APPROVE'))", Long.class);
++    }
++
++    /** 投影破坏者：view_count ≠ 明细行数的加速列行 */
++    private List<Long> viewCountRowsMismatchingHistory() {
++        return jdbcTemplate.queryForList(
++                "SELECT vc.product_id FROM product_view_count vc "
++                        + "LEFT JOIN (SELECT product_id, COUNT(*) AS cnt FROM product_view_history GROUP BY product_id) h "
++                        + "  ON h.product_id = vc.product_id "
++                        + "WHERE vc.view_count <> COALESCE(h.cnt, 0)", Long.class);
++    }
++
++    /** 覆盖破坏者：有浏览明细却没有计数行的商品 */
++    private List<Long> historyProductsWithoutCountRow() {
++        return jdbcTemplate.queryForList(
++                "SELECT DISTINCT h.product_id FROM product_view_history h "
++                        + "LEFT JOIN product_view_count vc ON vc.product_id = h.product_id "
++                        + "WHERE vc.product_id IS NULL", Long.class);
++    }
++}
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductFeedIndexSyncIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductFeedIndexSyncIntegrationTest.java
+index 086245b..9f47a07 100644
+--- a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductFeedIndexSyncIntegrationTest.java
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductFeedIndexSyncIntegrationTest.java
+@@ -178,8 +178,8 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
+     private long insertProduct(String state, String price) {
+         long productId = 910_000L + SEQ.incrementAndGet();
+         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
+-                        + "trade_location, category, state, review_round, view_count, create_time, update_time, expire_at) "
+-                        + "VALUES (?, 999, '索引同步夹具', '夹具描述', ?, '驿站', 'BOOKS', ?, 1, 0, "
++                        + "trade_location, category, state, review_round, create_time, update_time, expire_at) "
++                        + "VALUES (?, 999, '索引同步夹具', '夹具描述', ?, '驿站', 'BOOKS', ?, 1, "
+                         + "NOW(), NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY))",
+                 productId, price, state);
+         return productId;
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductViewMergeIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductViewMergeIntegrationTest.java
+index 9536d6b..f1cb0a9 100644
+--- a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductViewMergeIntegrationTest.java
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductViewMergeIntegrationTest.java
+@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
+  *
+  * <p>语义变更钉死在数据上：首次浏览计 1、重复浏览不计数只刷 viewed_at、<b>匿名不计入</b>
+  * （旧口径匿名也累加 PV，随本票作废）、加速列恒等于明细行数；旧 PV 列 {@code product.view_count}
+- * 随本票停写（删列随收口票 06）。浏览走真实详情链路（fire-and-forget 合并写），断言前排空合并窗口。
++ * 随本票停写、票 06 删列（主表已无该列）。浏览走真实详情链路（fire-and-forget 合并写），断言前排空合并窗口。
+  */
+ @DisplayName("商品浏览 UV：首次计 1 / 重复只刷 viewed_at / 匿名不计 / 加速列=明细行数")
+ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
+@@ -36,7 +36,7 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
+     private ICountFlushHandler flushHandler;
+ 
+     @Test
+-    @DisplayName("登录浏览：明细落一行、加速列计 1，详情响应读计数表；主表旧 PV 列停写")
++    @DisplayName("登录浏览：明细落一行、加速列计 1，详情响应读计数表")
+     void 登录浏览计一并读计数表() {
+         long productId = insertOnSaleProduct("登录浏览计数的台灯");
+         Session viewer = registerAndLogin("13700006001", "商品浏览者");
+@@ -46,7 +46,6 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
+ 
+         assertThat(historyCountOf(productId)).as("明细即事实源：一人一商品一行").isEqualTo(1);
+         assertThat(acceleratedCountOf(productId)).as("加速列 = 明细行数").isEqualTo(1);
+-        assertThat(legacyColumnOf(productId)).as("主表旧 PV 列停写（删列随收口票 06）").isZero();
+ 
+         JsonNode detail = getJson("/api/trade/products/" + productId, viewer).path("data");
+         assertThat(detail.path("viewCount").asLong()).as("详情 viewCount 读计数表（换源）").isEqualTo(1);
+@@ -122,8 +121,8 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
+     private long insertOnSaleProduct(String title) {
+         long productId = 910_000L + System.nanoTime() % 10_000L;
+         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
+-                        + "trade_location, category, state, view_count, create_time, update_time, expire_at) "
+-                        + "VALUES (?, 999, ?, '浏览计数的夹具', 10.00, '驿站', 'BOOKS', 'ON_SALE', 0, "
++                        + "trade_location, category, state, create_time, update_time, expire_at) "
++                        + "VALUES (?, 999, ?, '浏览计数的夹具', 10.00, '驿站', 'BOOKS', 'ON_SALE', "
+                         + "NOW(), NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY))", productId, title);
+         return productId;
+     }
+@@ -145,10 +144,4 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
+                 "SELECT COUNT(*) FROM outbox_message WHERE destination = ?", Integer.class, destination);
+         return count == null ? 0 : count;
+     }
+-
+-    private int legacyColumnOf(long productId) {
+-        Integer count = jdbcTemplate.queryForObject(
+-                "SELECT view_count FROM product WHERE product_id = ?", Integer.class, productId);
+-        return count == null ? 0 : count;
+-    }
+ }
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductViewedIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductViewedIntegrationTest.java
+index 76581c0..31c525d 100644
+--- a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductViewedIntegrationTest.java
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/ProductViewedIntegrationTest.java
+@@ -104,8 +104,8 @@ class ProductViewedIntegrationTest extends CommunityApiTestBase {
+         long productId = 940_000L + SEQ.incrementAndGet();
+         BigDecimal price = BigDecimal.valueOf(12).setScale(2);
+         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, trade_location, "
+-                        + "category, state, review_round, view_count, create_time, update_time, expire_at) "
+-                        + "VALUES (?, ?, ?, '灰显夹具描述', ?, '驿站', 'BOOKS', 'ON_SALE', 1, 0, NOW(), NOW(), "
++                        + "category, state, review_round, create_time, update_time, expire_at) "
++                        + "VALUES (?, ?, ?, '灰显夹具描述', ?, '驿站', 'BOOKS', 'ON_SALE', 1, NOW(), NOW(), "
+                         + "DATE_ADD(NOW(), INTERVAL 30 DAY))",
+                 productId, seller.userId(), title, price);
+         jdbcTemplate.update("INSERT INTO product_feed_index (product_id, state, feed_time, price, view_count, "
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/TradeDraftBoxIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/TradeDraftBoxIntegrationTest.java
+index c81b608..d8c2e1b 100644
+--- a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/TradeDraftBoxIntegrationTest.java
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/TradeDraftBoxIntegrationTest.java
+@@ -97,8 +97,8 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
+         // 直插夹具：product_id NOT NULL 且无默认值（应用侧才走 insert 0 + 回写 id），夹具显式给带外业务 ID 并返回它
+         long onSaleId = 900_000L + fixtureSeq++;
+         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
+-                        + "trade_location, category, state, view_count, create_time, update_time, expire_at) "
+-                        + "VALUES (?, ?, '在售存量商品', '回归用', 10.00, '驿站', 'BOOKS', 'ON_SALE', 0, NOW(), NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY))",
++                        + "trade_location, category, state, create_time, update_time, expire_at) "
++                        + "VALUES (?, ?, '在售存量商品', '回归用', 10.00, '驿站', 'BOOKS', 'ON_SALE', NOW(), NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY))",
+                 onSaleId, seller.userId());
+         JsonNode deleteOnSale = deleteJson("/api/trade/products/" + onSaleId, seller);
+         assertSuccess(deleteOnSale, "删除在售商品");
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/TradePublishPendingReviewIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/TradePublishPendingReviewIntegrationTest.java
+index dc0a722..36b0b42 100644
+--- a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/TradePublishPendingReviewIntegrationTest.java
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/trade/TradePublishPendingReviewIntegrationTest.java
+@@ -105,8 +105,8 @@ class TradePublishPendingReviewIntegrationTest extends CommunityApiTestBase {
+     private long insertProductRow(String title, String state) {
+         long productId = 900_000L + fixtureSeq++;
+         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
+-                        + "trade_location, category, state, view_count, create_time, update_time, expire_at) "
+-                        + "VALUES (?, 999, ?, '存量数据', 10.00, '驿站', 'BOOKS', ?, 0, NOW(), NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY))",
++                        + "trade_location, category, state, create_time, update_time, expire_at) "
++                        + "VALUES (?, 999, ?, '存量数据', 10.00, '驿站', 'BOOKS', ?, NOW(), NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY))",
+                 productId, title, state);
+         if ("ON_SALE".equals(state)) {
+             jdbcTemplate.update("INSERT INTO product_feed_index (product_id, state, feed_time, price, view_count, "
+diff --git a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/user/AuthorProfileIntegrationTest.java b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/user/AuthorProfileIntegrationTest.java
+index 3324e38..c23692b 100644
+--- a/backend/better-school/bs-app/src/test/java/com/betterschool/integration/user/AuthorProfileIntegrationTest.java
++++ b/backend/better-school/bs-app/src/test/java/com/betterschool/integration/user/AuthorProfileIntegrationTest.java
+@@ -240,8 +240,8 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
+     private long insertProduct(long userId, String status, String title) {
+         long productId = 900_000L + (++fixtureSeq);
+         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, images, price, "
+-                        + "trade_location, category, state, view_count, create_time, update_time) "
+-                        + "VALUES (?, ?, ?, '描述', '[]', 10.00, '驿站', 'BOOKS', ?, 0, NOW(), NOW())",
++                        + "trade_location, category, state, create_time, update_time) "
++                        + "VALUES (?, ?, ?, '描述', '[]', 10.00, '驿站', 'BOOKS', ?, NOW(), NOW())",
+                 productId, userId, title, status);
+         return productId;
+     }
+diff --git a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/errand/adapter/repository/IErrandRepository.java b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/errand/adapter/repository/IErrandRepository.java
+index 775099a..df720bb 100644
+--- a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/errand/adapter/repository/IErrandRepository.java
++++ b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/errand/adapter/repository/IErrandRepository.java
+@@ -30,6 +30,14 @@ public interface IErrandRepository {
+      */
+     List<ErrandFeedIndexItemVO> scanFeedIndex(String sortType, ErrandFeedCursorVO cursor, int limit);
+ 
++    /**
++     * feed 索引全量重建（market-feed-uv 票 06）：清空重灌 errand_feed_index（数据源 = errand_order +
++     * content_review + errand_view_count）并把 errand_view_count 校准成 errand_view_history 行数，
++     * 四条语句一个事务——读者要么看到重建前、要么看到重建后的完整索引，不见空窗。
++     * 兜底场景 = 13 态快照 / 浏览旁路的同事务直写留下漂移（索引行缺失、计数窄表被绕过直改）
++     */
++    void rebuildFeedIndex();
++
+     /** 支付确认：PENDING_PAYMENT → PENDING_REVIEW（已付款待审），并写入 deadline；同事务落 PAID 事件 */
+     boolean payById(Long orderId, Long actorId, LocalDateTime deadline);
+ 
+diff --git a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/errand/service/ErrandOrderServiceImpl.java b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/errand/service/ErrandOrderServiceImpl.java
+index 7610b8e..42bce5e 100644
+--- a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/errand/service/ErrandOrderServiceImpl.java
++++ b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/errand/service/ErrandOrderServiceImpl.java
+@@ -261,6 +261,11 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
+         return errandRepository.count(toTypeName(type), toStatusName(status));
+     }
+ 
++    @Override
++    public void rebuildFeedIndex() {
++        errandRepository.rebuildFeedIndex();
++    }
++
+     @Override
+     public List<Long> listViewedOrderIds(Long userId, List<Long> orderIds) {
+         return errandRepository.selectViewedOrderIds(userId, orderIds);
+diff --git a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/errand/service/IErrandOrderService.java b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/errand/service/IErrandOrderService.java
+index b35d2dd..071d228 100644
+--- a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/errand/service/IErrandOrderService.java
++++ b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/errand/service/IErrandOrderService.java
+@@ -71,6 +71,13 @@ public interface IErrandOrderService {
+ 
+     long countOrders(String type, String status);
+ 
++    /**
++     * feed 索引全量重建（market-feed-uv 票 06，XXL-Job 手动触发）：清空重灌 errand_feed_index 并把
++     * errand_view_count 校准成 errand_view_history 行数，一个事务（读者不见空窗）。
++     * 常态无漂移——同步是同事务直写，重建只在出现漂移信号（浏览旁路命中 0 行的 warn、窄表被绕过直改）时手动执行
++     */
++    void rebuildFeedIndex();
++
+     /**
+      * 当前用户在给定订单集合里浏览过的订单 id（大厅已读灰显，market-feed-uv 票 05）：
+      * 一页一次批量回查，未登录或集合为空返回空集
+diff --git a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/adapter/repository/ITradeRepository.java b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/adapter/repository/ITradeRepository.java
+index 7f4dcee..d28f6c6 100644
+--- a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/adapter/repository/ITradeRepository.java
++++ b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/adapter/repository/ITradeRepository.java
+@@ -91,6 +91,14 @@ public interface ITradeRepository {
+      */
+     List<ProductFeedIndexItemVO> scanFeedIndex(String sortType, ProductFeedCursorVO cursor, int limit);
+ 
++    /**
++     * feed 索引全量重建（market-feed-uv 票 06）：清空重灌 product_feed_index（数据源 = product +
++     * content_review + product_view_count）并把 product_view_count 校准成 product_view_history 行数，
++     * 四条语句一个事务——读者要么看到重建前、要么看到重建后的完整索引，不见空窗。
++     * 兜底场景 = 状态流转/改价/浏览旁路的同事务直写留下漂移（索引行缺失、计数窄表被绕过直改）
++     */
++    void rebuildFeedIndex();
++
+     /** 收藏记录入库，user+product 唯一冲突返回 false */
+     boolean addFavorite(Long productId, Long userId);
+ 
+diff --git a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/service/product/IProductService.java b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/service/product/IProductService.java
+index 67e2649..82f0676 100644
+--- a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/service/product/IProductService.java
++++ b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/service/product/IProductService.java
+@@ -72,6 +72,13 @@ public interface IProductService {
+ 
+     long countProducts(String category, BigDecimal minPrice, BigDecimal maxPrice);
+ 
++    /**
++     * feed 索引全量重建（market-feed-uv 票 06，XXL-Job 手动触发）：清空重灌 product_feed_index 并把
++     * product_view_count 校准成 product_view_history 行数，一个事务（读者不见空窗）。
++     * 常态无漂移——同步是同事务直写，重建只在出现漂移信号（浏览旁路命中 0 行的 warn、窄表被绕过直改）时手动执行
++     */
++    void rebuildFeedIndex();
++
+     /**
+      * 当前用户在给定商品集合里浏览过的商品 id（推荐列表已读灰显，market-feed-uv 票 05）：
+      * 一页一次批量回查，未登录或集合为空返回空集
+diff --git a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/service/product/ProductServiceImpl.java b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/service/product/ProductServiceImpl.java
+index 3f2261e..7b1a66d 100644
+--- a/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/service/product/ProductServiceImpl.java
++++ b/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/service/product/ProductServiceImpl.java
+@@ -302,6 +302,11 @@ public class ProductServiceImpl implements IProductService {
+         return tradeRepository.count(toCategory(category), minPrice, maxPrice);
+     }
+ 
++    @Override
++    public void rebuildFeedIndex() {
++        tradeRepository.rebuildFeedIndex();
++    }
++
+     @Override
+     public List<Long> listViewedProductIds(Long userId, List<Long> productIds) {
+         return tradeRepository.selectViewedProductIds(userId, productIds);
+diff --git a/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/adapter/repository/errand/ErrandRepository.java b/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/adapter/repository/errand/ErrandRepository.java
+index a501d12..73d2e0b 100644
+--- a/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/adapter/repository/errand/ErrandRepository.java
++++ b/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/adapter/repository/errand/ErrandRepository.java
+@@ -82,6 +82,24 @@ public class ErrandRepository implements IErrandRepository {
+         return errandDao.selectFeedIndex(sortType, cursor, limit);
+     }
+ 
++    /**
++     * feed 索引全量重建（market-feed-uv 票 06，照 {@code CommunityRepository.rebuildFeedIndex} 先例）：
++     * 四条语句一个事务——计数窄表校准（ODKU 补缺行 / 刷漂移 + 清孤儿）→ 清空索引 → 重灌投影。
++     * 顺序是先校准后清灌：计数窄表是索引热度键的数据源，先算准再抄进重灌语句，一个事务里两次写只对
++     * 读者呈现前后两个完整状态（清空用 DELETE 不用 TRUNCATE，后者隐式提交会毁掉原子性）
++     */
++    @Override
++    public void rebuildFeedIndex() {
++        transactionTemplate.executeWithoutResult(status -> {
++            int recalibrated = errandDao.recalibrateViewCounts();
++            int orphans = errandDao.deleteViewCountsMissingHistory();
++            errandDao.clearFeedIndex();
++            int rebuilt = errandDao.rebuildFeedIndexProjection();
++            log.info("[MarketFeedIndexRebuild] errand_feed_index 清空重灌 {} 行；errand_view_count 校准 {} 行、清理孤儿 {} 行",
++                    rebuilt, recalibrated, orphans);
++        });
++    }
++
+     @Override
+     public boolean payById(Long orderId, Long actorId, LocalDateTime deadline) {
+         // 先付后审：支付进入待审（处于支付事务内，轮次恒为 1）
+diff --git a/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/adapter/repository/trade/TradeRepository.java b/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/adapter/repository/trade/TradeRepository.java
+index 383d0b8..2f33b6d 100644
+--- a/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/adapter/repository/trade/TradeRepository.java
++++ b/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/adapter/repository/trade/TradeRepository.java
+@@ -310,6 +310,24 @@ public class TradeRepository implements ITradeRepository {
+         return productDao.selectFeedIndex(sortType, cursor, limit);
+     }
+ 
++    /**
++     * feed 索引全量重建（market-feed-uv 票 06，照 {@code CommunityRepository.rebuildFeedIndex} 先例）：
++     * 四条语句一个事务——计数窄表校准（ODKU 补缺行 / 刷漂移 + 清孤儿）→ 清空索引 → 重灌投影。
++     * 顺序是先校准后清灌：计数窄表是索引热度键的数据源，先算准再抄进重灌语句，一个事务里两次写只对
++     * 读者呈现前后两个完整状态（清空用 DELETE 不用 TRUNCATE，后者隐式提交会毁掉原子性）
++     */
++    @Override
++    public void rebuildFeedIndex() {
++        transactionTemplate.executeWithoutResult(status -> {
++            int recalibrated = productDao.recalibrateViewCounts();
++            int orphans = productDao.deleteViewCountsMissingHistory();
++            productDao.clearFeedIndex();
++            int rebuilt = productDao.rebuildFeedIndexProjection();
++            log.info("[MarketFeedIndexRebuild] product_feed_index 清空重灌 {} 行；product_view_count 校准 {} 行、清理孤儿 {} 行",
++                    rebuilt, recalibrated, orphans);
++        });
++    }
++
+     @Override
+     public boolean addFavorite(Long productId, Long userId) {
+         return productDao.insertFavorite(productId, userId) > 0;
+diff --git a/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/dao/errand/IErrandDao.java b/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/dao/errand/IErrandDao.java
+index a217aa4..16cd6bf 100644
+--- a/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/dao/errand/IErrandDao.java
++++ b/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/dao/errand/IErrandDao.java
+@@ -165,4 +165,19 @@ public interface IErrandDao {
+ 
+     /** 浏览合并事务旁路 ±N：纯 UPDATE 不 upsert；0 行 = 索引行缺失，调用方落 warn 交重建 job */
+     int updateFeedIndexViewCount(@Param("orderId") Long orderId, @Param("delta") int delta);
++
++    // ── feed 索引全量重建（market-feed-uv 票 06：兜底恢复手段，照帖子 IPostDao 同名四条先例）──
++    // 四条语句由仓储收进一个事务：先校准计数窄表再清空重灌索引，读者要么看到重建前、要么看到重建后的完整索引
++
++    /** 重建第一步：清空索引表（DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉事务原子性） */
++    int clearFeedIndex();
++
++    /** 重灌：行集 = PUBLISHED ∪ 有过审批通过；feed_time = MAX(APPROVE) 兜底 create_time；view_count 抄计数窄表 */
++    int rebuildFeedIndexProjection();
++
++    /** 浏览 UV 加速列校准第一步（第二步 = {@link #recalibrateViewCounts}）：清掉没有明细行的孤儿计数行 */
++    int deleteViewCountsMissingHistory();
++
++    /** 重灌：errand_view_count 重投影 = errand_view_history 行数（ODKU 补缺行 / 刷漂移 / 幂等落回同值） */
++    int recalibrateViewCounts();
+ }
+diff --git a/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/dao/product/IProductDao.java b/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/dao/product/IProductDao.java
+index 8364d03..85b112a 100644
+--- a/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/dao/product/IProductDao.java
++++ b/backend/better-school/bs-infrastructure/src/main/java/com/betterschool/infrastructure/dao/product/IProductDao.java
+@@ -147,4 +147,19 @@ public interface IProductDao {
+ 
+     /** 浏览合并事务旁路 ±N：纯 UPDATE 不 upsert；0 行 = 索引行缺失，调用方落 warn 交重建 job */
+     int updateFeedIndexViewCount(@Param("productId") Long productId, @Param("delta") int delta);
++
++    // ── feed 索引全量重建（market-feed-uv 票 06：兜底恢复手段，照帖子 IPostDao 同名四条先例）──
++    // 四条语句由仓储收进一个事务：先校准计数窄表再清空重灌索引，读者要么看到重建前、要么看到重建后的完整索引
++
++    /** 重建第一步：清空索引表（DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉事务原子性） */
++    int clearFeedIndex();
++
++    /** 重灌：行集 = ON_SALE ∪ 有过审批通过；feed_time = MAX(APPROVE) 兜底 create_time；view_count 抄计数窄表 */
++    int rebuildFeedIndexProjection();
++
++    /** 浏览 UV 加速列校准第一步（第二步 = {@link #recalibrateViewCounts}）：清掉没有明细行的孤儿计数行 */
++    int deleteViewCountsMissingHistory();
++
++    /** 重灌：product_view_count 重投影 = product_view_history 行数（ODKU 补缺行 / 刷漂移 / 幂等落回同值） */
++    int recalibrateViewCounts();
+ }
+diff --git a/backend/better-school/bs-trigger/src/main/java/com/betterschool/trigger/job/MarketFeedIndexRebuildJob.java b/backend/better-school/bs-trigger/src/main/java/com/betterschool/trigger/job/MarketFeedIndexRebuildJob.java
+new file mode 100644
+index 0000000..b356c7c
+--- /dev/null
++++ b/backend/better-school/bs-trigger/src/main/java/com/betterschool/trigger/job/MarketFeedIndexRebuildJob.java
+@@ -0,0 +1,38 @@
++package com.betterschool.trigger.job;
++
++import com.betterschool.domain.errand.service.IErrandOrderService;
++import com.betterschool.domain.trade.service.product.IProductService;
++import com.xxl.job.core.handler.annotation.XxlJob;
++import lombok.RequiredArgsConstructor;
++import lombok.extern.slf4j.Slf4j;
++import org.springframework.stereotype.Component;
++
++/**
++ * 市集两域 feed 索引全量重建（XXL-Job 手动触发，market-feed-uv 票 06；照帖子 {@link FeedIndexRebuildJob} 样板）：
++ * 兜底恢复手段——同事务直写丢更新 / 索引行与计数窄表漂移（浏览旁路命中 0 行的 warn、窄表被绕过直改）时，
++ * 各自的 handler 清空重灌索引表（商品数据源 = product + content_review + product_view_count；
++ * 跑腿 = errand_order + content_review + errand_view_count），并把计数窄表校准成明细表行数。
++ *
++ * <p>两域各一个 handler 而不是一个带域参数的 job：两侧重建的数据源、索引列（price = 售价 / 悬赏）与
++ * 驻留口径（商品行可见态流转、跑腿行常驻）都不同，参数化只会在入口处长出分支，域内各走各的仓储备份更直白。
++ */
++@Slf4j
++@Component
++@RequiredArgsConstructor
++public class MarketFeedIndexRebuildJob {
++
++    private final IProductService productService;
++    private final IErrandOrderService errandOrderService;
++
++    @XxlJob("productFeedIndexRebuildJob")
++    public String rebuildProduct(String param) {
++        productService.rebuildFeedIndex();
++        return "success";
++    }
++
++    @XxlJob("errandFeedIndexRebuildJob")
++    public String rebuildErrand(String param) {
++        errandOrderService.rebuildFeedIndex();
++        return "success";
++    }
++}
+diff --git a/backend/better-school/docs/api/errand.md b/backend/better-school/docs/api/errand.md
+index dbef1897..67f87f4 100644
+--- a/backend/better-school/docs/api/errand.md
++++ b/backend/better-school/docs/api/errand.md
+@@ -11,7 +11,9 @@
+   keyset 游标分页——`cursor` 非空则忽略 `page`，响应带 `cursor` 才续页、`total = -1`（未知，不再精确 COUNT）；
+   排序键 = 热度（浏览 UV 数，列表 `viewCount` 取索引热度快照）/ 进入大厅时刻（时间升/降序同索引正反向扫描）/
+   悬赏（价格升降）；**带 type 或非 PUBLISHED 口径** → 旧直查，精确 total、`cursor` 恒 null、按 page 续页；
+-  索引查询异常 warn 降级旧直查。游标是域内编解码的不透明串，换排序复用 / 篡改 → code 400
++  索引查询异常 warn 降级旧直查。游标是域内编解码的不透明串，换排序复用 / 篡改 → code 400；
++  索引行与计数窄表的漂移（浏览旁路命中 0 行的 warn）由 `errandFeedIndexRebuildJob` 手动重建兜底——
++  清空重灌索引 + 计数校准到明细行数，一个事务（market-feed-uv 票 06）
+ - 已读灰显（market-feed-uv 票 05）：登录用户每项带 `viewed`——页内 order_id 批量回查
+   `errand_view_history`（主键前缀 `(user_id, errand_order_id)`，一页一次 IN，不做 N+1），命中即已读；
+   **未登录恒 false**（大厅匿名可浏览，灰显只对登录用户有意义）。`viewed` 只在本接口填充，
+diff --git a/backend/better-school/docs/api/trade.md b/backend/better-school/docs/api/trade.md
+index bd2427c..d7605de 100644
+--- a/backend/better-school/docs/api/trade.md
++++ b/backend/better-school/docs/api/trade.md
+@@ -69,7 +69,9 @@
+   `cursor` 非空则忽略 `page`，响应带 `cursor` 才续页、`total = -1`（未知，不再精确 COUNT）；
+   排序键 = 热度（浏览 UV 数）/ 进入可见轮时刻（时间升/降序同索引正反向扫描）/ 价格；
+   **带 category 或价格区间** → 旧直查（索引表无筛选列），精确 total、`cursor` 恒 null、按 page 续页；
+-  索引查询异常 warn 降级旧直查（同筛选路径口径）。游标是域内编解码的不透明串，换排序复用 / 篡改 → code 400
++  索引查询异常 warn 降级旧直查（同筛选路径口径）。游标是域内编解码的不透明串，换排序复用 / 篡改 → code 400；
++  索引行与计数窄表的漂移（浏览旁路命中 0 行的 warn）由 `productFeedIndexRebuildJob` 手动重建兜底——
++  清空重灌索引 + 计数校准到明细行数，一个事务（market-feed-uv 票 06）
+ - 成功: 分页 `ProductResponseDTO`（status 恒 ON_SALE；`cursor` 见上）
+ - 已读灰显（market-feed-uv 票 05）：登录用户每项带 `viewed`——页内 product_id 批量回查
+   `product_view_history`（主键前缀 `(user_id, product_id)`，一页一次 IN，不做 N+1），命中即已读；
+diff --git a/backend/better-school/docs/db/trade.md b/backend/better-school/docs/db/trade.md
+index 4bf487e..0fa4dfe 100644
+--- a/backend/better-school/docs/db/trade.md
++++ b/backend/better-school/docs/db/trade.md
+@@ -31,11 +31,12 @@
+ |state|varchar(20)|NOT NULL, DEFAULT 'PENDING_REVIEW'|DRAFT(草稿)/PENDING_REVIEW(待审)/ON_SALE/LOCKED(交易中)/SOLD/REJECTED(审核未通过)/DELETED；先审后售，提交进待审，通过转在售，拒绝转 REJECTED（原 `status` 列改名，原 `OFF_SHELF` 终态已并入 DRAFT）|
+ |review_round|int|NOT NULL, DEFAULT 0|审核轮次：累计进入待审次数（直接发布=1，草稿提交/重新上架/在售改内容回审再 +1）；`content_review.review_round` 取此列|
+ |review_entered_at|datetime|NULL|最近一次进入待审时间（发布/草稿提交/改内容/重新上架时刷新；24h 待审超时提醒扫描锚点）|
+-|view_count|int|NOT NULL, DEFAULT 0|浏览数（Redis 增量 + 异步落库）|
+ |expire_at|datetime|NULL|到期下架时间（进入待审时刷新满 30 天，XXL-Job 扫描汇入草稿箱 DRAFT，可重提）|
+ |create_time|datetime|NOT NULL|创建时间|
+ |update_time|datetime|NOT NULL|更新时间|
+ 
++> 已删除的列：`view_count`（浏览数，旧 PV 口径——market-feed-uv 票 02 换源到计数窄表 `product_view_count`、票 06 删列。真相源 `product_view_history`、加速列 `product_view_count`，存量 PV 废弃不换算 UV）。存量库删列脚本 `sql/backfill/market-feed-uv-drop-columns.sql`。
++
+ ## 索引
+ - `uk_product_id (product_id)`
+ - `idx_category_created (category, create_time)`：分类列表
+diff --git a/backend/better-school/sql/backfill/market-feed-uv-backfill.sql b/backend/better-school/sql/backfill/market-feed-uv-backfill.sql
+index 322c4fd..04c2262 100644
+--- a/backend/better-school/sql/backfill/market-feed-uv-backfill.sql
++++ b/backend/better-school/sql/backfill/market-feed-uv-backfill.sql
+@@ -13,25 +13,37 @@
+ --     （回填后、换代码前，旧代码的状态流转/在售改价仍只写主表，重跑把漂移追平），已对齐的行 UPDATE 落回同值。
+ --   ② state 收口：回填首跑后离开可见态的行（商品离开 ON_SALE / 跑腿离开 PUBLISHED），把索引行状态同步成不可见。
+ --
+--- ⚠ 重跑圈禁：view_count 段从 product.view_count（PV 旧列）抄入，切码后该列停写、索引 view_count
+---   已是 ±N 累计的 UV 真值——**票 02/03 上线后禁止整脚本重跑**（重跑会用旧列值覆盖 UV）。
+---   切码前重跑无此顾虑：彼时索引 view_count 的真值本就是这份 PV。
++-- ⚠ 本脚本随票 06 收口部分退役：product.view_count 已删列（见同目录 market-feed-uv-drop-columns.sql，
++--   其头注释含完整执行序），① 段原「view_count 从主表 PV 抄入」随之移除——引用的列已不存在。
++--   索引热度键此后由运行期浏览旁路 ±N 累计，漂移由 productFeedIndexRebuildJob 校准成
++--   product_view_count（删列后也不再存在「重跑用旧 PV 覆盖 UV 真值」的风险，原「切码后禁止整脚本
++--   重跑」的圈禁随之解除；但切码后要修索引请走重建 job，本脚本只服务于切码前的存量库）。
++--   仍带旧列存量的更早线上库，若要沿用「PV 起步」的旧形态，先跑下面这版初版 ① 再跑删列脚本：
++--     INSERT INTO product_feed_index (product_id, state, feed_time, price, view_count, update_time)
++--     SELECT p.product_id, p.state,
++--            COALESCE((SELECT MAX(cr.create_time) FROM content_review cr
++--                       WHERE cr.target_type = 'PRODUCT' AND cr.target_id = p.product_id
++--                         AND cr.action = 'APPROVE'), p.create_time),
++--            p.price, p.view_count, NOW()
++--       FROM product p
++--      WHERE p.state = 'ON_SALE'
++--     ON DUPLICATE KEY UPDATE state = VALUES(state), feed_time = VALUES(feed_time),
++--                             price = VALUES(price), view_count = VALUES(view_count), update_time = NOW();
+ --
+ -- 行集口径（票内拍板）：
+ --   商品 = ON_SALE（大厅闲置 tab 直查同口径）；跑腿 = PUBLISHED（大厅前端恒传 status=PUBLISHED，
+ --   见 front/src/views/MarketView.vue；行常驻 + state 快照的驻留口径归票 03，回填只造大厅可见行）。
+ -- 不回填明细/计数表（product_view_history / errand_view_history / *_view_count）：
+ --   历史上没有按人明细可搬（商品只有 product.view_count 聚合 PV），UV 从票 02 切码起按 INSERT 成功
+---   精确累计（计数表恒等明细行数的不变式从第一天成立）；存量 PV 不换算 UV（用户拍板，老数据废弃），
+---   product.view_count 列随 market-feed-uv-view-count-reset.sql 清零（一次性，见该文件头）。
++--   精确累计（计数表恒等明细行数的不变式从第一天成立）；存量 PV 不换算 UV（用户拍板，老数据废弃）。
+ -- ============================================================================
+ 
+ -- ① 商品索引回填：ON_SALE 商品插入（一商品一行 1:1 投影）
+ --    feed_time = content_review 里该商品最近一次通过时刻（target_type='PRODUCT' AND action='APPROVE' 的
+ --    MAX(create_time)，重提再通过取最近一次）；查不到审批流水的存量老商品取 product.create_time 兜底。
+---    price 从主表抄入（ON_SALE 必有价格：提交时必填）；view_count 从主表 PV 列抄入（切码前它是唯一真值，
+---    重跑追平窗口期累加；切码后禁重跑，见头部圈禁）。
+-INSERT INTO product_feed_index (product_id, state, feed_time, price, view_count, update_time)
++--    price 从主表抄入（ON_SALE 必有价格：提交时必填）；view_count 不抄（列已删，索引行按默认 0 起，
++--    切码后由浏览旁路累计——存量 PV 本就要在切码前清零，抄不抄都落 0，见头部退役说明）
++INSERT INTO product_feed_index (product_id, state, feed_time, price, update_time)
+ SELECT p.product_id,
+        p.state,
+        COALESCE((SELECT MAX(cr.create_time)
+@@ -41,14 +53,12 @@ SELECT p.product_id,
+                     AND cr.action = 'APPROVE'),
+                 p.create_time),
+        p.price,
+-       p.view_count,
+        NOW()
+   FROM product p
+  WHERE p.state = 'ON_SALE'
+ ON DUPLICATE KEY UPDATE state      = VALUES(state),
+                         feed_time  = VALUES(feed_time),
+                         price      = VALUES(price),
+-                        view_count = VALUES(view_count),
+                         update_time = NOW();
+ 
+ -- ② 跑腿索引回填：PUBLISHED 跑腿插入（一单一行 1:1 投影；无存量浏览量，view_count 恒 0）
+diff --git a/backend/better-school/sql/backfill/market-feed-uv-drop-columns.sql b/backend/better-school/sql/backfill/market-feed-uv-drop-columns.sql
+new file mode 100644
+index 0000000..a7da60e
+--- /dev/null
++++ b/backend/better-school/sql/backfill/market-feed-uv-drop-columns.sql
+@@ -0,0 +1,36 @@
++-- ============================================================================
++-- market-feed-uv-drop-columns.sql —— product.view_count 删列收口
++-- （market-feed-uv 票 06；market-feed-uv effort 的最后一步存量收口）
++--
++-- 何时执行：线上库跑完 market-feed-uv-backfill.sql、且票 02~05 的新代码已上线
++--   （浏览读路径已换源 product_view_count、落库三步不再写主表列），确认停写期无残留写入后。
++--   开发库 / 测试库不需要跑：两库由 init-*.sql + schema.sql 重建，schema.sql 已按删列后的形状
++--   建表（本脚本针对的是带着旧列存量的线上库）。
++-- 执行方式（不自带 USE，库名在命令行给）：
++--   docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4 better_school < backend/better-school/sql/backfill/market-feed-uv-drop-columns.sql
++--
++-- 前置确认（执行前人工核对）：
++--   该列的存量值是**冻结的历史 PV**（票 02 起停写，不要求为 0/NULL）——确认停写期无残留写入的
++--   口径是「值不再变化」，观察手段：
++--     SELECT COUNT(*) FROM product WHERE view_count > 0;   -- 隔段时间跑两次，数字不再增长
++--   存量 PV 不换算 UV（用户拍板，老数据废弃）：UV 从票 02 切码起按 INSERT 成功精确累计，
++--   删列不丢 UV 口径数据（真源 product_view_history、加速列 product_view_count）。
++--
++-- 执行序（三步缺一不可）：
++--   ① 建表（schema.sql 已含六张市集表）→
++--   ② 回填索引（market-feed-uv-backfill.sql）→
++--   ③ 切码（票 02/03 上线；切码**之前**跑过一次性的 PV 清零脚本）→
++--   ④ 本脚本删列。
++--   第 ③ 步的清零脚本（原 market-feed-uv-view-count-reset.sql）已随本票退役：它的唯一作用是把
++--   这张主表列的旧 PV 与索引热度键归零（切码前做，避免旧 PV 被当成 UV 展示），删列后该列不存在、
++--   脚本无从下手，故整脚本删除（内容与执行时机留在 git 历史与票 06 Answer 里）。
++--
++-- 不幂等：MySQL 8.0 的 ALTER TABLE 不支持 DROP COLUMN IF EXISTS，二次执行会报 1091（列不存在）。
++--   报错即目标已达成，无需处理。
++-- ============================================================================
++
++ALTER TABLE product
++    DROP COLUMN view_count;
++
++-- 验证（人工核对，期望 0 行）：
++--   SHOW COLUMNS FROM product LIKE 'view_count';
+diff --git a/backend/better-school/sql/backfill/market-feed-uv-view-count-reset.sql b/backend/better-school/sql/backfill/market-feed-uv-view-count-reset.sql
+deleted file mode 100644
+index 869891d..0000000
+--- a/backend/better-school/sql/backfill/market-feed-uv-view-count-reset.sql
++++ /dev/null
+@@ -1,29 +0,0 @@
+--- ============================================================================
+--- market-feed-uv-view-count-reset.sql —— 商品存量 PV 清零重启（一次性脚本，禁止重跑）
+--- （market-feed-uv 票 01；用户拍板：PV 不换算 UV，老 PV 数据废弃，浏览量从 UV 起点重新累计）
+---
+--- ⚠ 执行时机（票内拍板）：票 02/03 新代码上线的**同一维护窗口内、切流量之前**。
+---   为什么必须在切码前：切码后索引表 view_count 已经是票 03 浏览旁路 ±N 累计出的 UV 真值，
+---   再跑本脚本会把 UV 连同抄入的存量 PV 一起抹掉、且两者无法区分——先清后切没有这个问题。
+---   切码前清零的副作用只有两个，都可接受：① 旧代码仍读 product.view_count 展示，清零到切码之间
+---   商品详情短暂显示 0 浏览（秒级窗口）；② 清零后旧代码若又累加进少量 PV，残留值只活在
+---   将退役的 product.view_count 列里（票 06 收口删列），无任何读方。
+---   抄入→清零的窗口关系：market-feed-uv-backfill.sql 的 view_count 抄入段在切码前是索引真值
+---   （重跑追平 PV 累加）；本脚本把它连同主表列一起归零，此后热度排序键从 0 起随 UV 累计。
+---
+--- 本脚本刻意**不碰**新 UV 三表（product_view_history / product_view_count / 明细侧）：
+---   计数加速列恒等明细行数，从空表（= 0）起步即「清零重启」的落点，无存量可清。
+---
+--- 执行方式（不自带 USE，库名在命令行给）：
+---   docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4 better_school < backend/better-school/sql/backfill/market-feed-uv-view-count-reset.sql
+--- ============================================================================
+-
+--- 主表 PV 列归零（票 02 读路径换源到 product_view_count 后本列即无读方，票 06 收口删列）
+-UPDATE product SET view_count = 0 WHERE view_count <> 0;
+-
+--- 索引表热度排序键归零（同窗口内切码前执行，切码后禁止执行——会抹掉 ±N 已累计的 UV）
+-UPDATE product_feed_index SET view_count = 0 WHERE view_count <> 0;
+-
+--- ── 验证（人工核对，期望各 0 行）──
+-SELECT product_id FROM product WHERE view_count <> 0;
+-SELECT product_id FROM product_feed_index WHERE view_count <> 0;
+diff --git a/backend/better-school/sql/schema.sql b/backend/better-school/sql/schema.sql
+index f5fe701..affe49c 100644
+--- a/backend/better-school/sql/schema.sql
++++ b/backend/better-school/sql/schema.sql
+@@ -87,7 +87,6 @@ CREATE TABLE IF NOT EXISTS product (
+     state          VARCHAR(20)    NOT NULL DEFAULT 'PENDING_REVIEW' COMMENT '状态 DRAFT(草稿)/PENDING_REVIEW(待审)/ON_SALE/LOCKED(交易中)/SOLD/REJECTED(审核未通过)/DELETED（先审后售：提交进待审，审核通过转在售，拒绝转 REJECTED）',
+     review_round   INT            NOT NULL DEFAULT 0 COMMENT '审核轮次：累计进入待审次数（直接发布=1，草稿提交/重新上架/在售改内容回审再 +1；content_review.review_round 取此列）',
+     review_entered_at DATETIME    NULL COMMENT '最近一次进入待审时间（24h 待审超时提醒扫描用）',
+-    view_count     INT            NOT NULL DEFAULT 0 COMMENT '浏览数（Redis 增量 + 异步落库）',
+     expire_at      DATETIME       NULL COMMENT '到期下架时间（进入待审时刷新满 30 天，XXL-Job 后置汇入草稿箱）',
+     create_time    DATETIME       NOT NULL COMMENT '创建时间',
+     update_time    DATETIME       NOT NULL COMMENT '更新时间',
+@@ -96,6 +95,9 @@ CREATE TABLE IF NOT EXISTS product (
+     KEY idx_category_created (category, create_time),
+     KEY idx_user (user_id)
+ ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '二手商品表';
++-- product.view_count 已删（market-feed-uv 票 06 收口：浏览切 UV 口径，真相源 product_view_history、
++-- 加速列 product_view_count；存量 PV 随票 01 的一次性清零脚本废弃，清零脚本与列一同退役）。
++-- 存量库删列用 backend/better-school/sql/backfill/market-feed-uv-drop-columns.sql。
+ 
+ CREATE TABLE IF NOT EXISTS product_favorite (
+     id         BIGINT   NOT NULL AUTO_INCREMENT,
+diff --git a/backend/better-school/sql/xxl-job-tasks.sql b/backend/better-school/sql/xxl-job-tasks.sql
+index a73a2e2..d29c7b8 100644
+--- a/backend/better-school/sql/xxl-job-tasks.sql
++++ b/backend/better-school/sql/xxl-job-tasks.sql
+@@ -70,6 +70,35 @@ SELECT @group_id, 'feed 索引全量重建（手动）', NOW(), NOW(), 'better-s
+        '', 0, 0, 0
+ WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'feedIndexRebuildJob');
+ 
++-- 市集两域 feed 索引全量重建：同样默认不自动触发（trigger_status=0）——同步是同事务直写、常态无漂移，
++-- 重建是重活，仅在出现漂移信号（浏览旁路 updateFeedIndexViewCount 命中 0 行的 warn、计数窄表被绕过直改）
++-- 时到 xxl-job-admin 手动执行；两域各一个 handler（数据源与索引列不同，见 MarketFeedIndexRebuildJob 类注释）
++INSERT INTO xxl_job_info
++(job_group, job_desc, add_time, update_time, author, alarm_email,
++ schedule_type, schedule_conf, misfire_strategy, executor_route_strategy,
++ executor_handler, executor_param, executor_block_strategy, executor_timeout,
++ executor_fail_retry_count, glue_type, glue_source, glue_remark, glue_updatetime,
++ child_jobid, trigger_status, trigger_last_time, trigger_next_time)
++SELECT @group_id, '商品 feed 索引全量重建（手动）', NOW(), NOW(), 'better-school', '',
++       'CRON', '0 50 3 * * ?', 'DO_NOTHING', 'FIRST',
++       'productFeedIndexRebuildJob', '', 'SERIAL_EXECUTION', 0,
++       0, 'BEAN', '', '', NOW(),
++       '', 0, 0, 0
++WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'productFeedIndexRebuildJob');
++
++INSERT INTO xxl_job_info
++(job_group, job_desc, add_time, update_time, author, alarm_email,
++ schedule_type, schedule_conf, misfire_strategy, executor_route_strategy,
++ executor_handler, executor_param, executor_block_strategy, executor_timeout,
++ executor_fail_retry_count, glue_type, glue_source, glue_remark, glue_updatetime,
++ child_jobid, trigger_status, trigger_last_time, trigger_next_time)
++SELECT @group_id, '跑腿 feed 索引全量重建（手动）', NOW(), NOW(), 'better-school', '',
++       'CRON', '0 55 3 * * ?', 'DO_NOTHING', 'FIRST',
++       'errandFeedIndexRebuildJob', '', 'SERIAL_EXECUTION', 0,
++       0, 'BEAN', '', '', NOW(),
++       '', 0, 0, 0
++WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'errandFeedIndexRebuildJob');
++
+ INSERT INTO xxl_job_info
+ (job_group, job_desc, add_time, update_time, author, alarm_email,
+  schedule_type, schedule_conf, misfire_strategy, executor_route_strategy,
+diff --git a/sql.md b/sql.md
+index fcdc4e1..136ee76 100644
+--- a/sql.md
++++ b/sql.md
+@@ -108,7 +108,6 @@ CREATE TABLE IF NOT EXISTS product (
+     state          VARCHAR(20)    NOT NULL DEFAULT 'PENDING_REVIEW' COMMENT '状态 DRAFT(草稿)/PENDING_REVIEW(待审)/ON_SALE/LOCKED(交易中)/SOLD/REJECTED(审核未通过)/DELETED（先审后售：提交进待审，审核通过转在售，拒绝转 REJECTED）',
+     review_round   INT            NOT NULL DEFAULT 0 COMMENT '审核轮次：累计进入待审次数（直接发布=1，草稿提交/重新上架/在售改内容回审再 +1；content_review.review_round 取此列）',
+     review_entered_at DATETIME    NULL COMMENT '最近一次进入待审时间（24h 待审超时提醒扫描用）',
+-    view_count     INT            NOT NULL DEFAULT 0 COMMENT '浏览数（Redis 增量 + 异步落库）',
+     expire_at      DATETIME       NULL COMMENT '到期下架时间（进入待审时刷新满 30 天，XXL-Job 后置汇入草稿箱）',
+     create_time    DATETIME       NOT NULL COMMENT '创建时间',
+     update_time    DATETIME       NOT NULL COMMENT '更新时间',
+@@ -117,6 +116,9 @@ CREATE TABLE IF NOT EXISTS product (
+     KEY idx_category_created (category, create_time),
+     KEY idx_user (user_id)
+ ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '二手商品表';
++-- product.view_count 已删（market-feed-uv 票 06 收口：浏览切 UV 口径，真相源 product_view_history、
++-- 加速列 product_view_count；存量 PV 随票 01 的一次性清零脚本废弃，清零脚本与列一同退役）。
++-- 存量库删列用 backend/better-school/sql/backfill/market-feed-uv-drop-columns.sql。
+ ```
+ 
+ ### product_favorite
+@@ -259,7 +261,7 @@ CREATE TABLE IF NOT EXISTS product_feed_index (
+ ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商品 feed 异构索引（product 的 1:1 排序投影，同事务直写）';
+ ```
+ 
+-说明：市集闲置 tab 推荐读路径的落点，照 `post_feed_index` 先例分域落表（不与 post 泛化合表，post 侧一行不动）。一商品一行 1:1 投影，feed 只取 `state = 'ON_SALE'`（大厅闲置 tab 直查同口径）；排序键 = 热度（`view_count` 降，浏览量显示为热度）/ 时间降 / 时间升（同索引反向扫描，不单设索引）/ 价格升 / 价格降。`price` 进索引表是帖子没有的新排序键——商品在售改价立即生效不进审核，改价事务必须同事务旁路同步（market-feed-uv 票 03）。存量回填见 `backend/better-school/sql/backfill/market-feed-uv-backfill.sql`。
++说明：市集闲置 tab 推荐读路径的落点，照 `post_feed_index` 先例分域落表（不与 post 泛化合表，post 侧一行不动）。一商品一行 1:1 投影，feed 只取 `state = 'ON_SALE'`（大厅闲置 tab 直查同口径）；排序键 = 热度（`view_count` 降，浏览量显示为热度）/ 时间降 / 时间升（同索引反向扫描，不单设索引）/ 价格升 / 价格降。`price` 进索引表是帖子没有的新排序键——商品在售改价立即生效不进审核，改价事务必须同事务旁路同步（market-feed-uv 票 03）。存量回填见 `backend/better-school/sql/backfill/market-feed-uv-backfill.sql`；索引行与计数窄表的漂移（浏览旁路命中 0 行的 warn）由 `productFeedIndexRebuildJob` 手动重建兜底（票 06：清空重灌 + 计数校准，一个事务）。
+ 
+ ### errand_feed_index（market-feed-uv 票 01）
+ 
+@@ -278,7 +280,7 @@ CREATE TABLE IF NOT EXISTS errand_feed_index (
+ ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '跑腿 feed 异构索引（errand_order 的 1:1 排序投影，同事务直写）';
+ ```
+ 
+-说明：跑腿大厅推荐读路径的落点。行常驻 + state 快照（13 态流转频繁，照帖子做法：每个影响 state 的流转点同事务同步快照，读路径 `WHERE state = 'PUBLISHED'` 挑可见行）——大厅前端恒传 `status=PUBLISHED`（`front/src/views/MarketView.vue`），这是回填行集与 feed 读路径的统一公开口径。跑腿无存量浏览量，`view_count` 从 0 起步。
++说明：跑腿大厅推荐读路径的落点。行常驻 + state 快照（13 态流转频繁，照帖子做法：每个影响 state 的流转点同事务同步快照，读路径 `WHERE state = 'PUBLISHED'` 挑可见行）——大厅前端恒传 `status=PUBLISHED`（`front/src/views/MarketView.vue`），这是回填行集与 feed 读路径的统一公开口径。跑腿无存量浏览量，`view_count` 从 0 起步；漂移由 `errandFeedIndexRebuildJob` 手动重建兜底（票 06）。
+ 
+ ### product_view_history（market-feed-uv 票 01）
+ 
+@@ -330,7 +332,7 @@ CREATE TABLE IF NOT EXISTS errand_view_count (
+ ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '跑腿浏览计数表（UV 加速列，事实源在 errand_view_history）';
+ ```
+ 
+-说明（两域计数表合并）：照 `post_view_count` 先例的 UV 加速列，精确值 = 各域明细表行数，不是真相源。与帖子的不对称：**存量 PV 不搬数**——post 的 `post_view_count` 曾从 `post.view_count` 一次性搬数续展示，商品存量 PV 由用户拍板废弃（PV 无法换算 UV），本表从空表（= 0）起步即「清零重启」，`product.view_count` 旧列用一次性脚本 `backend/better-school/sql/backfill/market-feed-uv-view-count-reset.sql` 清零（执行时机 = 票 02/03 切流量之前，见脚本头）。
++说明（两域计数表合并）：照 `post_view_count` 先例的 UV 加速列，精确值 = 各域明细表行数，不是真相源。与帖子的不对称：**存量 PV 不搬数**——post 的 `post_view_count` 曾从 `post.view_count` 一次性搬数续展示，商品存量 PV 由用户拍板废弃（PV 无法换算 UV），本表从空表（= 0）起步即「清零重启」：`product.view_count` 旧列与配套的一次性清零脚本（原 `sql/backfill/market-feed-uv-view-count-reset.sql`）随票 06 删列一并退役，删列脚本见 `backend/better-school/sql/backfill/market-feed-uv-drop-columns.sql`。两域加速列的漂移（窄表被绕过直改、缺行、孤儿行）由各域重建 job 校准回明细行数。
+ 
+ ### outbox_message
+ 

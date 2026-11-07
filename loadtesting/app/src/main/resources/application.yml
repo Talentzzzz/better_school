@@ -1,0 +1,101 @@
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  # Tomcat 接入能力：默认 max-threads=200 太低，压测会在容器层就排队
+  tomcat:
+    # 注册 Tomcat MBean，才能在 /actuator/metrics 里看到 tomcat.threads.busy 等指标
+    # （Spring Boot 3.2+ 默认关闭，压测要观察线程池是否打满）
+    mbeanregistry:
+      enabled: true
+    threads:
+      max: ${TOMCAT_THREADS:800}
+      min-spare: ${TOMCAT_MIN_SPARE:100}
+    accept-count: ${TOMCAT_ACCEPT_COUNT:2000}
+    max-connections: ${TOMCAT_MAX_CONNECTIONS:20000}
+    connection-timeout: 20s
+    max-keep-alive-requests: -1
+
+spring:
+  application:
+    name: inventory-loadtest
+  lifecycle:
+    timeout-per-shutdown-phase: 10s
+  sql:
+    init:
+      # 启动时执行 schema.sql（全是 CREATE TABLE IF NOT EXISTS，幂等）
+      # 这样中间件只要建好库，应用自己会把表建出来，不依赖 init SQL 挂载
+      mode: always
+      continue-on-error: false
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/lt_inventory?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&useServerPrepStmts=true&cachePrepStmts=true&prepStmtCacheSize=500&prepStmtCacheSqlLimit=2048&rewriteBatchedStatements=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:lt123456}
+    hikari:
+      pool-name: lt-hikari
+      maximum-pool-size: ${DB_POOL_SIZE:120}
+      minimum-idle: ${DB_POOL_SIZE:120}
+      connection-timeout: 5000
+      validation-timeout: 1000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      keepalive-time: 60000
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:lt123456}
+      timeout: 2s
+      connect-timeout: 2s
+      lettuce:
+        pool:
+          max-active: ${REDIS_POOL_SIZE:400}
+          max-idle: 400
+          min-idle: 50
+          max-wait: 3000ms
+  jackson:
+    default-property-inclusion: non_null
+
+rocketmq:
+  name-server: ${ROCKETMQ_NAMESRV:127.0.0.1:9876}
+  producer:
+    group: lt-inventory-producer
+    send-message-timeout: 3000
+    # 压测不重试：失败了就把错误暴露在错误率里，而不是被重试掩盖成高延迟
+    retry-times-when-send-failed: 0
+    retry-times-when-send-async-failed: 0
+
+inventory:
+  default-sku-id: ${DEFAULT_SKU_ID:1001}
+  default-stock: ${DEFAULT_STOCK:10000}
+  bucket-count: ${BUCKET_COUNT:1}
+  default-strategy: ${DEFAULT_STRATEGY:merge}
+  merge:
+    dedupe-window-ms: ${MERGE_WINDOW_MS:1000}
+    delay-level: ${MERGE_DELAY_LEVEL:1}
+    max-cells-per-wake: ${MERGE_CELLS_PER_WAKE:1}
+    fallback-interval-ms: ${MERGE_FALLBACK_MS:5000}
+    stale-seconds: ${MERGE_STALE_SECONDS:2}
+    scan-limit: 50
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  level:
+    root: warn
+    com.betterschool.loadtest: info
+    org.apache.rocketmq: warn
+    org.springframework.web: warn
+    io.lettuce: warn
+    com.zaxxer.hikari: warn
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{20} - %msg%n"

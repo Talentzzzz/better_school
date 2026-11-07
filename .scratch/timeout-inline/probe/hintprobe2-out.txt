@@ -1,0 +1,74 @@
+﻿
+################ A production-shape  (ss_a / probe-r-a.yaml) ################
+13:43:25.507 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Starting...
+13:43:25.517 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@5f9678e1
+13:43:25.517 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Start completed.
+java.exe : 2026-10-16 13:43:25.712 [main] INFO  com.cedarsoftware.util.MultiKeyMap - MultiKeyMap stripe configuration: 
+64 locks for 32 cores
+所在位置 行:8 字符: 1
++ & "$jdk\bin\java.exe" "-Dfile.encoding=UTF-8" "-Duser.language=en" -c ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-10-16 13:4...ks for 32 cores:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+13:43:27.115 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:43:27.115 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: 2f54e179-93df-4482-a2da-69c86af6711c, IP: 26.144.150.84
+  [info] logical db 'logic_db' -> schema tables(1)
+  [info]   [timeout_task]
+  [info]   singleTableDataNodes (0) keys=[]
+  ---- A1 production pattern: hint -> connection -> statement -> execute ----
+  [PASS] A1 hinted write -> timeout_task_00  ::  updateCount=1 rowsInShard=1
+  [PASS] A1 hinted write -> timeout_task_01  ::  updateCount=1 rowsInShard=1
+  [PASS] A1 hinted write -> timeout_task_02  ::  updateCount=1 rowsInShard=1
+  [PASS] A1 hinted write -> timeout_task_03  ::  updateCount=1 rowsInShard=1
+  [PASS] A1 hinted write -> timeout_task_04  ::  updateCount=1 rowsInShard=1
+  [PASS] A1 hinted write -> timeout_task_05  ::  updateCount=1 rowsInShard=1
+  ---- A2 ConfirmProbe pattern: connection -> hint -> statement -> execute ----
+  [PASS] A2 conn-first hinted write -> timeout_task_06  ::  updateCount=1 rowsInShard=1
+  [PASS] A2 conn-first hinted write -> timeout_task_07  ::  updateCount=1 rowsInShard=1
+  [PASS] A2 conn-first hinted write -> timeout_task_08  ::  updateCount=1 rowsInShard=1
+  [PASS] A2 conn-first hinted write -> timeout_task_09  ::  updateCount=1 rowsInShard=1
+  [PASS] A2 conn-first hinted write -> timeout_task_00  ::  updateCount=1 rowsInShard=2
+  [PASS] A2 conn-first hinted write -> timeout_task_01  ::  updateCount=1 rowsInShard=2
+  ---- A3 prepared-statement path ----
+  [PASS] A3 hinted prepared write -> timeout_task_10  ::  updateCount=1 rowsInShard=1
+  [PASS] A3 hinted prepared write -> timeout_task_11  ::  updateCount=1 rowsInShard=1
+  [PASS] A3 hinted prepared write -> timeout_task_12  ::  updateCount=1 rowsInShard=1
+  ---- A4 fail-fast safety net ----
+  [PASS] A4 no-hint sharded write is rejected  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[], startInd...
+  [info] total rows in the 16 shards now = 15
+
+################ B singleStar        (ss_b / probe-r-b.yaml) ################
+13:43:28.723 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Starting...
+13:43:28.728 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-2 - Added connection com.mysql.cj.jdbc.ConnectionImpl@5330b213
+13:43:28.728 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Start completed.
+13:43:29.033 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:43:29.034 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: bac68366-2f21-4407-927b-5e0d99fe4892, IP: 26.144.150.84
+  [info] logical db 'ss_b' -> schema tables(3)
+  [info]   [product_order, timeout_task, user_account]
+  [info]   singleTableDataNodes (2) keys=[product_order, user_account]
+  ---- A1 production pattern: hint -> connection -> statement -> execute ----
+  [PASS] A1 hinted write -> timeout_task_00  ::  updateCount=1 rowsInShard=1
+  [PASS] A1 hinted write -> timeout_task_01  ::  updateCount=1 rowsInShard=1
+  [PASS] A1 hinted write -> timeout_task_02  ::  updateCount=1 rowsInShard=1
+  [PASS] A1 hinted write -> timeout_task_03  ::  updateCount=1 rowsInShard=1
+  [PASS] A1 hinted write -> timeout_task_04  ::  updateCount=1 rowsInShard=1
+  [PASS] A1 hinted write -> timeout_task_05  ::  updateCount=1 rowsInShard=1
+  ---- A2 ConfirmProbe pattern: connection -> hint -> statement -> execute ----
+  [PASS] A2 conn-first hinted write -> timeout_task_06  ::  updateCount=1 rowsInShard=1
+  [PASS] A2 conn-first hinted write -> timeout_task_07  ::  updateCount=1 rowsInShard=1
+  [PASS] A2 conn-first hinted write -> timeout_task_08  ::  updateCount=1 rowsInShard=1
+  [PASS] A2 conn-first hinted write -> timeout_task_09  ::  updateCount=1 rowsInShard=1
+  [PASS] A2 conn-first hinted write -> timeout_task_00  ::  updateCount=1 rowsInShard=2
+  [PASS] A2 conn-first hinted write -> timeout_task_01  ::  updateCount=1 rowsInShard=2
+  ---- A3 prepared-statement path ----
+  [PASS] A3 hinted prepared write -> timeout_task_10  ::  updateCount=1 rowsInShard=1
+  [PASS] A3 hinted prepared write -> timeout_task_11  ::  updateCount=1 rowsInShard=1
+  [PASS] A3 hinted prepared write -> timeout_task_12  ::  updateCount=1 rowsInShard=1
+  ---- A4 fail-fast safety net ----
+  [PASS] A4 no-hint sharded write is rejected  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition(values=[], startInd...
+  [info] total rows in the 16 shards now = 15
+
+=== HINTPROBE2 RESULT: PASS=32 FAIL=0 ===
+  [info] DATA_SOURCE_CACHE key: jdbc:shardingsphere:classpath:probe-r-a.yaml
+  [info] DATA_SOURCE_CACHE key: jdbc:shardingsphere:classpath:probe-r-b.yaml

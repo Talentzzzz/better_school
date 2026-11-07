@@ -30,7 +30,7 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
         sendText("m1", "第一条");
         sendText("m2", "第二条");
 
-        // B 视角：1v1 拼对方资料，unread = 水位副本 last_seq_copy − 水位线 O(1)
+        // B 视角：1v1 拼对方资料，unread = room.last_seq − 水位线（服务端拼装）
         JsonNode listForB = listRooms(userB);
         assertThat(listForB.path("total").asLong()).isEqualTo(1);
         JsonNode roomForB = listForB.path("list").get(0);
@@ -182,7 +182,7 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
         sendText("rm1", "已读测试1");
         sendText("rm2", "已读测试2");
 
-        // B 打开会话：水位线推到成员行水位副本 last_seq_copy，提交后一个 READ 事件
+        // B 打开会话：水位线推到会话真源 room.last_seq，提交后一个 READ 事件
         JsonNode readResp = postJson("/api/chat/rooms/" + roomId + "/read", Map.of(), userB);
         assertSuccess(readResp, "推水位线");
         assertThat(readResp.path("data").asLong()).isEqualTo(2);

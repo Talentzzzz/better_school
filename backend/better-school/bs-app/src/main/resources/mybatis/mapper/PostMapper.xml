@@ -2,44 +2,15 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.betterschool.infrastructure.dao.post.IPostDao">
 
-    <!-- like_count/comment_count/view_count 为列表查询投影列：窄表 post_like_count / post_comment_count /
-         post_view_count LEFT JOIN 合成（不进缓存 ⇒ 就是实时值）；post 行不再存前两列，也不刷新 view_count
-         （feed-index-uv 票 02 起停写停读，浏览 UV 的真相源是 user_view_history，加速列 post_view_count）。
-         票 05 把投影拆成「内容列 + 计数列」两块：列表照旧整块用；详情内容查询只用内容列（计数不进缓存） -->
+    <!-- like_count/comment_count/view_count 不在本 mapper 的任何 SELECT 里：三个计数窄表
+         post_like_count / post_comment_count / post_view_count 由仓储按页内 id 集批量回查
+         （selectLikeCountsByPostIds 等），作者昵称头像由仓储查 bs_user 回填——SQL 层零 JOIN。
+         post 行不再存计数列，也不刷新 view_count（feed-index-uv 票 02 起停写停读，
+         浏览 UV 的真相源是 user_view_history，加速列 post_view_count） -->
     <sql id="postColumns">
         p.id, p.post_id, p.user_id, p.title, p.content, p.images, p.cover, p.state,
         p.review_round, p.review_entered_at,
         p.create_time, p.update_time, p.expire_at
-    </sql>
-
-    <sql id="listCountColumns">
-        COALESCE(plc.like_count, 0) AS like_count,
-        COALESCE(pcc.comment_count, 0) AS comment_count,
-        COALESCE(pvc.view_count, 0) AS view_count
-    </sql>
-
-    <sql id="baseColumns">
-        <include refid="postColumns"/>,
-        <include refid="listCountColumns"/>
-    </sql>
-
-    <sql id="baseJoins">
-        <include refid="listCountJoins"/>
-        <include refid="authorJoins"/>
-    </sql>
-
-    <sql id="authorJoins">
-        LEFT JOIN bs_user u ON p.user_id = u.user_id
-    </sql>
-
-    <sql id="listCountJoins">
-        LEFT JOIN post_like_count plc ON plc.post_id = p.post_id
-        LEFT JOIN post_comment_count pcc ON pcc.post_id = p.post_id
-        LEFT JOIN post_view_count pvc ON pvc.post_id = p.post_id
-    </sql>
-
-    <sql id="authorColumns">
-        u.nickname AS author_nickname, u.avatar AS author_avatar
     </sql>
 
     <insert id="insert" parameterType="com.betterschool.infrastructure.dao.post.po.PostPO"
@@ -65,24 +36,38 @@
         LIMIT #{limit}
     </select>
 
-    <!-- 详情内容查询（票 05 读路径拆两段之一）：只取正文/状态/作者/配图，进缓存；
-         不带计数 JOIN——三个计数由 selectCountsByPostId 每次读单独取，缓存里永远没有计数 -->
+    <!-- 详情内容查询（票 05 读路径拆两段之一）：只取正文/状态/作者外键/配图，进缓存；
+         不带计数——三个计数由仓储按窄表批量回查，缓存里永远没有计数；作者昵称头像同样仓储回查 -->
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
-        SELECT <include refid="postColumns"/>, <include refid="authorColumns"/>
+        SELECT <include refid="postColumns"/>
         FROM post p
-        <include refid="authorJoins"/>
         WHERE p.post_id = #{postId}
           AND p.state != 'DELETED'
     </select>
 
-    <!-- 详情读的计数查询（票 05 拆两段之二）：按主键一次取回三个计数（like/comment 窄表 + 浏览 UV 加速列），
-         每次读都查、在仓储拼回实体——缓存命中路径的三个数也恒等于库值（acceptance C5）。
-         view 段换源（feed-index-uv 票 02）：post.view_count 停读，走 post_view_count（真相源 user_view_history） -->
-    <select id="selectCountsByPostId" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
-        SELECT <include refid="listCountColumns"/>
-        FROM post p
-        <include refid="listCountJoins"/>
-        WHERE p.post_id = #{postId}
+    <!-- 详情读的计数查询（票 05 拆两段之二）改为三张窄表按 id 集批量单表读，仓储拼回 PO/实体——
+         每次读都查、在仓储拼回——缓存命中路径的三个数也恒等于库值（acceptance C5）。
+         view 段换源（feed-index-uv 票 02）：post.view_count 停读，走 post_view_count（真相源 user_view_history）。
+         缺行 = 计数 0（COALESCE 在仓储做），与原 LEFT JOIN 合成口径一致 -->
+    <select id="selectLikeCountsByPostIds" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
+        SELECT c.post_id AS postId, c.like_count AS likeCount
+        FROM post_like_count c
+        WHERE c.post_id IN
+        <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
+    </select>
+
+    <select id="selectCommentCountsByPostIds" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
+        SELECT c.post_id AS postId, c.comment_count AS commentCount
+        FROM post_comment_count c
+        WHERE c.post_id IN
+        <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
+    </select>
+
+    <select id="selectViewCountsByPostIds" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
+        SELECT c.post_id AS postId, c.view_count AS viewCount
+        FROM post_view_count c
+        WHERE c.post_id IN
+        <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
     </select>
 
     <!-- 覆盖草稿内容（全量编辑：文字、图片、封面全部可改，仅 DRAFT 行生效） -->
@@ -128,11 +113,11 @@
           AND state = 'REJECTED'
     </update>
 
-    <!-- 按 id 列表查询：不分状态（搜索同步按 state 判定 upsert/删除，搜索命中组装按 NORMAL 过滤） -->
+    <!-- 按 id 列表查询：不分状态（搜索同步按 state 判定 upsert/删除，搜索命中组装按 NORMAL 过滤）。
+         纯 post 单表：计数/作者由仓储批量回查拼装 -->
     <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
-        SELECT <include refid="baseColumns"/>, <include refid="authorColumns"/>
+        SELECT <include refid="postColumns"/>
         FROM post p
-        <include refid="baseJoins"/>
         WHERE p.post_id IN
         <foreach collection="ids" item="postId" open="(" separator="," close=")">#{postId}</foreach>
     </select>
@@ -174,19 +159,22 @@
         LIMIT #{limit}
     </select>
 
-    <!-- 旧直查路径（feed-index-uv 票 04 起仅作降级，票 06 分类退役后索引路径为主路径）：热榜口径已对齐
-         索引表 = 纯 like_count（map 定稿去掉 + comment_count*2 权重公式），降级时两路排序语义一致 -->
+    <!-- 旧直查路径（feed-index-uv 票 04 起仅作降级，票 06 分类退役后索引路径为主路径）：
+         time 档纯 post 单表 SQL 分页；hot 档排序键 like_count 在窄表里（不能 JOIN 进来），
+         由仓储走 selectNormalRows 取全集 + 窄表批量回查 + 内存排序切片（降级路径，数据集有界） -->
     <select id="selectPage" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
-        SELECT <include refid="baseColumns"/>, <include refid="authorColumns"/>
+        SELECT <include refid="postColumns"/>
         FROM post p
-        <include refid="baseJoins"/>
         WHERE p.state = 'NORMAL'
-        ORDER BY
-        <choose>
-            <when test="sort == 'hot'">COALESCE(plc.like_count, 0) DESC, p.create_time DESC, p.post_id DESC</when>
-            <otherwise>p.create_time DESC, p.post_id DESC</otherwise>
-        </choose>
+        ORDER BY p.create_time DESC, p.post_id DESC
         LIMIT #{offset}, #{limit}
+    </select>
+
+    <!-- hot 档降级取数：NORMAL 全集（无 LIMIT），排序与切片在仓储内存完成 -->
+    <select id="selectNormalRows" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
+        SELECT <include refid="postColumns"/>
+        FROM post p
+        WHERE p.state = 'NORMAL'
     </select>
 
     <select id="count" resultType="long">
@@ -197,9 +185,8 @@
 
     <!-- 我的帖子分页（作者视角）：含待审/草稿/被驳回，作者需感知审核结果与草稿，排除已删除 -->
     <select id="selectPageByUser" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
-        SELECT <include refid="baseColumns"/>, <include refid="authorColumns"/>
+        SELECT <include refid="postColumns"/>
         FROM post p
-        <include refid="baseJoins"/>
         WHERE p.user_id = #{userId}
           AND p.state IN ('NORMAL', 'PENDING_REVIEW', 'DRAFT', 'REJECTED')
         ORDER BY p.create_time DESC, p.post_id DESC
@@ -213,57 +200,30 @@
           AND state IN ('NORMAL', 'PENDING_REVIEW', 'DRAFT', 'REJECTED')
     </select>
 
-    <!-- 我点赞过的帖子：按点赞时间倒序；点赞后帖子可能被驳回/转入待审，仍向点赞者展示 -->
-    <select id="selectLikedPageByUser" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
-        SELECT <include refid="baseColumns"/>, <include refid="authorColumns"/>
+    <!-- 我点赞过的帖子：关系行主查（post_like 单表，按点赞时间倒序）；帖子行与可见性过滤
+         （点赞后帖子可能被驳回/转入待审，仍向点赞者展示）由仓储两段查拼装 -->
+    <select id="selectRelationLikedRows" resultType="com.betterschool.infrastructure.dao.post.po.PostRelationRowPO">
+        SELECT pl.post_id AS postId, pl.create_time AS sortTime
         FROM post_like pl
-        JOIN post p ON pl.post_id = p.post_id
-        <include refid="baseJoins"/>
         WHERE pl.user_id = #{userId}
-          AND p.state IN ('NORMAL', 'PENDING_REVIEW', 'REJECTED')
-        ORDER BY pl.create_time DESC, p.post_id DESC
-        LIMIT #{offset}, #{limit}
+        ORDER BY pl.create_time DESC, pl.post_id DESC
     </select>
 
-    <select id="countLikedByUser" resultType="long">
-        SELECT COUNT(1)
-        FROM post_like pl
-        JOIN post p ON pl.post_id = p.post_id
-        WHERE pl.user_id = #{userId}
-          AND p.state IN ('NORMAL', 'PENDING_REVIEW', 'REJECTED')
-    </select>
-
-    <!-- 我评论过的帖子：去重 + 最近评论时间倒序（子查询取 max 避免 ONLY_FULL_GROUP_BY 歧义） -->
-    <select id="selectCommentedPageByUser" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
-        SELECT <include refid="baseColumns"/>, <include refid="authorColumns"/>
-        FROM (SELECT post_id, MAX(create_time) AS latest_at
-              FROM post_comment
-              WHERE user_id = #{userId}
-                AND state = 'NORMAL'
-              GROUP BY post_id) my_comments
-        JOIN post p ON my_comments.post_id = p.post_id
-        <include refid="baseJoins"/>
-        WHERE p.state IN ('NORMAL', 'PENDING_REVIEW', 'REJECTED')
-        ORDER BY my_comments.latest_at DESC, p.post_id DESC
-        LIMIT #{offset}, #{limit}
-    </select>
-
-    <select id="countCommentedByUser" resultType="long">
-        SELECT COUNT(1)
-        FROM (SELECT post_id
-              FROM post_comment
-              WHERE user_id = #{userId}
-                AND state = 'NORMAL'
-              GROUP BY post_id) my_comments
-        JOIN post p ON my_comments.post_id = p.post_id
-        WHERE p.state IN ('NORMAL', 'PENDING_REVIEW', 'REJECTED')
+    <!-- 我评论过的帖子：去重 + 最近评论时间倒序（单表 GROUP BY，ONLY_FULL_GROUP_BY 安全）；
+         帖子行与可见性过滤由仓储两段查拼装 -->
+    <select id="selectRelationCommentedRows" resultType="com.betterschool.infrastructure.dao.post.po.PostRelationRowPO">
+        SELECT post_id AS postId, MAX(create_time) AS sortTime
+        FROM post_comment
+        WHERE user_id = #{userId}
+          AND state = 'NORMAL'
+        GROUP BY post_id
+        ORDER BY sortTime DESC, post_id DESC
     </select>
 
     <!-- 某用户的公开帖子（作者主页「笔记」tab）：仅 NORMAL；本人看自己也走此口径（草稿/待审/驳回只在「我的」页） -->
     <select id="selectNormalPageByUser" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
-        SELECT <include refid="baseColumns"/>, <include refid="authorColumns"/>
+        SELECT <include refid="postColumns"/>
         FROM post p
-        <include refid="baseJoins"/>
         WHERE p.user_id = #{userId}
           AND p.state = 'NORMAL'
         ORDER BY p.create_time DESC, p.post_id DESC
@@ -277,25 +237,17 @@
           AND state = 'NORMAL'
     </select>
 
-    <!-- 某用户赞过的帖子（作者主页「赞过」tab）：源帖仅 NORMAL（待审/驳回不外露），按点赞时间倒序 -->
-    <select id="selectPublicLikedPageByUser" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
-        SELECT <include refid="baseColumns"/>, <include refid="authorColumns"/>
-        FROM post_like pl
-        JOIN post p ON pl.post_id = p.post_id
-        <include refid="baseJoins"/>
-        WHERE pl.user_id = #{userId}
-          AND p.state = 'NORMAL'
-        ORDER BY pl.create_time DESC, p.post_id DESC
-        LIMIT #{offset}, #{limit}
+    <!-- 某用户全部 NORMAL 帖 id 集（获赞统计取数①：个人资料页的 receivedLikeCount，idUserRepository
+         拿它回查 post_like_count 窄表求和，SQL 层零 JOIN；只取 id 列，行数 = 该用户公开帖数） -->
+    <select id="selectNormalIdsByUser" resultType="string">
+        SELECT post_id
+        FROM post
+        WHERE user_id = #{userId}
+          AND state = 'NORMAL'
     </select>
 
-    <select id="countPublicLikedByUser" resultType="long">
-        SELECT COUNT(1)
-        FROM post_like pl
-        JOIN post p ON pl.post_id = p.post_id
-        WHERE pl.user_id = #{userId}
-          AND p.state = 'NORMAL'
-    </select>
+    <!-- 某用户赞过的帖子（作者主页「赞过」tab）：关系行主查与「我赞过的」共用 selectRelationLikedRows，
+         源帖仅 NORMAL（待审/驳回不外露）的过滤在仓储 Java 侧做 -->
 
     <!-- 点赞关系行批量写（合并器一组一个事务）：同帖 N 个用户一条语句。
          INSERT IGNORE 的根本目的不是「别报错」，而是把撞唯一键的裁决交给数据库：
@@ -392,28 +344,14 @@
 
     <!-- ── 浏览历史的两个读能力（feed-index-uv 票 05：user_view_history 明细即事实源）── -->
 
-    <!-- 我的浏览历史分页：idx_user_viewed (user_id, viewed_at) 倒序扫描，JOIN post 过滤可见性 +
-         带出内容列/计数列/作者（与 selectLikedPageByUser 同型）。可见性谓词必须在 SQL 里——
-         offset 翻页窗口与 COUNT 才同口径：NORMAL 公开；本人看自己浏览过的待审/驳回/草稿帖照常展示
-         （详情对作者可见），已删除一律过滤（点卡片要能进详情，非可见态进详情是 404） -->
-    <select id="selectViewHistoryPage" resultType="com.betterschool.infrastructure.dao.post.po.PostPO">
-        SELECT <include refid="baseColumns"/>, <include refid="authorColumns"/>
+    <!-- 我的浏览历史：明细行主查（idx_user_viewed (user_id, viewed_at) 倒序扫描）；帖子行与可见性过滤
+         由仓储两段查拼装——NORMAL 公开；本人看自己浏览过的待审/驳回/草稿帖照常展示（详情对作者可见），
+         已删除一律过滤（点卡片要能进详情，非可见态进详情是 404） -->
+    <select id="selectRelationViewedRows" resultType="com.betterschool.infrastructure.dao.post.po.PostRelationRowPO">
+        SELECT uvh.post_id AS postId, uvh.viewed_at AS sortTime
         FROM user_view_history uvh
-        JOIN post p ON uvh.post_id = p.post_id
-        <include refid="baseJoins"/>
         WHERE uvh.user_id = #{userId}
-          AND (p.state = 'NORMAL' OR (p.user_id = #{userId} AND p.state != 'DELETED'))
         ORDER BY uvh.viewed_at DESC, uvh.post_id DESC
-        LIMIT #{offset}, #{limit}
-    </select>
-
-    <!-- 浏览历史总数：与分页同一可见性谓词 -->
-    <select id="countViewHistory" resultType="long">
-        SELECT COUNT(1)
-        FROM user_view_history uvh
-        JOIN post p ON uvh.post_id = p.post_id
-        WHERE uvh.user_id = #{userId}
-          AND (p.state = 'NORMAL' OR (p.user_id = #{userId} AND p.state != 'DELETED'))
     </select>
 
     <!-- feed 已读灰显批量回显：页内 post_id 的浏览记录，走 (user_id, post_id) 主键前缀 -->
@@ -497,30 +435,24 @@
         DELETE FROM post_feed_index
     </delete>
 
-    <!-- 重灌：一帖一行 1:1 投影。行集 = NORMAL 帖 ∪ 有过审批通过的帖（运行期语义：通过事务才诞生行，
-         之后 state 跟随流转、行不消失；从未通过审的待审/驳回/草稿帖不凭空进索引）。feed_time 取审核
-         记录里最近一次 APPROVE 时刻（与票 01 回填脚本同口径），查不到审批流水的存量老帖取 create_time
-         兜底；like_count 从窄表抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径） -->
-    <insert id="rebuildFeedIndexProjection">
+    <!-- 重灌：行集 = NORMAL 帖 ∪ 有过审批通过的帖（运行期语义：通过事务才诞生行，之后 state 跟随流转、
+         行不消失；从未通过审的待审/驳回/草稿帖不凭空进索引）。原 INSERT..SELECT 一步投影改为
+         仓储三段查拼装：① selectRebuildRows 取 post 全量 (post_id, state, create_time)；
+         ② content_review 的 APPROVE 流水经 IModerationDao.selectApproveRowsByTargetType 查（feed_time 真源）；
+         ③ like_count 从窄表批量抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径），
+         组装成行集后走 insertFeedIndexRows 批量写入 -->
+    <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.post.po.PostFeedIndexRowPO">
+        SELECT p.post_id AS postId, p.state AS state, p.create_time AS createTime
+        FROM post p
+    </select>
+
+    <!-- 重灌写回：一帖一行 1:1 投影，行集由仓储组装（见 selectRebuildRows 注释） -->
+    <insert id="insertFeedIndexRows">
         INSERT INTO post_feed_index (post_id, state, feed_time, like_count, update_time)
-        SELECT p.post_id,
-               p.state,
-               COALESCE((SELECT MAX(cr.create_time)
-                           FROM content_review cr
-                          WHERE cr.target_type = 'POST'
-                            AND cr.target_id = p.post_id
-                            AND cr.action = 'APPROVE'),
-                        p.create_time),
-               COALESCE(lc.like_count, 0),
-               NOW()
-          FROM post p
-          LEFT JOIN post_like_count lc ON lc.post_id = p.post_id
-         WHERE p.state = 'NORMAL'
-            OR EXISTS (SELECT 1
-                         FROM content_review cr2
-                        WHERE cr2.target_type = 'POST'
-                          AND cr2.target_id = p.post_id
-                          AND cr2.action = 'APPROVE')
+        VALUES
+        <foreach collection="rows" item="row" separator=",">
+            (#{row.postId}, #{row.state}, #{row.feedTime}, #{row.likeCount}, NOW())
+        </foreach>
     </insert>
 
     <!-- 浏览 UV 加速列校准第一步：清掉没有明细行的孤儿计数行（懒建行口径：无浏览不建行） -->

@@ -98,7 +98,7 @@
 
 该用户「赞过」tab。
 
-- 过滤：该用户点过赞（JOIN `post_like`）且**源帖 `status='NORMAL'`**；按**点赞时间**倒序
+- 过滤：该用户点过赞（`post_like` 单表主查）且**源帖 `status='NORMAL'`**（源帖由仓储按 id 集回查后 Java 过滤）；按**点赞时间**倒序
 - **隐私开关**：`bs_user.show_liked=0` 且请求者 **≠** 主页主人 → 返回空列表（前端渲染「该用户已隐藏此内容」）；请求者＝主人不受影响
 - 响应：`PageResult<PostSummaryResponseDTO>`
 
@@ -107,7 +107,7 @@
 该用户「评论」tab——**评论列表**形态（不是「评论过的帖子列表」）。
 
 - 过滤：该用户 `post_comment.status='NORMAL'` **且源帖 `status='NORMAL'`**；按**评论时间**倒序
-- 每项：`{ commentId, content, likeCount, createdAt, postId, postTitle, postCover }`——`postTitle`/`postCover` JOIN `post` 取（评论行本身不存标题/封面）
+- 每项：`{ commentId, content, likeCount, createdAt, postId, postTitle, postCover }`——`postTitle`/`postCover` 由仓储回查 `post` 拼装（评论行本身不存标题/封面）
 - 前端：点「来自笔记 · 标题」→ `/post/{postId}?commentId={commentId}`，详情页据 `commentId` 定位高亮（若不在首页已加载范围，落地时按 `commentId` 拉取定位）
 - **隐私开关**：`bs_user.show_comments=0` 且请求者 ≠ 主人 → 空列表 + 「该用户已隐藏此内容」
 - **「我的-评论」tab 共用本接口**（传自己 `userId`）；旧 `/posts/commented` 保留给 `SearchView` 的 `scope=comments`（搜索我评论过的帖子，语义不同）

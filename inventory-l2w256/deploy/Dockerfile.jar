@@ -1,0 +1,17 @@
+# 只打包、不编译：构建机已经 mvn package 过时用这个（不用拉 maven 镜像、不用联网）
+#
+#   mvn clean package -DskipTests
+#   docker build -f deploy/Dockerfile.jar -t inventory-l2w256:1.0.0 .
+#
+# 构建上下文仍是项目根目录。
+FROM eclipse-temurin:21-jre
+
+ENV TZ=Asia/Shanghai \
+    JAVA_OPTS=""
+
+WORKDIR /app
+COPY l2w256-app/target/l2w256-app.jar /app/app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]

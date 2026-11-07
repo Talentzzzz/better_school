@@ -1,0 +1,24 @@
+﻿13:47:25.066 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Starting...
+13:47:25.076 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@59252cb6
+13:47:25.077 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Start completed.
+java.exe : 2026-10-16 13:47:25.242 [main] INFO  com.cedarsoftware.util.MultiKeyMap - MultiKeyMap stripe configuration: 
+64 locks for 32 cores
+所在位置 行:8 字符: 1
++ & "$jdk\bin\java.exe" "-Dfile.encoding=UTF-8" "-Duser.language=en" -c ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-10-16 13:4...ks for 32 cores:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+13:47:26.506 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:47:26.506 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: e0ac29b4-4fc0-451e-b2b6-e63a17d58b4d, IP: 26.144.150.84
+################ repo shape (no databaseName) + !SINGLE ["*.*.*"] ################
+  [info] logical db 'logic_db' visible tables(5): [errand_order, product_order, review_task, timeout_task, user_account]
+  [info] singleTableDataNodes (4) keys=[errand_order, product_order, review_task, user_account]
+  [PASS] unconfigured business tables transparent (4/4)  ::  usable=4/4
+  [PASS] hint-routed writes land on the hinted shard (6/6)  ::  hit=6/6
+  [PASS] no-hint sharded write rejected  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition...
+  [PASS] one MySQL session for sharded+unsharded  ::  ids=332,332,332
+  [PASS] one rollback clears all three  ::  po=0 tt=0 rt=0
+  [PASS] hinted prepared insert + generated keys  ::  key=2
+
+=== GAP RESULT: PASS=6 FAIL=0 ===

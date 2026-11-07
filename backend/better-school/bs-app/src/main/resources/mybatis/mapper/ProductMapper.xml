@@ -4,16 +4,12 @@
 
     <!-- 读路径换源（market-feed-uv 票 02）：viewCount 从主表列换到计数表 product_view_count
          （UV 加速列，真源 product_view_history）；主表旧 PV 列已随票 06 删列。未浏览过的商品
-         计数行不存在，IFNULL 归 0。所有带本片段的查询必须带 pvc 的 LEFT JOIN -->
+         计数行不存在，仓储批量回查后补 0。所有列表/详情查询纯 product 单表（SQL 层零 JOIN）：
+         view_count 与卖家昵称头像由仓储拼装 -->
     <sql id="baseColumns">
         p.id, p.product_id, p.user_id, p.title, p.description, p.images, p.price, p.trade_location,
         p.category, p.state, p.review_round, p.review_entered_at,
-        IFNULL(pvc.view_count, 0) AS view_count, p.create_time, p.update_time, p.expire_at
-    </sql>
-
-    <!-- 计数表 JOIN：主键等值，各列表/详情查询共用 -->
-    <sql id="viewCountJoin">
-        LEFT JOIN product_view_count pvc ON pvc.product_id = p.product_id
+        p.create_time, p.update_time, p.expire_at
     </sql>
 
     <!-- 主表不再有浏览列（market-feed-uv 票 06 删列）：浏览 UV 只落 product_view_history + product_view_count -->
@@ -28,23 +24,25 @@
                 #{createTime}, #{updateTime}, #{expireAt})
     </insert>
 
+    <!-- 浏览 UV 加速列批量读：按 id 集单表 IN 查询，仓储补 0 拼装（详情单元素与列表共用） -->
+    <select id="selectViewCountsByProductIds" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+        SELECT c.product_id AS productId, c.view_count AS viewCount
+        FROM product_view_count c
+        WHERE c.product_id IN
+        <foreach collection="productIds" item="productId" open="(" separator="," close=")">#{productId}</foreach>
+    </select>
+
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
-        SELECT <include refid="baseColumns"/>,
-               u.nickname AS seller_nickname, u.avatar AS seller_avatar
+        SELECT <include refid="baseColumns"/>
         FROM product p
-        <include refid="viewCountJoin"/>
-        LEFT JOIN bs_user u ON p.user_id = u.user_id
         WHERE p.product_id = #{productId}
           AND p.state != 'DELETED'
     </select>
 
     <!-- 按 id 列表查询：不分状态（搜索同步按 state 判定 upsert/删除，搜索命中组装按 ON_SALE 过滤） -->
     <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
-        SELECT <include refid="baseColumns"/>,
-               u.nickname AS seller_nickname, u.avatar AS seller_avatar
+        SELECT <include refid="baseColumns"/>
         FROM product p
-        <include refid="viewCountJoin"/>
-        LEFT JOIN bs_user u ON p.user_id = u.user_id
         WHERE p.product_id IN
         <foreach collection="ids" item="productId" open="(" separator="," close=")">#{productId}</foreach>
     </select>
@@ -226,12 +224,12 @@
           AND state = 'LOCKED'
     </update>
 
+    <!-- 旧直查降级路径（market-feed-uv 票 04 起仅索引不可用时走）：price/time 四档纯 product 单表 SQL 分页；
+         hot 档排序键 view_count 在窄表（不能 JOIN 进来），由仓储走 selectOnSaleRows 全集 + 窄表批量回查 +
+         内存排序切片（降级路径，数据集有界） -->
     <select id="selectPage" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
-        SELECT <include refid="baseColumns"/>,
-               u.nickname AS seller_nickname, u.avatar AS seller_avatar
+        SELECT <include refid="baseColumns"/>
         FROM product p
-        <include refid="viewCountJoin"/>
-        LEFT JOIN bs_user u ON p.user_id = u.user_id
         WHERE p.state = 'ON_SALE'
         <if test="category != null">
             AND p.category = #{category}
@@ -244,18 +242,32 @@
         </if>
         ORDER BY
         <choose>
-            <!-- 五档排序（market-feed-uv 票 04）与索引路径语义同构：热度 = 浏览 UV 数、tie-break 同向。
-                 已知口径差：时间键这里取主表 create_time，索引取 feed_time（进入当前可见轮的通过时刻）——
-                 降级本就发生在「索引不可用」时，拿不到 feed_time，只能取主表最近似的时刻；
-                 热度档与帖子热榜同构（uuid-biz-id 票 05）：view_count 同值按 create_time DESC 收敛成确定序
-                 （业务 ID 是 UUID 无序，不再拿 id/product_id 当时间代理），其余档 tie-break 用 product_id -->
-            <when test="sort == 'hot'">IFNULL(pvc.view_count, 0) DESC, p.create_time DESC, p.product_id DESC</when>
+            <!-- 五档排序（market-feed-uv 票 04）与索引路径语义同构；已知口径差：时间键这里取主表 create_time，
+                 索引取 feed_time（进入当前可见轮的通过时刻）——降级本就发生在「索引不可用」时，拿不到 feed_time，
+                 只能取主表最近似的时刻。热度档（uuid-biz-id 票 05 三段收敛 view_count DESC, create_time DESC,
+                 product_id DESC）不走本语句：仓储内存排序（见 selectOnSaleRows） -->
             <when test="sort == 'price_asc'">p.price ASC, p.product_id ASC</when>
             <when test="sort == 'price_desc'">p.price DESC, p.product_id DESC</when>
             <when test="sort == 'time_asc'">p.create_time ASC, p.product_id ASC</when>
             <otherwise>p.create_time DESC, p.product_id DESC</otherwise>
         </choose>
         LIMIT #{offset}, #{limit}
+    </select>
+
+    <!-- hot 档降级取数：ON_SALE 全集（无 LIMIT，筛选条件同 selectPage），窄表批量回查后仓储内存排序切片 -->
+    <select id="selectOnSaleRows" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+        SELECT <include refid="baseColumns"/>
+        FROM product p
+        WHERE p.state = 'ON_SALE'
+        <if test="category != null">
+            AND p.category = #{category}
+        </if>
+        <if test="minPrice != null">
+            AND p.price &gt;= #{minPrice}
+        </if>
+        <if test="maxPrice != null">
+            AND p.price &lt;= #{maxPrice}
+        </if>
     </select>
 
     <!-- 闲置推荐页索引序扫描（market-feed-uv 票 04）：state 过滤 + (排序键, product_id) 索引序 range scan。
@@ -323,11 +335,8 @@
 
     <!-- 我发布的商品（卖家视角）：含待审/草稿/被拒等自己的全部状态，排除软删，按发布时间倒序 -->
     <select id="selectPageBySeller" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
-        SELECT <include refid="baseColumns"/>,
-               u.nickname AS seller_nickname, u.avatar AS seller_avatar
+        SELECT <include refid="baseColumns"/>
         FROM product p
-        <include refid="viewCountJoin"/>
-        LEFT JOIN bs_user u ON p.user_id = u.user_id
         WHERE p.user_id = #{userId}
           AND p.state != 'DELETED'
         ORDER BY p.create_time DESC, p.product_id DESC
@@ -343,11 +352,8 @@
 
     <!-- 某用户在售商品（作者主页「闲置」tab，访客口径）：仅 ON_SALE，草稿/待审/被拒/锁定/已售一律不外露 -->
     <select id="selectOnSalePageByUser" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
-        SELECT <include refid="baseColumns"/>,
-               u.nickname AS seller_nickname, u.avatar AS seller_avatar
+        SELECT <include refid="baseColumns"/>
         FROM product p
-        <include refid="viewCountJoin"/>
-        LEFT JOIN bs_user u ON p.user_id = u.user_id
         WHERE p.user_id = #{userId}
           AND p.state = 'ON_SALE'
         ORDER BY p.create_time DESC, p.product_id DESC
@@ -385,17 +391,13 @@
         WHERE product_id = #{productId}
     </select>
 
-    <select id="selectFavoritesByUser" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
-        SELECT <include refid="baseColumns"/>,
-               u.nickname AS seller_nickname, u.avatar AS seller_avatar
+    <!-- 我的收藏：收藏关系行主查（product_favorite 单表，物理 id DESC = 收藏先后倒序）；
+         商品行与可见性过滤（state != 'DELETED'）由仓储两段查拼装 -->
+    <select id="selectFavoriteProductIdsByUser" resultType="string">
+        SELECT f.product_id
         FROM product_favorite f
-        INNER JOIN product p ON f.product_id = p.product_id
-        <include refid="viewCountJoin"/>
-        LEFT JOIN bs_user u ON p.user_id = u.user_id
         WHERE f.user_id = #{userId}
-          AND p.state != 'DELETED'
         ORDER BY f.id DESC
-        LIMIT #{offset}, #{limit}
     </select>
 
     <!-- ── 商品浏览 UV 三步（market-feed-uv 票 02，照帖子 insertViewHistory / touchViewedAt / upsertViewCount 先例）── -->
@@ -497,32 +499,25 @@
     </delete>
 
     <!-- 重灌：一商品一行 1:1 投影。行集 = ON_SALE 商品 ∪ 有过审批通过的商品（运行期语义：通过事务才诞生行、
-         之后 state 跟随流转、行不消失；从未通过审的待审/驳回/草稿商品不凭空进索引）。feed_time 取审核记录
-         里最近一次 APPROVE 时刻（与票 01 回填脚本同口径），查不到审批流水的存量老商品取 create_time 兜底；
-         view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步同时把「过审前被浏览、旁路命中 0 行」
-         漏计的那部分追平（运行期旁路只在本行存在后累加），也与热度排序键的读口径一致 -->
-    <insert id="rebuildFeedIndexProjection">
+         之后 state 跟随流转、行不消失；从未通过审的待审/驳回/草稿商品不凭空进索引）。原 INSERT..SELECT
+         一步投影改为仓储三段查拼装：① selectRebuildRows 取 product 全量 (product_id, state, create_time, price)；
+         ② feed_time 取审核记录最近一次 APPROVE 时刻（经 IModerationDao.selectApproveRowsByTargetType，
+         与票 01 回填脚本同口径），查不到审批流水的存量老商品取 create_time 兜底；
+         ③ view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步同时把「过审前被浏览、旁路命中 0 行」
+         漏计的那部分追平（运行期旁路只在本行存在后累加），也与热度排序键的读口径一致。
+         组装后走 insertFeedIndexRows 批量写回 -->
+    <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.product.po.ProductFeedIndexRowPO">
+        SELECT p.product_id AS productId, p.state AS state, p.create_time AS createTime, p.price AS price
+        FROM product p
+    </select>
+
+    <!-- 重灌写回：仓储拼装好的行集批量 INSERT（见 selectRebuildRows 注释） -->
+    <insert id="insertFeedIndexRows">
         INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, view_count, update_time)
-        SELECT p.product_id,
-               p.state,
-               COALESCE((SELECT MAX(cr.create_time)
-                           FROM content_review cr
-                          WHERE cr.target_type = 'PRODUCT'
-                            AND cr.target_id = p.product_id
-                            AND cr.action = 'APPROVE'),
-                        p.create_time),
-               p.create_time,
-               p.price,
-               COALESCE(pvc.view_count, 0),
-               NOW()
-          FROM product p
-          LEFT JOIN product_view_count pvc ON pvc.product_id = p.product_id
-         WHERE p.state = 'ON_SALE'
-            OR EXISTS (SELECT 1
-                         FROM content_review cr2
-                        WHERE cr2.target_type = 'PRODUCT'
-                          AND cr2.target_id = p.product_id
-                          AND cr2.action = 'APPROVE')
+        VALUES
+        <foreach collection="rows" item="row" separator=",">
+            (#{row.productId}, #{row.state}, #{row.feedTime}, #{row.createTime}, #{row.price}, #{row.viewCount}, NOW())
+        </foreach>
     </insert>
 
     <!-- 浏览 UV 加速列校准第一步：清掉没有明细行的孤儿计数行（懒建行口径：无浏览不建行） -->

@@ -1,0 +1,66 @@
+diff --git a/sql.md b/sql.md
+index 111e6e8..ee8cdee 100644
+--- a/sql.md
++++ b/sql.md
+@@ -1,7 +1,7 @@
+ # 全库建表语句（SQL DDL 汇总）
+ 
+ > 收录 2 个工程的建表语句：better-school 单体（库 better_school，超时中心已内嵌在此）、marketing 营销（库 bs_marketing；points / raffle / drawcount / config / inventory 同属 `backend/marketing/` 一个工程）。XXL-Job 调度库（原 backend/sql/xxl-job.sql 的 8 张表）不在本文档范围内。
+-> **超时中心内嵌化（2026-10-16 起，[`.scratch/timeout-inline/`](.scratch/timeout-inline/map.md)）已完成**：原独立超时工程与独立库已下线，16 张 `timeout_task_00..15` 分表在 `better_school` / `better_school_test` 里（见 §1 末），与业务表同库、同事务。全库物理表数 = **29（单体业务）+ 16（单体超时分表）+ 22（营销）= 67**。
++> **超时中心内嵌化（2026-10-16 起，[`.scratch/timeout-inline/`](.scratch/timeout-inline/map.md)）已完成**：原独立超时工程与独立库已下线，16 张 `timeout_task_00..15` 分表在 `better_school` / `better_school_test` 里（见 §1 末），与业务表同库、同事务。全库物理表数 = **29（单体业务）+ 16（单体超时分表）+ 20（营销）= 65**。
+ > 不含种子数据 `INSERT`、`sql/migrations/` 下的迁移脚本与集成测试夹具；开发库与测试库共用同一份 DDL，建库语句在各自的 `init-dev.sql` / `init-test.sql`。
+ > 命名口径：每张表固定以 `create_time DATETIME NOT NULL COMMENT '创建时间'` 与 `update_time DATETIME NOT NULL COMMENT '更新时间'` 收尾（不带默认值，由应用写入），全库不再出现 `created_at` / `updated_at`。**唯一例外是 §1 的 `timeout_task_00..15`**（`created_at` / `updated_at`）：那是分批表从原独立超时库迁入时的既有形态、且已进 16 张分表与 mapper XML，本口径不回溯改它（见 §1 说明）。
+ > 主键口径：每张表第一列恒为 `id BIGINT NOT NULL AUTO_INCREMENT`——纯物理自增，无业务含义、不写注释、禁止当对外标识或游标/水位；它必须落在某条索引的首列，计数器表用 `PRIMARY KEY (id)` + `UNIQUE KEY uk_<业务键>` 兜住；业务标识一律单独成列（17 张实体主表，如 `bs_user.user_id`、`post.post_id`、`errand_order.errand_order_id`），并配 `UNIQUE KEY uk_<列>`；关联表、流水表、计数器、单行配置、outbox 与超时任务表不设业务列。
+@@ -640,7 +640,7 @@ CREATE TABLE IF NOT EXISTS content_report (
+ 
+ ## 2. 营销服务 marketing（库 bs_marketing）
+ 
+-来源：`backend/marketing/sql/schema.sql`（票 08 起本节 22 张表随该文件落地；票 13 起旧 `schema-lottery.sql` 等过渡文件已删，该文件是本节唯一 DDL 事实源）· 共 22 张表
++来源：`backend/marketing/sql/schema.sql`（票 08 起本节 20 张表随该文件落地；票 13 起旧 `schema-lottery.sql` 等过渡文件已删，该文件是本节唯一 DDL 事实源）· 共 20 张表
+ 
+ 积分（桶模型）、抽奖次数（与积分同构的桶模型）、配置（积分/次数有效期 + 行为返利）、抽奖（活动/策略/奖品/记录）、库存（虚拟权益池与实物营销配额的两段式库存：Redis 分桶 + DB 台账）、本服务 outbox。原积分与抽奖两个服务合并为一个营销服务、共库，积分流水与抽奖记录可同库同事务。
+ 
+@@ -937,43 +937,6 @@ CREATE TABLE IF NOT EXISTS virtual_inventory_detail (
+ 
+ 说明（XXL-Job，每秒触发）：先扫出当前运行的 activity_id → strategy_id → inv_id → bucket_id，再扫本表 state=0 的行，按 (inv_id, bucket_id, state, quantity) 汇总出各桶待合并总量，用这个量去减 virtual_inventory_bucket.redis_qty，同时减 virtual_inventory.surplus_qty、加 issued_qty。
+ 
+-### physical_inventory
+-
+-```sql
+-CREATE TABLE IF NOT EXISTS physical_inventory (
+-    id          BIGINT       NOT NULL AUTO_INCREMENT,
+-    inv_id      BIGINT       NOT NULL COMMENT '业务 ID（库存全局唯一标识）',
+-    name        VARCHAR(128) NOT NULL COMMENT '库存/权益名称，如「暑期实物礼包」',
+-    decr        VARCHAR(255) NULL     COMMENT '库存说明',
+-    surplus_qty BIGINT       NOT NULL DEFAULT -1 COMMENT '剩余可发份数，-1=不限量',
+-    issued_qty  BIGINT       NOT NULL DEFAULT 0 COMMENT '累计已发放份数，用于对账/预算',
+-    state       VARCHAR(12)  NOT NULL DEFAULT 'open' COMMENT 'open/closed/exhausted',
+-    create_time DATETIME     NOT NULL COMMENT '创建时间',
+-    update_time DATETIME     NOT NULL COMMENT '更新时间',
+-    PRIMARY KEY (id),
+-    UNIQUE KEY uk_inv_id (inv_id),
+-    KEY idx_state (state),
+-    CONSTRAINT chk_physical_inventory CHECK (surplus_qty >= -1)
+-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '实物库存（出入库台账）';
+-```
+-
+-### physical_inventory_detail
+-
+-```sql
+-CREATE TABLE IF NOT EXISTS physical_inventory_detail (
+-    id          BIGINT      NOT NULL AUTO_INCREMENT,
+-    inv_id      BIGINT      NOT NULL COMMENT '库存业务 ID',
+-    quantity    BIGINT      NOT NULL COMMENT '变动数量（入库为正、发放为负）',
+-    type        VARCHAR(20) NOT NULL COMMENT '变动类型 IN(入库) / OUT(发放) / ADJUST(盘点调整)',
+-    ref_id      BIGINT      NULL COMMENT '关联业务 ID（发放 = 兑换单 id；入库/盘点为空）',
+-    operator_id BIGINT      NULL COMMENT '操作人用户 ID（后台入库/调整写入；系统发放为空）',
+-    create_time DATETIME    NOT NULL COMMENT '创建时间',
+-    update_time DATETIME    NOT NULL COMMENT '更新时间',
+-    PRIMARY KEY (id),
+-    KEY idx_inv_created (inv_id, create_time)
+-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '实物库存出入库明细（对 physical_inventory 的增减记录）';
+-```
+-
+ ### physical_marketing_quota
+ 
+ ```sql

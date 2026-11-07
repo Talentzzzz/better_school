@@ -82,13 +82,6 @@
         WHERE user_id = #{userId}
     </update>
 
-    <!-- 获赞：该用户 NORMAL 帖点赞计数之和（窄表 post_like_count，不含评论获赞，不含待审/驳回/草稿帖） -->
-    <select id="sumNormalPostLikeCount" resultType="long">
-        SELECT COALESCE(SUM(plc.like_count), 0)
-        FROM post p
-        JOIN post_like_count plc ON plc.post_id = p.post_id
-        WHERE p.user_id = #{userId}
-          AND p.state = 'NORMAL'
-    </select>
-
+    <!-- 获赞统计改仓储多查拼装：post 单表取该用户 NORMAL 帖 id 集（PostMapper.selectNormalIdsByUser）
+         + post_like_count 窄表批量读（PostMapper.selectLikeCountsByPostIds），Java 求和（SQL 层零 JOIN） -->
 </mapper>

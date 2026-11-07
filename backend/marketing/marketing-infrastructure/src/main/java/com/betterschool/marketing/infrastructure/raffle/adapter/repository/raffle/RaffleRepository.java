@@ -17,9 +17,14 @@ import com.betterschool.marketing.infrastructure.raffle.dao.IRaffleDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawActivityPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordDetailPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordViewPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyAwardPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyWeightPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawUserPrizeViewPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.ExchangeDetailRowPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.PhysicalQuotaRowPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.VirtualQuotaRowPO;
 import com.betterschool.marketing.types.common.Constants;
 import lombok.RequiredArgsConstructor;
 import org.redisson.api.RBucket;
@@ -30,10 +35,12 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 抽奖域唯一仓储实现：四张面（决策侧配置读 + 决策数据 Redis 读写、读侧翻页视图、落库写面、
@@ -178,18 +185,51 @@ public class RaffleRepository implements IRaffleRepository {
 
     @Override
     public List<PrizeCatalogVO> queryPrizeCatalog(String strategyId) {
-        return raffleDao.selectPrizeCatalog(strategyId).stream().map(po -> {
+        // 三段查拼装（原奖品行 LEFT JOIN 两段台账一步投影，SQL 层零 JOIN）：①奖品行（同 sort,id 排序）；
+        // ②虚拟台账 ③实物台账按 inv_id 集批量回查；CASE 语义在 Java 收口——
+        // remaining = 台账 surplus_qty、total = 虚拟 surplus+issued / 实物 surplus+waiting+issued，
+        // inv_id='0'（不限量哨兵）或 surplus < 0 落 null 由 unlimited 表达；台账行缺失 = 原 LEFT JOIN 空行，同样落 null
+        List<DrawStrategyAwardPO> awards = raffleDao.selectAwardListByStrategyId(strategyId);
+        if (awards.isEmpty()) {
+            return List.of();
+        }
+        List<String> invIds = awards.stream().map(DrawStrategyAwardPO::getInvId)
+                .filter(invId -> invId != null && !"0".equals(invId))
+                .distinct().toList();
+        Map<String, VirtualQuotaRowPO> virtualByInv = invIds.isEmpty() ? Map.of()
+                : raffleDao.selectVirtualQuotasByInvIds(invIds).stream()
+                        .collect(Collectors.toMap(VirtualQuotaRowPO::getInvId, row -> row, (a, b) -> a));
+        Map<String, PhysicalQuotaRowPO> physicalByInv = invIds.isEmpty() ? Map.of()
+                : raffleDao.selectPhysicalQuotasByInvIds(invIds).stream()
+                        .collect(Collectors.toMap(PhysicalQuotaRowPO::getInvId, row -> row, (a, b) -> a));
+        List<PrizeCatalogVO> prizes = new ArrayList<>(awards.size());
+        for (DrawStrategyAwardPO award : awards) {
             PrizeCatalogVO vo = new PrizeCatalogVO();
-            vo.setAwardId(po.getAwardId());
-            vo.setAwardName(po.getAwardName());
-            vo.setAwardType(po.getAwardType());
-            vo.setLevel(po.getLevel());
-            vo.setPointsAmount(po.getPointsAmount());
-            vo.setRemaining(po.getRemaining());
-            vo.setTotal(po.getTotal());
-            vo.setUnlimited(po.getRemaining() == null && po.getTotal() == null);
-            return vo;
-        }).toList();
+            vo.setAwardId(award.getAwardId());
+            vo.setAwardName(award.getAwardName());
+            vo.setAwardType(award.getAwardType());
+            vo.setLevel(award.getLevel());
+            VirtualQuotaRowPO virtual = virtualByInv.get(award.getInvId());
+            // 积分档面额（VIRTUAL + 库存 type=POINTS），其余为 null
+            vo.setPointsAmount("VIRTUAL".equals(award.getAwardType())
+                    && virtual != null && "POINTS".equals(virtual.getType()) ? virtual.getValue() : null);
+            Long remaining = null;
+            Long total = null;
+            if (virtual != null) {
+                remaining = virtual.getSurplusQty() < 0 ? null : virtual.getSurplusQty();
+                total = virtual.getSurplusQty() < 0 ? null : virtual.getSurplusQty() + virtual.getIssuedQty();
+            } else if (physicalByInv.get(award.getInvId()) != null) {
+                PhysicalQuotaRowPO physical = physicalByInv.get(award.getInvId());
+                remaining = physical.getSurplusQty() < 0 ? null : physical.getSurplusQty();
+                total = physical.getSurplusQty() < 0 ? null
+                        : physical.getSurplusQty() + physical.getWaitingQty() + physical.getIssuedQty();
+            }
+            vo.setRemaining(remaining);
+            vo.setTotal(total);
+            vo.setUnlimited(remaining == null && total == null);
+            prizes.add(vo);
+        }
+        return prizes;
     }
 
     @Override
@@ -199,9 +239,21 @@ public class RaffleRepository implements IRaffleRepository {
 
     @Override
     public List<DrawRecordVO> listDrawRecords(String userId, int offset, int limit) {
-        return raffleDao.selectDrawRecordViews(userId, offset, limit).stream().map(po ->
-                new DrawRecordVO(po.getRecordId(), po.getAwardId(), po.getAwardName(), po.getAwardType(),
-                        po.getLevel(), po.getPointsAmount(), po.getCreateTime())).toList();
+        // 两段查拼装（原 draw_record LEFT JOIN 积分台账，SQL 层零 JOIN）：记录行单表分页 + 按 inv_id 集
+        // 批量回查 type=POINTS 面额；缺行 = null（原 LEFT JOIN 空行口径）
+        List<DrawRecordViewPO> rows = raffleDao.selectDrawRecordRows(userId, offset, limit);
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        List<String> invIds = rows.stream().map(DrawRecordViewPO::getInvId)
+                .filter(invId -> invId != null && !"0".equals(invId))
+                .distinct().toList();
+        Map<String, Integer> pointValues = invIds.isEmpty() ? Map.of()
+                : raffleDao.selectPointValuesByInvIds(invIds).stream()
+                        .filter(row -> row.getValue() != null)
+                        .collect(Collectors.toMap(VirtualQuotaRowPO::getInvId, VirtualQuotaRowPO::getValue, (a, b) -> a));
+        return rows.stream().map(po -> new DrawRecordVO(po.getRecordId(), po.getAwardId(), po.getAwardName(),
+                po.getAwardType(), po.getLevel(), pointValues.get(po.getInvId()), po.getCreateTime())).toList();
     }
 
     @Override
@@ -211,9 +263,19 @@ public class RaffleRepository implements IRaffleRepository {
 
     @Override
     public List<UserPrizeVO> listMyPrizes(String userId, List<String> states, int offset, int limit) {
-        return raffleDao.selectMyPrizeViews(userId, states, offset, limit).stream().map(po ->
-                new UserPrizeVO(po.getRecordId(), po.getAwardId(), po.getAwardName(), po.getAwardType(),
-                        po.getLevel(), po.getState(), po.getCreateTime(), po.getClaimedAt())).toList();
+        // 两段查拼装（原 draw_record LEFT JOIN EXCHANGE 明细，SQL 层零 JOIN）：记录行单表分页 +
+        // 按 record_id 集批量回查兑换明细；缺行 = 还没兑换，claimedAt 落 null（原 LEFT JOIN 口径）
+        List<DrawUserPrizeViewPO> rows = raffleDao.selectMyPrizeRows(userId, states, offset, limit);
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        Map<String, LocalDateTime> claimedAtByRecord = raffleDao.selectExchangeDetailsByRecordIds(
+                rows.stream().map(DrawUserPrizeViewPO::getRecordId).toList()).stream()
+                .collect(Collectors.toMap(ExchangeDetailRowPO::getRecordId,
+                        ExchangeDetailRowPO::getCreateTime, (a, b) -> a));
+        return rows.stream().map(po -> new UserPrizeVO(po.getRecordId(), po.getAwardId(), po.getAwardName(),
+                po.getAwardType(), po.getLevel(), po.getState(), po.getCreateTime(),
+                claimedAtByRecord.get(po.getRecordId()))).toList();
     }
 
     // ---------------------------------------------------------------- 落库写面

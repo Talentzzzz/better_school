@@ -1,0 +1,27 @@
+﻿datasource class = com.zaxxer.hikari.HikariDataSource
+13:32:56.687 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Starting...
+13:32:56.825 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@dd05255
+13:32:56.826 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Start completed.
+connection catalog = probe
+connection schema  = null
+driver = MySQL Connector/J mysql-connector-j-8.3.0 (Revision: 805f872a57875f311cb82487efcfb070411a3fa0)
+databaseProductName = MySQL
+storage type = org.apache.shardingsphere.database.connector.mysql.type.MySQLDatabaseType@2cdd0d4b / org.apache.shardingsphere.database.connector.mysql.type.MySQLDatabaseType
+java.exe : 2026-10-16 13:32:56.918 [main] INFO  com.cedarsoftware.util.MultiKeyMap - MultiKeyMap stripe configuration: 
+64 locks for 32 cores
+所在位置 行:6 字符: 1
++ & "$env:JAVA_HOME\bin\java.exe" "-Dfile.encoding=UTF-8" "-Duser.langu ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-10-16 13:3...ks for 32 cores:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+loadSchemaTableNames(schema=probe) -> {probe=[errand_order, product_order, review_task, timeout_task_00, timeout_task_01, timeout_task_02, timeout_task_03, timeout_task_04, timeout_task_05, timeout_task_06, timeout_task_07, timeout_task_08, timeout_task_09, timeout_task_10, timeout_task_11, timeout_task_12, timeout_task_13, timeout_task_14, timeout_task_15, user_account]}
+loadSchemaTableNames(schema=logic_db) -> {logic_db=[errand_order, product_order, review_task, timeout_task_00, timeout_task_01, timeout_task_02, timeout_task_03, timeout_task_04, timeout_task_05, timeout_task_06, timeout_task_07, timeout_task_08, timeout_task_09, timeout_task_10, timeout_task_11, timeout_task_12, timeout_task_13, timeout_task_14, timeout_task_15, user_account]}
+loadSchemaTableNames(schema=PROBE) -> {PROBE=[errand_order, product_order, review_task, timeout_task_00, timeout_task_01, timeout_task_02, timeout_task_03, timeout_task_04, timeout_task_05, timeout_task_06, timeout_task_07, timeout_task_08, timeout_task_09, timeout_task_10, timeout_task_11, timeout_task_12, timeout_task_13, timeout_task_14, timeout_task_15, user_account]}
+SingleTableDataNodeLoader.load(probe) -> size=0 {}
+SingleTableDataNodeLoader.load(logic_db) -> size=0 {}
+SingleTableDataNodeLoader.load(ds0) -> size=0 {}
+SchemaMetaDataLoader.loadSchemaTableNames(probe) -> {probe=[errand_order, product_order, review_task, timeout_task_00, timeout_task_01, timeout_task_02, timeout_task_03, timeout_task_04, timeout_task_05, timeout_task_06, timeout_task_07, timeout_task_08, timeout_task_09, timeout_task_10, timeout_task_11, timeout_task_12, timeout_task_13, timeout_task_14, timeout_task_15, user_account]}
+SchemaMetaDataLoader.loadSchemaTableNames(ds0) -> {ds0=[errand_order, product_order, review_task, timeout_task_00, timeout_task_01, timeout_task_02, timeout_task_03, timeout_task_04, timeout_task_05, timeout_task_06, timeout_task_07, timeout_task_08, timeout_task_09, timeout_task_10, timeout_task_11, timeout_task_12, timeout_task_13, timeout_task_14, timeout_task_15, user_account]}
+SchemaMetaDataLoader.loadSchemaTableNames(logic_db) -> {logic_db=[errand_order, product_order, review_task, timeout_task_00, timeout_task_01, timeout_task_02, timeout_task_03, timeout_task_04, timeout_task_05, timeout_task_06, timeout_task_07, timeout_task_08, timeout_task_09, timeout_task_10, timeout_task_11, timeout_task_12, timeout_task_13, timeout_task_14, timeout_task_15, user_account]}
+direct SingleRule('probe') singleTableDataNodes size = 0

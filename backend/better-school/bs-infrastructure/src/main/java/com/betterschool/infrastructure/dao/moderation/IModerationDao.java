@@ -75,6 +75,10 @@ public interface IModerationDao {
     int existsProcessedCreditLog(@Param("authorId") String authorId, @Param("targetType") String targetType,
                                  @Param("targetId") String targetId);
 
+    /**
+     * 审核队列（review_task 单表）：工单定位列（targetType/targetId/reviewRound/authorId/enteredAt），
+     * 素材与作者昵称由仓储按 target_id 集回查业务表与 bs_user 拼装（SQL 层零 JOIN）
+     */
     List<ReviewQueueItemPO> selectReviewQueue(@Param("targetType") String targetType,
                                               @Param("offset") int offset, @Param("limit") int limit);
 
@@ -90,6 +94,7 @@ public interface IModerationDao {
      */
     Map<String, Object> selectPendingWaitStats();
 
+    /** 审核详情素材（业务表单表直查）：authorNickname 仓储回查 bs_user 拼装 */
     ReviewQueueItemPO selectReviewDetail(@Param("targetType") String targetType, @Param("targetId") String targetId);
 
     /** 工单按业务键定位（详情聚合入口） */
@@ -105,7 +110,7 @@ public interface IModerationDao {
      */
     int closeByHolder(@Param("taskId") String taskId, @Param("claimBy") String claimBy);
 
-    /** 工单内容素材按类型分支直查（通用列 + 类型专属上下文；不筛业务行状态，DONE 工单也要能看） */
+    /** 工单内容素材按类型分支单表直查（通用列 + 类型专属上下文 id；不筛业务行状态，DONE 工单也要能看） */
     ReviewTaskTargetPO selectTaskTargetDetail(@Param("targetType") String targetType, @Param("targetId") String targetId);
 
     /** 同一内容历轮裁决（review_round 升序） */
@@ -117,10 +122,14 @@ public interface IModerationDao {
     /** 拒绝理由：uk_target_action 下 REJECT 至多一行，取最新一条兜底 */
     String selectRejectReason(@Param("targetType") String targetType, @Param("targetId") String targetId);
 
-    /** 批量最新拒绝理由：每个 target 取最新一轮 REJECT 行，resultType=map（targetId/reason） */
-    List<java.util.Map<String, Object>> selectRejectReasons(@Param("targetType") String targetType,
-                                                            @Param("targetIds") List<String> targetIds);
+    /** 批量拒绝理由取数：该批 target 的全部 REJECT 行（含物理 id），「每 target 取最新」裁决在仓储 Java 侧做 */
+    List<ContentReviewPO> selectRejectRowsByTargetIds(@Param("targetType") String targetType,
+                                                      @Param("targetIds") List<String> targetIds);
 
+    /** 某类型全部 APPROVE 流水的最新时刻（content_review 单表 GROUP BY，feed 索引重建拼 feed_time 用） */
+    List<ContentReviewPO> selectApproveRowsByTargetType(@Param("targetType") String targetType);
+
+    /** 举报列表（content_report 单表）：举报人/被举报人昵称由仓储回查 bs_user 拼装 */
     List<ContentReportPO> selectReports(@Param("status") String status, @Param("offset") int offset,
                                         @Param("limit") int limit);
 

@@ -17,11 +17,13 @@ import com.betterschool.domain.chat.model.valobj.RoomSourceVO;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
 import com.betterschool.domain.chat.model.valobj.TimelineItemVO;
 import com.betterschool.infrastructure.dao.chat.IChatDao;
-import com.betterschool.infrastructure.dao.chat.po.DirectRoomPairPO;
+import com.betterschool.infrastructure.dao.chat.po.UserPairRoomPO;
 import com.betterschool.infrastructure.dao.chat.po.MessagePO;
 import com.betterschool.infrastructure.dao.chat.po.RoomPO;
 import com.betterschool.infrastructure.dao.chat.po.RoomListItemPO;
 import com.betterschool.infrastructure.dao.chat.po.RoomMemberPO;
+import com.betterschool.infrastructure.dao.chat.po.RoomPeerRowPO;
+import com.betterschool.infrastructure.dao.chat.po.TimelineDeliveryRowPO;
 import com.betterschool.infrastructure.dao.chat.po.TimelinePO;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
 import com.betterschool.types.common.Constants;
@@ -33,6 +35,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Repository
 @RequiredArgsConstructor
@@ -59,7 +64,7 @@ public class ChatRepository implements IChatRepository {
             // 配对行收尾闸门：撞 uk_pair（同一对人恒一行）即整事务回滚，
             // 服务层捕获 DuplicateKeyException 后经 pair 表幂等回读既有会话
             LocalDateTime now = LocalDateTime.now();
-            DirectRoomPairPO pair = new DirectRoomPairPO();
+            UserPairRoomPO pair = new UserPairRoomPO();
             // user_id 是 UUID 字符串，配对键按字符串字典序取规范序（计算收敛在 DirectRoomPairVO，与查重同口径）
             DirectRoomPairVO pairKey = DirectRoomPairVO.canonicalOf(room.getInitiatorId(), targetUserId);
             pair.setUserMin(pairKey.getUserMin());
@@ -67,7 +72,7 @@ public class ChatRepository implements IChatRepository {
             pair.setRoomId(room.getRoomId());
             pair.setCreateTime(now);
             pair.setUpdateTime(now);
-            chatDao.insertDirectRoomPair(pair);
+            chatDao.insertUserPairRoom(pair);
             return room;
         });
     }
@@ -95,8 +100,8 @@ public class ChatRepository implements IChatRepository {
             // 新消息清空成员隐藏位：删除的会话弹回列表顶部（微信行为）
             clearHidden(message.getRoomId());
 
-            // 列表副本落用户维度成员行（本票过渡：与取号同事务；票 02 起归扩散消费端单一写入方）
-            updateMemberCopies(message.getRoomId(), seq, message.getMsgType(), preview, message.getCreatedAt());
+            // 列表预览落用户维度成员行（本票过渡：与取号同事务；票 02 起归扩散消费端单一写入方）
+            updateMemberPreview(message.getRoomId(), message.getMsgType(), preview, message.getCreatedAt());
 
             // 推送载荷的事务内生成字段（序号/主键/时间）在这里补齐后与业务同事务落 outbox
             pushMessage.setSeq(seq);
@@ -165,7 +170,7 @@ public class ChatRepository implements IChatRepository {
 
     @Override
     public RoomEntity findDirectRoom(String userMin, String userMax) {
-        String roomId = chatDao.selectDirectRoomId(userMin, userMax);
+        String roomId = chatDao.selectUserPairRoomId(userMin, userMax);
         return roomId == null ? null : findRoomById(roomId);
     }
 
@@ -180,15 +185,37 @@ public class ChatRepository implements IChatRepository {
     }
 
     @Override
-    public void updateMemberCopies(String roomId, long seq, MsgTypeVO msgType, String preview, LocalDateTime lastMsgAt) {
-        chatDao.updateMemberCopies(roomId, seq, msgType.name(), preview, lastMsgAt);
+    public void updateMemberPreview(String roomId, MsgTypeVO msgType, String preview, LocalDateTime lastMsgAt) {
+        chatDao.updateMemberPreview(roomId, msgType.name(), preview, lastMsgAt);
     }
 
     @Override
     public List<RoomListItemVO> listRoomItems(String userId, int offset, int limit) {
-        return chatDao.selectRoomItems(userId, offset, limit).stream()
-                .map(this::toRoomListItemVO)
-                .toList();
+        // 会话列表三段查（SQL 层零 JOIN）：①本人成员行分页 → ②room 行批量回查 → ③对家成员行回查，
+        // Java 按会话拼装。room 行或对家行缺失 = 原 INNER JOIN 语义，该会话不出现
+        List<RoomListItemPO> rows = chatDao.selectRoomMemberPage(userId, offset, limit);
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        List<String> roomIds = rows.stream().map(RoomListItemPO::getRoomId).toList();
+        Map<String, RoomPO> roomsById = chatDao.selectRoomsByIds(roomIds).stream()
+                .collect(Collectors.toMap(RoomPO::getRoomId, Function.identity(), (a, b) -> a));
+        Map<String, String> peerByRoom = chatDao.selectPeerMembers(roomIds, userId).stream()
+                .collect(Collectors.toMap(RoomPeerRowPO::getRoomId, RoomPeerRowPO::getUserId, (a, b) -> a));
+        List<RoomListItemVO> items = new ArrayList<>(rows.size());
+        for (RoomListItemPO row : rows) {
+            RoomPO room = roomsById.get(row.getRoomId());
+            String peerUserId = peerByRoom.get(row.getRoomId());
+            if (room == null || peerUserId == null) {
+                continue;
+            }
+            row.setSource(room.getSource());
+            row.setInitiatorId(room.getInitiatorId());
+            row.setLastSeq(room.getLastSeq());
+            row.setPeerUserId(peerUserId);
+            items.add(toRoomListItemVO(row));
+        }
+        return items;
     }
 
     @Override
@@ -213,7 +240,6 @@ public class ChatRepository implements IChatRepository {
         for (int i = 0; i < memberPOs.size(); i++) {
             RoomMemberEntity member = members.get(i);
             member.setId(memberPOs.get(i).getId());
-            member.setLastSeqCopy(0L);
             member.setLastReadSeq(0L);
             member.setCreatedAt(now);
         }
@@ -330,9 +356,24 @@ public class ChatRepository implements IChatRepository {
 
     @Override
     public List<TimelineItemVO> listTimelineAfter(String userId, long afterDeliverySeq, int limit) {
-        return chatDao.selectTimelineAfter(userId, afterDeliverySeq, limit).stream()
-                .map(po -> new TimelineItemVO(toMessageEntity(po), po.getDeliverySeq()))
-                .toList();
+        // 增量补拉两段查（SQL 层零 JOIN）：timeline 投递行扫描 → msg_id 集批量回查消息全量，
+        // 按投递序拼装。消息行缺失 = 原 INNER JOIN 语义（timeline 行在而消息行缺失属漂移），跳过
+        List<TimelineDeliveryRowPO> rows = chatDao.selectTimelineRows(userId, afterDeliverySeq, limit);
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        Map<String, MessagePO> messagesById = chatDao.selectMessagesByIds(
+                rows.stream().map(TimelineDeliveryRowPO::getMsgId).toList()).stream()
+                .collect(Collectors.toMap(MessagePO::getMsgId, Function.identity(), (a, b) -> a));
+        List<TimelineItemVO> items = new ArrayList<>(rows.size());
+        for (TimelineDeliveryRowPO row : rows) {
+            MessagePO message = messagesById.get(row.getMsgId());
+            if (message == null) {
+                continue;
+            }
+            items.add(new TimelineItemVO(toMessageEntity(message), row.getDeliverySeq()));
+        }
+        return items;
     }
 
     // ===== user_seq =====
@@ -375,7 +416,7 @@ public class ChatRepository implements IChatRepository {
         vo.setLastMsgType(po.getLastMsgType() == null ? null : MsgTypeVO.valueOf(po.getLastMsgType()));
         vo.setLastMsgPreview(po.getLastMsgPreview());
         vo.setLastMsgAt(po.getLastMsgAt());
-        vo.setUnread(po.getLastSeqCopy() - po.getLastReadSeq());
+        vo.setUnread(po.getLastSeq() - po.getLastReadSeq());
         return vo;
     }
 
@@ -400,7 +441,6 @@ public class ChatRepository implements IChatRepository {
         roomMember.setId(roomMemberPO.getId());
         roomMember.setRoomId(roomMemberPO.getRoomId());
         roomMember.setUserId(roomMemberPO.getUserId());
-        roomMember.setLastSeqCopy(roomMemberPO.getLastSeqCopy());
         roomMember.setLastReadSeq(roomMemberPO.getLastReadSeq());
         roomMember.setHiddenAt(roomMemberPO.getHiddenAt());
         roomMember.setCreatedAt(roomMemberPO.getCreateTime());

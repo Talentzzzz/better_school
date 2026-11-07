@@ -1,0 +1,645 @@
+﻿Compiled from "ShardingSphereConnection.java"
+public final class org.apache.shardingsphere.driver.jdbc.core.connection.ShardingSphereConnection extends org.apache.shardingsphere.driver.jdbc.adapter.AbstractConnectionAdapter {
+  private final org.apache.shardingsphere.infra.executor.sql.process.ProcessEngine processEngine;
+
+  private final org.apache.shardingsphere.driver.jdbc.adapter.executor.ForceExecuteTemplate<org.apache.shardingsphere.driver.jdbc.core.statement.StatementManager> forceExecuteTemplate;
+
+  private final java.lang.String currentDatabaseName;
+
+  private final org.apache.shardingsphere.mode.manager.ContextManager contextManager;
+
+  private final org.apache.shardingsphere.driver.jdbc.core.connection.DriverDatabaseConnectionManager databaseConnectionManager;
+
+  private final java.util.Collection<org.apache.shardingsphere.driver.jdbc.core.statement.StatementManager> statementManagers;
+
+  private final java.lang.String processId;
+
+  private boolean autoCommit;
+
+  private int transactionIsolation;
+
+  private boolean readOnly;
+
+  private volatile boolean closed;
+
+  public org.apache.shardingsphere.driver.jdbc.core.connection.ShardingSphereConnection(java.lang.String, org.apache.shardingsphere.mode.manager.ContextManager);
+    Code:
+       0: aload_0
+       1: invokespecial #1                  // Method org/apache/shardingsphere/driver/jdbc/adapter/AbstractConnectionAdapter."<init>":()V
+       4: aload_0
+       5: new           #7                  // class org/apache/shardingsphere/infra/executor/sql/process/ProcessEngine
+       8: dup
+       9: invokespecial #9                  // Method org/apache/shardingsphere/infra/executor/sql/process/ProcessEngine."<init>":()V
+      12: putfield      #10                 // Field processEngine:Lorg/apache/shardingsphere/infra/executor/sql/process/ProcessEngine;
+      15: aload_0
+      16: new           #16                 // class org/apache/shardingsphere/driver/jdbc/adapter/executor/ForceExecuteTemplate
+      19: dup
+      20: invokespecial #18                 // Method org/apache/shardingsphere/driver/jdbc/adapter/executor/ForceExecuteTemplate."<init>":()V
+      23: putfield      #19                 // Field forceExecuteTemplate:Lorg/apache/shardingsphere/driver/jdbc/adapter/executor/ForceExecuteTemplate;
+      26: aload_0
+      27: new           #23                 // class java/util/concurrent/ConcurrentLinkedQueue
+      30: dup
+      31: invokespecial #25                 // Method java/util/concurrent/ConcurrentLinkedQueue."<init>":()V
+      34: putfield      #26                 // Field statementManagers:Ljava/util/Collection;
+      37: aload_0
+      38: iconst_1
+      39: putfield      #30                 // Field autoCommit:Z
+      42: aload_0
+      43: iconst_1
+      44: putfield      #36                 // Field transactionIsolation:I
+      47: aload_0
+      48: aload_1
+      49: putfield      #40                 // Field currentDatabaseName:Ljava/lang/String;
+      52: aload_0
+      53: aload_2
+      54: putfield      #44                 // Field contextManager:Lorg/apache/shardingsphere/mode/manager/ContextManager;
+      57: aload_0
+      58: new           #48                 // class org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager
+      61: dup
+      62: aload_1
+      63: aload_2
+      64: invokespecial #50                 // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager."<init>":(Ljava/lang/String;Lorg/apache/shardingsphere/mode/manager/ContextManager;)V
+      67: putfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      70: aload_0
+      71: aload_0
+      72: getfield      #10                 // Field processEngine:Lorg/apache/shardingsphere/infra/executor/sql/process/ProcessEngine;
+      75: aload_1
+      76: invokevirtual #57                 // Method org/apache/shardingsphere/infra/executor/sql/process/ProcessEngine.connect:(Ljava/lang/String;)Ljava/lang/String;
+      79: putfield      #61                 // Field processId:Ljava/lang/String;
+      82: return
+
+  public void beginTransactionIfNeededWhenAutoCommitFalse() throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: getfield      #30                 // Field autoCommit:Z
+       4: ifne          23
+       7: aload_0
+       8: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      11: invokevirtual #64                 // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getConnectionContext:()Lorg/apache/shardingsphere/infra/session/connection/ConnectionContext;
+      14: invokevirtual #68                 // Method org/apache/shardingsphere/infra/session/connection/ConnectionContext.getTransactionContext:()Lorg/apache/shardingsphere/infra/session/connection/transaction/TransactionConnectionContext;
+      17: invokevirtual #74                 // Method org/apache/shardingsphere/infra/session/connection/transaction/TransactionConnectionContext.isInTransaction:()Z
+      20: ifeq          24
+      23: return
+      24: aload_0
+      25: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      28: invokevirtual #80                 // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.begin:()V
+      31: return
+
+  public java.sql.DatabaseMetaData getMetaData() throws java.sql.SQLException;
+    Code:
+       0: new           #83                 // class org/apache/shardingsphere/driver/jdbc/core/datasource/metadata/ShardingSphereDatabaseMetaData
+       3: dup
+       4: aload_0
+       5: invokespecial #85                 // Method org/apache/shardingsphere/driver/jdbc/core/datasource/metadata/ShardingSphereDatabaseMetaData."<init>":(Lorg/apache/shardingsphere/driver/jdbc/core/connection/ShardingSphereConnection;)V
+       8: areturn
+
+  public java.sql.PreparedStatement prepareStatement(java.lang.String) throws java.sql.SQLException;
+    Code:
+       0: new           #88                 // class org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSpherePreparedStatement
+       3: dup
+       4: aload_0
+       5: aload_1
+       6: invokespecial #90                 // Method org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSpherePreparedStatement."<init>":(Lorg/apache/shardingsphere/driver/jdbc/core/connection/ShardingSphereConnection;Ljava/lang/String;)V
+       9: areturn
+
+  public java.sql.PreparedStatement prepareStatement(java.lang.String, int, int) throws java.sql.SQLException;
+    Code:
+       0: new           #88                 // class org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSpherePreparedStatement
+       3: dup
+       4: aload_0
+       5: aload_1
+       6: iload_2
+       7: iload_3
+       8: invokespecial #93                 // Method org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSpherePreparedStatement."<init>":(Lorg/apache/shardingsphere/driver/jdbc/core/connection/ShardingSphereConnection;Ljava/lang/String;II)V
+      11: areturn
+
+  public java.sql.PreparedStatement prepareStatement(java.lang.String, int, int, int) throws java.sql.SQLException;
+    Code:
+       0: new           #88                 // class org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSpherePreparedStatement
+       3: dup
+       4: aload_0
+       5: aload_1
+       6: iload_2
+       7: iload_3
+       8: iload         4
+      10: invokespecial #96                 // Method org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSpherePreparedStatement."<init>":(Lorg/apache/shardingsphere/driver/jdbc/core/connection/ShardingSphereConnection;Ljava/lang/String;III)V
+      13: areturn
+
+  public java.sql.PreparedStatement prepareStatement(java.lang.String, int) throws java.sql.SQLException;
+    Code:
+       0: new           #88                 // class org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSpherePreparedStatement
+       3: dup
+       4: aload_0
+       5: aload_1
+       6: iload_2
+       7: invokespecial #99                 // Method org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSpherePreparedStatement."<init>":(Lorg/apache/shardingsphere/driver/jdbc/core/connection/ShardingSphereConnection;Ljava/lang/String;I)V
+      10: areturn
+
+  public java.sql.PreparedStatement prepareStatement(java.lang.String, int[]) throws java.sql.SQLException;
+    Code:
+       0: new           #88                 // class org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSpherePreparedStatement
+       3: dup
+       4: aload_0
+       5: aload_1
+       6: iconst_1
+       7: invokespecial #99                 // Method org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSpherePreparedStatement."<init>":(Lorg/apache/shardingsphere/driver/jdbc/core/connection/ShardingSphereConnection;Ljava/lang/String;I)V
+      10: areturn
+
+  public java.sql.PreparedStatement prepareStatement(java.lang.String, java.lang.String[]) throws java.sql.SQLException;
+    Code:
+       0: new           #88                 // class org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSpherePreparedStatement
+       3: dup
+       4: aload_0
+       5: aload_1
+       6: aload_2
+       7: invokespecial #104                // Method org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSpherePreparedStatement."<init>":(Lorg/apache/shardingsphere/driver/jdbc/core/connection/ShardingSphereConnection;Ljava/lang/String;[Ljava/lang/String;)V
+      10: areturn
+
+  public java.sql.Statement createStatement();
+    Code:
+       0: new           #107                // class org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSphereStatement
+       3: dup
+       4: aload_0
+       5: invokespecial #109                // Method org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSphereStatement."<init>":(Lorg/apache/shardingsphere/driver/jdbc/core/connection/ShardingSphereConnection;)V
+       8: areturn
+
+  public java.sql.Statement createStatement(int, int);
+    Code:
+       0: new           #107                // class org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSphereStatement
+       3: dup
+       4: aload_0
+       5: iload_1
+       6: iload_2
+       7: invokespecial #110                // Method org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSphereStatement."<init>":(Lorg/apache/shardingsphere/driver/jdbc/core/connection/ShardingSphereConnection;II)V
+      10: areturn
+
+  public java.sql.Statement createStatement(int, int, int);
+    Code:
+       0: new           #107                // class org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSphereStatement
+       3: dup
+       4: aload_0
+       5: iload_1
+       6: iload_2
+       7: iload_3
+       8: invokespecial #113                // Method org/apache/shardingsphere/driver/jdbc/core/statement/ShardingSphereStatement."<init>":(Lorg/apache/shardingsphere/driver/jdbc/core/connection/ShardingSphereConnection;III)V
+      11: areturn
+
+  public boolean getAutoCommit();
+    Code:
+       0: aload_0
+       1: getfield      #30                 // Field autoCommit:Z
+       4: ireturn
+
+  public void setAutoCommit(boolean) throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: iload_1
+       2: putfield      #30                 // Field autoCommit:Z
+       5: aload_0
+       6: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       9: invokevirtual #116                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getConnectionTransaction:()Lorg/apache/shardingsphere/transaction/ConnectionTransaction;
+      12: invokevirtual #120                // Method org/apache/shardingsphere/transaction/ConnectionTransaction.isLocalTransaction:()Z
+      15: ifeq          25
+      18: aload_0
+      19: invokespecial #125                // Method processLocalTransaction:()V
+      22: goto          29
+      25: aload_0
+      26: invokespecial #128                // Method processDistributedTransaction:()V
+      29: return
+
+  private void processLocalTransaction() throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       4: aload_0
+       5: getfield      #30                 // Field autoCommit:Z
+       8: invokevirtual #131                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.setAutoCommit:(Z)V
+      11: aload_0
+      12: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      15: invokevirtual #64                 // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getConnectionContext:()Lorg/apache/shardingsphere/infra/session/connection/ConnectionContext;
+      18: invokevirtual #68                 // Method org/apache/shardingsphere/infra/session/connection/ConnectionContext.getTransactionContext:()Lorg/apache/shardingsphere/infra/session/connection/transaction/TransactionConnectionContext;
+      21: astore_1
+      22: aload_0
+      23: getfield      #30                 // Field autoCommit:Z
+      26: ifeq          41
+      29: aload_1
+      30: invokevirtual #74                 // Method org/apache/shardingsphere/infra/session/connection/transaction/TransactionConnectionContext.isInTransaction:()Z
+      33: ifeq          41
+      36: aload_1
+      37: invokevirtual #135                // Method org/apache/shardingsphere/infra/session/connection/transaction/TransactionConnectionContext.close:()V
+      40: return
+      41: aload_0
+      42: getfield      #30                 // Field autoCommit:Z
+      45: ifne          96
+      48: aload_1
+      49: invokevirtual #74                 // Method org/apache/shardingsphere/infra/session/connection/transaction/TransactionConnectionContext.isInTransaction:()Z
+      52: ifne          96
+      55: aload_1
+      56: aload_0
+      57: getfield      #44                 // Field contextManager:Lorg/apache/shardingsphere/mode/manager/ContextManager;
+      60: invokevirtual #138                // Method org/apache/shardingsphere/mode/manager/ContextManager.getMetaDataContexts:()Lorg/apache/shardingsphere/mode/metadata/MetaDataContexts;
+      63: invokevirtual #144                // Method org/apache/shardingsphere/mode/metadata/MetaDataContexts.getMetaData:()Lorg/apache/shardingsphere/infra/metadata/ShardingSphereMetaData;
+      66: invokevirtual #150                // Method org/apache/shardingsphere/infra/metadata/ShardingSphereMetaData.getGlobalRuleMetaData:()Lorg/apache/shardingsphere/infra/metadata/database/rule/RuleMetaData;
+      69: ldc           #156                // class org/apache/shardingsphere/transaction/rule/TransactionRule
+      71: invokevirtual #158                // Method org/apache/shardingsphere/infra/metadata/database/rule/RuleMetaData.getSingleRule:(Ljava/lang/Class;)Lorg/apache/shardingsphere/infra/rule/ShardingSphereRule;
+      74: checkcast     #156                // class org/apache/shardingsphere/transaction/rule/TransactionRule
+      77: invokevirtual #164                // Method org/apache/shardingsphere/transaction/rule/TransactionRule.getDefaultType:()Lorg/apache/shardingsphere/transaction/api/TransactionType;
+      80: invokevirtual #168                // Method org/apache/shardingsphere/transaction/api/TransactionType.name:()Ljava/lang/String;
+      83: aload_0
+      84: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      87: invokevirtual #116                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getConnectionTransaction:()Lorg/apache/shardingsphere/transaction/ConnectionTransaction;
+      90: invokevirtual #174                // Method org/apache/shardingsphere/transaction/ConnectionTransaction.getDistributedTransactionManager:()Lorg/apache/shardingsphere/transaction/spi/ShardingSphereDistributedTransactionManager;
+      93: invokevirtual #178                // Method org/apache/shardingsphere/infra/session/connection/transaction/TransactionConnectionContext.beginTransaction:(Ljava/lang/String;Lorg/apache/shardingsphere/infra/session/connection/transaction/TransactionManager;)V
+      96: return
+
+  private void processDistributedTransaction() throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       4: invokevirtual #116                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getConnectionTransaction:()Lorg/apache/shardingsphere/transaction/ConnectionTransaction;
+       7: aload_0
+       8: getfield      #30                 // Field autoCommit:Z
+      11: invokevirtual #182                // Method org/apache/shardingsphere/transaction/ConnectionTransaction.getDistributedTransactionOperationType:(Z)Ljava/util/Optional;
+      14: astore_1
+      15: aload_1
+      16: invokevirtual #186                // Method java/util/Optional.isPresent:()Z
+      19: ifne          23
+      22: return
+      23: getstatic     #191                // Field org/apache/shardingsphere/transaction/ConnectionTransaction$DistributedTransactionOperationType.BEGIN:Lorg/apache/shardingsphere/transaction/ConnectionTransaction$DistributedTransactionOperationType;
+      26: aload_1
+      27: invokevirtual #197                // Method java/util/Optional.get:()Ljava/lang/Object;
+      30: if_acmpne     43
+      33: aload_0
+      34: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      37: invokevirtual #80                 // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.begin:()V
+      40: goto          50
+      43: aload_0
+      44: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      47: invokevirtual #201                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.commit:()V
+      50: return
+
+  public void commit() throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       4: invokevirtual #201                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.commit:()V
+       7: return
+
+  public void rollback() throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       4: invokevirtual #204                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.rollback:()V
+       7: return
+
+  public void rollback(java.sql.Savepoint) throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: invokespecial #207                // Method checkClose:()V
+       4: aload_0
+       5: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       8: invokevirtual #116                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getConnectionTransaction:()Lorg/apache/shardingsphere/transaction/ConnectionTransaction;
+      11: aload_0
+      12: getfield      #30                 // Field autoCommit:Z
+      15: invokevirtual #210                // Method org/apache/shardingsphere/transaction/ConnectionTransaction.isHoldTransaction:(Z)Z
+      18: ifne          28
+      21: aload_0
+      22: invokespecial #214                // Method isSchemaSupportedDatabaseType:()Z
+      25: ifne          32
+      28: iconst_1
+      29: goto          33
+      32: iconst_0
+      33: invokedynamic #217,  0            // InvokeDynamic #0:get:()Ljava/util/function/Supplier;
+      38: invokestatic  #220                // Method org/apache/shardingsphere/infra/exception/ShardingSpherePreconditions.checkState:(ZLjava/util/function/Supplier;)V
+      41: aload_0
+      42: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      45: aload_1
+      46: invokevirtual #226                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.rollback:(Ljava/sql/Savepoint;)V
+      49: return
+
+  public java.sql.Savepoint setSavepoint(java.lang.String) throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: invokespecial #207                // Method checkClose:()V
+       4: aload_0
+       5: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       8: invokevirtual #116                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getConnectionTransaction:()Lorg/apache/shardingsphere/transaction/ConnectionTransaction;
+      11: aload_0
+      12: getfield      #30                 // Field autoCommit:Z
+      15: invokevirtual #210                // Method org/apache/shardingsphere/transaction/ConnectionTransaction.isHoldTransaction:(Z)Z
+      18: ifne          28
+      21: aload_0
+      22: invokespecial #214                // Method isSchemaSupportedDatabaseType:()Z
+      25: ifne          32
+      28: iconst_1
+      29: goto          33
+      32: iconst_0
+      33: invokedynamic #229,  0            // InvokeDynamic #1:get:()Ljava/util/function/Supplier;
+      38: invokestatic  #220                // Method org/apache/shardingsphere/infra/exception/ShardingSpherePreconditions.checkState:(ZLjava/util/function/Supplier;)V
+      41: aload_0
+      42: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      45: aload_1
+      46: invokevirtual #230                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.setSavepoint:(Ljava/lang/String;)Ljava/sql/Savepoint;
+      49: areturn
+
+  public java.sql.Savepoint setSavepoint() throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: invokespecial #207                // Method checkClose:()V
+       4: aload_0
+       5: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       8: invokevirtual #116                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getConnectionTransaction:()Lorg/apache/shardingsphere/transaction/ConnectionTransaction;
+      11: aload_0
+      12: getfield      #30                 // Field autoCommit:Z
+      15: invokevirtual #210                // Method org/apache/shardingsphere/transaction/ConnectionTransaction.isHoldTransaction:(Z)Z
+      18: ifne          28
+      21: aload_0
+      22: invokespecial #214                // Method isSchemaSupportedDatabaseType:()Z
+      25: ifne          32
+      28: iconst_1
+      29: goto          33
+      32: iconst_0
+      33: invokedynamic #234,  0            // InvokeDynamic #2:get:()Ljava/util/function/Supplier;
+      38: invokestatic  #220                // Method org/apache/shardingsphere/infra/exception/ShardingSpherePreconditions.checkState:(ZLjava/util/function/Supplier;)V
+      41: aload_0
+      42: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      45: invokevirtual #235                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.setSavepoint:()Ljava/sql/Savepoint;
+      48: areturn
+
+  public void releaseSavepoint(java.sql.Savepoint) throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: invokespecial #207                // Method checkClose:()V
+       4: aload_0
+       5: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       8: invokevirtual #116                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getConnectionTransaction:()Lorg/apache/shardingsphere/transaction/ConnectionTransaction;
+      11: aload_0
+      12: getfield      #30                 // Field autoCommit:Z
+      15: invokevirtual #210                // Method org/apache/shardingsphere/transaction/ConnectionTransaction.isHoldTransaction:(Z)Z
+      18: ifne          28
+      21: aload_0
+      22: invokespecial #214                // Method isSchemaSupportedDatabaseType:()Z
+      25: ifne          32
+      28: iconst_1
+      29: goto          33
+      32: iconst_0
+      33: invokedynamic #238,  0            // InvokeDynamic #3:get:()Ljava/util/function/Supplier;
+      38: invokestatic  #220                // Method org/apache/shardingsphere/infra/exception/ShardingSpherePreconditions.checkState:(ZLjava/util/function/Supplier;)V
+      41: aload_0
+      42: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      45: invokevirtual #116                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getConnectionTransaction:()Lorg/apache/shardingsphere/transaction/ConnectionTransaction;
+      48: aload_0
+      49: getfield      #30                 // Field autoCommit:Z
+      52: invokevirtual #210                // Method org/apache/shardingsphere/transaction/ConnectionTransaction.isHoldTransaction:(Z)Z
+      55: ifeq          66
+      58: aload_0
+      59: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      62: aload_1
+      63: invokevirtual #239                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.releaseSavepoint:(Ljava/sql/Savepoint;)V
+      66: return
+
+  private void checkClose() throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: invokevirtual #242                // Method isClosed:()Z
+       4: ifne          11
+       7: iconst_1
+       8: goto          12
+      11: iconst_0
+      12: invokedynamic #245,  0            // InvokeDynamic #4:get:()Ljava/util/function/Supplier;
+      17: invokestatic  #220                // Method org/apache/shardingsphere/infra/exception/ShardingSpherePreconditions.checkState:(ZLjava/util/function/Supplier;)V
+      20: return
+
+  private boolean isSchemaSupportedDatabaseType();
+    Code:
+       0: aload_0
+       1: getfield      #44                 // Field contextManager:Lorg/apache/shardingsphere/mode/manager/ContextManager;
+       4: invokevirtual #138                // Method org/apache/shardingsphere/mode/manager/ContextManager.getMetaDataContexts:()Lorg/apache/shardingsphere/mode/metadata/MetaDataContexts;
+       7: invokevirtual #144                // Method org/apache/shardingsphere/mode/metadata/MetaDataContexts.getMetaData:()Lorg/apache/shardingsphere/infra/metadata/ShardingSphereMetaData;
+      10: aload_0
+      11: getfield      #40                 // Field currentDatabaseName:Ljava/lang/String;
+      14: invokevirtual #246                // Method org/apache/shardingsphere/infra/metadata/ShardingSphereMetaData.getDatabase:(Ljava/lang/String;)Lorg/apache/shardingsphere/infra/metadata/database/ShardingSphereDatabase;
+      17: invokevirtual #250                // Method org/apache/shardingsphere/infra/metadata/database/ShardingSphereDatabase.getProtocolType:()Lorg/apache/shardingsphere/database/connector/core/type/DatabaseType;
+      20: astore_1
+      21: new           #256                // class org/apache/shardingsphere/database/connector/core/type/DatabaseTypeRegistry
+      24: dup
+      25: aload_1
+      26: invokespecial #258                // Method org/apache/shardingsphere/database/connector/core/type/DatabaseTypeRegistry."<init>":(Lorg/apache/shardingsphere/database/connector/core/type/DatabaseType;)V
+      29: invokevirtual #261                // Method org/apache/shardingsphere/database/connector/core/type/DatabaseTypeRegistry.getDialectDatabaseMetaData:()Lorg/apache/shardingsphere/database/connector/core/metadata/database/metadata/DialectDatabaseMetaData;
+      32: invokeinterface #265,  1          // InterfaceMethod org/apache/shardingsphere/database/connector/core/metadata/database/metadata/DialectDatabaseMetaData.getSchemaOption:()Lorg/apache/shardingsphere/database/connector/core/metadata/database/metadata/option/schema/DialectSchemaOption;
+      37: invokeinterface #271,  1          // InterfaceMethod org/apache/shardingsphere/database/connector/core/metadata/database/metadata/option/schema/DialectSchemaOption.getDefaultSchema:()Ljava/util/Optional;
+      42: invokevirtual #186                // Method java/util/Optional.isPresent:()Z
+      45: ireturn
+
+  public int getTransactionIsolation() throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       4: invokevirtual #277                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getTransactionIsolation:()Ljava/util/Optional;
+       7: aload_0
+       8: invokedynamic #280,  0            // InvokeDynamic #5:get:(Lorg/apache/shardingsphere/driver/jdbc/core/connection/ShardingSphereConnection;)Ljava/util/function/Supplier;
+      13: invokevirtual #283                // Method java/util/Optional.orElseGet:(Ljava/util/function/Supplier;)Ljava/lang/Object;
+      16: checkcast     #287                // class java/lang/Integer
+      19: invokevirtual #289                // Method java/lang/Integer.intValue:()I
+      22: ireturn
+
+  public void setTransactionIsolation(int) throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: iload_1
+       2: putfield      #36                 // Field transactionIsolation:I
+       5: aload_0
+       6: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       9: iload_1
+      10: invokevirtual #293                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.setTransactionIsolation:(I)V
+      13: return
+
+  public boolean isReadOnly();
+    Code:
+       0: aload_0
+       1: getfield      #297                // Field readOnly:Z
+       4: ireturn
+
+  public void setReadOnly(boolean) throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: iload_1
+       2: putfield      #297                // Field readOnly:Z
+       5: aload_0
+       6: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       9: iload_1
+      10: invokevirtual #300                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.setReadOnly:(Z)V
+      13: return
+
+  public int getNetworkTimeout();
+    Code:
+       0: iconst_0
+       1: ireturn
+
+  public void setNetworkTimeout(java.util.concurrent.Executor, int) throws java.sql.SQLException;
+    Code:
+       0: iconst_0
+       1: iload_2
+       2: if_icmpgt     9
+       5: iconst_1
+       6: goto          10
+       9: iconst_0
+      10: invokedynamic #303,  0            // InvokeDynamic #6:get:()Ljava/util/function/Supplier;
+      15: invokestatic  #220                // Method org/apache/shardingsphere/infra/exception/ShardingSpherePreconditions.checkState:(ZLjava/util/function/Supplier;)V
+      18: return
+
+  public boolean isValid(int) throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       4: iload_1
+       5: invokevirtual #304                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.isValid:(I)Z
+       8: ireturn
+
+  public java.lang.String getSchema();
+    Code:
+       0: aload_0
+       1: getfield      #40                 // Field currentDatabaseName:Ljava/lang/String;
+       4: areturn
+
+  public boolean isClosed();
+    Code:
+       0: aload_0
+       1: getfield      #308                // Field closed:Z
+       4: ireturn
+
+  public void close() throws java.sql.SQLException;
+    Code:
+       0: aload_0
+       1: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       4: invokevirtual #116                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getConnectionTransaction:()Lorg/apache/shardingsphere/transaction/ConnectionTransaction;
+       7: aload_0
+       8: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      11: invokevirtual #64                 // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getConnectionContext:()Lorg/apache/shardingsphere/infra/session/connection/ConnectionContext;
+      14: invokevirtual #68                 // Method org/apache/shardingsphere/infra/session/connection/ConnectionContext.getTransactionContext:()Lorg/apache/shardingsphere/infra/session/connection/transaction/TransactionConnectionContext;
+      17: invokevirtual #311                // Method org/apache/shardingsphere/transaction/ConnectionTransaction.isInDistributedTransaction:(Lorg/apache/shardingsphere/infra/session/connection/transaction/TransactionConnectionContext;)Z
+      20: ifeq          33
+      23: aload_0
+      24: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      27: invokevirtual #116                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.getConnectionTransaction:()Lorg/apache/shardingsphere/transaction/ConnectionTransaction;
+      30: invokevirtual #315                // Method org/apache/shardingsphere/transaction/ConnectionTransaction.rollback:()V
+      33: aload_0
+      34: iconst_1
+      35: putfield      #308                // Field closed:Z
+      38: aload_0
+      39: getfield      #10                 // Field processEngine:Lorg/apache/shardingsphere/infra/executor/sql/process/ProcessEngine;
+      42: aload_0
+      43: getfield      #61                 // Field processId:Ljava/lang/String;
+      46: invokevirtual #316                // Method org/apache/shardingsphere/infra/executor/sql/process/ProcessEngine.disconnect:(Ljava/lang/String;)V
+      49: aload_0
+      50: getfield      #19                 // Field forceExecuteTemplate:Lorg/apache/shardingsphere/driver/jdbc/adapter/executor/ForceExecuteTemplate;
+      53: aload_0
+      54: getfield      #26                 // Field statementManagers:Ljava/util/Collection;
+      57: invokedynamic #320,  0            // InvokeDynamic #7:execute:()Lorg/apache/shardingsphere/driver/jdbc/adapter/executor/ForceExecuteCallback;
+      62: invokevirtual #324                // Method org/apache/shardingsphere/driver/jdbc/adapter/executor/ForceExecuteTemplate.execute:(Ljava/util/Collection;Lorg/apache/shardingsphere/driver/jdbc/adapter/executor/ForceExecuteCallback;)V
+      65: aload_0
+      66: getfield      #26                 // Field statementManagers:Ljava/util/Collection;
+      69: invokeinterface #327,  1          // InterfaceMethod java/util/Collection.clear:()V
+      74: aload_0
+      75: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      78: invokevirtual #332                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.close:()V
+      81: goto          103
+      84: astore_1
+      85: aload_0
+      86: getfield      #26                 // Field statementManagers:Ljava/util/Collection;
+      89: invokeinterface #327,  1          // InterfaceMethod java/util/Collection.clear:()V
+      94: aload_0
+      95: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+      98: invokevirtual #332                // Method org/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager.close:()V
+     101: aload_1
+     102: athrow
+     103: return
+    Exception table:
+       from    to  target type
+          49    65    84   any
+
+  public java.lang.String getCurrentDatabaseName();
+    Code:
+       0: aload_0
+       1: getfield      #40                 // Field currentDatabaseName:Ljava/lang/String;
+       4: areturn
+
+  public org.apache.shardingsphere.mode.manager.ContextManager getContextManager();
+    Code:
+       0: aload_0
+       1: getfield      #44                 // Field contextManager:Lorg/apache/shardingsphere/mode/manager/ContextManager;
+       4: areturn
+
+  public org.apache.shardingsphere.driver.jdbc.core.connection.DriverDatabaseConnectionManager getDatabaseConnectionManager();
+    Code:
+       0: aload_0
+       1: getfield      #53                 // Field databaseConnectionManager:Lorg/apache/shardingsphere/driver/jdbc/core/connection/DriverDatabaseConnectionManager;
+       4: areturn
+
+  public java.util.Collection<org.apache.shardingsphere.driver.jdbc.core.statement.StatementManager> getStatementManagers();
+    Code:
+       0: aload_0
+       1: getfield      #26                 // Field statementManagers:Ljava/util/Collection;
+       4: areturn
+
+  public java.lang.String getProcessId();
+    Code:
+       0: aload_0
+       1: getfield      #61                 // Field processId:Ljava/lang/String;
+       4: areturn
+
+  private static java.sql.SQLException lambda$setNetworkTimeout$6();
+    Code:
+       0: new           #333                // class java/sql/SQLException
+       3: dup
+       4: ldc_w         #335                // String Network timeout must be a value greater than or equal to 0.
+       7: invokespecial #337                // Method java/sql/SQLException."<init>":(Ljava/lang/String;)V
+      10: areturn
+
+  private java.lang.Integer lambda$getTransactionIsolation$5();
+    Code:
+       0: aload_0
+       1: getfield      #36                 // Field transactionIsolation:I
+       4: invokestatic  #339                // Method java/lang/Integer.valueOf:(I)Ljava/lang/Integer;
+       7: areturn
+
+  private static java.sql.SQLException lambda$checkClose$4();
+    Code:
+       0: new           #343                // class org/apache/shardingsphere/driver/exception/ConnectionClosedException
+       3: dup
+       4: invokespecial #345                // Method org/apache/shardingsphere/driver/exception/ConnectionClosedException."<init>":()V
+       7: invokevirtual #346                // Method org/apache/shardingsphere/driver/exception/ConnectionClosedException.toSQLException:()Ljava/sql/SQLException;
+      10: areturn
+
+  private static java.sql.SQLFeatureNotSupportedException lambda$releaseSavepoint$3();
+    Code:
+       0: new           #350                // class java/sql/SQLFeatureNotSupportedException
+       3: dup
+       4: ldc_w         #352                // String RELEASE SAVEPOINT can only be used in transaction blocks
+       7: invokespecial #354                // Method java/sql/SQLFeatureNotSupportedException."<init>":(Ljava/lang/String;)V
+      10: areturn
+
+  private static java.sql.SQLFeatureNotSupportedException lambda$setSavepoint$2();
+    Code:
+       0: new           #350                // class java/sql/SQLFeatureNotSupportedException
+       3: dup
+       4: ldc_w         #355                // String Savepoint can only be used in transaction blocks
+       7: invokespecial #354                // Method java/sql/SQLFeatureNotSupportedException."<init>":(Ljava/lang/String;)V
+      10: areturn
+
+  private static java.sql.SQLFeatureNotSupportedException lambda$setSavepoint$1();
+    Code:
+       0: new           #350                // class java/sql/SQLFeatureNotSupportedException
+       3: dup
+       4: ldc_w         #355                // String Savepoint can only be used in transaction blocks
+       7: invokespecial #354                // Method java/sql/SQLFeatureNotSupportedException."<init>":(Ljava/lang/String;)V
+      10: areturn
+
+  private static java.sql.SQLFeatureNotSupportedException lambda$rollback$0();
+    Code:
+       0: new           #350                // class java/sql/SQLFeatureNotSupportedException
+       3: dup
+       4: ldc_w         #357                // String ROLLBACK TO SAVEPOINT can only be used in transaction blocks
+       7: invokespecial #354                // Method java/sql/SQLFeatureNotSupportedException."<init>":(Ljava/lang/String;)V
+      10: areturn
+}

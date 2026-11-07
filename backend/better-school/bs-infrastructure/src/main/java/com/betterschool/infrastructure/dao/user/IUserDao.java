@@ -28,9 +28,6 @@ public interface IUserDao {
     int updatePrivacy(@Param("userId") String userId, @Param("showLiked") boolean showLiked,
                       @Param("showComments") boolean showComments);
 
-    /** 获赞：该用户 NORMAL 帖点赞计数之和（窄表 post_like_count） */
-    long sumNormalPostLikeCount(@Param("userId") String userId);
-
     /** 全量用户 id（站内公告广播落库用；一次性取全量，不是循环） */
     List<String> selectAllIds();
 

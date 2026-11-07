@@ -1,0 +1,11 @@
+﻿javac.exe : C:\Users\a1368\Desktop\better_school\.scratch\timeout-inline\probe\ss\VerifyProbe.java:133: ����: δ������쳣�
+���InterruptedException; ���������в���������Ա��׳�
+所在位置 行:5 字符: 1
++ & "$jdk\bin\javac.exe" -encoding UTF-8 -nowarn -cp $cp -d "$work\clas ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\a1368\...в���������Ա��׳�:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+        t.join();
+              ^
+1 ������

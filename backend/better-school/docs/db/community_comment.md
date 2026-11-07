@@ -42,7 +42,7 @@
 
 ## 关联
 - N:1 → post
-- 自关联 → `parent_id` / `root_id` 指向本表的 comment_id（指向标签昵称 JOIN parent 行取，忽略其状态）
+- 自关联 → `parent_id` / `root_id` 指向本表的 comment_id（指向标签昵称由仓储回查 parent 行取，忽略其状态）
 - 1:0..1 → post_comment_like_count（点赞计数真源，行诞生于审核通过）
 - 1:0..1 → post_comment_feed_index（仅根评论有行，「最热」排序投影）
 - 1:N → post_comment_like（评论点赞）
@@ -53,7 +53,7 @@
 - root/parent 由服务端推导，客户端传入的归属字段被忽略；展示永远两级平铺，仅 `parent ≠ root` 显示指向标签
 - `reply_count` 同事务维护：子回复 NORMAL 落库 +1 / 审核通过 +1 / 删除或下架 -1；待审不计数（本轮零改动，仍在本行）
 - 删除统一软删：用户删除与举报下架同轨转 `state='DELETED'`，行保留可审计，物理 DELETE 已废弃；**删根 = 整楼消失**（楼内子回复行不动、随楼不可达），总数扣 1+楼内可见子回复数；删子回复 = 仅隐藏该条，`reply_count` 与总数各 -1；待审删除计数不动；REJECTED/DELETED 为终态，重复删除幂等
-- 指向已删评论的「▶ 昵称」仍显示：指向昵称 JOIN parent 行取、忽略其状态
+- 指向已删评论的「▶ 昵称」仍显示：指向昵称由仓储回查 parent 行取、忽略其状态
 
 # post_comment_count
 
@@ -69,7 +69,7 @@
 
 ## 注意
 - **写路径与点赞计数不同：本表是同事务同步写**——评论审核通过（PENDING_REVIEW→NORMAL，条件 UPDATE 命中 1 行才 +1）/ 软删 -1 时，在同一事务内 `INSERT ... ON DUPLICATE KEY UPDATE comment_count = GREATEST(0, comment_count + delta)`；待审不计数，故不是「落库即 +1」
-- 读路径：帖子列表/详情 `LEFT JOIN post_comment_count ... COALESCE(comment_count, 0)`；无行 = 计数 0
+- 读路径：帖子列表/详情由仓储批量回查 `post_comment_count` 后 `COALESCE(comment_count, 0)` 投影；无行 = 计数 0
 - 窄行设计目的：评论写入不再 UPDATE `post` 行（不与帖子内容/状态写入抢锁）
 
 # post_comment_like_count
@@ -142,6 +142,6 @@ comment-count-narrow-table 落地后的形状：各条读语句（根列表默�
 |作者主页「评论」tab|`create_time DESC, comment_id DESC`|同上|
 |单条评论（详情定位等）|—|单元素回查（同一条通路）|
 
-- **最热档两级取数**：先在 `post_comment_feed_index` 上按帖子前缀扫出本页 `comment_id` 序，再按 id 集回查 `post_comment` 行（保留昵称/驳回理由 JOIN）并按扫描序重排，最后走同一条计数回查。索引行在而评论行不可见 = 漂移，跳过不补位（补位要么多查一页、要么让页大小漂移）
+- **最热档两级取数**：先在 `post_comment_feed_index` 上按帖子前缀扫出本页 `comment_id` 序，再按 id 集回查 `post_comment` 行（昵称/驳回理由由仓储批量回查拼装）并按扫描序重排，最后走同一条计数回查。索引行在而评论行不可见 = 漂移，跳过不补位（补位要么多查一页、要么让页大小漂移）
 - **批量回查**：一次 `SELECT comment_id, like_count FROM post_comment_like_count WHERE comment_id IN (...)`，Java 侧投影进 `PostCommentPO.likeCount`，缺行补 0（票 02 之前过审的历史评论没有计数行 = 存量语义）。不用 SQL JOIN：与 feed 形态的批量回查同思路，单行/批量同一通路
 - **重建 job 兜底**：快照漂移（点赞旁带命中 0 行的 warn、索引行被绕过直改、软删漏删索引行）跑一次 `commentFeedIndexRebuildJob`；它只重建排序快照。窄表缺行的根评论在重灌时按 0 处理，且**点赞不会自愈**（点赞只 `UPDATE` 窄表、命中 0 行仅落 warn）——要让计数回正得先手工补窄表行，再重跑一次重建

@@ -7,22 +7,10 @@
         create_time, update_time
     </sql>
 
-    <!-- 根评论两档（默认档 / 最热档回查）共用的列清单 + 两个展示 JOIN：同一档的列表项字段不该随取数路径
-         漂移，所以两档共用这一份，根评论列增删只改这一处。楼内平铺 / 主页 tab / 单行各有自己的列清单——
-         它们取的是不同的冗余列（reply_to_* / post_title+cover / 无 reply_count），不强行合并
-         （baseColumns 是历史遗留的整表列清单，当前无 include 引用）。
-         like_count 不在列清单里（票 02）：真源在 post_comment_like_count，由仓储按页内 id 集批量回查填充 -->
-    <sql id="rootCommentColumns">
-        c.id, c.comment_id, c.post_id, c.user_id, c.content, c.state, c.root_id, c.parent_id,
-        c.reply_count, c.create_time, c.update_time,
-        u.nickname AS author_nickname,
-        cr.reason  AS reject_reason
-    </sql>
-
-    <sql id="rootCommentJoins">
-        LEFT JOIN bs_user u ON c.user_id = u.user_id
-        LEFT JOIN content_review cr ON cr.target_type = 'COMMENT' AND cr.target_id = c.comment_id AND cr.action = 'REJECT'
-    </sql>
+    <!-- 各语句统一纯 post_comment 单表列清单：作者昵称（bs_user）、驳回理由（content_review 最新 REJECT 行）、
+         楼内的指向评论（post_comment 父行自连）、主页 tab 的来源帖标题封面（post）均由仓储二次回查拼装
+         （SQL 层零 JOIN）。like_count 不在列清单里（票 02）：真源在 post_comment_like_count，
+         由仓储按页内 id 集批量回查填充 -->
 
     <insert id="insert" parameterType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO"
             useGeneratedKeys="true" keyProperty="id">
@@ -36,9 +24,8 @@
          create_time 表达，业务 ID 只做同值收敛）；最热档不走这条——它在 post_comment_feed_index 上两级取数
          （见 selectRootFeedCommentIds），顺序来自索引、且只有已过审根评论（热评档不自见） -->
     <select id="selectRootPageByPostId" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO">
-        SELECT <include refid="rootCommentColumns"/>
+        SELECT <include refid="baseColumns"/>
         FROM post_comment c
-        <include refid="rootCommentJoins"/>
         WHERE c.post_id = #{postId}
           AND c.root_id = '0'
           AND (c.state = 'NORMAL'
@@ -65,13 +52,12 @@
         LIMIT #{offset}, #{limit}
     </select>
 
-    <!-- 最热档第二步：按 id 集回查评论行（列清单与默认档同形，保留 bs_user / content_review JOIN）。
+    <!-- 最热档第二步：按 id 集回查评论行（纯单表，与默认档同列清单；作者昵称/驳回理由仓储拼装）。
          顺序由调用方按扫描序重排，本语句不排序；只取 NORMAL 根行——索引行集本应与之一致，
          漂移（索引行未随软删退场）时缺行由调用方跳过，不补位 -->
     <select id="selectNormalRootsByIds" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO">
-        SELECT <include refid="rootCommentColumns"/>
+        SELECT <include refid="baseColumns"/>
         FROM post_comment c
-        <include refid="rootCommentJoins"/>
         WHERE c.comment_id IN
         <foreach collection="commentIds" item="commentId" open="(" separator="," close=")">#{commentId}</foreach>
           AND c.root_id = '0'
@@ -88,21 +74,13 @@
     </select>
 
     <!-- 楼内子回复平铺：按 root_id 归组、create_time 升序 + 业务 ID 升序、仅 NORMAL；
-         指向昵称 JOIN parent 行取、忽略其状态（被指向评论被删/未通过时昵称仍可读）。
+         指向评论行（reply_to_*）由仓储按 parent_id 集单表回查拼装、忽略其状态
+         （被指向评论被删/未通过时昵称仍可读）。
          like_count 不在列清单里（票 02，真源在 post_comment_like_count，仓储批量回查填充）；
          reply_count 只对根评论有意义，楼内不取 -->
     <select id="selectRepliesByRootId" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO">
-        SELECT c.id, c.comment_id, c.post_id, c.user_id, c.content, c.state, c.root_id, c.parent_id,
-               c.create_time, c.update_time,
-               u.nickname AS author_nickname,
-               p.user_id  AS reply_to_user_id,
-               pu.nickname AS reply_to_nickname,
-               cr.reason  AS reject_reason
+        SELECT <include refid="baseColumns"/>
         FROM post_comment c
-        LEFT JOIN bs_user u ON c.user_id = u.user_id
-        LEFT JOIN post_comment p ON c.parent_id = p.comment_id
-        LEFT JOIN bs_user pu ON p.user_id = pu.user_id
-        LEFT JOIN content_review cr ON cr.target_type = 'COMMENT' AND cr.target_id = c.comment_id AND cr.action = 'REJECT'
         WHERE c.root_id = #{rootId}
           AND (c.state = 'NORMAL'
               <if test="viewerId != null">
@@ -139,40 +117,33 @@
         WHERE comment_id = #{rootId}
     </update>
 
-    <!-- 按用户列评论（作者主页「评论」tab）：该用户 NORMAL 评论且源帖 NORMAL，
-         来源帖标题/封面 JOIN post 取（评论行不存），按评论时间倒序。
+    <!-- 按用户列评论（作者主页「评论」tab）：该用户的全部 NORMAL 评论行（单表，按评论时间倒序），
+         源帖 NORMAL 过滤与来源帖标题/封面（评论行不存）由仓储回查 post 拼装
+         （用户自己的评论行有界，total = 过滤后集合大小，与原 JOIN COUNT 同口径）。
          like_count 不在列清单里（票 02，真源在 post_comment_like_count，仓储批量回查填充） -->
-    <select id="selectPageByUser" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO">
-        SELECT c.id, c.comment_id, c.post_id, c.user_id, c.content, c.state, c.root_id, c.parent_id,
-               c.reply_count, c.create_time, c.update_time,
-               p.title AS post_title, p.cover AS post_cover
+    <select id="selectNormalRowsByUser" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO">
+        SELECT <include refid="baseColumns"/>
         FROM post_comment c
-        JOIN post p ON c.post_id = p.post_id
         WHERE c.user_id = #{userId}
           AND c.state = 'NORMAL'
-          AND p.state = 'NORMAL'
         ORDER BY c.create_time DESC, c.comment_id DESC
-        LIMIT #{offset}, #{limit}
-    </select>
-
-    <select id="countByUser" resultType="long">
-        SELECT COUNT(1)
-        FROM post_comment c
-        JOIN post p ON c.post_id = p.post_id
-        WHERE c.user_id = #{userId}
-          AND c.state = 'NORMAL'
-          AND p.state = 'NORMAL'
     </select>
 
     <!-- 单条评论（点赞/审核前置检查、详情组装）。like_count 不在列清单里（票 02）：
          真源在 post_comment_like_count，仓储按单元素 id 集同一条回查通路填充 -->
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO">
-        SELECT c.id, c.comment_id, c.post_id, c.user_id, c.content, c.state, c.root_id, c.parent_id,
-               c.create_time, c.update_time,
-               u.nickname AS author_nickname
+        SELECT <include refid="baseColumns"/>
         FROM post_comment c
-        LEFT JOIN bs_user u ON c.user_id = u.user_id
         WHERE c.comment_id = #{commentId}
+    </select>
+
+    <!-- 按 id 集批量回查（不分状态：楼内指向评论回查要忽略父行状态；审核队列素材回查只取待审行时
+         由调用方按 state 过滤） -->
+    <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO">
+        SELECT <include refid="baseColumns"/>
+        FROM post_comment c
+        WHERE c.comment_id IN
+        <foreach collection="ids" item="commentId" open="(" separator="," close=")">#{commentId}</foreach>
     </select>
 
     <!-- ── 评论点赞计数窄表（post_comment_like_count，票 02 起的计数真源）── -->
@@ -321,25 +292,25 @@
     <!-- 重灌：根评论一行 1:1 投影，行集 = root_id = '0' AND state = 'NORMAL'（与运行期口径一致：过审诞生、
          软删物理退场，所以没有 state 列要投影）。这条 state 判据的前提是「评论软删是终态、没有恢复路径」——
          原文来自 spec §2.2 的建表理由；将来若给评论开恢复路径，这张表的行集语义与这条 SQL 要一起改。
-         create_time 取审核记录里最近一次 APPROVE 时刻 = 行诞生时的口径（通过时刻），查不到审批流水的
-         存量行取评论 create_time 兜底；like_count 从计数窄表抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径）。
-         update_time 每次重建刷 NOW()：技术时间戳、非排序键，不参与「幂等」的逐行比对 -->
-    <insert id="rebuildFeedIndexProjection">
+         原 INSERT..SELECT 一步投影改为仓储三段查拼装：① selectRebuildRows 取根评论行；
+         ② like_count 从计数窄表抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径）；
+         ③ create_time 取审核记录最近一次 APPROVE 时刻 = 行诞生时的口径（通过时刻，经
+         IModerationDao.selectApproveRowsByTargetType），查不到审批流水的存量行取评论 create_time 兜底；
+         组装后走 insertFeedIndexRows 批量写回。update_time 每次重建刷 NOW()：技术时间戳、非排序键 -->
+    <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.comment.po.CommentFeedIndexRowPO">
+        SELECT c.comment_id AS commentId, c.post_id AS postId, c.create_time AS createTime
+        FROM post_comment c
+        WHERE c.root_id = '0'
+          AND c.state = 'NORMAL'
+    </select>
+
+    <!-- 重灌写回：仓储拼装好的行集批量 INSERT（见 selectRebuildRows 注释） -->
+    <insert id="insertFeedIndexRows">
         INSERT INTO post_comment_feed_index (comment_id, post_id, like_count, create_time, update_time)
-        SELECT c.comment_id,
-               c.post_id,
-               COALESCE(lc.like_count, 0),
-               COALESCE((SELECT MAX(cr.create_time)
-                           FROM content_review cr
-                          WHERE cr.target_type = 'COMMENT'
-                            AND cr.target_id = c.comment_id
-                            AND cr.action = 'APPROVE'),
-                        c.create_time),
-               NOW()
-          FROM post_comment c
-          LEFT JOIN post_comment_like_count lc ON lc.comment_id = c.comment_id
-         WHERE c.root_id = '0'
-           AND c.state = 'NORMAL'
+        VALUES
+        <foreach collection="rows" item="row" separator=",">
+            (#{row.commentId}, #{row.postId}, #{row.likeCount}, #{row.feedTime}, NOW())
+        </foreach>
     </insert>
 
 </mapper>

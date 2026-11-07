@@ -5,8 +5,9 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 会话列表查询投影（room_member 主行 JOIN room 补会话真相 + 自连出对家）：列表三件套与水位副本
- * 都在本人的成员行上，unread 由调用方 O(1) 拼装
+ * 会话列表查询投影：三段查拼装——本人成员行分页直查（roomId + 列表三件套 + lastReadSeq），
+ * room 真相（source/initiatorId/lastSeq，lastSeq 即未读数真源）与对家 userId（peerUserId）由仓储
+ * 按 room_id 集二次回查填充；unread = lastSeq − lastReadSeq 由调用方拼装
  */
 @Data
 public class RoomListItemPO {
@@ -22,7 +23,8 @@ public class RoomListItemPO {
 
     private String initiatorId;
 
-    private Long lastSeqCopy;
+    /** 会话水位真源（room.last_seq，随列表 JOIN room 投影带出）：unread = 此列 − lastReadSeq */
+    private Long lastSeq;
 
     private String lastMsgType;
 

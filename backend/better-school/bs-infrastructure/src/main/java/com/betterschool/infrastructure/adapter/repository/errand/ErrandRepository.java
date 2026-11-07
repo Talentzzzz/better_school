@@ -18,8 +18,13 @@ import com.betterschool.infrastructure.adapter.merge.CountEvent;
 import com.betterschool.infrastructure.adapter.merge.LikeState;
 import com.betterschool.infrastructure.adapter.merge.ViewMergeWriter;
 import com.betterschool.infrastructure.dao.errand.IErrandDao;
+import com.betterschool.infrastructure.dao.errand.po.ErrandFeedIndexRowPO;
 import com.betterschool.infrastructure.dao.errand.po.ErrandOrderEventPO;
 import com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO;
+import com.betterschool.infrastructure.dao.moderation.IModerationDao;
+import com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO;
+import com.betterschool.infrastructure.dao.user.IUserDao;
+import com.betterschool.infrastructure.dao.user.po.UserPO;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
 import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCode;
@@ -34,9 +39,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Repository
@@ -51,6 +61,10 @@ public class ErrandRepository implements IErrandRepository {
     private final IIdGenerator idGenerator;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
+    /** 发布方/接单方昵称头像批量回查（SQL 层零 JOIN：订单列表/详情的 bs_user 信息在这里多查一次拼装） */
+    private final IUserDao userDao;
+    /** feed 索引重建取 APPROVE 审批流水（content_review 单表，IModerationDao 内该语句零 JOIN） */
+    private final IModerationDao moderationDao;
 
     @Override
     public void save(ErrandOrderEntity orderEntity) {
@@ -65,12 +79,33 @@ public class ErrandRepository implements IErrandRepository {
 
     @Override
     public ErrandOrderEntity findById(String orderId) {
-        return toEntity(errandDao.selectById(orderId));
+        ErrandOrderPO row = errandDao.selectById(orderId);
+        fillOrderExtras(row == null ? List.of() : List.of(row));
+        return toEntity(row);
     }
 
     @Override
     public List<ErrandOrderEntity> pageList(String type, String status, String sort, int offset, int limit) {
-        return errandDao.selectPage(type, status, sort, offset, limit).stream().map(this::toEntity).toList();
+        // hot 档排序键 view_count 在窄表（SQL 不能 JOIN 进来）：公开口径全集 + 窄表批量回查 + 内存排序切片。
+        // 旧直查路径仅作降级（索引不可用/带筛选时），数据集有界，可接受
+        List<ErrandOrderPO> rows;
+        if ("hot".equals(sort)) {
+            List<ErrandOrderPO> allVisible = errandDao.selectVisibleRows(type, status);
+            Map<String, ErrandOrderPO> viewRows = viewCountRowsById(errandDao.selectViewCountsByOrderIds(
+                    allVisible.stream().map(ErrandOrderPO::getErrandOrderId).toList()));
+            rows = allVisible.stream()
+                    .sorted(Comparator
+                            .comparing((ErrandOrderPO o) -> viewCountOf(viewRows, o.getErrandOrderId())).reversed()
+                            .thenComparing(ErrandOrderPO::getCreateTime, Comparator.reverseOrder())
+                            .thenComparing(ErrandOrderPO::getErrandOrderId, Comparator.reverseOrder()))
+                    .skip(offset)
+                    .limit(limit)
+                    .toList();
+        } else {
+            rows = errandDao.selectPage(type, status, sort, offset, limit);
+        }
+        fillOrderExtras(rows);
+        return rows.stream().map(this::toEntity).toList();
     }
 
     @Override
@@ -95,10 +130,45 @@ public class ErrandRepository implements IErrandRepository {
             int recalibrated = errandDao.recalibrateViewCounts();
             int orphans = errandDao.deleteViewCountsMissingHistory();
             errandDao.clearFeedIndex();
-            int rebuilt = errandDao.rebuildFeedIndexProjection();
+            int rebuilt = rebuildFeedIndexRows();
             log.info("[MarketFeedIndexRebuild] errand_feed_index 清空重灌 {} 行；errand_view_count 校准 {} 行、清理孤儿 {} 行",
                     rebuilt, recalibrated, orphans);
         });
+    }
+
+    /**
+     * 重灌行集拼装（原 INSERT..SELECT 一步投影的多查形态）：行集 = PUBLISHED 订单 ∪ 有过审批通过的订单
+     * （行常驻口径：通过事务才诞生行、之后 13 态流转只翻快照、行永不删除）。三段取数——
+     * ① errand_order 全量 (errand_order_id, state, create_time, reward)；② content_review 的 APPROVE 流水
+     * （feed_time 真源，经 IModerationDao 单表 GROUP BY，查不到审批流水取 create_time 兜底）；
+     * ③ view_count 从计数窄表抄入（无行 = 0）——组装后批量写回
+     */
+    private int rebuildFeedIndexRows() {
+        Map<String, LocalDateTime> approveTimes = new HashMap<>();
+        for (ContentReviewPO approveRow : moderationDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.ERRAND.name())) {
+            approveTimes.put(approveRow.getTargetId(), approveRow.getCreateTime());
+        }
+        List<ErrandFeedIndexRowPO> rows = new ArrayList<>();
+        for (ErrandFeedIndexRowPO candidate : errandDao.selectRebuildRows()) {
+            boolean approved = approveTimes.containsKey(candidate.getErrandOrderId());
+            if (!ErrandStatusVO.PUBLISHED.name().equals(candidate.getState()) && !approved) {
+                // 审核通过前的草稿/待支付/待审/驳回订单不凭空进索引
+                continue;
+            }
+            candidate.setFeedTime(approveTimes.getOrDefault(candidate.getErrandOrderId(), candidate.getCreateTime()));
+            rows.add(candidate);
+        }
+        if (!rows.isEmpty()) {
+            Map<String, ErrandOrderPO> viewRows = viewCountRowsById(errandDao.selectViewCountsByOrderIds(
+                    rows.stream().map(ErrandFeedIndexRowPO::getErrandOrderId).toList()));
+            for (ErrandFeedIndexRowPO row : rows) {
+                row.setViewCount(viewCountOf(viewRows, row.getErrandOrderId()));
+            }
+            for (int from = 0; from < rows.size(); from += REBUILD_INSERT_BATCH) {
+                errandDao.insertFeedIndexRows(rows.subList(from, Math.min(from + REBUILD_INSERT_BATCH, rows.size())));
+            }
+        }
+        return rows.size();
     }
 
     @Override
@@ -369,7 +439,9 @@ public class ErrandRepository implements IErrandRepository {
 
     @Override
     public List<ErrandOrderEntity> listMyPublished(String userId, String status, int offset, int limit) {
-        return errandDao.selectMyPublished(userId, status, offset, limit).stream().map(this::toEntity).toList();
+        List<ErrandOrderPO> rows = errandDao.selectMyPublished(userId, status, offset, limit);
+        fillOrderExtras(rows);
+        return rows.stream().map(this::toEntity).toList();
     }
 
     @Override
@@ -379,7 +451,9 @@ public class ErrandRepository implements IErrandRepository {
 
     @Override
     public List<ErrandOrderEntity> listPublicByPublisher(String userId, int offset, int limit) {
-        return errandDao.selectPublicPageByPublisher(userId, offset, limit).stream().map(this::toEntity).toList();
+        List<ErrandOrderPO> rows = errandDao.selectPublicPageByPublisher(userId, offset, limit);
+        fillOrderExtras(rows);
+        return rows.stream().map(this::toEntity).toList();
     }
 
     @Override
@@ -389,7 +463,9 @@ public class ErrandRepository implements IErrandRepository {
 
     @Override
     public List<ErrandOrderEntity> listMyTaken(String userId, String status, int offset, int limit) {
-        return errandDao.selectMyTaken(userId, status, offset, limit).stream().map(this::toEntity).toList();
+        List<ErrandOrderPO> rows = errandDao.selectMyTaken(userId, status, offset, limit);
+        fillOrderExtras(rows);
+        return rows.stream().map(this::toEntity).toList();
     }
 
     @Override
@@ -415,7 +491,9 @@ public class ErrandRepository implements IErrandRepository {
 
     @Override
     public List<ErrandOrderEntity> listByIds(List<String> orderIds) {
-        return errandDao.selectByIds(orderIds).stream().map(this::toEntity).toList();
+        List<ErrandOrderPO> rows = errandDao.selectByIds(orderIds);
+        fillOrderExtras(rows);
+        return rows.stream().map(this::toEntity).toList();
     }
 
     @Override
@@ -673,7 +751,8 @@ public class ErrandRepository implements IErrandRepository {
         orderEntity.setImages(toImagesList(orderPO.getImages()));
         orderEntity.setDeadline(orderPO.getDeadline());
         orderEntity.setStatus(ErrandStatusVO.valueOf(orderPO.getState()));
-        // 公开列表的浏览量由 selectPage 的计数窄表 JOIN 带出；其余查询不带该列（null → 0，详情由 orderDetail 回填）
+        // 公开列表的浏览量由仓储从计数窄表批量回查带出（selectViewCountsByOrderIds）；其余查询不带
+        // 该列（null → 0，详情由 orderDetail 回填）
         orderEntity.setViewCount(orderPO.getViewCount() == null ? 0 : orderPO.getViewCount());
         orderEntity.setTakerCanceled(orderPO.getTakerCanceled() != null && orderPO.getTakerCanceled());
         orderEntity.setCreatedAt(orderPO.getCreateTime());
@@ -689,6 +768,51 @@ public class ErrandRepository implements IErrandRepository {
     private void saveEvent(String orderId, String eventType, String fromState, String toState,
                            String actorId, String actorRole, String reasonType) {
         saveEvent(orderId, eventType, fromState, toState, actorId, actorRole, reasonType, null);
+    }
+
+    // ---------- 拼装辅助：浏览窄表 / 昵称头像（SQL 层零 JOIN 的 Java 收口点） ----------
+
+    /** 重灌行集批量写回的分片大小（防 foreach 语句过长） */
+    private static final int REBUILD_INSERT_BATCH = 500;
+
+    /**
+     * 订单行补齐发布方/接单方昵称头像 + 浏览 UV 加速列：bs_user 与 errand_view_count 各一次 IN 批量回查。
+     * 缺行补 0 / 补 null（与原 LEFT JOIN 合成口径一致）；列表与详情共用
+     */
+    private void fillOrderExtras(List<ErrandOrderPO> rows) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        Map<String, ErrandOrderPO> viewRows = viewCountRowsById(errandDao.selectViewCountsByOrderIds(
+                rows.stream().map(ErrandOrderPO::getErrandOrderId).toList()));
+        List<String> userIds = new ArrayList<>(rows.size() * 2);
+        for (ErrandOrderPO row : rows) {
+            userIds.add(row.getPublisherId());
+            userIds.add(row.getTakerId());
+        }
+        Map<String, UserPO> users = userDao.selectByIds(
+                userIds.stream().filter(Objects::nonNull).distinct().toList()).stream()
+                .collect(Collectors.toMap(UserPO::getUserId, user -> user, (a, b) -> a));
+        for (ErrandOrderPO row : rows) {
+            row.setViewCount(viewCountOf(viewRows, row.getErrandOrderId()));
+            UserPO publisher = users.get(row.getPublisherId());
+            UserPO taker = users.get(row.getTakerId());
+            row.setPublisherNickname(publisher == null ? null : publisher.getNickname());
+            row.setPublisherAvatar(publisher == null ? null : publisher.getAvatar());
+            row.setTakerNickname(taker == null ? null : taker.getNickname());
+            row.setTakerAvatar(taker == null ? null : taker.getAvatar());
+        }
+    }
+
+    /** 部分列计数行 → orderId 索引 */
+    private static Map<String, ErrandOrderPO> viewCountRowsById(List<ErrandOrderPO> viewRows) {
+        return viewRows.stream().collect(Collectors.toMap(ErrandOrderPO::getErrandOrderId, row -> row, (a, b) -> a));
+    }
+
+    /** 窄表缺行 = 计数 0（与原 LEFT JOIN IFNULL(x, 0) 同口径） */
+    private static Integer viewCountOf(Map<String, ErrandOrderPO> viewRows, String orderId) {
+        ErrandOrderPO row = viewRows.get(orderId);
+        return row == null ? 0 : row.getViewCount();
     }
 
     /**

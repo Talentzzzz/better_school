@@ -1,0 +1,134 @@
+﻿java.exe : Picked up JAVA_TOOL_OPTIONS: -Duser.language=en -Duser.country=US
+所在位置 行:9 字符: 1
++ & "$jdk\bin\java.exe" "-Dfile.encoding=UTF-8" "-Duser.language=en" -c ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Picked up JAVA_...user.country=US:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+################ C repo-shape-verbatim   (no !SINGLE) ################
+13:46:15.065 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Starting...
+13:46:15.074 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@56113384
+13:46:15.076 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-1 - Start completed.
+2026-10-16 13:46:15.249 [main] INFO  com.cedarsoftware.util.MultiKeyMap - MultiKeyMap stripe configuration: 64 locks fo
+r 32 cores
+13:46:16.560 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:46:16.560 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: 3953d366-b52c-4e1d-8fc3-dacf2b72ec15, IP: 26.144.150.84
+  [info] logical db 'logic_db' visible tables(1): [timeout_task]
+  [info] singleTableDataNodes (0) keys=[]
+  [info] Q1 unconfigured business tables usable: 0/4  (transparent=false)
+  [PASS] Q2 hint-routed writes land on the hinted physical shard (6/6)  ::  hit=6/6
+  [PASS] Q2b unwritable without hint (fail-fast)  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition...
+  [PASS] Q3 target shard timeout_task_06 is empty before the transaction  ::  rows=0
+  [FAIL] Q3 mixed transaction  ::  java.sql.SQLException: Table or view 'product_order' does not exist.
+  [PASS] Q4 SELECT LAST_INSERT_ID()  ::  ok
+  [FAIL] Q4 ODKU  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 INSERT IGNORE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 multi-value IN batch UPDATE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 EXPLAIN  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 subquery  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 JOIN  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 FOR UPDATE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 TRUNCATE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'review_task' ...
+  [PASS] Q4 information_schema  ::  ok
+  [PASS] Q4 SHOW TABLES  ::  ok
+  [PASS] Q4 SHOW CREATE TABLE  ::  ok
+  [FAIL] Q4 unconfigured-table generated keys  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] Q4 sharded-table generated keys  ::  key=2
+  [info] Q5 MySQL PROCESSLIST rows for ss_c = 2
+
+################ D repo-shape+!SINGLE *  (proposed fix) ################
+13:46:18.354 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Starting...
+13:46:18.358 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-2 - Added connection com.mysql.cj.jdbc.ConnectionImpl@3de75935
+13:46:18.358 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-2 - Start completed.
+13:46:18.669 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:46:18.669 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: b48efa18-ad53-42a4-8f1c-d87a17ceecf4, IP: 26.144.150.84
+  [info] logical db 'ss_d' visible tables(5): [errand_order, product_order, review_task, timeout_task, user_account]
+  [info] singleTableDataNodes (4) keys=[errand_order, product_order, review_task, user_account]
+  [info] Q1 unconfigured business tables usable: 4/4  (transparent=true)
+  [PASS] Q2 hint-routed writes land on the hinted physical shard (6/6)  ::  hit=6/6
+  [PASS] Q2b unwritable without hint (fail-fast)  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition...
+  [PASS] Q3 target shard timeout_task_06 is empty before the transaction  ::  rows=0
+  [PASS] Q3 one MySQL session for sharded+unsharded writes  ::  ids=284,284,284
+  [PASS] Q3 uncommitted sharded row is invisible to other sessions  ::  rowsFromAnotherConnection=0
+  [PASS] Q3 one rollback clears all three tables  ::  po=0 tt=0 rt=0
+  [PASS] Q4 SELECT LAST_INSERT_ID()  ::  ok
+  [PASS] Q4 ODKU  ::  ok
+  [PASS] Q4 INSERT IGNORE  ::  ok
+  [PASS] Q4 multi-value IN batch UPDATE  ::  ok
+  [PASS] Q4 EXPLAIN  ::  ok
+  [PASS] Q4 subquery  ::  ok
+  [PASS] Q4 JOIN  ::  ok
+  [PASS] Q4 FOR UPDATE  ::  ok
+  [PASS] Q4 TRUNCATE  ::  ok
+  [PASS] Q4 information_schema  ::  ok
+  [PASS] Q4 SHOW TABLES  ::  ok
+  [PASS] Q4 SHOW CREATE TABLE  ::  ok
+  [PASS] Q4 unconfigured-table generated keys  ::  key=9
+  [PASS] Q4 sharded-table generated keys  ::  key=2
+  [info] Q5 MySQL PROCESSLIST rows for ss_d = 2
+
+################ E !SINGLE defaultDs-only (no tables) ################
+13:46:18.945 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-3 - Starting...
+13:46:18.948 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-3 - Added connection com.mysql.cj.jdbc.ConnectionImpl@511b3c35
+13:46:18.948 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-3 - Start completed.
+13:46:19.118 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:46:19.118 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: 6409980d-9352-4fed-88cc-5b073b94fdc2, IP: 26.144.150.84
+  [info] logical db 'ss_e' visible tables(1): [timeout_task]
+  [info] singleTableDataNodes (0) keys=[]
+  [info] Q1 unconfigured business tables usable: 0/4  (transparent=false)
+  [PASS] Q2 hint-routed writes land on the hinted physical shard (6/6)  ::  hit=6/6
+  [PASS] Q2b unwritable without hint (fail-fast)  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition...
+  [PASS] Q3 target shard timeout_task_06 is empty before the transaction  ::  rows=0
+  [FAIL] Q3 mixed transaction  ::  java.sql.SQLException: Table or view 'product_order' does not exist.
+  [PASS] Q4 SELECT LAST_INSERT_ID()  ::  ok
+  [FAIL] Q4 ODKU  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 INSERT IGNORE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 multi-value IN batch UPDATE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 EXPLAIN  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 subquery  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 JOIN  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 FOR UPDATE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 TRUNCATE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'review_task' ...
+  [PASS] Q4 information_schema  ::  ok
+  [PASS] Q4 SHOW TABLES  ::  ok
+  [PASS] Q4 SHOW CREATE TABLE  ::  ok
+  [FAIL] Q4 unconfigured-table generated keys  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] Q4 sharded-table generated keys  ::  key=2
+  [info] Q5 MySQL PROCESSLIST rows for ss_e = 2
+
+################ F !SINGLE per-table lines ################
+13:46:19.269 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-4 - Starting...
+13:46:19.271 [main] INFO com.zaxxer.hikari.pool.HikariPool -- HikariPool-4 - Added connection com.mysql.cj.jdbc.ConnectionImpl@4908a6cd
+13:46:19.271 [main] INFO com.zaxxer.hikari.HikariDataSource -- HikariPool-4 - Start completed.
+13:46:19.404 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- ShardingSphere-JDBC Standalone mode started successfully.
+13:46:19.404 [main] INFO org.apache.shardingsphere.driver.jdbc.core.datasource.ShardingSphereDataSource -- Instance id: 034657ab-b10d-483c-b481-23cc97e2ea63, IP: 26.144.150.84
+  [info] logical db 'ss_f' visible tables(1): [timeout_task]
+  [info] singleTableDataNodes (0) keys=[]
+  [info] Q1 unconfigured business tables usable: 0/4  (transparent=false)
+  [PASS] Q2 hint-routed writes land on the hinted physical shard (6/6)  ::  hit=6/6
+  [PASS] Q2b unwritable without hint (fail-fast)  ::  java.sql.SQLException: Please check your sharding conditions 'ShardingConditions(conditions=[ShardingCondition...
+  [PASS] Q3 target shard timeout_task_06 is empty before the transaction  ::  rows=0
+  [FAIL] Q3 mixed transaction  ::  java.sql.SQLException: Table or view 'product_order' does not exist.
+  [PASS] Q4 SELECT LAST_INSERT_ID()  ::  ok
+  [FAIL] Q4 ODKU  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 INSERT IGNORE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 multi-value IN batch UPDATE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 EXPLAIN  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 subquery  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 JOIN  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 FOR UPDATE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order...
+  [FAIL] Q4 TRUNCATE  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'review_task' ...
+  [PASS] Q4 information_schema  ::  ok
+  [PASS] Q4 SHOW TABLES  ::  ok
+  [PASS] Q4 SHOW CREATE TABLE  ::  ok
+  [FAIL] Q4 unconfigured-table generated keys  ::  org.apache.shardingsphere.infra.exception.kernel.metadata.TableNotFoundException: Table or view 'product_order' does not exist.
+  [PASS] Q4 sharded-table generated keys  ::  key=2
+  [info] Q5 MySQL PROCESSLIST rows for ss_f = 2
+
+=== CONFIRMPROBE2 RESULT: PASS=44 FAIL=30 ===
+  [info] DATA_SOURCE_CACHE holds 4 entries (one per YAML):
+  [info]   jdbc:shardingsphere:classpath:probe-r-d.yaml
+  [info]   jdbc:shardingsphere:classpath:probe-r-f.yaml
+  [info]   jdbc:shardingsphere:classpath:probe-r-c.yaml
+  [info]   jdbc:shardingsphere:classpath:probe-r-e.yaml

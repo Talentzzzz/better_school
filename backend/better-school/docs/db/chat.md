@@ -1,4 +1,4 @@
-# chat 域表（room/direct_room_pair/room_member/message/timeline/user_seq + notification 三表）
+# chat 域表（room/user_pair_room/room_member/message/timeline/user_seq + notification 三表）
 
 > 业务：站内私信（恒 1v1，群形态已随票 04 整体下线；时间线模型：写扩散 timeline + 会话级水位线）+ 站内通知（scope + 水位线已读模型）；归属模块：chat
 > DDL 唯一事实源：`sql/schema.sql`（票 05 全库重写）。旧 message_thread/message 私信两表、旧 chat REST 均已下线（不迁移），新接口重建中
@@ -16,7 +16,7 @@
 |create_time|datetime|NOT NULL|创建时间（无默认值，应用写入；全库无 created_at）|
 |update_time|datetime|NOT NULL|更新时间|
 
-> `user_min`/`user_max`/`uk_direct_pair` 已迁出至 direct_room_pair（direct-room-pair 收口）——room 回归纯会话实体、不知道「配对」的存在。
+> `user_min`/`user_max`/`uk_direct_pair` 已迁出至 user_pair_room（配对收口）——room 回归纯会话实体、不知道「配对」的存在。
 > `last_msg_type`/`last_msg_preview`/`last_msg_at` 已迁出至 room_member（列表职责迁用户维度）——room 回归纯取号器 + 会话真相。
 > 历史存量割接脚本已随 uuid-biz-id 票 08 退役：存量数据不迁移，删库重建。
 
@@ -26,11 +26,11 @@
 ## 注意
 - `id` 与 `room_id` 不是同一口径：所有读/改按 `room_id`，`id` 是纯内部键（uuid-biz-id 起两者永不同值）
 - `last_seq` 是取号器，禁用自增 `id` 充当消息序号；取号必须与消息/时间线写入同事务
-- 未读数不落库 = `room_member.last_seq_copy − room_member.last_read_seq` O(1)（副本与水位线都在用户维度成员行上就地可算）
-- `source` 只写一次（`direct_room_pair.uk_pair` 命中即原样返回既有 room）：同一对人先聊闲置又聊跑腿仍是同一条会话、同一个标签
+- 未读数不落库 = `room.last_seq − room_member.last_read_seq`（真源与会话真相同行，服务端拼装）
+- `source` 只写一次（`user_pair_room.uk_pair` 命中即原样返回既有 room）：同一对人先聊闲置又聊跑腿仍是同一条会话、同一个标签
 - `source` + `initiator_id` 是市集消息页的筛子与角色标签来源；对家角色（跑手/卖家/买家）**按请求者现算不落库**——同一会话两侧各自看到自己的对家
 
-# direct_room_pair（1v1 会话配对映射，查重与反查专用）
+# user_pair_room（用户对 → 1v1 会话映射，查重与反查专用）
 
 |字段|类型|约束|说明|
 |----|----|----|----|
@@ -57,11 +57,10 @@
 |id|bigint|PK, AUTO_INCREMENT|物理主键：纯内部键，永不对外|
 |room_id|varchar(36)|NOT NULL, `uk_room_user` 首列|会话业务键（引用 `room.room_id`，非物理 `id`）|
 |user_id|varchar(36)|NOT NULL|成员 user_id|
-|last_seq_copy|bigint|NOT NULL, DEFAULT 0|会话水位副本：未读数 = `此列 − last_read_seq`（用户维度就地可算，与 OpenIM Conversation 行同构）；写链路 GREATEST 只进不退，真源 `room.last_seq` 仍由取号事务维护|
 |last_msg_type|varchar(20)|NULL|最后一条消息类型副本（列表预览标签：IMAGE=[图片]、CARD=按 ref_type 出 [商品]/[帖子]/[跑腿]，不查标题）|
 |last_msg_preview|varchar(200)|NULL|最后一条消息预览文案副本（TEXT=原文截断至 200，撤回=[已撤回]）|
 |last_msg_at|datetime|NULL|最后消息时间副本（会话列表排序键）|
-|last_read_seq|bigint|NOT NULL, DEFAULT 0|已读水位线：未读数 = `last_seq_copy − 此列`；打开会话即推到 last_seq_copy；已读回执 = 对方的此列|
+|last_read_seq|bigint|NOT NULL, DEFAULT 0|已读水位线：未读数 = `room.last_seq − 此列`（服务端拼装，不落副本）；打开会话即推到 `room.last_seq`；已读回执 = 对方的此列|
 |hidden_at|datetime|NULL|会话隐藏时间（用户侧删除会话，软删）；新消息清空弹回|
 |create_time|datetime|NOT NULL|创建时间（加入时间）|
 |update_time|datetime|NOT NULL|更新时间|
@@ -72,7 +71,7 @@
 
 ## 注意
 - 成员状态只在这一张表可变（隐藏/已读）；会话列表的排序键与预览三件套也只落这张表
-- 水位线只前进不回退（SQL 带 `last_read_seq < 目标` 条件）；水位副本 `last_seq_copy` 由写链路 GREATEST 推进、同样只进不退
+- 水位线只前进不回退（SQL 带 `last_read_seq < 目标` 条件）
 - 无业务 ID 列：对外按 (room_id, user_id) 定位
 
 # message（消息内容表，内容中心只写一份）
@@ -123,7 +122,7 @@
 
 ## 注意
 - 只插不改，一条消息 N 个成员 N 行多值 INSERT 扇出；禁 UPDATE/DELETE
-- 补拉 JOIN 按业务键：`timeline t JOIN message m ON m.msg_id = t.msg_id`
+- 补拉两段查：`timeline` 单表按 `delivery_seq` 扫投递行（msg_id 外联消息业务 ID），再按 `msg_id` 集单表批量回查 `message`，仓储按投递序拼装
 
 # user_seq（投递序号计数器表）
 
@@ -140,15 +139,15 @@
 - 无独立读路径
 
 ## 关联
-- direct_room_pair N:1 → room（走 `room_id` 业务键；1v1 查重与反查专用）
+- user_pair_room N:1 → room（走 `room_id` 业务键；1v1 查重与反查专用）
 - room 1:N → room_member / message / timeline（逻辑外键走 `room_id` 业务键）
 - message 1:N → timeline（走 `msg_id` 业务键）
 - 被 content_report（target_type=MESSAGE）引用：chat 零审核的举报兜底
 
 ## 谁在写
-- 发消息事务：room.last_seq 取号 + message 插入（`msg_id` insert 前发号一次写入）+ timeline 扇出 + user_seq 计数 + room_member 列表副本（`last_seq_copy` GREATEST + 预览三件套）
+- 发消息事务：room.last_seq 取号 + message 插入（`msg_id` insert 前发号一次写入）+ timeline 扇出 + user_seq 计数 + room_member 列表副本（预览三件套）
 - 撤回事务：message 三件套（state/recalled_at/recalled_by）+ 守卫替换 room_member 双方 `last_msg_preview`
-- 读路径：room_member 水位线推高（推到 `last_seq_copy`）
+- 读路径：room_member 水位线推高（推到 `room.last_seq`）
 
 # notification（站内通知，scope + 水位线已读模型，营销票 02）
 
@@ -209,4 +208,4 @@
 |update_time|datetime|NOT NULL|更新时间|
 
 - 唯一键 `uk_user_scope (user_id, scope)`：每用户每范围恒一行
-- 未读数 = `notification_seq.seq − last_read_seq` O(1)；列表 read 字段由 `seq ≤ 水位` JOIN 算出
+- 未读数 = `notification_seq.seq − last_read_seq` O(1)；列表 read 字段由 `seq ≤ 水位` 算出（仓储查水位后 Java 计算）

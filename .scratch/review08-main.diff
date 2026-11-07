@@ -1,0 +1,1310 @@
+diff --git a/backend/marketing/marketing-app/src/main/java/com/betterschool/marketing/config/XxlJobConfig.java b/backend/marketing/marketing-app/src/main/java/com/betterschool/marketing/config/XxlJobConfig.java
+index f007727..a256233 100644
+--- a/backend/marketing/marketing-app/src/main/java/com/betterschool/marketing/config/XxlJobConfig.java
++++ b/backend/marketing/marketing-app/src/main/java/com/betterschool/marketing/config/XxlJobConfig.java
+@@ -10,8 +10,10 @@ import org.springframework.context.annotation.Configuration;
+  * 否则 admin 会把任务派给别的应用、或执行器互相顶掉端口。本地无调度中心时注册失败仅日志告警。
+  * <p>
+  * 票 13 起本执行器承载的 handler：pointsExpireScan、drawCountBucketExpireScan、outboxScan，
+- * 以及票 11/12 的 raffleCacheWarmup、inventoryMergeBackstop（种子与清单见 sql/xxl-job-tasks.sql）。
+- * 票 06 起 inventoryBucketWarmup 随桶层删除；inventoryMergeBackstop 由票 08 删（handler 收到 4 个）。
++ * 以及票 11/12 的 raffleCacheWarmup（种子与清单见 sql/xxl-job-tasks.sql）。
++ * 票 06 起 inventoryBucketWarmup 随桶层删除；票 08 起 inventoryMergeBackstop 随旧合并机制删除
++ * ——handler 清单收到 4 个（outboxScan / pointsExpireScan / drawCountBucketExpireScan / raffleCacheWarmup），
++ * 注册行的停用与 DELETE 时序归切换包（票 09）。
+  * 旧 lottery 域的三个 handler（lotteryDeductMerge / lotteryDrawCountExpireScan /
+  * lotteryOutboxScan）随旧域代码删除，xxl_job_info 里已注册的旧行需在 admin 里停用/删除。
+  */
+diff --git a/backend/marketing/marketing-app/src/main/resources/mybatis/mapper/inventory/PhysicalQuotaMapper.xml b/backend/marketing/marketing-app/src/main/resources/mybatis/mapper/inventory/PhysicalQuotaMapper.xml
+index 5baf261..49da7e8 100644
+--- a/backend/marketing/marketing-app/src/main/resources/mybatis/mapper/inventory/PhysicalQuotaMapper.xml
++++ b/backend/marketing/marketing-app/src/main/resources/mybatis/mapper/inventory/PhysicalQuotaMapper.xml
+@@ -65,58 +65,6 @@
+                         AND biz_type = #{bizType} AND biz_id = #{bizId})
+     </select>
+ 
+-    <!-- ============ 旧合并机制（时间格 + 兜底；票 08 删，只对切换前的存量行有意义） ============ -->
+-
+-    <select id="selectOldestUnmergedCellTime" resultType="java.time.LocalDateTime">
+-        SELECT MIN(create_time)
+-        FROM physical_marketing_quota_detail
+-        WHERE inv_id = #{invId} AND bucket_id = #{bucketId} AND state = 0 AND create_time &lt; NOW()
+-    </select>
+-
+-    <select id="aggregateUnmergedCell"
+-            resultType="com.betterschool.marketing.infrastructure.inventory.dao.po.InventoryCellAggregatePO">
+-        SELECT type, SUM(quantity) AS quantity, COUNT(*) AS detail_count
+-        FROM physical_marketing_quota_detail
+-        WHERE inv_id = #{invId} AND bucket_id = #{bucketId} AND state = 0 AND create_time = #{createTime}
+-        GROUP BY type
+-    </select>
+-
+-    <update id="flipUnmergedCell">
+-        UPDATE physical_marketing_quota_detail
+-        SET state = 1, update_time = NOW()
+-        WHERE inv_id = #{invId} AND bucket_id = #{bucketId} AND state = 0 AND create_time = #{createTime}
+-    </update>
+-
+-    <!-- 兜底扫描的 key 选取：按最老未合时间升序，LIMIT 由调用方给（spec §4.6）。
+-         只扫带桶号的行（bucket_id IS NOT NULL）：票 06 起新预扣行不写桶号且账已动，
+-         不属于旧时间格合并的责任范围（旧兜底只对切换前的存量行有意义，票 08 删） -->
+-    <select id="selectMergeKeys"
+-            resultType="com.betterschool.marketing.infrastructure.inventory.dao.po.InventoryMergeKeyPO">
+-        SELECT inv_id, bucket_id
+-        FROM physical_marketing_quota_detail FORCE INDEX (idx_pending)
+-        WHERE state = 0 AND bucket_id IS NOT NULL
+-        GROUP BY inv_id, bucket_id
+-        ORDER BY MIN(create_time)
+-        LIMIT #{limit}
+-    </select>
+-
+-    <!-- 旧合并的桶对账副本递减：redis_qty >= qty 守卫，0 行 = 不变量被破坏（调用方整格回滚） -->
+-    <update id="deductQuotaBucketRedisQty">
+-        UPDATE physical_marketing_quota_bucket
+-        SET redis_qty = redis_qty - #{quantity}, update_time = NOW()
+-        WHERE inv_id = #{invId} AND bucket_id = #{bucketId} AND redis_qty &gt;= #{quantity}
+-    </update>
+-
+-    <!-- 旧合并的台账结算（L989 尾步）：+waiting_qty；-1=不限量不动 surplus -->
+-    <update id="settleQuota">
+-        UPDATE physical_marketing_quota
+-        SET state = IF(surplus_qty &gt;= 0 AND surplus_qty = #{quantity} AND state = 'open', 'exhausted', state),
+-            waiting_qty = waiting_qty + #{quantity},
+-            surplus_qty = IF(surplus_qty &lt; 0, surplus_qty, surplus_qty - #{quantity}),
+-            update_time = NOW()
+-        WHERE inv_id = #{invId}
+-    </update>
+-
+     <!-- ============ 兑换确认（同步合并，票 07：逐行 INSERT IGNORE + waiting→issued） ============ -->
+ 
+     <!-- 逐行 INSERT IGNORE 确认明细（type = 2）：撞 uk_biz_type 静默跳过，返回值 = 是否新增（1/0）。
+@@ -147,32 +95,4 @@
+         WHERE state = 'open'
+     </select>
+ 
+-    <!-- 对账口径（实物段，只算 type=1 的预扣结转）：type=2 是兑换确认，不进这条口径。
+-         pendingDeduct 与 pendingClaim 只差调用方传的 type（1 / 2），SQL 共用 -->
+-    <sql id="sumUnmergedByType">
+-        SELECT COALESCE(SUM(quantity), 0)
+-        FROM physical_marketing_quota_detail
+-        WHERE inv_id = #{invId} AND state = 0 AND type = #{type}
+-    </sql>
+-
+-    <select id="sumPendingDeductQty" resultType="long">
+-        <include refid="sumUnmergedByType"/>
+-    </select>
+-
+-    <select id="sumPendingClaimQty" resultType="long">
+-        <include refid="sumUnmergedByType"/>
+-    </select>
+-
+-    <select id="sumMergedDeductQty" resultType="long">
+-        SELECT COALESCE(SUM(quantity), 0)
+-        FROM physical_marketing_quota_detail
+-        WHERE inv_id = #{invId} AND state = 1 AND type = #{type}
+-    </select>
+-
+-    <select id="sumPendingDeductQtyByBucket" resultType="long">
+-        SELECT COALESCE(SUM(quantity), 0)
+-        FROM physical_marketing_quota_detail
+-        WHERE inv_id = #{invId} AND bucket_id = #{bucketId} AND state = 0 AND type = #{type}
+-    </select>
+-
+ </mapper>
+diff --git a/backend/marketing/marketing-app/src/main/resources/mybatis/mapper/inventory/VirtualInventoryQuotaMapper.xml b/backend/marketing/marketing-app/src/main/resources/mybatis/mapper/inventory/VirtualInventoryQuotaMapper.xml
+index 3ed9a2c..f95622d 100644
+--- a/backend/marketing/marketing-app/src/main/resources/mybatis/mapper/inventory/VirtualInventoryQuotaMapper.xml
++++ b/backend/marketing/marketing-app/src/main/resources/mybatis/mapper/inventory/VirtualInventoryQuotaMapper.xml
+@@ -64,57 +64,6 @@
+                       WHERE inv_id = #{invId} AND biz_type = #{bizType} AND biz_id = #{bizId})
+     </select>
+ 
+-    <!-- ============ 旧合并机制（时间格 + 兜底；票 08 删，只对切换前的存量行有意义） ============ -->
+-
+-    <select id="selectOldestUnmergedCellTime" resultType="java.time.LocalDateTime">
+-        SELECT MIN(create_time)
+-        FROM virtual_inventory_quota_detail
+-        WHERE inv_id = #{invId} AND bucket_id = #{bucketId} AND state = 0 AND create_time &lt; NOW()
+-    </select>
+-
+-    <select id="aggregateUnmergedCell"
+-            resultType="com.betterschool.marketing.infrastructure.inventory.dao.po.InventoryCellAggregatePO">
+-        SELECT NULL AS type, SUM(quantity) AS quantity, COUNT(*) AS detail_count
+-        FROM virtual_inventory_quota_detail
+-        WHERE inv_id = #{invId} AND bucket_id = #{bucketId} AND state = 0 AND create_time = #{createTime}
+-    </select>
+-
+-    <update id="flipUnmergedCell">
+-        UPDATE virtual_inventory_quota_detail
+-        SET state = 1, update_time = NOW()
+-        WHERE inv_id = #{invId} AND bucket_id = #{bucketId} AND state = 0 AND create_time = #{createTime}
+-    </update>
+-
+-    <!-- 兜底扫描的 key 选取：按最老未合时间升序，LIMIT 由调用方给（spec §4.6）。
+-         只扫带桶号的行（bucket_id IS NOT NULL）：票 06 起新预扣行不写桶号且账已动，
+-         不属于旧时间格合并的责任范围（旧兜底只对切换前的存量行有意义，票 08 删） -->
+-    <select id="selectMergeKeys"
+-            resultType="com.betterschool.marketing.infrastructure.inventory.dao.po.InventoryMergeKeyPO">
+-        SELECT inv_id, bucket_id
+-        FROM virtual_inventory_quota_detail FORCE INDEX (idx_pending)
+-        WHERE state = 0 AND bucket_id IS NOT NULL
+-        GROUP BY inv_id, bucket_id
+-        ORDER BY MIN(create_time)
+-        LIMIT #{limit}
+-    </select>
+-
+-    <!-- 旧合并的桶对账副本递减：redis_qty >= qty 守卫，0 行 = 不变量被破坏（调用方整格回滚） -->
+-    <update id="deductBucketRedisQty">
+-        UPDATE virtual_inventory_quota_bucket
+-        SET redis_qty = redis_qty - #{quantity}, update_time = NOW()
+-        WHERE inv_id = #{invId} AND bucket_id = #{bucketId} AND redis_qty &gt;= #{quantity}
+-    </update>
+-
+-    <!-- 旧合并的台账结算（L898 尾步）：+issued_qty；-1=不限量不动 surplus -->
+-    <update id="settleInventory">
+-        UPDATE virtual_inventory_quota
+-        SET state = IF(surplus_qty &gt;= 0 AND surplus_qty = #{quantity} AND state = 'open', 'exhausted', state),
+-            issued_qty = issued_qty + #{quantity},
+-            surplus_qty = IF(surplus_qty &lt; 0, surplus_qty, surplus_qty - #{quantity}),
+-            update_time = NOW()
+-        WHERE inv_id = #{invId}
+-    </update>
+-
+     <!-- 预热入口：全部 open 的虚拟库存 -->
+     <select id="selectOpenInventories" resultType="com.betterschool.marketing.infrastructure.inventory.dao.po.VirtualInventoryQuotaPO">
+         SELECT id, inv_id, name, type, value, surplus_qty, issued_qty, state, create_time, update_time
+@@ -122,25 +71,4 @@
+         WHERE state = 'open'
+     </select>
+ 
+-    <!-- 对账口径：pendingDeduct = 未合并预扣明细总量（虚拟没有 type 列，state=0 即预扣） -->
+-    <select id="sumPendingDeductQty" resultType="long">
+-        SELECT COALESCE(SUM(quantity), 0)
+-        FROM virtual_inventory_quota_detail
+-        WHERE inv_id = #{invId} AND state = 0
+-    </select>
+-
+-    <!-- 对账口径：mergedDeduct = 已合并预扣明细总量（恒等式 issued_qty == mergedDeduct） -->
+-    <select id="sumMergedDeductQty" resultType="long">
+-        SELECT COALESCE(SUM(quantity), 0)
+-        FROM virtual_inventory_quota_detail
+-        WHERE inv_id = #{invId} AND state = 1
+-    </select>
+-
+-    <!-- 按桶汇总未合并预扣明细量 -->
+-    <select id="sumPendingDeductQtyByBucket" resultType="long">
+-        SELECT COALESCE(SUM(quantity), 0)
+-        FROM virtual_inventory_quota_detail
+-        WHERE inv_id = #{invId} AND bucket_id = #{bucketId} AND state = 0
+-    </select>
+-
+ </mapper>
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/adapter/repository/IInventoryRepository.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/adapter/repository/IInventoryRepository.java
+index aa65505..fc1cbe7 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/adapter/repository/IInventoryRepository.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/adapter/repository/IInventoryRepository.java
+@@ -5,23 +5,21 @@ import com.betterschool.marketing.domain.inventory.model.valobj.ClaimOutcome;
+ import com.betterschool.marketing.domain.inventory.model.valobj.DeductResult;
+ import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductRequestVO;
+ import com.betterschool.marketing.domain.inventory.model.valobj.InventoryLedgerVO;
+-import com.betterschool.marketing.domain.inventory.model.valobj.InventoryMergeKeyVO;
+ import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+ 
+-import java.time.LocalDateTime;
+ import java.util.List;
+ 
+ /**
+  * 库存域唯一仓储（一域一仓储）：两段（虚拟库存配额 / 实物营销配额）共用**一套方法**，
+  * 每个方法都带 {@link InventorySegmentVO}，实现按段分派到两个 DAO。
+  * <p>
+- * 为什么不是两个仓储：两段的表不同，但数据访问面同构——查询、预扣落库、业务幂等预检、合并、
+- * 对账汇总一一对应。合成一个接口后方法数减半，域服务里也不会再出现「虚拟版 + 实物版」两份调用。
++ * 为什么不是两个仓储：两段的表不同，但数据访问面同构——查询、预扣落库、业务幂等预检、
++ * 对账直读一一对应。合成一个接口后方法数减半，域服务里也不会再出现「虚拟版 + 实物版」两份调用。
+  * <b>PO / DAO / mapper XML 仍是两套</b>（表就是两张，合了只会把 SQL 变成动态表名），分派只发生在这里。
+  * <p>
+- * 事务：预扣的一组落库（{@link #flushDeductGroup}）、确认的一组落库（{@link #flushClaimGroup}）、
+- * 合并一格（{@code mergeCell}）都是「一次操作的原子边界」，由实现类用 {@code TransactionTemplate}
+- * （REQUIRED）包住；其余方法是单条 SQL，不额外开事务。域服务只调一次仓储方法，不注入模板。
++ * 事务：预扣的一组落库（{@link #flushDeductGroup}）、确认的一组落库（{@link #flushClaimGroup}）
++ * 都是「一次操作的原子边界」，由实现类用 {@code TransactionTemplate}（REQUIRED）包住；
++ * 其余方法是单条 SQL，不额外开事务。域服务只调一次仓储方法，不注入模板。
+  * <p>
+  * 实现类同时是合并器的落库出口（{@code IQuotaMergeFlushHandler}）：
+  * {@link #flushDeductGroup} / {@link #flushClaimGroup} 就是那两个组方法
+@@ -93,34 +91,4 @@ public interface IInventoryRepository {
+      * @throws IllegalStateException {@code waiting} 不足（不变量破坏，整组回滚后抛出）
+      */
+     List<ClaimOutcome> flushClaimGroup(long invId, List<ClaimItem> items);
+-
+-    // ---- 旧合并机制（时间格 + 60s 兜底；票 08 整体删除，只对切换前的存量行有意义） ----
+-
+-    /** 该 key 的**最老已封口时间格**：无未合行返回 null。只有兜底用 */
+-    LocalDateTime queryOldestUnmergedCellTime(InventorySegmentVO segment, Long invId, Integer bucketId);
+-
+-    /**
+-     * 合并**一格**：按 {@code type} 聚合 → 条件翻转 → 桶对账副本递减（只对 {@code s1}）→
+-     * 台账结算 → {@code s2} 从 waiting 转 issued（仅实物）。
+-     *
+-     * @return 本格合并的明细行数；0 = 这一格没合
+-     */
+-    int mergeCell(InventorySegmentVO segment, Long invId, Integer bucketId, LocalDateTime cellCreateTime);
+-
+-    /** 兜底扫描的 key 选取（spec §4.6） */
+-    List<InventoryMergeKeyVO> listUnmergedMergeKeys(InventorySegmentVO segment, int limit);
+-
+-    // ---- 对账口径（旧模型读数；票 08 随合并机制一起删） ----
+-
+-    /** 该段未合并预扣明细总量（{@code SUM(quantity) WHERE state = 0}；实物只算 {@code type = 1}） */
+-    long sumPendingDeductQty(InventorySegmentVO segment, Long invId);
+-
+-    /** 该段未合并兑换确认明细总量（实物 {@code type = 2}）；虚拟段恒 0 */
+-    long sumPendingClaimQty(InventorySegmentVO segment, Long invId);
+-
+-    /** 该段已合并预扣明细总量（{@code state = 1}；实物只算 {@code type = 1}） */
+-    long sumMergedDeductQty(InventorySegmentVO segment, Long invId);
+-
+-    /** 该桶未合并预扣明细量：Redis 恒等式的右端 */
+-    long sumPendingDeductQtyByBucket(InventorySegmentVO segment, Long invId, Integer bucketId);
+ }
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryAuditVO.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryAuditVO.java
+index 12f1cf4..bedd67b 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryAuditVO.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryAuditVO.java
+@@ -4,39 +4,19 @@ import lombok.Builder;
+ import lombok.Data;
+ 
+ /**
+- * 对账报告（可重复执行的检查口径，见 {@code IInventoryAuditService}）。
+- * <p>
+- * 两段同一条恒等式（spec §8）：
+- * <pre>
+- * 实物：ledgerWaitingQty + ledgerIssuedQty == mergedDeductQty   （明细 SUM WHERE state=1 AND type=1）
+- * 虚拟：                          ledgerIssuedQty == mergedDeductQty（虚拟 waiting 恒 0）
+- * </pre>
+- * 实物的 {@code type = 2}（兑换确认）在台账两列之间搬（waiting -s2 / issued +s2），和不变，所以
+- * 既不会进这条等式，也就不会把「合并停跑」和「确认没落地」混在一起。<b>本报告只暴露差值，不修数据。</b>
++ * 对账读数（票 08 起瘦成台账三列 + invId 的直读）：台账就是唯一真相，
++ * 不再有「Redis 余量面」「未合并 / 已合并」这些推导视图——守恒等式降级为集成测试断言
++ * （{@code InventoryQuotaConservationIntegrationTest} 的 B2 / B3），不留在运行时读数里。
+  */
+ @Data
+ @Builder
+ public class InventoryAuditVO {
+ 
+     private Long invId;
+-    /** 未合并预扣明细总量：{@code SUM(quantity) WHERE state=0 AND type=1}（虚拟 = 全部 state=0） */
+-    private Long pendingDeductQty;
+-    /**
+-     * 未合并兑换确认明细总量（实物 {@code SUM(quantity) WHERE state=0 AND type=2}；虚拟恒 0）。
+-     * 它是「异步确认没落地」的唯一可观测信号：长期 &gt; 0 说明确认停了或合并停了。
+-     */
+-    private Long pendingClaimQty;
+-    /** 已合并预扣明细总量：{@code SUM(quantity) WHERE state=1 AND type=1}（虚拟 = 全部 state=1） */
+-    private Long mergedDeductQty;
++    /** 台账 {@code surplus_qty}（{@code -1 = 不限量}） */
++    private Long surplusQty;
+     /** 台账 {@code waiting_qty}（虚拟恒 0） */
+     private Long ledgerWaitingQty;
+     /** 台账 {@code issued_qty} */
+     private Long ledgerIssuedQty;
+-    /** 台账恒等式：{@code ledgerWaitingQty + ledgerIssuedQty == mergedDeductQty} */
+-    private boolean ledgerConsistent;
+-    /**
+-     * Redis 恒等式：每桶 Redis 余额 == {@code redis_qty − SUM(quantity WHERE state=0 AND type=1)}。
+-     * 三态：true / false / <b>null = Redis 不可读，不下结论</b>（DB 侧恒等式照常可查）。
+-     */
+-    private Boolean redisConsistent;
+ }
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryMergeKeyVO.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryMergeKeyVO.java
+deleted file mode 100644
+index f47dcd8..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/InventoryMergeKeyVO.java
++++ /dev/null
+@@ -1,10 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.model.valobj;
+-
+-/**
+- * 兜底扫描取出的一个合并 key：两段明细表的 {@code (inv_id, bucket_id)}。
+- * <p>
+- * 只带定位两字段——时间格由服务逐 key 现查 {@code MIN(create_time)}，数量由聚合 SQL 回答，
+- * 扫描结果里不带任何会过期的事实。
+- */
+-public record InventoryMergeKeyVO(Long invId, Integer bucketId) {
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/MergeBackstopResultVO.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/MergeBackstopResultVO.java
+deleted file mode 100644
+index ae4489c..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/MergeBackstopResultVO.java
++++ /dev/null
+@@ -1,11 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.model.valobj;
+-
+-/**
+- * 兜底扫描一轮的结果（{@code IInventoryMergeService#backstopOnce}）：
+- * {@code quotaKeys} / {@code virtualKeys} = 两段各处理了多少个 key（按 spec §4.6 的 SQL 取出的 key 数），
+- * {@code details} = 两段合计合掉的明细行数。
+- * <p>
+- * 给 job 日志与测试断言用；不表示「合完了」——同一轮里失败即停的 key 也计入 key 数。
+- */
+-public record MergeBackstopResultVO(int quotaKeys, int virtualKeys, long details) {
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/MergeKeyResultVO.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/MergeKeyResultVO.java
+deleted file mode 100644
+index 768be4e..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/model/valobj/MergeKeyResultVO.java
++++ /dev/null
+@@ -1,11 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.model.valobj;
+-
+-/**
+- * 一次合并的结算结果：{@code cells} = 本次真的合掉的时间格数（消息路径 ≤ 2，兜底 ≤ 10），
+- * {@code details} = 这些格里的明细行数。
+- * <p>
+- * 两者都为 0 = 这些格都已由别人合过（消息路径的常态：同一对格子会被前后两条消息各指一次）
+- * 或第一格就失败并立即停止；给消费侧日志与测试断言用，不参与任何口径计算。
+- */
+-public record MergeKeyResultVO(int cells, long details) {
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryAuditService.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryAuditService.java
+index fb2ac99..1d875dd 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryAuditService.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryAuditService.java
+@@ -4,25 +4,21 @@ import com.betterschool.marketing.domain.inventory.model.valobj.InventoryAuditVO
+ import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+ 
+ /**
+- * 库存对账：**可重复执行的检查口径**（票 12 验收 4）。Redis 挂掉 / 合并停跑时 DB 台账可收敛、可对账。
++ * 库存对账：**可重复执行的检查口径**（票 12 验收 4；票 08 起只做台账直读）。
+  * <p>
+- * 两段同一条恒等式（spec §8）：
+- * <ol>
+- *   <li>台账恒等式：实物 {@code waiting_qty + issued_qty == SUM(quantity) WHERE state=1 AND type=1}；
+- *       虚拟 {@code issued_qty == SUM(quantity) WHERE state=1}（虚拟 waiting 恒 0）。</li>
+- *   <li>Redis 恒等式（Redis 可读时）：每桶余额 {@code == redis_qty − SUM(quantity WHERE state=0 AND type=1)}。</li>
+- * </ol>
+- * <b>只算 {@code type = 1}</b>：实物的 {@code type = 2}（兑换确认）在两列之间搬、且从不碰 Redis，算进去会稳定报差。
+- * <p>
+- * 报告只暴露差值，**不自动修数据**（既有口径）：少卖可容忍，超卖必须人工核。
++ * 台账三列（{@code surplus / waiting / issued}）是唯一真相：预扣与确认由进程内合并器
++ * 一组一事务直接落账，没有「Redis 余量面」也没有「未合并 / 已合并」的推导视图。
++ * 守恒等式由集成测试断言锁住（{@code InventoryQuotaConservationIntegrationTest} 的 B2 / B3），
++ * 不留在运行时读数里。报告只暴露读数，**不修数据**。
+  */
+ public interface IInventoryAuditService {
+ 
+     /**
+-     * 对账报告：一条路径，段只决定仓储分派与桶 key。
++     * 台账直读：段只决定仓储分派。
+      *
+      * @param segment 段（{@link InventorySegmentVO#QUOTA} / {@link InventorySegmentVO#VIRTUAL}）
+      * @param invId   库存业务 id
++     * @return 台账三列读数（{@code invId / surplusQty / ledgerWaitingQty / ledgerIssuedQty}）
+      * @throws com.betterschool.marketing.types.common.AppException 该段没有这个 inv 的台账
+      */
+     InventoryAuditVO audit(InventorySegmentVO segment, Long invId);
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryMergeService.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryMergeService.java
+deleted file mode 100644
+index aa958d7..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/IInventoryMergeService.java
++++ /dev/null
+@@ -1,65 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.service;
+-
+-import com.betterschool.marketing.domain.inventory.model.valobj.MergeBackstopResultVO;
+-import com.betterschool.marketing.domain.inventory.model.valobj.MergeKeyResultVO;
+-import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+-
+-import java.time.LocalDateTime;
+-
+-/**
+- * 库存合并：把 Redis 桶已扣、明细 {@code state=0} 的量按**时间格**结算进 DB 台账（spec §5）。
+- * <p>
+- * 一个时间格 = 同一 {@code (inv_id, bucket_id)} 上同一个秒级 {@code create_time}；只合**已封口的秒**
+- * （{@code create_time < NOW()}）。翻转按「格条件」做，靠 {@code affected == cnt} 判重——并发消费者
+- * 谁先翻谁赢，输家整格回滚。
+- * <p>
+- * 两条入口职责不同，**不要**用一个方法 + 空值判断糊起来（消息路径知道该合哪两格，兜底路径不知道）：
+- * <ul>
+- *   <li>{@link #mergePair}：消息驱动，按载荷给的 {@code cellTime} 固定合 {@code s} 与 {@code s + 1} 两格后结束；</li>
+- *   <li>{@link #mergeKey}：60 秒兜底，不知道该合哪格，只能查 {@code MIN} 循环 ≤ 10 格。</li>
+- * </ul>
+- * 两条都不发消息（续命已删）：及时性由「一格一条定时消息」保证，消息丢了归兜底。
+- */
+-public interface IInventoryMergeService {
+-
+-    /**
+-     * 合**消息指向的那两格**：{@code cellTime = s} 与 {@code s + 1}，各一次 {@code mergeCell}，结束。
+-     * <p>
+-     * 顺序固定 {@code s → s + 1}、同线程串行：实物段 {@code type = 1}（预扣）必落在 {@code s}、
+-     * {@code type = 2}（确认）在 {@code s + 1}，先合 {@code s} 才能让 {@code waiting_qty >= s2} 守卫结构成立。
+-     * <p>
+-     * <b>某一格返回 0 不结束</b>：第二格的 0 是常态（这一对格子已经被指向前一对的那条消息合过，
+-     * 本格早已 {@code state = 1}），第一格的 0 也不代表第二格合不了。两格都试过才收工。
+-     *
+-     * @param segment  {@link InventorySegmentVO#QUOTA} / {@link InventorySegmentVO#VIRTUAL}
+-     * @param invId    配额业务 ID
+-     * @param bucketId Redis 分桶编号
+-     * @param cellTime 责任起点秒（消息载荷里的 {@code cellTime}，= 明细的 DB {@code create_time}）
+-     * @return 真的合掉的格数（0~2）与明细行数；0 格 = 两格都已由别人合过
+-     */
+-    MergeKeyResultVO mergePair(InventorySegmentVO segment, long invId, int bucketId, LocalDateTime cellTime);
+-
+-    /**
+-     * **兜底专用**：不知道该合哪一格，所以查 {@code MIN(create_time)} 循环，按最老优先合掉已封口的时间格，
+-     * 一次最多 {@code 10} 格。消息整条丢了（outbox 进 DEAD / 事务未提交 / 进程崩）时由它收口。
+-     * <p>
+-     * 只合不发：本方法**不再**续命、不再入队消息——正常路径的下一跳由各格自己的定时消息负责。
+-     * <p>
+-     * <b>失败即停</b>：某一格翻转行数对不上（竞态）或桶守卫不过（不变量破坏）时，该格在仓储内整格回滚、
+-     * 本方法立即返回（不抛）——坏格子留给下一轮兜底反复撞与对账读数暴露（spec §5.5）。
+-     *
+-     * @param segment  {@link InventorySegmentVO#QUOTA} / {@link InventorySegmentVO#VIRTUAL}
+-     * @param invId    配额业务 ID
+-     * @param bucketId Redis 分桶编号
+-     * @return 本次合掉的格数与明细行数（0 格 = 没有可合的已封口格，或第一格就失败）
+-     */
+-    MergeKeyResultVO mergeKey(InventorySegmentVO segment, long invId, int bucketId);
+-
+-    /**
+-     * 兜底扫描一轮（spec §4.6）：两段各按 {@code idx_pending} 取最多 200 个 key（按最老未合时间升序），
+-     * 逐 key **直接调** {@link #mergeKey}，不额外发扫描消息——并发已由 {@code affected == cnt} 判重扛住。
+-     * <p>
+-     * 由 60 秒的 {@code inventoryMergeBackstop} job 调用；只负责「消息整条丢了」。
+-     */
+-    MergeBackstopResultVO backstopOnce();
+-}
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryAuditServiceImpl.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryAuditServiceImpl.java
+index ac33fbb..6fb641f 100644
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryAuditServiceImpl.java
++++ b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryAuditServiceImpl.java
+@@ -11,16 +11,10 @@ import lombok.extern.slf4j.Slf4j;
+ import org.springframework.stereotype.Service;
+ 
+ /**
+- * 库存对账实现（旧模型读数；票 08 整体瘦成台账三列直读）。
+- * <p>
+- * 口径只算 {@code type = 1}：实物的 {@code type = 2}（兑换确认）在台账两列之间搬、
+- * 所以台账恒等式与 Redis 恒等式都不含它；这样「合并停跑」（pendingDeductQty 涨）与
+- * 「确认没落地」（pendingClaimQty 涨）才是两个独立读数。
+- * <p>
+- * <b>票 06 中间态</b>：Redis 桶层已整层删除，{@code redisConsistent} 失去数据源，恒 {@code null}
+- * （「无结论」）——对账不再有「Redis 余量面」，台账三列是唯一真相；新预扣明细不写 {@code state}
+- * （列默认 0），在票 08 删除读数之前，旧口径对切换后的新行不再有意义。字段本身由票 08 连同
+- * 7 → 4 瘦身一起删。
++ * 库存对账实现（票 08 起只做台账直读）：预扣与确认由进程内合并器一组一事务直接落账，
++ * 台账三列就是唯一真相，读数不需要任何推导——守恒等式由集成测试断言（B2 / B3）锁住，
++ * 生产上账不平的信号只剩死信队列、{@code draw_record} 停在待发货、人工查台账三条路
++ * （spec §9，本工程无 metrics 端点、不建对账 job）。
+  */
+ @Slf4j
+ @Service
+@@ -36,24 +30,11 @@ public class InventoryAuditServiceImpl implements IInventoryAuditService {
+             throw new AppException(ResponseCode.INVENTORY_PARAM_ERROR.getCode(),
+                     "库存不存在 segment=" + segment.getCode() + " invId=" + invId);
+         }
+-        // 虚拟段的 waiting 由仓储显式补 0，所以两段是同一个表达：waiting + issued == 已合并预扣明细和
+-        long ledgerWaiting = ledger.waitingQty();
+-        long ledgerIssued = ledger.issuedQty();
+-        long mergedDeduct = inventoryRepository.sumMergedDeductQty(segment, invId);
+-        boolean ledgerConsistent = ledgerWaiting + ledgerIssued == mergedDeduct;
+-        if (!ledgerConsistent) {
+-            log.warn("台账恒等式不成立 segment={} invId={} waiting={} issued={} mergedDeduct={}",
+-                    segment.getCode(), invId, ledgerWaiting, ledgerIssued, mergedDeduct);
+-        }
+         return InventoryAuditVO.builder()
+                 .invId(invId)
+-                .pendingDeductQty(inventoryRepository.sumPendingDeductQty(segment, invId))
+-                .pendingClaimQty(inventoryRepository.sumPendingClaimQty(segment, invId))
+-                .mergedDeductQty(mergedDeduct)
+-                .ledgerWaitingQty(ledgerWaiting)
+-                .ledgerIssuedQty(ledgerIssued)
+-                .ledgerConsistent(ledgerConsistent)
+-                .redisConsistent(null)
++                .surplusQty(ledger.surplusQty())
++                .ledgerWaitingQty(ledger.waitingQty())
++                .ledgerIssuedQty(ledger.issuedQty())
+                 .build();
+     }
+ }
+diff --git a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryMergeServiceImpl.java b/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryMergeServiceImpl.java
+deleted file mode 100644
+index 3c9b004..0000000
+--- a/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/inventory/service/InventoryMergeServiceImpl.java
++++ /dev/null
+@@ -1,111 +0,0 @@
+-package com.betterschool.marketing.domain.inventory.service;
+-
+-import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
+-import com.betterschool.marketing.domain.inventory.model.valobj.InventoryMergeKeyVO;
+-import com.betterschool.marketing.domain.inventory.model.valobj.MergeBackstopResultVO;
+-import com.betterschool.marketing.domain.inventory.model.valobj.MergeKeyResultVO;
+-import com.betterschool.marketing.types.inventory.Constants;
+-import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+-import lombok.RequiredArgsConstructor;
+-import lombok.extern.slf4j.Slf4j;
+-import org.springframework.stereotype.Service;
+-
+-import java.time.LocalDateTime;
+-import java.util.List;
+-
+-/**
+- * 库存合并实现（spec §5）：**时间格 + {@code affected == cnt} 判重**，两条入口共用 {@code mergeCell}。
+- * <pre>
+- * mergePair(segment, invId, bucketId, s)：           ← 消息驱动（主路径）
+- *   固定合两格：[s, s+1]，顺序串行，各自一格一事务
+- *   某一格返回 0 不 break（第二格空转是常态），两格都试过才结束
+- * mergeKey(segment, invId, bucketId)：              ← 60s 兜底（不知道合哪格）
+- *   循环 ≤ 10 格：t0 = MIN(create_time) WHERE state=0 AND create_time &lt; NOW()
+- *                t0 为空 → 结束；mergeCell(t0) 返回 0 → 记日志并结束
+- *   不发消息（续命已删）：下一跳由各格自己的定时消息负责
+- * backstopOnce()：
+- *   每段取 ≤ 200 个 key（按 MIN(create_time) 升序）→ 逐 key 直调 mergeKey，不发扫描消息
+- * </pre>
+- * 为什么消息路径能固定合两格：一格一条定时消息、延迟 2s 投递（{@link Constants#MERGE_DELIVER_DELAY_MILLIS}），
+- * 消息到达时 {@code s} 与 {@code s + 1} 都早已封口。为什么顺序必须是 {@code s → s + 1}：
+- * 同 key 上 {@code type = 1} 的 {@code create_time} 必然早于 {@code type = 2}，
+- * 先合 {@code s} 才能让 {@code waiting_qty >= s2} 守卫恒成立；并行合两格会破坏这条顺序。
+- * <p>
+- * 不抛（spec §5.5）：竞态与不变量破坏都让该格留在 {@code state=0}，由兜底反复撞，
+- * 并靠对账读数 {@code pendingDeductQty} / {@code pendingClaimQty} 暴露给人。
+- * <p>
+- * 事务落位：一格一个事务由仓储 {@code mergeCell} 承担（REQUIRED），域服务只逐格调一次。
+- */
+-@Slf4j
+-@Service
+-@RequiredArgsConstructor
+-public class InventoryMergeServiceImpl implements IInventoryMergeService {
+-
+-    private final IInventoryRepository inventoryRepository;
+-
+-    @Override
+-    public MergeKeyResultVO mergePair(InventorySegmentVO segment, long invId, int bucketId, LocalDateTime cellTime) {
+-        // 顺序必须是 s → s+1，同一线程串行：type = 1（预扣）在 s、type = 2（确认）在 s+1，
+-        // 先合 s 才能让 waiting_qty >= s2 的守卫结构成立
+-        int sealedMerged = inventoryRepository.mergeCell(segment, invId, bucketId, cellTime);
+-        int nextMerged = inventoryRepository.mergeCell(segment, invId, bucketId, cellTime.plusSeconds(1));
+-        // 某一格 0 都不影响另一格：第二格的 0 是正常覆盖（这一对格子已被指向前一对的消息合过）
+-        int cells = (sealedMerged > 0 ? 1 : 0) + (nextMerged > 0 ? 1 : 0);
+-        long details = (long) sealedMerged + nextMerged;
+-        if (log.isDebugEnabled()) {
+-            log.debug("合并两格 segment={} invId={} bucketId={} cellTime={} merged=[{}, {}]",
+-                    segment.getCode(), invId, bucketId, cellTime, sealedMerged, nextMerged);
+-        }
+-        return new MergeKeyResultVO(cells, details);
+-    }
+-
+-    @Override
+-    public MergeKeyResultVO mergeKey(InventorySegmentVO segment, long invId, int bucketId) {
+-        int cells = 0;
+-        long details = 0;
+-        while (cells < Constants.MERGE_MAX_CELLS_PER_KEY) {
+-            LocalDateTime cellCreateTime = inventoryRepository.queryOldestUnmergedCellTime(segment, invId, bucketId);
+-            if (cellCreateTime == null) {
+-                break;
+-            }
+-            int merged = inventoryRepository.mergeCell(segment, invId, bucketId, cellCreateTime);
+-            if (merged == 0) {
+-                // 失败即停：这一格重试也不会好，交给下一轮兜底反复撞 + 对账暴露
+-                log.warn("合并时间格未成功，结束本 key（交给兜底） segment={} invId={} bucketId={} t0={}",
+-                        segment.getCode(), invId, bucketId, cellCreateTime);
+-                break;
+-            }
+-            cells++;
+-            details += merged;
+-        }
+-        if (cells > 0) {
+-            log.info("合并 key 完成 segment={} invId={} bucketId={} cells={} details={}",
+-                    segment.getCode(), invId, bucketId, cells, details);
+-        } else if (log.isDebugEnabled()) {
+-            log.debug("合并 key 无可合格 segment={} invId={} bucketId={}", segment.getCode(), invId, bucketId);
+-        }
+-        return new MergeKeyResultVO(cells, details);
+-    }
+-
+-    @Override
+-    public MergeBackstopResultVO backstopOnce() {
+-        List<InventoryMergeKeyVO> quotaKeys =
+-                inventoryRepository.listUnmergedMergeKeys(InventorySegmentVO.QUOTA, Constants.MERGE_BACKSTOP_KEY_LIMIT);
+-        long quotaDetails = drain(InventorySegmentVO.QUOTA, quotaKeys);
+-
+-        List<InventoryMergeKeyVO> virtualKeys =
+-                inventoryRepository.listUnmergedMergeKeys(InventorySegmentVO.VIRTUAL, Constants.MERGE_BACKSTOP_KEY_LIMIT);
+-        long virtualDetails = drain(InventorySegmentVO.VIRTUAL, virtualKeys);
+-
+-        return new MergeBackstopResultVO(quotaKeys.size(), virtualKeys.size(), quotaDetails + virtualDetails);
+-    }
+-
+-    /** 逐 key 直调 {@link #mergeKey}（兜底不发消息：并发已由 affected 判重扛住） */
+-    private long drain(InventorySegmentVO segment, List<InventoryMergeKeyVO> keys) {
+-        long details = 0;
+-        for (InventoryMergeKeyVO key : keys) {
+-            details += mergeKey(segment, key.invId(), key.bucketId()).details();
+-        }
+-        return details;
+-    }
+-}
+diff --git a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/adapter/repository/InventoryRepository.java b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/adapter/repository/InventoryRepository.java
+index daa0a4e..68d4d38 100644
+--- a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/adapter/repository/InventoryRepository.java
++++ b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/adapter/repository/InventoryRepository.java
+@@ -6,11 +6,8 @@ import com.betterschool.marketing.domain.inventory.model.valobj.ClaimOutcome;
+ import com.betterschool.marketing.domain.inventory.model.valobj.DeductResult;
+ import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductRequestVO;
+ import com.betterschool.marketing.domain.inventory.model.valobj.InventoryLedgerVO;
+-import com.betterschool.marketing.domain.inventory.model.valobj.InventoryMergeKeyVO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.IPhysicalQuotaDao;
+ import com.betterschool.marketing.infrastructure.inventory.dao.IVirtualInventoryQuotaDao;
+-import com.betterschool.marketing.infrastructure.inventory.dao.po.InventoryCellAggregatePO;
+-import com.betterschool.marketing.infrastructure.inventory.dao.po.InventoryMergeKeyPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaDetailPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.VirtualInventoryQuotaDetailPO;
+@@ -23,7 +20,6 @@ import lombok.extern.slf4j.Slf4j;
+ import org.springframework.stereotype.Repository;
+ import org.springframework.transaction.support.TransactionTemplate;
+ 
+-import java.time.LocalDateTime;
+ import java.util.ArrayList;
+ import java.util.HashSet;
+ import java.util.LinkedHashMap;
+@@ -35,7 +31,7 @@ import java.util.Set;
+  * 库存域唯一仓储实现：两段各碰自己的 DAO（PO / mapper XML 仍是两套），
+  * 对外只呈现一套按 {@link InventorySegmentVO} 分派的方法。分派全部集中在 {@code switch} 表达式里。
+  * <p>
+- * 事务：{@link #flushDeductGroup}、{@link #flushClaimGroup}（各一组一个事务）、{@link #mergeCell}
++ * 事务：{@link #flushDeductGroup}、{@link #flushClaimGroup}（各一组一个事务）
+  * 是「一次操作的原子边界」，由本类用 {@code TransactionTemplate}（REQUIRED）包住；
+  * 其余单步方法各是一条 SQL，不额外开事务。
+  * <p>
+@@ -315,145 +311,6 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
+         }
+     }
+ 
+-    // ---------------------------------------------------------------- 旧合并机制（票 08 删）
+-
+-    @Override
+-    public LocalDateTime queryOldestUnmergedCellTime(InventorySegmentVO segment, Long invId, Integer bucketId) {
+-        return switch (segment) {
+-            case VIRTUAL -> virtualInventoryQuotaDao.selectOldestUnmergedCellTime(invId, bucketId);
+-            case QUOTA -> physicalQuotaDao.selectOldestUnmergedCellTime(invId, bucketId);
+-        };
+-    }
+-
+-    /**
+-     * 一格一个事务（spec §5.2）：② 聚合 → ③ 条件翻转（{@code affected == c1 + c2}）→ ④ 桶守卫递减（只 s1）
+-     * → ⑤ 台账结算（s1 进 waiting / 虚拟进 issued）→ ⑥ {@code type = 2} 从 waiting 转 issued（仅实物）。
+-     * 任何一步不成立都置 rollback-only 并返回 0。只对切换前的存量行有意义（票 08 删）。
+-     */
+-    @Override
+-    public int mergeCell(InventorySegmentVO segment, Long invId, Integer bucketId, LocalDateTime cellCreateTime) {
+-        Integer mergedRows = transactionTemplate.execute(status -> {
+-            CellAggregate aggregate = aggregateCell(segment, invId, bucketId, cellCreateTime);
+-            if (aggregate.totalCount() == 0) {
+-                status.setRollbackOnly();
+-                log.debug("合并格已无可合行（本格已由前一条消息合并） segment={} invId={} bucketId={} t0={}",
+-                        segment.getCode(), invId, bucketId, cellCreateTime);
+-                return 0;
+-            }
+-
+-            int flipped = flipCell(segment, invId, bucketId, cellCreateTime);
+-            if (flipped != aggregate.totalCount()) {
+-                status.setRollbackOnly();
+-                log.debug("合并格翻转行数对不上（整格回滚，多为已被前一条消息合并）"
+-                                + " segment={} invId={} bucketId={} t0={} affected={} expected={}",
+-                        segment.getCode(), invId, bucketId, cellCreateTime, flipped, aggregate.totalCount());
+-                return 0;
+-            }
+-
+-            if (aggregate.deductQty() > 0) {
+-                if (deductBucketRedisQty(segment, invId, bucketId, aggregate.deductQty()) == 0) {
+-                    status.setRollbackOnly();
+-                    log.error("合并桶守卫不过（redis_qty < 本格预扣量，不变量破坏，整格回滚） segment={} invId={} bucketId={} t0={} s1={}",
+-                            segment.getCode(), invId, bucketId, cellCreateTime, aggregate.deductQty());
+-                    return 0;
+-                }
+-                if (settleLedger(segment, invId, aggregate.deductQty()) == 0) {
+-                    status.setRollbackOnly();
+-                    log.error("合并台账行缺失（结算 0 行，不变量破坏，整格回滚） segment={} invId={} t0={} s1={}",
+-                            segment.getCode(), invId, cellCreateTime, aggregate.deductQty());
+-                    return 0;
+-                }
+-            }
+-            if (segment == InventorySegmentVO.QUOTA && aggregate.claimQty() > 0) {
+-                if (physicalQuotaDao.transferWaitingToIssued(invId, aggregate.claimQty()) == 0) {
+-                    status.setRollbackOnly();
+-                    log.error("合并兑换确认守卫不过（waiting_qty < 本格确认量，不变量破坏，整格回滚）"
+-                                    + " segment={} invId={} bucketId={} t0={} s2={}",
+-                            segment.getCode(), invId, bucketId, cellCreateTime, aggregate.claimQty());
+-                    return 0;
+-                }
+-            }
+-            return (int) aggregate.totalCount();
+-        });
+-        return mergedRows == null ? 0 : mergedRows;
+-    }
+-
+-    @Override
+-    public List<InventoryMergeKeyVO> listUnmergedMergeKeys(InventorySegmentVO segment, int limit) {
+-        return switch (segment) {
+-            case VIRTUAL -> virtualInventoryQuotaDao.selectMergeKeys(limit).stream().map(this::toMergeKey).toList();
+-            case QUOTA -> physicalQuotaDao.selectMergeKeys(limit).stream().map(this::toMergeKey).toList();
+-        };
+-    }
+-
+-    private record CellAggregate(long deductQty, long deductCount, long claimQty, long claimCount) {
+-
+-        long totalCount() {
+-            return deductCount + claimCount;
+-        }
+-    }
+-
+-    private CellAggregate aggregateCell(InventorySegmentVO segment, Long invId, Integer bucketId,
+-                                        LocalDateTime cellCreateTime) {
+-        return switch (segment) {
+-            case VIRTUAL -> {
+-                InventoryCellAggregatePO po = virtualInventoryQuotaDao.aggregateUnmergedCell(
+-                        invId, bucketId, cellCreateTime);
+-                yield po == null ? new CellAggregate(0, 0, 0, 0)
+-                        : new CellAggregate(valueOrZero(po.getQuantity()), valueOrZero(po.getDetailCount()), 0, 0);
+-            }
+-            case QUOTA -> {
+-                long deductQty = 0;
+-                long deductCount = 0;
+-                long claimQty = 0;
+-                long claimCount = 0;
+-                for (InventoryCellAggregatePO po : physicalQuotaDao.aggregateUnmergedCell(
+-                        invId, bucketId, cellCreateTime)) {
+-                    if (po.getType() == null) {
+-                        continue;
+-                    }
+-                    if (po.getType() == Constants.DETAIL_TYPE_DEDUCT) {
+-                        deductQty = valueOrZero(po.getQuantity());
+-                        deductCount = valueOrZero(po.getDetailCount());
+-                    } else if (po.getType() == Constants.DETAIL_TYPE_CLAIM) {
+-                        claimQty = valueOrZero(po.getQuantity());
+-                        claimCount = valueOrZero(po.getDetailCount());
+-                    }
+-                }
+-                yield new CellAggregate(deductQty, deductCount, claimQty, claimCount);
+-            }
+-        };
+-    }
+-
+-    private long valueOrZero(Long value) {
+-        return value == null ? 0 : value;
+-    }
+-
+-    private InventoryMergeKeyVO toMergeKey(InventoryMergeKeyPO po) {
+-        return new InventoryMergeKeyVO(po.getInvId(), po.getBucketId());
+-    }
+-
+-    private int deductBucketRedisQty(InventorySegmentVO segment, Long invId, Integer bucketId, long quantity) {
+-        return switch (segment) {
+-            case VIRTUAL -> virtualInventoryQuotaDao.deductBucketRedisQty(invId, bucketId, quantity);
+-            case QUOTA -> physicalQuotaDao.deductQuotaBucketRedisQty(invId, bucketId, quantity);
+-        };
+-    }
+-
+-    private int settleLedger(InventorySegmentVO segment, Long invId, long quantity) {
+-        return switch (segment) {
+-            case VIRTUAL -> virtualInventoryQuotaDao.settleInventory(invId, quantity);
+-            case QUOTA -> physicalQuotaDao.settleQuota(invId, quantity);
+-        };
+-    }
+-
+-    private int flipCell(InventorySegmentVO segment, Long invId, Integer bucketId, LocalDateTime cellCreateTime) {
+-        return switch (segment) {
+-            case VIRTUAL -> virtualInventoryQuotaDao.flipUnmergedCell(invId, bucketId, cellCreateTime);
+-            case QUOTA -> physicalQuotaDao.flipUnmergedCell(invId, bucketId, cellCreateTime);
+-        };
+-    }
+-
+     // ---------------------------------------------------------------- 合并器落库出口（确认，票 07 接线）
+ 
+     /**
+@@ -505,42 +362,6 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
+         return results;
+     }
+ 
+-    /** 该段未合并预扣明细总量（旧模型读数，票 08 删） */
+-    @Override
+-    public long sumPendingDeductQty(InventorySegmentVO segment, Long invId) {
+-        return switch (segment) {
+-            case VIRTUAL -> virtualInventoryQuotaDao.sumPendingDeductQty(invId);
+-            case QUOTA -> physicalQuotaDao.sumPendingDeductQty(invId, Constants.DETAIL_TYPE_DEDUCT);
+-        };
+-    }
+-
+-    /** 该段未合并兑换确认明细总量（虚拟段恒 0；旧模型读数，票 08 删） */
+-    @Override
+-    public long sumPendingClaimQty(InventorySegmentVO segment, Long invId) {
+-        return switch (segment) {
+-            case VIRTUAL -> 0L;
+-            case QUOTA -> physicalQuotaDao.sumPendingClaimQty(invId, Constants.DETAIL_TYPE_CLAIM);
+-        };
+-    }
+-
+-    /** 该段已合并预扣明细总量（旧模型读数，票 08 删） */
+-    @Override
+-    public long sumMergedDeductQty(InventorySegmentVO segment, Long invId) {
+-        return switch (segment) {
+-            case VIRTUAL -> virtualInventoryQuotaDao.sumMergedDeductQty(invId);
+-            case QUOTA -> physicalQuotaDao.sumMergedDeductQty(invId, Constants.DETAIL_TYPE_DEDUCT);
+-        };
+-    }
+-
+-    /** 按桶汇总未合并预扣明细量：旧 Redis 恒等式的右端（票 08 删） */
+-    @Override
+-    public long sumPendingDeductQtyByBucket(InventorySegmentVO segment, Long invId, Integer bucketId) {
+-        return switch (segment) {
+-            case VIRTUAL -> virtualInventoryQuotaDao.sumPendingDeductQtyByBucket(invId, bucketId);
+-            case QUOTA -> physicalQuotaDao.sumPendingDeductQtyByBucket(invId, Constants.DETAIL_TYPE_DEDUCT, bucketId);
+-        };
+-    }
+-
+     // ---------------------------------------------------------------- PO → 公共形状
+ 
+     /** 虚拟段没有 waiting 列：这里显式补齐 0，让两段共用 {@code waiting + issued} 的对账表达 */
+diff --git a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/IPhysicalQuotaDao.java b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/IPhysicalQuotaDao.java
+index 8cb6047..3b289b8 100644
+--- a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/IPhysicalQuotaDao.java
++++ b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/IPhysicalQuotaDao.java
+@@ -1,19 +1,16 @@
+ package com.betterschool.marketing.infrastructure.inventory.dao;
+ 
+-import com.betterschool.marketing.infrastructure.inventory.dao.po.InventoryCellAggregatePO;
+-import com.betterschool.marketing.infrastructure.inventory.dao.po.InventoryMergeKeyPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaDetailPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaPO;
+ import org.apache.ibatis.annotations.Mapper;
+ import org.apache.ibatis.annotations.Param;
+ 
+-import java.time.LocalDateTime;
+ import java.util.List;
+ 
+ /**
+  * 实物营销配额 Mapper（physical_marketing_quota 三张表）。
+  * SQL 定义在 marketing-app 模块 resources/mybatis/mapper/inventory/PhysicalQuotaMapper.xml。
+- * 写侧语句（预扣落库 / 合并 / 兑换确认）假定在仓储方法（{@code InventoryRepository}）的事务内调用。
++ * 写侧语句（预扣落库 / 兑换确认）假定在仓储方法（{@code InventoryRepository}）的事务内调用。
+  * <p>
+  * 票 06 起预扣明细不再写 {@code bucket_id} 与 {@code state}（桶层已删；列保留到 D9 收口，
+  * {@code state} 落列默认 0）。
+@@ -56,30 +53,6 @@ public interface IPhysicalQuotaDao {
+     boolean existsDeductDetail(@Param("invId") Long invId, @Param("type") int type,
+                                @Param("bizType") String bizType, @Param("bizId") long bizId);
+ 
+-    // ---- 旧合并机制（时间格 + 兜底；票 08 删，只对切换前的存量行有意义） ----
+-
+-    /** 该 key 的最老已封口格：无行返回 null */
+-    LocalDateTime selectOldestUnmergedCellTime(@Param("invId") Long invId, @Param("bucketId") Integer bucketId);
+-
+-    /** 该格的精确聚合（翻转前读，同一事务）：按 type 分组，1-预扣结转 / 2-兑换确认 */
+-    List<InventoryCellAggregatePO> aggregateUnmergedCell(@Param("invId") Long invId,
+-                                                         @Param("bucketId") Integer bucketId,
+-                                                         @Param("createTime") LocalDateTime createTime);
+-
+-    /** 条件翻转（{@code state=0 AND create_time=createTime}）；affected 由调用方与 c1 + c2 比较 */
+-    int flipUnmergedCell(@Param("invId") Long invId, @Param("bucketId") Integer bucketId,
+-                         @Param("createTime") LocalDateTime createTime);
+-
+-    /** 兜底扫描的 key 选取：按最老未合时间升序，LIMIT 由调用方给（spec §4.6） */
+-    List<InventoryMergeKeyPO> selectMergeKeys(@Param("limit") int limit);
+-
+-    /** 旧合并的桶对账副本递减（redis_qty >= qty 守卫）：0 行 = 台账不变量被破坏 */
+-    int deductQuotaBucketRedisQty(@Param("invId") Long invId, @Param("bucketId") Integer bucketId,
+-                                  @Param("quantity") long quantity);
+-
+-    /** 旧合并的台账结算：+waiting_qty；限量同步递减 surplus_qty，减到 0 置 exhausted */
+-    int settleQuota(@Param("invId") Long invId, @Param("quantity") long quantity);
+-
+     // ---- 兑换确认（同步合并，票 07） ----
+ 
+     /**
+@@ -93,20 +66,7 @@ public interface IPhysicalQuotaDao {
+     /** waiting_qty >= qty 守卫下的转移（确认组落库的台账步）：0 行 = 没有足够的悬挂预扣 = 不变量破坏 */
+     int transferWaitingToIssued(@Param("invId") Long invId, @Param("quantity") long quantity);
+ 
+-    // ---- 预热 / 对账 ----
++    // ---- 预热 ----
+ 
+     List<PhysicalMarketingQuotaPO> selectOpenQuotas();
+-
+-    /** 未合并预扣明细总量（{@code state = 0 AND type = 1}） */
+-    long sumPendingDeductQty(@Param("invId") Long invId, @Param("type") int type);
+-
+-    /** 未合并兑换确认明细总量（{@code state = 0 AND type = 2}） */
+-    long sumPendingClaimQty(@Param("invId") Long invId, @Param("type") int type);
+-
+-    /** 已合并预扣明细总量（{@code state = 1 AND type = 1}）：台账恒等式的右端 */
+-    long sumMergedDeductQty(@Param("invId") Long invId, @Param("type") int type);
+-
+-    /** 按桶汇总未合并预扣明细量（{@code state = 0 AND type = 1}） */
+-    long sumPendingDeductQtyByBucket(@Param("invId") Long invId, @Param("type") int type,
+-                                     @Param("bucketId") Integer bucketId);
+ }
+diff --git a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/IVirtualInventoryQuotaDao.java b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/IVirtualInventoryQuotaDao.java
+index 7176554..ae1aafa 100644
+--- a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/IVirtualInventoryQuotaDao.java
++++ b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/IVirtualInventoryQuotaDao.java
+@@ -1,19 +1,15 @@
+ package com.betterschool.marketing.infrastructure.inventory.dao;
+ 
+-import com.betterschool.marketing.infrastructure.inventory.dao.po.InventoryCellAggregatePO;
+-import com.betterschool.marketing.infrastructure.inventory.dao.po.InventoryMergeKeyPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.VirtualInventoryQuotaDetailPO;
+ import com.betterschool.marketing.infrastructure.inventory.dao.po.VirtualInventoryQuotaPO;
+ import org.apache.ibatis.annotations.Mapper;
+ import org.apache.ibatis.annotations.Param;
+ 
+-import java.time.LocalDateTime;
+ import java.util.List;
+ 
+ /**
+  * 虚拟权益池 Mapper（virtual_inventory_quota 三张表，一域段一 DAO）。
+  * SQL 定义在 marketing-app 模块 resources/mybatis/mapper/inventory/VirtualInventoryQuotaMapper.xml。
+- * 合并侧语句（flipUnmergedCell / deductBucketRedisQty / settleInventory）假定在合并事务内调用。
+  * <p>
+  * 票 06 起预扣明细不再写 {@code bucket_id} 与 {@code state}（桶层已删；列保留到 D9 收口，
+  * {@code state} 落列默认 0）。
+@@ -56,39 +52,7 @@ public interface IVirtualInventoryQuotaDao {
+     /** 业务幂等预检：这场业务（biz_type + biz_id）在本 inv 的明细是否已存在（命中 = 已落过） */
+     boolean existsDeductDetail(@Param("invId") Long invId, @Param("bizType") String bizType, @Param("bizId") long bizId);
+ 
+-    // ---- 旧合并机制（时间格 + 兜底；票 08 删，只对切换前的存量行有意义） ----
+-
+-    /** 该 key 的最老已封口格：无行返回 null */
+-    LocalDateTime selectOldestUnmergedCellTime(@Param("invId") Long invId, @Param("bucketId") Integer bucketId);
+-
+-    /** 该格的精确聚合（翻转前读，同一事务）：虚拟没有 type，一组即全部未合行 */
+-    InventoryCellAggregatePO aggregateUnmergedCell(@Param("invId") Long invId, @Param("bucketId") Integer bucketId,
+-                                                   @Param("createTime") LocalDateTime createTime);
+-
+-    /** 条件翻转（{@code state=0 AND create_time=createTime}）；affected 由调用方与 cnt 比较 */
+-    int flipUnmergedCell(@Param("invId") Long invId, @Param("bucketId") Integer bucketId,
+-                         @Param("createTime") LocalDateTime createTime);
+-
+-    /** 兜底扫描的 key 选取：按最老未合时间升序，LIMIT 由调用方给（spec §4.6） */
+-    List<InventoryMergeKeyPO> selectMergeKeys(@Param("limit") int limit);
+-
+-    /** 旧合并的桶对账副本递减（redis_qty >= qty 守卫）：0 行 = 台账不变量被破坏 */
+-    int deductBucketRedisQty(@Param("invId") Long invId, @Param("bucketId") Integer bucketId,
+-                             @Param("quantity") long quantity);
+-
+-    /** 旧合并的台账结算：+issued_qty；-1=不限量不动 surplus；减到 0 由 open 置 exhausted */
+-    int settleInventory(@Param("invId") Long invId, @Param("quantity") long quantity);
+-
+-    // ---- 预热 / 对账 ----
++    // ---- 预热 ----
+ 
+     List<VirtualInventoryQuotaPO> selectOpenInventories();
+-
+-    /** 未合并预扣明细总量（{@code state = 0}；虚拟没有 type 列） */
+-    long sumPendingDeductQty(@Param("invId") Long invId);
+-
+-    /** 已合并预扣明细总量（{@code state = 1}）：台账恒等式 {@code issued_qty == merged} 的右端 */
+-    long sumMergedDeductQty(@Param("invId") Long invId);
+-
+-    /** 按桶汇总未合并预扣明细量 */
+-    long sumPendingDeductQtyByBucket(@Param("invId") Long invId, @Param("bucketId") Integer bucketId);
+ }
+diff --git a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/po/InventoryCellAggregatePO.java b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/po/InventoryCellAggregatePO.java
+deleted file mode 100644
+index d251ebc..0000000
+--- a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/po/InventoryCellAggregatePO.java
++++ /dev/null
+@@ -1,22 +0,0 @@
+-package com.betterschool.marketing.infrastructure.inventory.dao.po;
+-
+-import lombok.Data;
+-
+-/**
+- * 时间格聚合的查询投影（**不是表**）：{@code SUM(quantity) / COUNT(*)}，实物段另带 {@code type}。
+- * <p>
+- * 虚拟段没有 {@code type} 列，查询里写 {@code NULL AS type}；两段共用一个投影形状，
+- * 聚合读 SQL 不用因为一处列差异分叉。
+- */
+-@Data
+-public class InventoryCellAggregatePO {
+-
+-    /** 实物段 1-预扣结转 / 2-兑换确认；虚拟段恒为 null */
+-    private Integer type;
+-
+-    /** 该组 {@code SUM(quantity)} */
+-    private Long quantity;
+-
+-    /** 该组 {@code COUNT(*)}：翻转时 {@code affected} 要比的 cnt */
+-    private Long detailCount;
+-}
+diff --git a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/po/InventoryMergeKeyPO.java b/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/po/InventoryMergeKeyPO.java
+deleted file mode 100644
+index df3a90a..0000000
+--- a/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/inventory/dao/po/InventoryMergeKeyPO.java
++++ /dev/null
+@@ -1,16 +0,0 @@
+-package com.betterschool.marketing.infrastructure.inventory.dao.po;
+-
+-import lombok.Data;
+-
+-/**
+- * 兜底扫描的 key 投影（**不是表**）：{@code SELECT inv_id, bucket_id GROUP BY ...} 的一行。
+- * <p>
+- * 只承载定位两字段，时间与数量都不带出来——那两件事由后续的单格查询回答。
+- */
+-@Data
+-public class InventoryMergeKeyPO {
+-
+-    private Long invId;
+-
+-    private Integer bucketId;
+-}
+diff --git a/backend/marketing/marketing-trigger/src/main/java/com/betterschool/marketing/trigger/inventory/job/InventoryMergeBackstopJob.java b/backend/marketing/marketing-trigger/src/main/java/com/betterschool/marketing/trigger/inventory/job/InventoryMergeBackstopJob.java
+deleted file mode 100644
+index ec9fd19..0000000
+--- a/backend/marketing/marketing-trigger/src/main/java/com/betterschool/marketing/trigger/inventory/job/InventoryMergeBackstopJob.java
++++ /dev/null
+@@ -1,38 +0,0 @@
+-package com.betterschool.marketing.trigger.inventory.job;
+-
+-import com.betterschool.marketing.domain.inventory.service.IInventoryMergeService;
+-import com.xxl.job.core.context.XxlJobHelper;
+-import com.xxl.job.core.handler.annotation.XxlJob;
+-import lombok.RequiredArgsConstructor;
+-import lombok.extern.slf4j.Slf4j;
+-import org.springframework.stereotype.Component;
+-
+-/**
+- * 库存合并兜底（spec §4.6）：每 60 秒触发一轮，只负责「消息整条丢了」——
+- * outbox 进 DEAD、Redis 扣了但事务失败、进程在两步之间崩。
+- * <p>
+- * 一轮 = {@link IInventoryMergeService#backstopOnce()}：两段各取 ≤ 200 个 key（按最老未合时间升序）
+- * → 逐 key 直调 {@link IInventoryMergeService#mergeKey}。幂等可重入；合不了的格留在 {@code state=0}
+- * 由下一轮 / 对账暴露，不影响任务成功。
+- */
+-@Slf4j
+-@Component
+-@RequiredArgsConstructor
+-public class InventoryMergeBackstopJob {
+-
+-    private final IInventoryMergeService inventoryMergeService;
+-
+-    @XxlJob("inventoryMergeBackstop")
+-    public void execute() {
+-        try {
+-            var result = inventoryMergeService.backstopOnce();
+-            if (result.details() > 0) {
+-                log.info("xxl-job: 库存合并兜底完成 quota {} key / virtual {} key / {} 行",
+-                        result.quotaKeys(), result.virtualKeys(), result.details());
+-            }
+-        } catch (Exception e) {
+-            log.error("xxl-job: 库存合并兜底失败", e);
+-            XxlJobHelper.handleFail("库存合并兜底失败：" + e.getMessage());
+-        }
+-    }
+-}
+diff --git a/backend/marketing/marketing-trigger/src/main/java/com/betterschool/marketing/trigger/inventory/listener/InventoryMergeConsumer.java b/backend/marketing/marketing-trigger/src/main/java/com/betterschool/marketing/trigger/inventory/listener/InventoryMergeConsumer.java
+deleted file mode 100644
+index a41b673..0000000
+--- a/backend/marketing/marketing-trigger/src/main/java/com/betterschool/marketing/trigger/inventory/listener/InventoryMergeConsumer.java
++++ /dev/null
+@@ -1,68 +0,0 @@
+-package com.betterschool.marketing.trigger.inventory.listener;
+-
+-import com.betterschool.marketing.domain.inventory.service.IInventoryMergeService;
+-import com.betterschool.marketing.types.inventory.Constants;
+-import com.betterschool.marketing.types.inventory.InventoryMergeMessage;
+-import com.betterschool.marketing.types.inventory.InventoryMqConstants;
+-import com.betterschool.marketing.types.inventory.InventorySegmentVO;
+-import com.fasterxml.jackson.databind.ObjectMapper;
+-import lombok.RequiredArgsConstructor;
+-import lombok.extern.slf4j.Slf4j;
+-import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
+-import org.apache.rocketmq.spring.core.RocketMQListener;
+-import org.springframework.stereotype.Component;
+-
+-/**
+- * 库存合并消息消费方（spec §4.5，topic {@code bs-inventory-merge}）：按
+- * {@code (segment, invId, bucketId, cellTime)} 调 {@link IInventoryMergeService#mergePair}，
+- * 固定合 {@code cellTime} 与它的后一秒两格后结束。**不续命**：每格有自己的一条定时消息。
+- * <p>
+- * 载荷必须是「定位三字段 + 责任起点秒」；解析失败 / 未知 segment / 缺 {@code cellTime} = 重试也不会成功，
+- * {@code log + 丢弃}，不触发 broker 重投（丢掉的格由 60s 兜底收口）。
+- * 缺 {@code cellTime} 的旧格式载荷（续命那代）同样落在这里被丢弃——滚动发布期间它们会走兜底。
+- * <b>业务异常不吞</b>：抛给 broker 重投（阶梯 10s 起步）——兜底扫描才是快速恢复手段，重投只是最后一道。
+- * <p>
+- * 同 key 可并行消费（默认 CONCURRENTLY、无队列锁，本仓还投给虚拟线程池）：合并的正确性靠 DB 层
+- * {@code affected == cnt} 判重，不靠串行，所以这里**不加** synchronized / 队列锁。
+- */
+-@Slf4j
+-@Component
+-@RequiredArgsConstructor
+-@RocketMQMessageListener(topic = Constants.INVENTORY_MERGE_TOPIC,
+-        consumerGroup = InventoryMqConstants.INVENTORY_MERGE_CONSUMER_GROUP)
+-public class InventoryMergeConsumer implements RocketMQListener<String> {
+-
+-    private final IInventoryMergeService inventoryMergeService;
+-    private final ObjectMapper objectMapper;
+-
+-    @Override
+-    public void onMessage(String payload) {
+-        InventoryMergeMessage message;
+-        try {
+-            message = objectMapper.readValue(payload, InventoryMergeMessage.class);
+-        } catch (Exception e) {
+-            log.error("[InventoryMergeConsumer] 消息载荷解析失败，丢弃 payload={}", payload, e);
+-            return;
+-        }
+-        if (message == null) {
+-            // JSON 字面量 "null" 会成功反序列化成 null（不是异常），同样按解析失败丢弃
+-            log.error("[InventoryMergeConsumer] 消息载荷为空，丢弃 payload={}", payload);
+-            return;
+-        }
+-        if (message.getInvId() == null || message.getBucketId() == null) {
+-            log.error("[InventoryMergeConsumer] 载荷缺 invId / bucketId，丢弃 payload={}", payload);
+-            return;
+-        }
+-        InventorySegmentVO segment = InventorySegmentVO.fromCode(message.getSegment());
+-        if (segment == null) {
+-            log.error("[InventoryMergeConsumer] 未知 segment，丢弃 payload={}", payload);
+-            return;
+-        }
+-        if (message.getCellTime() == null) {
+-            // 没有责任起点秒就不知道该合哪两格：查 MIN 兜底是另一条路径（backstopOnce），不在这里退化
+-            log.error("[InventoryMergeConsumer] 载荷缺 cellTime（无法定位时间格），丢弃 payload={}", payload);
+-            return;
+-        }
+-        inventoryMergeService.mergePair(segment, message.getInvId(), message.getBucketId(), message.getCellTime());
+-    }
+-}
+diff --git a/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/Constants.java b/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/Constants.java
+index 061bce4..1a01eb0 100644
+--- a/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/Constants.java
++++ b/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/Constants.java
+@@ -1,33 +1,14 @@
+ package com.betterschool.marketing.types.inventory;
+ 
+ /**
+- * 库存域自有常量：合并消息的 topic / 延迟（一律走毫秒级相对延迟），以及实物明细的 {@code type} 分工。
++ * 库存域自有常量：实物明细的 {@code type} 分工。
+  * <p>
+- * 票 06 起 Redis 桶层整层删除（桶 key / 去重 key / Lua 返回码随之消失）：台账三列是唯一真相，
+- * 不再有「Redis 余量面」要对齐。这里只剩旧合并机制（票 08 删）与新落库路径共用的消息常量。
++ * 票 06 起 Redis 桶层整层删除（桶 key / 去重 key / Lua 返回码随之消失），票 08 起旧合并机制
++ * （{@code bs-inventory-merge} topic / 消费组 / 合并消息 / 兜底常量）随之删除：台账三列是唯一真相，
++ * 预扣与确认由进程内合并器一组一事务直接落账，不再有消息驱动的合并。
+  */
+ public final class Constants {
+ 
+-    /** 库存合并消息的 topic（生产方与消费方同域，常量放域内；消费组在 {@code InventoryMqConstants}） */
+-    public final static String INVENTORY_MERGE_TOPIC = "bs-inventory-merge";
+-
+-    /**
+-     * 合并消息的相对延迟（毫秒）：发送后 2 秒投递，让「责任起点秒 {@code s} 与 {@code s + 1}」两格都已封口。
+-     * <p>
+-     * 只剩兑换确认还在发这条消息（预扣自票 06 起一组一事务直接落账，不再发合并消息；
+-     * 确认路径由票 07 换成同步合并后，本常量随旧合并机制在票 08 一起删）。
+-     */
+-    public final static int MERGE_DELIVER_DELAY_MILLIS = 2000;
+-
+-    /**
+-     * 兜底一次最多合并的时间格数（spec §5.3）：一条消息整条丢了也不致永久落后一格；
+-     * 再多会把单轮兜底拖长，剩下的交给下一轮（消息路径固定合两格，不受这个上限约束）。
+-     */
+-    public final static int MERGE_MAX_CELLS_PER_KEY = 10;
+-
+-    /** 兜底扫描每段单轮最多取的 key 数（spec §4.6 的 {@code LIMIT 200}，保险丝而非省扫描成本） */
+-    public final static int MERGE_BACKSTOP_KEY_LIMIT = 200;
+-
+     /** 实物明细 {@code type}：1-预扣结转（票 06 起落库即进 waiting / issued） */
+     public final static int DETAIL_TYPE_DEDUCT = 1;
+ 
+diff --git a/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/InventoryMergeMessage.java b/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/InventoryMergeMessage.java
+deleted file mode 100644
+index 784e1fd..0000000
+--- a/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/InventoryMergeMessage.java
++++ /dev/null
+@@ -1,60 +0,0 @@
+-package com.betterschool.marketing.types.inventory;
+-
+-import lombok.AllArgsConstructor;
+-import lombok.Data;
+-import lombok.NoArgsConstructor;
+-
+-import java.time.LocalDateTime;
+-
+-/**
+- * 库存合并消息（topic {@link Constants#INVENTORY_MERGE_TOPIC}，spec §4.1）：
+- * 唤醒消费侧合并「{@code cellTime} 这一秒与它的下一秒」这两个时间格。
+- * <p>
+- * 载荷是**定位三字段 + 责任起点秒**：定位用 {@code (segment, invId, bucketId)}；
+- * {@code cellTime} 是这批明细落库时 DB 写下的 {@code create_time} 秒值（无时区 {@code LocalDateTime}，
+- * JSON 里就是 {@code 2026-10-20T10:00:10}），消费侧以它为准合并 {@code s} 与 {@code s + 1} 两格。
+- * 仍然**不带数量**——数量由明细表的事实回答。
+- * <p>
+- * {@code cellTime} **不参与延迟计算**：延迟是相对发送时刻的毫秒数
+- * （{@link Constants#MERGE_DELIVER_DELAY_MILLIS}），所以这里不需要转 epoch，时区问题整条不存在。
+- * <p>
+- * 重复投递无害（合并靠 {@code affected == cnt} 判重），所以不需要消息 id 或去重键进载荷。
+- * <p>
+- * {@code segment} 用 {@link InventorySegmentVO#getCode()}（{@code quota} / {@code virtual}）；
+- * 解析失败 / 未知 segment / **缺 {@code cellTime}** 都是 log + 丢弃（重试也不会成功），
+- * 丢掉的格由 60 秒兜底收口——消费侧不会因为缺 {@code cellTime} 就退化成「查 {@code MIN}」，
+- * 那两条路径的语义不同（一个知道合哪两格，一个不知道），混在一起就没法判断消息是不是坏的。
+- */
+-@Data
+-@NoArgsConstructor
+-@AllArgsConstructor
+-public class InventoryMergeMessage {
+-
+-    /** 段 code：{@code quota} / {@code virtual}（{@link InventorySegmentVO#getCode()}） */
+-    private String segment;
+-    /** 配额业务 ID */
+-    private Long invId;
+-    /** Redis 分桶编号（0 起） */
+-    private Integer bucketId;
+-    /** 责任起点秒：这批明细的 {@code create_time}（DB 写，秒精度），消费侧合它与它后一秒 */
+-    private LocalDateTime cellTime;
+-
+-    /**
+-     * 只带定位三字段：{@code cellTime} 留空，由**落明细的仓储**在 INSERT 之后回填
+-     * （DB 的 {@code NOW()} 应用事先不知道，见 {@link #withCellTime}）。
+-     * <p>
+-     * 域服务只负责说「这一笔要叫醒哪个 key」，说不出来的是时间。**这个构造出来的实例不能直接发出去**：
+-     * 消费侧认 {@code cellTime}，空的会被当坏载荷丢弃（续命那条「只带定位」的路已删除）。
+-     */
+-    public InventoryMergeMessage(String segment, Long invId, Integer bucketId) {
+-        this(segment, invId, bucketId, null);
+-    }
+-
+-    /**
+-     * 同一个定位换一个责任起点秒，返回新实例（不回写入参）。
+-     * 唯一的调用点是仓储落明细之后——回读到的 {@code create_time} 只在那里拿得到。
+-     */
+-    public InventoryMergeMessage withCellTime(LocalDateTime cellTime) {
+-        return new InventoryMergeMessage(segment, invId, bucketId, cellTime);
+-    }
+-}
+diff --git a/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/InventoryMqConstants.java b/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/InventoryMqConstants.java
+deleted file mode 100644
+index 1524f3e..0000000
+--- a/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/inventory/InventoryMqConstants.java
++++ /dev/null
+@@ -1,17 +0,0 @@
+-package com.betterschool.marketing.types.inventory;
+-
+-/**
+- * 库存域的 MQ 常量：本域**自有**的消费组名。
+- * <p>
+- * topic 在 {@link Constants#INVENTORY_MERGE_TOPIC}（生产方与消费方同域）；命名口径
+- * {@code bs-<service>-<topic>-group}（spec §4.1）：service = {@code marketing}，
+- * topic 段 = {@code inventory-merge}。
+- */
+-public final class InventoryMqConstants {
+-
+-    /** 消费 {@code bs-inventory-merge} 的组：库存合并消息只被本组消费（spec §4.1） */
+-    public final static String INVENTORY_MERGE_CONSUMER_GROUP = "bs-marketing-inventory-merge-group";
+-
+-    private InventoryMqConstants() {
+-    }
+-}

@@ -1,0 +1,123 @@
+{
+  "script_version": "1.0.0",
+  "mode": "forward",
+  "generated_at": "2026-10-17T10:04:58.505217+00:00",
+  "dry_run": false,
+  "source_schema": "cut2_src",
+  "target_schema": "cut2_dst",
+  "counts": {
+    "source_rows": 6,
+    "source_by_status": {
+      "FAILED": 1,
+      "RETRYING": 1,
+      "WAITING": 4
+    },
+    "outbox_rows": 3,
+    "target_rows_before": 7,
+    "planned_inserts": 0,
+    "planned_inserts_by_status": {},
+    "planned_inserts_by_table": {},
+    "skipped": 9,
+    "target_rows_after": 7,
+    "target_by_status_after": {
+      "FAILED": 1,
+      "RETRYING": 1,
+      "SUCCESS": 1,
+      "WAITING": 4
+    }
+  },
+  "warnings": [
+    "目标库已有 7 行（同键以目标行为准，只补缺不覆盖）",
+    "timeout_register_outbox 存在，PENDING=3（会一并搬入）"
+  ],
+  "conflicts": [
+    {
+      "origin": "outbox",
+      "source_table": "timeout_register_outbox",
+      "target_table": null,
+      "task_type": "ERRAND_PAY_TIMEOUT",
+      "biz_id": "2002",
+      "status": "WAITING",
+      "reason": "outbox 行已在旧中心在途（status=RETRYING），以中心行为准"
+    },
+    {
+      "origin": "outbox",
+      "source_table": "timeout_register_outbox",
+      "target_table": null,
+      "task_type": "ERRAND_LOCK_TIMEOUT",
+      "biz_id": "😀:7",
+      "status": "WAITING",
+      "reason": "旧中心同键已是终态（status=SUCCESS）且 outbox 不更新，按残留跳过"
+    },
+    {
+      "origin": "outbox",
+      "source_table": "timeout_register_outbox",
+      "target_table": null,
+      "task_type": "PRODUCT_ORDER_PAY_TIMEOUT",
+      "biz_id": "5005",
+      "status": "WAITING",
+      "reason": "outbox 行已在旧中心在途（status=WAITING），以中心行为准"
+    },
+    {
+      "origin": "center",
+      "source_table": "timeout_task_00",
+      "target_table": "timeout_task_00",
+      "task_type": "ERRAND_PAY_TIMEOUT",
+      "biz_id": "2002",
+      "status": "RETRYING",
+      "reason": "目标已有同键行（status=RETRYING），保留目标行"
+    },
+    {
+      "origin": "center",
+      "source_table": "timeout_task_02",
+      "target_table": "timeout_task_04",
+      "task_type": "PRODUCT_ORDER_PAY_TIMEOUT",
+      "biz_id": "订单-测试",
+      "status": "WAITING",
+      "reason": "目标已有同键行（status=WAITING），保留目标行"
+    },
+    {
+      "origin": "center",
+      "source_table": "timeout_task_02",
+      "target_table": "timeout_task_00",
+      "task_type": "PRODUCT_ORDER_PAY_TIMEOUT",
+      "biz_id": "5005",
+      "status": "WAITING",
+      "reason": "目标已有同键行（status=WAITING），保留目标行"
+    },
+    {
+      "origin": "center",
+      "source_table": "timeout_task_02",
+      "target_table": "timeout_task_01",
+      "task_type": "PRODUCT_ORDER_PAY_TIMEOUT",
+      "biz_id": "8008",
+      "status": "WAITING",
+      "reason": "目标已有同键行（status=WAITING），保留目标行"
+    },
+    {
+      "origin": "center",
+      "source_table": "timeout_task_09",
+      "target_table": "timeout_task_08",
+      "task_type": "REVIEW_LEASE_TIMEOUT",
+      "biz_id": "4004:2",
+      "status": "FAILED",
+      "reason": "目标已有同键行（status=FAILED），保留目标行"
+    },
+    {
+      "origin": "center",
+      "source_table": "timeout_task_15",
+      "target_table": "timeout_task_07",
+      "task_type": "ERRAND_LOCK_TIMEOUT",
+      "biz_id": "3003:1",
+      "status": "WAITING",
+      "reason": "目标已有同键行（status=WAITING），保留目标行"
+    }
+  ],
+  "conflict_total": 9,
+  "verification": {
+    "ok": false,
+    "errors": [
+      "目标行槽位错误（扫描器会漏掉）：('PRODUCT_ORDER_PAY_TIMEOUT', '8008') 在 timeout_task_01，应在 timeout_task_00"
+    ]
+  }
+}
