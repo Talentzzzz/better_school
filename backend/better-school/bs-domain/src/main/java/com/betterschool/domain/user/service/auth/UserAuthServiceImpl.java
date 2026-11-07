@@ -9,7 +9,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
@@ -50,8 +49,9 @@ public class UserAuthServiceImpl implements IUserAuthService {
         if (userEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "用户不存在，请先注册");
         }
-        userEntity.setLastLoginAt(LocalDateTime.now());
         userRepository.update(userEntity);
+        // last_login_at 由 SQL NOW() 落库（时刻一律数据库时钟），回读补齐登录响应字段
+        userEntity.setLastLoginAt(userRepository.findByPhone(phone).getLastLoginAt());
         return new UserAuthResult(userEntity, userRepository.generateToken(userEntity.getUserId(), userEntity.getRole().name()));
     }
 }

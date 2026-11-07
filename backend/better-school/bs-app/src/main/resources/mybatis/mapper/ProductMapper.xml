@@ -13,26 +13,28 @@
     </sql>
 
     <!-- 主表不再有浏览列（market-feed-uv 票 06 删列）：浏览 UV 只落 product_view_history + product_view_count -->
-    <!-- uuid-biz-id 票 05：业务 ID 发号在 repository 落库前生成（IIdGenerator.nextId），随行一次写入，
+    <!-- uuid-biz-id 票 05：业务 ID 发号在 repository 落库前生成（UUID.randomUUID()），随行一次写入，
          删除 bindBizId 自增同值回写 -->
-    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+    <!-- 时刻一律数据库时钟：create_time/update_time=NOW()；发布行 review_entered_at=NOW()、
+         expire_at=NOW()+30d（与 submitDraft 同口径）；草稿行两列保持 NULL（提交时才锚定） -->
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.product.po.Product">
         INSERT INTO product (product_id, user_id, title, description, images, price, trade_location,
                              category, state, review_round, review_entered_at,
                              create_time, update_time, expire_at)
         VALUES (#{productId}, #{userId}, #{title}, #{description}, #{images}, #{price}, #{tradeLocation},
-                #{category}, #{state}, #{reviewRound}, #{reviewEnteredAt},
-                #{createTime}, #{updateTime}, #{expireAt})
+                #{category}, #{state}, #{reviewRound}, IF(#{state} = 'DRAFT', NULL, NOW()),
+                NOW(), NOW(), IF(#{state} = 'DRAFT', NULL, DATE_ADD(NOW(), INTERVAL 30 DAY)))
     </insert>
 
     <!-- 浏览 UV 加速列批量读：按 id 集单表 IN 查询，仓储补 0 拼装（详情单元素与列表共用） -->
-    <select id="selectViewCountsByProductIds" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+    <select id="selectViewCountsByProductIds" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT c.product_id AS productId, c.view_count AS viewCount
         FROM product_view_count c
         WHERE c.product_id IN
         <foreach collection="productIds" item="productId" open="(" separator="," close=")">#{productId}</foreach>
     </select>
 
-    <select id="selectById" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+    <select id="selectById" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
         FROM product p
         WHERE p.product_id = #{productId}
@@ -40,7 +42,7 @@
     </select>
 
     <!-- 按 id 列表查询：不分状态（搜索同步按 state 判定 upsert/删除，搜索命中组装按 ON_SALE 过滤） -->
-    <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+    <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
         FROM product p
         WHERE p.product_id IN
@@ -83,7 +85,7 @@
     </update>
 
     <!-- 草稿全量编辑：仅 DRAFT 行生效（待审/在售等状态不可通过此语句改内容） -->
-    <update id="updateDraft" parameterType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+    <update id="updateDraft" parameterType="com.betterschool.infrastructure.dao.product.po.Product">
         UPDATE product
         SET title          = #{title},
             description    = #{description},
@@ -174,7 +176,7 @@
     <!-- 上架后改内容：ON_SALE → PENDING_REVIEW（期间他人不可见、卖家本人可见），重提产生第二轮审核；
          动态覆盖非 null 字段（title/description/images 任一即视为改内容）。price 非审核对象、不属重审范围，
          混合提交时随行更新（重审期间商品不可见，恢复可见后即生效；重审被拒不回滚新价） -->
-    <update id="editOnSaleContent" parameterType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+    <update id="editOnSaleContent" parameterType="com.betterschool.infrastructure.dao.product.po.Product">
         UPDATE product
         <set>
             state = 'PENDING_REVIEW',
@@ -227,7 +229,7 @@
     <!-- 旧直查降级路径（market-feed-uv 票 04 起仅索引不可用时走）：price/time 四档纯 product 单表 SQL 分页；
          hot 档排序键 view_count 在窄表（不能 JOIN 进来），由仓储走 selectOnSaleRows 全集 + 窄表批量回查 +
          内存排序切片（降级路径，数据集有界） -->
-    <select id="selectPage" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+    <select id="selectPage" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
         FROM product p
         WHERE p.state = 'ON_SALE'
@@ -255,7 +257,7 @@
     </select>
 
     <!-- hot 档降级取数：ON_SALE 全集（无 LIMIT，筛选条件同 selectPage），窄表批量回查后仓储内存排序切片 -->
-    <select id="selectOnSaleRows" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+    <select id="selectOnSaleRows" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
         FROM product p
         WHERE p.state = 'ON_SALE'
@@ -334,7 +336,7 @@
     </select>
 
     <!-- 我发布的商品（卖家视角）：含待审/草稿/被拒等自己的全部状态，排除软删，按发布时间倒序 -->
-    <select id="selectPageBySeller" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+    <select id="selectPageBySeller" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
         FROM product p
         WHERE p.user_id = #{userId}
@@ -351,7 +353,7 @@
     </select>
 
     <!-- 某用户在售商品（作者主页「闲置」tab，访客口径）：仅 ON_SALE，草稿/待审/被拒/锁定/已售一律不外露 -->
-    <select id="selectOnSalePageByUser" resultType="com.betterschool.infrastructure.dao.product.po.ProductPO">
+    <select id="selectOnSalePageByUser" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
         FROM product p
         WHERE p.user_id = #{userId}
@@ -506,7 +508,7 @@
          ③ view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步同时把「过审前被浏览、旁路命中 0 行」
          漏计的那部分追平（运行期旁路只在本行存在后累加），也与热度排序键的读口径一致。
          组装后走 insertFeedIndexRows 批量写回 -->
-    <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.product.po.ProductFeedIndexRowPO">
+    <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.product.po.ProductFeedIndexRow">
         SELECT p.product_id AS productId, p.state AS state, p.create_time AS createTime, p.price AS price
         FROM product p
     </select>

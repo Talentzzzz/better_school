@@ -31,14 +31,14 @@ public interface IChatRepository {
     // ===== 原子用例（仓储内事务） =====
 
     /**
-     * 建 1v1 会话 + 两行名册 + 两行用户状态 + 配对行（一个原子用例）：成员 = 首建发起人（room.initiatorId）+ 对家；
+     * 建 1v1 会话 + 两行名册 + 两行用户状态 + 配对行（一个原子用例）：成员 = 会话创建人（room.creatorId）+ 对家；
      * 名册行（join_seq=0）与 user_room 行（read_seq=0）同事务成对写入；
      * 配对行（user_pair_room.uk_pair）是事务收尾闸门，同一对人并发建会话时后到者整事务回滚
      * room_id 由 insertRoom 在实现内应用层发号，成员行在实现内构造
      *
      * @return 落库后的会话（含 roomId）
      */
-    RoomEntity createDirectRoom(RoomEntity room, String targetUserId);
+    RoomEntity createDirectRoom(RoomEntity roomEntity, String targetUserId);
 
     /**
      * 发送落库段（一个原子用例）：取号 → 落消息 → 按名册扇出时间线（per-user delivery_seq 取号）
@@ -47,7 +47,7 @@ public interface IChatRepository {
      *
      * @return 落库后的完整消息体（含 roomId/seq/messageId/createdAt）
      */
-    MessageEntity deliverMessage(MessageEntity message, ChatMessagePushMessage pushMessage);
+    MessageEntity deliverMessage(MessageEntity messageEntity, ChatMessagePushMessage pushMessage);
 
     /**
      * 已读水位线推进 + READ 事件（一个原子用例）。
@@ -57,13 +57,14 @@ public interface IChatRepository {
 
     /**
      * 撤回 + RECALL 事件（一个原子用例）：预览零维护写（读时按 message 真相现算，撤回即时反映）。
-     * 条件 UPDATE（status=NORMAL 才生效）：并发撤回/强撤撞自行撤回时落空即静默，不重复投递事件
+     * 条件 UPDATE（status=NORMAL 才生效）：并发撤回/强撤撞自行撤回时落空即静默，不重复投递事件；
+     * recalled_at 由 SQL NOW() 落库（时刻一律数据库时钟）
      */
-    void recallMessageWithEvent(String roomId, Long seq, LocalDateTime recalledAt, RecallByVO recalledBy);
+    void recallMessageWithEvent(String roomId, Long seq, RecallByVO recalledBy);
 
     // ===== room（会话本体） =====
 
-    void insertRoom(RoomEntity room);
+    void insertRoom(RoomEntity roomEntity);
 
     RoomEntity findRoomById(String roomId);
 
@@ -102,7 +103,7 @@ public interface IChatRepository {
     // ===== room_member（会话维度名册：「这个会话有谁」） =====
 
     /** 多值 INSERT 名册扇出（1v1 恒两行，join_seq=0 入群水位）；与两行 user_room 同事务成对写入 */
-    void insertRoomMembers(List<RoomMemberEntity> members);
+    void insertRoomMembers(List<RoomMemberEntity> memberEntities);
 
     /** 名册枚举（成员扇出/对家回查/成员页的成员集来源，room_id 片键单分片查询面） */
     List<RoomMemberEntity> listRoomMembers(String roomId);
@@ -111,7 +112,7 @@ public interface IChatRepository {
 
     // ===== user_room（用户维度会话状态） =====
 
-    void insertUserRooms(List<UserRoomEntity> userRooms);
+    void insertUserRooms(List<UserRoomEntity> userRoomEntities);
 
     /** 本人用户行点查（成员资格判据：行不存在 = 非成员） */
     UserRoomEntity findUserRoom(String roomId, String userId);
@@ -129,12 +130,12 @@ public interface IChatRepository {
     /** 新消息扇出时按名册成员集清空隐藏位（删除的会话弹回，微信行为；逐用户执行） */
     void clearHidden(String roomId);
 
-    /** 用户侧隐藏会话（置 hidden_at）；新消息 clearHidden 弹回 */
-    void hideRoom(String roomId, String userId, LocalDateTime hiddenAt);
+    /** 用户侧隐藏会话（置 hidden_at，时刻取数据库时钟）；新消息 clearHidden 弹回 */
+    void hideRoom(String roomId, String userId);
 
     // ===== message（内容中心） =====
 
-    void insertMessage(MessageEntity message);
+    void insertMessage(MessageEntity messageEntity);
 
     MessageEntity findMessage(String roomId, Long seq);
 
@@ -147,7 +148,7 @@ public interface IChatRepository {
      *
      * @return 是否实际撤回（0 = 已被撤回，调用方据此跳过 RECALL 事件）
      */
-    boolean recallMessage(String roomId, Long seq, LocalDateTime recalledAt, RecallByVO recalledBy);
+    boolean recallMessage(String roomId, Long seq, RecallByVO recalledBy);
 
     /** 举报回查：按消息全局主键取消息（MESSAGE 举报定位 / 强制撤回入口） */
     MessageEntity findMessageById(String messageId);
@@ -155,7 +156,7 @@ public interface IChatRepository {
     // ===== timeline（不可变瘦收件箱） =====
 
     /** 多值 INSERT 扇出：一条消息 N 个成员 N 行，只插不改 */
-    void insertTimelines(List<TimelineEntity> timelines);
+    void insertTimelines(List<TimelineEntity> timelineEntities);
 
     // ===== user_seq（per-user 投递序号计数器） =====
 

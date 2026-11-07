@@ -48,9 +48,6 @@ public class PostEntity {
         postEntity.likeCount = 0;
         postEntity.commentCount = 0;
         postEntity.viewCount = 0;
-        postEntity.createdAt = LocalDateTime.now();
-        postEntity.reviewEnteredAt = postEntity.createdAt;
-        postEntity.expireAt = postEntity.createdAt.plusDays(30);
         return postEntity;
     }
 
@@ -68,7 +65,6 @@ public class PostEntity {
         postEntity.likeCount = 0;
         postEntity.commentCount = 0;
         postEntity.viewCount = 0;
-        postEntity.createdAt = LocalDateTime.now();
         return postEntity;
     }
 

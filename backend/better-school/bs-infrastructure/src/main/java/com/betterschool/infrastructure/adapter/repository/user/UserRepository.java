@@ -8,13 +8,12 @@ import com.betterschool.domain.user.model.valobj.GenderVO;
 import com.betterschool.domain.user.model.valobj.UserRoleVO;
 import com.betterschool.domain.user.model.valobj.UserStatusVO;
 import com.betterschool.infrastructure.dao.post.IPostDao;
-import com.betterschool.infrastructure.dao.post.po.PostPO;
+import com.betterschool.infrastructure.dao.post.po.Post;
 import com.betterschool.infrastructure.dao.user.IUserDao;
-import com.betterschool.infrastructure.dao.user.po.UserPO;
+import com.betterschool.infrastructure.dao.user.po.User;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
 import com.betterschool.infrastructure.security.JwtService;
 import com.betterschool.types.common.Constants;
-import com.betterschool.types.id.IIdGenerator;
 import lombok.RequiredArgsConstructor;
 import org.redisson.api.RBucket;
 import org.redisson.api.RedissonClient;
@@ -22,6 +21,7 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
@@ -41,28 +41,26 @@ public class UserRepository implements IUserRepository {
 
     private final TransactionTemplate transactionTemplate;
 
-    private final IIdGenerator idGenerator;
-
     @Override
     public UserEntity findByPhone(String phone) {
-        UserPO userPO = userDao.selectByPhone(phone);
-        return userPO == null ? null : toEntity(userPO);
+        User user = userDao.selectByPhone(phone);
+        return user == null ? null : toEntity(user);
     }
 
     @Override
     public UserEntity findById(String userId) {
-        UserPO userPO = userDao.selectById(userId);
-        return userPO == null ? null : toEntity(userPO);
+        User user = userDao.selectById(userId);
+        return user == null ? null : toEntity(user);
     }
 
     /** 落库 + 注册消息 + 搜索同步消息一个原子用例（同事务写 outbox） */
     @Override
     public UserEntity saveRegistered(UserEntity userEntity) {
+        // 业务 ID 应用层发号、insert 前一次写入（物理自增 id 只作内部键，不再同值回写）
+        userEntity.setUserId(UUID.randomUUID().toString());
+        User user = toPO(userEntity);
         return transactionTemplate.execute(status -> {
-            // 业务 ID 应用层发号、insert 前一次写入（物理自增 id 只作内部键，不再同值回写）
-            userEntity.setUserId(idGenerator.nextId());
-            UserPO userPO = toPO(userEntity);
-            userDao.insert(userPO);
+            userDao.insert(user);
             outboxMessageStore.save(Constants.USER_REGISTER_TOPIC, userEntity);
             // 注册后昵称参与用户搜索，落搜索同步消息（与入库同事务）
             outboxMessageStore.save(Constants.SEARCH_SYNC_TOPIC,
@@ -95,7 +93,7 @@ public class UserRepository implements IUserRepository {
             return 0;
         }
         long total = 0;
-        for (PostPO countRow : postDao.selectLikeCountsByPostIds(postIds)) {
+        for (Post countRow : postDao.selectLikeCountsByPostIds(postIds)) {
             total += countRow.getLikeCount() == null ? 0 : countRow.getLikeCount();
         }
         return total;
@@ -159,40 +157,37 @@ public class UserRepository implements IUserRepository {
         return userDao.selectByIds(userIds).stream().map(this::toEntity).toList();
     }
 
-    private UserEntity toEntity(UserPO userPO) {
+    private UserEntity toEntity(User user) {
         UserEntity userEntity = new UserEntity();
-        userEntity.setUserId(userPO.getUserId());
-        userEntity.setPhone(userPO.getPhone());
-        userEntity.setNickname(userPO.getNickname());
-        userEntity.setAvatar(userPO.getAvatar());
-        userEntity.setSignature(userPO.getSignature());
-        userEntity.setGender(userPO.getGender() == null ? null : GenderVO.valueOf(userPO.getGender()));
-        userEntity.setShowLiked(userPO.getShowLiked());
-        userEntity.setShowComments(userPO.getShowComments());
-        userEntity.setRole(UserRoleVO.valueOf(userPO.getRole()));
-        userEntity.setStatus(UserStatusVO.valueOf(userPO.getState()));
-        userEntity.setCreditScore(userPO.getCreditScore());
-        userEntity.setLastLoginAt(userPO.getLastLoginAt());
-        userEntity.setCreatedAt(userPO.getCreateTime());
+        userEntity.setUserId(user.getUserId());
+        userEntity.setPhone(user.getPhone());
+        userEntity.setNickname(user.getNickname());
+        userEntity.setAvatar(user.getAvatar());
+        userEntity.setSignature(user.getSignature());
+        userEntity.setGender(user.getGender() == null ? null : GenderVO.valueOf(user.getGender()));
+        userEntity.setShowLiked(user.getShowLiked());
+        userEntity.setShowComments(user.getShowComments());
+        userEntity.setRole(UserRoleVO.valueOf(user.getRole()));
+        userEntity.setStatus(UserStatusVO.valueOf(user.getState()));
+        userEntity.setCreditScore(user.getCreditScore());
+        userEntity.setLastLoginAt(user.getLastLoginAt());
+        userEntity.setCreatedAt(user.getCreateTime());
         return userEntity;
     }
 
-    private UserPO toPO(UserEntity userEntity) {
-        UserPO userPO = new UserPO();
-        userPO.setUserId(userEntity.getUserId());
-        userPO.setPhone(userEntity.getPhone());
-        userPO.setNickname(userEntity.getNickname());
-        userPO.setAvatar(userEntity.getAvatar());
-        userPO.setSignature(userEntity.getSignature());
-        userPO.setGender(userEntity.getGender() == null ? null : userEntity.getGender().name());
-        userPO.setShowLiked(userEntity.getShowLiked());
-        userPO.setShowComments(userEntity.getShowComments());
-        userPO.setRole(userEntity.getRole().name());
-        userPO.setState(userEntity.getStatus().name());
-        userPO.setCreditScore(userEntity.getCreditScore());
-        userPO.setLastLoginAt(userEntity.getLastLoginAt());
-        userPO.setUpdateTime(userEntity.getCreatedAt());
-        userPO.setCreateTime(userEntity.getCreatedAt());
-        return userPO;
+    private User toPO(UserEntity userEntity) {
+        User user = new User();
+        user.setUserId(userEntity.getUserId());
+        user.setPhone(userEntity.getPhone());
+        user.setNickname(userEntity.getNickname());
+        user.setAvatar(userEntity.getAvatar());
+        user.setSignature(userEntity.getSignature());
+        user.setGender(userEntity.getGender() == null ? null : userEntity.getGender().name());
+        user.setShowLiked(userEntity.getShowLiked());
+        user.setShowComments(userEntity.getShowComments());
+        user.setRole(userEntity.getRole().name());
+        user.setState(userEntity.getStatus().name());
+        user.setCreditScore(userEntity.getCreditScore());
+        return user;
     }
 }

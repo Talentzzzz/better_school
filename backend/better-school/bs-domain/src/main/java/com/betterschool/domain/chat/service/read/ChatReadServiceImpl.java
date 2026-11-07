@@ -8,8 +8,6 @@ import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
-
 /**
  * 水位线推进：目标 = 会话水位真源 room.last_seq（打开即已读，未读算式同源），守卫 UPDATE 只前进；
  * 仅水位线实际前进才投递 READ 事件——并发/重复打开时守卫 UPDATE 落空，幂等无噪音。
@@ -49,6 +47,7 @@ public class ChatReadServiceImpl implements IChatReadService {
         if (self == null) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "非会话成员");
         }
-        chatRepository.hideRoom(roomId, userId, LocalDateTime.now());
+        // hidden_at 由 SQL NOW() 落库（时刻一律数据库时钟；该列只作「非 NULL 即隐藏」判断）
+        chatRepository.hideRoom(roomId, userId);
     }
 }

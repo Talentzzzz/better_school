@@ -1,11 +1,11 @@
 package com.betterschool.infrastructure.dao.moderation;
 
-import com.betterschool.infrastructure.dao.moderation.po.ContentReportPO;
-import com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO;
-import com.betterschool.infrastructure.dao.moderation.po.ReviewQueueItemPO;
-import com.betterschool.infrastructure.dao.moderation.po.ReviewTaskPO;
-import com.betterschool.infrastructure.dao.moderation.po.ReviewTaskTargetPO;
-import com.betterschool.infrastructure.dao.moderation.po.SensitiveWordPO;
+import com.betterschool.infrastructure.dao.moderation.po.ContentReport;
+import com.betterschool.infrastructure.dao.moderation.po.ContentReview;
+import com.betterschool.infrastructure.dao.moderation.po.ReviewQueueItem;
+import com.betterschool.infrastructure.dao.moderation.po.ReviewTask;
+import com.betterschool.infrastructure.dao.moderation.po.ReviewTaskTarget;
+import com.betterschool.infrastructure.dao.moderation.po.SensitiveWord;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -20,10 +20,10 @@ import java.util.Map;
 public interface IModerationDao {
 
     /** INSERT IGNORE：uk_target_action 冲突 = 已记录过（幂等，审计只插一次） */
-    int insertIgnoreReview(ContentReviewPO reviewPO);
+    int insertIgnoreReview(ContentReview review);
 
     /** INSERT IGNORE：uk_target_round 冲突 = 同轮已开单（幂等入池，0 行不报错） */
-    int insertIgnoreTask(ReviewTaskPO taskPO);
+    int insertIgnoreTask(ReviewTask task);
 
     /** 关单：该目标该轮之外的全部在途工单（PENDING/CLAIMED）停 DONE（入池前清旧轮遗留，幂等） */
     int closeStaleRoundTasks(@Param("targetType") String targetType, @Param("targetId") String targetId,
@@ -61,7 +61,7 @@ public interface IModerationDao {
     int countEscalatedPending();
 
     /** INSERT IGNORE：uk_reporter_target 冲突 = 重复举报（幂等），返回影响行数 */
-    int insertIgnoreReport(ContentReportPO reportPO);
+    int insertIgnoreReport(ContentReport report);
 
     /** 核实：PENDING → PROCESSED，返回影响行数（1=本次刚核实；按业务键 report_id 定位） */
     int processById(@Param("reportId") String reportId, @Param("handlerId") String handlerId);
@@ -69,7 +69,7 @@ public interface IModerationDao {
     /** 忽略：PENDING → IGNORED，返回影响行数 */
     int ignoreById(@Param("reportId") String reportId, @Param("handlerId") String handlerId);
 
-    ContentReportPO selectReportById(@Param("reportId") String reportId);
+    ContentReport selectReportById(@Param("reportId") String reportId);
 
     /** 同 target 举报单是否已有 REPORT_CONFIRMED 流水（直查 user_credit_detail 子查询，一内容一罚判定） */
     int existsProcessedCreditLog(@Param("authorId") String authorId, @Param("targetType") String targetType,
@@ -79,7 +79,7 @@ public interface IModerationDao {
      * 审核队列（review_task 单表）：工单定位列（targetType/targetId/reviewRound/authorId/enteredAt），
      * 素材与作者昵称由仓储按 target_id 集回查业务表与 bs_user 拼装（SQL 层零 JOIN）
      */
-    List<ReviewQueueItemPO> selectReviewQueue(@Param("targetType") String targetType,
+    List<ReviewQueueItem> selectReviewQueue(@Param("targetType") String targetType,
                                               @Param("offset") int offset, @Param("limit") int limit);
 
     /** 审核队列计数（targetType 为 null = 跨类型全量） */
@@ -95,13 +95,13 @@ public interface IModerationDao {
     Map<String, Object> selectPendingWaitStats();
 
     /** 审核详情素材（业务表单表直查）：authorNickname 仓储回查 bs_user 拼装 */
-    ReviewQueueItemPO selectReviewDetail(@Param("targetType") String targetType, @Param("targetId") String targetId);
+    ReviewQueueItem selectReviewDetail(@Param("targetType") String targetType, @Param("targetId") String targetId);
 
     /** 工单按业务键定位（详情聚合入口） */
-    ReviewTaskPO selectTaskById(@Param("taskId") String taskId);
+    ReviewTask selectTaskById(@Param("taskId") String taskId);
 
     /** 反查审核员持有的在途工单（遗留审核入口收口用：claim_by=我 且 claim_state='CLAIMED'；未持有返回 null） */
-    ReviewTaskPO selectHeldTaskByTarget(@Param("targetType") String targetType, @Param("targetId") String targetId,
+    ReviewTask selectHeldTaskByTarget(@Param("targetType") String targetType, @Param("targetId") String targetId,
                                         @Param("claimBy") String claimBy);
 
     /**
@@ -111,26 +111,26 @@ public interface IModerationDao {
     int closeByHolder(@Param("taskId") String taskId, @Param("claimBy") String claimBy);
 
     /** 工单内容素材按类型分支单表直查（通用列 + 类型专属上下文 id；不筛业务行状态，DONE 工单也要能看） */
-    ReviewTaskTargetPO selectTaskTargetDetail(@Param("targetType") String targetType, @Param("targetId") String targetId);
+    ReviewTaskTarget selectTaskTargetDetail(@Param("targetType") String targetType, @Param("targetId") String targetId);
 
     /** 同一内容历轮裁决（review_round 升序） */
-    List<ContentReviewPO> selectReviewsByTarget(@Param("targetType") String targetType, @Param("targetId") String targetId);
+    List<ContentReview> selectReviewsByTarget(@Param("targetType") String targetType, @Param("targetId") String targetId);
 
     /** 同一作者历史裁决（单表 author_id 直查免 join，id 降序取最新 limit 条） */
-    List<ContentReviewPO> selectReviewsByAuthor(@Param("authorId") String authorId, @Param("limit") int limit);
+    List<ContentReview> selectReviewsByAuthor(@Param("authorId") String authorId, @Param("limit") int limit);
 
     /** 拒绝理由：uk_target_action 下 REJECT 至多一行，取最新一条兜底 */
     String selectRejectReason(@Param("targetType") String targetType, @Param("targetId") String targetId);
 
     /** 批量拒绝理由取数：该批 target 的全部 REJECT 行（含物理 id），「每 target 取最新」裁决在仓储 Java 侧做 */
-    List<ContentReviewPO> selectRejectRowsByTargetIds(@Param("targetType") String targetType,
+    List<ContentReview> selectRejectRowsByTargetIds(@Param("targetType") String targetType,
                                                       @Param("targetIds") List<String> targetIds);
 
     /** 某类型全部 APPROVE 流水的最新时刻（content_review 单表 GROUP BY，feed 索引重建拼 feed_time 用） */
-    List<ContentReviewPO> selectApproveRowsByTargetType(@Param("targetType") String targetType);
+    List<ContentReview> selectApproveRowsByTargetType(@Param("targetType") String targetType);
 
     /** 举报列表（content_report 单表）：举报人/被举报人昵称由仓储回查 bs_user 拼装 */
-    List<ContentReportPO> selectReports(@Param("status") String status, @Param("offset") int offset,
+    List<ContentReport> selectReports(@Param("status") String status, @Param("offset") int offset,
                                         @Param("limit") int limit);
 
     long countReports(@Param("status") String status);
@@ -140,13 +140,13 @@ public interface IModerationDao {
 
     int existsUser(@Param("userId") String userId);
 
-    int insertIgnoreWord(SensitiveWordPO wordPO);
+    int insertIgnoreWord(SensitiveWord word);
 
     int deleteWord(@Param("wordId") Long wordId);
 
     List<String> selectEnabledWords();
 
-    List<SensitiveWordPO> selectWords(@Param("offset") int offset, @Param("limit") int limit);
+    List<SensitiveWord> selectWords(@Param("offset") int offset, @Param("limit") int limit);
 
     long countWords();
 }

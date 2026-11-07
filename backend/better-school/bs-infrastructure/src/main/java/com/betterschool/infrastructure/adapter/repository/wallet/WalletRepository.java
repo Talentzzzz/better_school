@@ -5,19 +5,18 @@ import com.betterschool.domain.wallet.model.entity.VirtualWalletEntity;
 import com.betterschool.domain.wallet.model.entity.WalletDetailEntity;
 import com.betterschool.domain.wallet.model.valobj.WalletDetailTypeVO;
 import com.betterschool.infrastructure.dao.wallet.IWalletDao;
-import com.betterschool.infrastructure.dao.wallet.po.VirtualWalletPO;
-import com.betterschool.infrastructure.dao.wallet.po.WalletDetailPO;
+import com.betterschool.infrastructure.dao.wallet.po.VirtualWallet;
+import com.betterschool.infrastructure.dao.wallet.po.WalletDetail;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
-import com.betterschool.types.id.IIdGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * 虚拟钱包仓储：资金动作"流水先行（uk_order_type 幂等）+ 余额条件 UPDATE"，每个动作由方法自身
@@ -32,24 +31,18 @@ public class WalletRepository implements IWalletRepository {
 
     private final IWalletDao walletDao;
 
-    /** 业务 ID 发号器（wallet_id UUID，uuid-biz-id 票 06） */
-    private final IIdGenerator idGenerator;
-
     /** 资金动作都是「流水先行 + 余额条件 UPDATE」的原子用例：仓储方法内用事务（REQUIRED）收口 */
     private final TransactionTemplate transactionTemplate;
 
     @Override
     public void ensureWallet(String userId) {
-        VirtualWalletPO walletPO = new VirtualWalletPO();
+        VirtualWallet wallet = new VirtualWallet();
         // 业务 ID 随 insert 一次写入（uuid-biz-id 票 06）；INSERT IGNORE 撞 uk_user 时本行未落库，发号作废无害
-        walletPO.setWalletId(idGenerator.nextId());
-        walletPO.setUserId(userId);
-        walletPO.setBalance(INITIAL_BALANCE);
-        walletPO.setFrozenAmount(BigDecimal.ZERO);
-        LocalDateTime now = LocalDateTime.now();
-        walletPO.setCreateTime(now);
-        walletPO.setUpdateTime(now);
-        walletDao.insertIgnore(walletPO);
+        wallet.setWalletId(UUID.randomUUID().toString());
+        wallet.setUserId(userId);
+        wallet.setBalance(INITIAL_BALANCE);
+        wallet.setFrozenAmount(BigDecimal.ZERO);
+        walletDao.insertIgnore(wallet);
     }
 
     @Override
@@ -147,43 +140,40 @@ public class WalletRepository implements IWalletRepository {
 
     /** 返回影响行数：0 = 该流水已存在（幂等跳过） */
     private int insertDetail(String userId, WalletDetailTypeVO type, BigDecimal amount, String orderId, int bizRound) {
-        WalletDetailPO detailPO = new WalletDetailPO();
-        detailPO.setUserId(userId);
-        detailPO.setType(type.name());
-        detailPO.setAmount(amount);
-        detailPO.setOrderId(orderId);
-        detailPO.setBizRound(bizRound);
-        LocalDateTime now = LocalDateTime.now();
-        detailPO.setCreateTime(now);
-        detailPO.setUpdateTime(now);
-        return walletDao.insertIgnoreDetail(detailPO);
+        WalletDetail detail = new WalletDetail();
+        detail.setUserId(userId);
+        detail.setType(type.name());
+        detail.setAmount(amount);
+        detail.setOrderId(orderId);
+        detail.setBizRound(bizRound);
+        return walletDao.insertIgnoreDetail(detail);
     }
 
-    private VirtualWalletEntity toEntity(VirtualWalletPO walletPO) {
-        if (walletPO == null) {
+    private VirtualWalletEntity toEntity(VirtualWallet wallet) {
+        if (wallet == null) {
             return null;
         }
         VirtualWalletEntity walletEntity = new VirtualWalletEntity();
-        walletEntity.setWalletId(walletPO.getWalletId());
-        walletEntity.setUserId(walletPO.getUserId());
-        walletEntity.setBalance(walletPO.getBalance());
-        walletEntity.setFrozenAmount(walletPO.getFrozenAmount());
-        walletEntity.setCreatedAt(walletPO.getCreateTime());
-        walletEntity.setUpdatedAt(walletPO.getUpdateTime());
+        walletEntity.setWalletId(wallet.getWalletId());
+        walletEntity.setUserId(wallet.getUserId());
+        walletEntity.setBalance(wallet.getBalance());
+        walletEntity.setFrozenAmount(wallet.getFrozenAmount());
+        walletEntity.setCreatedAt(wallet.getCreateTime());
+        walletEntity.setUpdatedAt(wallet.getUpdateTime());
         return walletEntity;
     }
 
-    private WalletDetailEntity toDetailEntity(WalletDetailPO detailPO) {
+    private WalletDetailEntity toDetailEntity(WalletDetail detail) {
         WalletDetailEntity detailEntity = new WalletDetailEntity();
-        detailEntity.setId(detailPO.getId());
-        detailEntity.setWalletId(detailPO.getWalletId());
-        detailEntity.setUserId(detailPO.getUserId());
-        detailEntity.setType(WalletDetailTypeVO.valueOf(detailPO.getType()));
-        detailEntity.setAmount(detailPO.getAmount());
-        detailEntity.setOrderId(detailPO.getOrderId());
-        detailEntity.setBizRound(detailPO.getBizRound());
-        detailEntity.setCreateTime(detailPO.getCreateTime());
-        detailEntity.setUpdateTime(detailPO.getUpdateTime());
+        detailEntity.setId(detail.getId());
+        detailEntity.setWalletId(detail.getWalletId());
+        detailEntity.setUserId(detail.getUserId());
+        detailEntity.setType(WalletDetailTypeVO.valueOf(detail.getType()));
+        detailEntity.setAmount(detail.getAmount());
+        detailEntity.setOrderId(detail.getOrderId());
+        detailEntity.setBizRound(detail.getBizRound());
+        detailEntity.setCreateTime(detail.getCreateTime());
+        detailEntity.setUpdateTime(detail.getUpdateTime());
         return detailEntity;
     }
 }

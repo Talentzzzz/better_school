@@ -9,12 +9,12 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理主键：纯内部键，永不对外、永不再与业务键同值|
-|room_id|varchar(36)|UNIQUE(`uk_room_id`), NOT NULL|会话业务 ID（对外唯一标识，UUID 字符串）：应用层 insert 前由 `IIdGenerator` 发号、随行一次写入；user_room/room_member/message/timeline 引用的都是它|
+|room_id|varchar(36)|UNIQUE(`uk_room_id`), NOT NULL|会话业务 ID（对外唯一标识，UUID 字符串）：应用层 insert 前生成（`UUID.randomUUID()`）、随行一次写入；user_room/room_member/message/timeline 引用的都是它|
 |source|varchar(20)|NULL|会话来源（首次由市集「私信联系」入口建会话时写入、**首来源钉死不覆盖**；首页/主页入口建的为 NULL）：ERRAND/PRODUCT|
-|initiator_id|varchar(36)|NULL|首建发起人 user_id（对家角色标签的相对视角锚点；`source` 为 NULL 时也为 NULL）|
+|creator_id|varchar(36)|NULL|会话创建人 user_id，首建落定不覆盖（对家角色标签的相对视角锚点；`source` 为 NULL 时也为 NULL）|
 |last_seq|bigint|NOT NULL, DEFAULT 0|消息序号水位（取号器）：发消息事务内 `UPDATE last_seq=last_seq+1` 原子取号，回滚无空洞|
 |state|varchar(20)|NOT NULL, DEFAULT 'ACTIVE'|与取号器同行：一把行锁完成取号+终态判定；当前恒 ACTIVE（SEALED 已随票 04 下线不再产生，列随口径保留）|
-|create_time|datetime|NOT NULL|创建时间（无默认值，应用写入；全库无 created_at）|
+|create_time|datetime|NOT NULL|创建时间（无默认值，SQL `NOW()` 写入；全库无 created_at）|
 |update_time|datetime|NOT NULL|更新时间|
 
 > `user_min`/`user_max`/`uk_direct_pair` 已迁出至 user_pair_room（配对收口）——room 回归纯会话实体、不知道「配对」的存在。
@@ -29,7 +29,7 @@
 - `last_seq` 是取号器，禁用自增 `id` 充当消息序号；取号必须与消息/时间线写入同事务
 - 未读数不落库 = `room.last_seq − user_room.read_seq`（真源与会话真相同行，服务端多一次查询现算）
 - `source` 只写一次（`user_pair_room.uk_pair` 命中即原样返回既有 room）：同一对人先聊闲置又聊跑腿仍是同一条会话、同一个标签
-- `source` + `initiator_id` 是市集消息页的筛子与角色标签来源；对家角色（跑手/卖家/买家）**按请求者现算不落库**——同一会话两侧各自看到自己的对家
+- `source` + `creator_id` 是市集消息页的筛子与角色标签来源；对家角色（跑手/卖家/买家）**按请求者现算不落库**——同一会话两侧各自看到自己的对家
 
 # user_pair_room（用户对 → 1v1 会话映射，查重与反查专用）
 
@@ -69,11 +69,11 @@
 - `idx_user_msg (user_id, last_msg_time)`：会话列表驱动索引（user_id 等值 + last_msg_time 倒序取页）
 
 ## 注意
-- 本表只装 per-user 状态（排序键 `last_msg_time` + 水位线 `read_seq` + 隐藏位 `hidden_at`），会话事实（来源/发起人/seq 水位）在 room、名册在 room_member——三张表严格分工，不再有「一条 UPDATE 刷两行」的副本同步负担
+- 本表只装 per-user 状态（排序键 `last_msg_time` + 水位线 `read_seq` + 隐藏位 `hidden_at`），会话事实（来源/创建人/seq 水位）在 room、名册在 room_member——三张表严格分工，不再有「一条 UPDATE 刷两行」的副本同步负担
 - 水位线只前进不回退（SQL 带 `read_seq < 目标` 条件）
 - 发送事务只刷 `last_msg_time`；撤回**零写**（列表「[已撤回]」由读时现算天然覆盖）
 - 无业务 ID 列：对外按 (room_id, user_id) 定位
-- **会话列表读路径 = 四段查（SQL 层零 JOIN）**：①本人 user_room 行分页（筛+排+取页，`idx_user_msg`）→ ②room 行批量回查（`last_seq` 未读真源 + source/initiator 角色锚点）→ ③名册回查对家 user_id → ④按 `(room_id, room.last_seq)` 逐会话点查 message 最新一条现算预览（`last_seq=0` 空会话不查；点查上限 = 页大小 200，非无界 N+1）
+- **会话列表读路径 = 四段查（SQL 层零 JOIN）**：①本人 user_room 行分页（筛+排+取页，`idx_user_msg`）→ ②room 行批量回查（`last_seq` 未读真源 + source/creator 角色锚点）→ ③名册回查对家 user_id → ④按 `(room_id, room.last_seq)` 逐会话点查 message 最新一条现算预览（`last_seq=0` 空会话不查；点查上限 = 页大小 200，非无界 N+1）
 
 # room_member（会话成员名册，会话维度「这个会话有谁」的正式查询面）
 
@@ -99,7 +99,7 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理主键：纯内部键，永不对外（timeline 引 `msg_id`）|
-|msg_id|varchar(36)|UNIQUE(`uk_msg_id`), NOT NULL|消息业务 ID（对外唯一标识，UUID 字符串）：应用层 insert 前由 `IIdGenerator` 发号、随行一次写入；跨表引用与对外暴露用它|
+|msg_id|varchar(36)|UNIQUE(`uk_msg_id`), NOT NULL|消息业务 ID（对外唯一标识，UUID 字符串）：应用层 insert 前生成（`UUID.randomUUID()`）、随行一次写入；跨表引用与对外暴露用它|
 |room_id|varchar(36)|NOT NULL|会话业务键（引用 `room.room_id`）|
 |seq|bigint|NOT NULL|消息序号（`room.last_seq` 取号，会话内从 1 起），`uk_room_seq` 第二列|
 |from_user_id|varchar(36)|NOT NULL|发送者（1v1 无系统消息，恒非空）|
@@ -122,7 +122,7 @@
 
 ## 注意
 - 撤回条件 UPDATE 带 `state='NORMAL'` 守卫：用户自撤与强制撤回并发先到先得，已撤回行不被覆盖
-- 发消息事务顺序：insert 前生成 `msg_id`（`IIdGenerator`）→ 插 message（业务键随行一次写入）→ timeline 扇出引用该 `msg_id`
+- 发消息事务顺序：insert 前生成 `msg_id`（`UUID.randomUUID()`）→ 插 message（业务键随行一次写入）→ timeline 扇出引用该 `msg_id`
 - **预览渲染规则归属本表**：会话列表预览不落任何副本（user_room 只有排序键 `last_msg_time`），读时按 `(room_id, room.last_seq)` 点查本表最新一条、由 `RoomPreviewRenderer` 单点渲染——message 是预览唯一真相，撤回即时反映、永不漂移。渲染规则：`RECALLED`→[已撤回]、`IMAGE`→[图片]、`CARD`→按 `ref_type` 出 [商品]/[帖子]/[跑腿卡片]（不查标题）、`TEXT`→原文截 200
 
 # timeline（时间线，不可变瘦收件箱）
@@ -179,7 +179,7 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理自增，**禁止当已读水位**（分配序 ≠ 提交序，并发跳读）|
-|notification_id|varchar(36)|NOT NULL, UNIQUE `uk_notification_id`|业务 ID（对外唯一标识，UUID 字符串）：应用层 insert 前由 `IIdGenerator` 发号、随行一次写入（uuid-biz-id 票 06 起，不再有 bindBizId 回写）|
+|notification_id|varchar(36)|NOT NULL, UNIQUE `uk_notification_id`|业务 ID（对外唯一标识，UUID 字符串）：应用层 insert 前生成（`UUID.randomUUID()`）、随行一次写入（uuid-biz-id 票 06 起，不再有 bindBizId 回写）|
 |user_id|varchar(36)|NOT NULL|接收用户|
 |scope|varchar(20)|NOT NULL|收件范围：MARKET_ERRAND/MARKET_PRODUCT(预留)/BOTTOM_SYSTEM/INTERACTION_LIKE/INTERACTION_COMMENT；**生产点写入时显式标注，禁止从 (type,refType) 推导**（同一 ORDER_EVENT×ERRAND 发用户=MARKET_ERRAND、发审核员=BOTTOM_SYSTEM）|
 |seq|bigint|NOT NULL|per-(user,scope) 收件序号（notification_seq 写入事务内取号）|

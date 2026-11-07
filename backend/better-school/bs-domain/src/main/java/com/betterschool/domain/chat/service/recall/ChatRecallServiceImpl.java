@@ -58,7 +58,8 @@ public class ChatRecallServiceImpl implements IChatRecallService {
     }
 
     private void doRecall(MessageEntity message, RecallByVO recalledBy) {
-        // 条件 UPDATE（status=NORMAL 才生效）：并发撤回先到先得，落空即已被撤回，幂等静默
-        chatRepository.recallMessageWithEvent(message.getRoomId(), message.getSeq(), LocalDateTime.now(), recalledBy);
+        // 条件 UPDATE（status=NORMAL 才生效）：并发撤回先到先得，落空即已被撤回，幂等静默；
+        // recalled_at 由 SQL NOW() 落库（时刻一律数据库时钟）
+        chatRepository.recallMessageWithEvent(message.getRoomId(), message.getSeq(), recalledBy);
     }
 }

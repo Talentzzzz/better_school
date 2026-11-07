@@ -10,19 +10,19 @@
         po.state, po.create_time, po.update_time
     </sql>
 
-    <!-- uuid-biz-id 票 05：业务 ID 发号在 repository 落库前生成（IIdGenerator.nextId），随行一次写入，
+    <!-- uuid-biz-id 票 05：业务 ID 发号在 repository 落库前生成（UUID.randomUUID()），随行一次写入，
          删除 bindBizId 自增同值回写 -->
-    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO">
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.productorder.po.ProductOrder">
         INSERT INTO product_order (product_order_id, buyer_id, seller_id, product_id, price,
                                    product_title, product_description, product_images, product_trade_location, product_category,
                                    state, create_time, update_time)
         VALUES (#{productOrderId}, #{buyerId}, #{sellerId}, #{productId}, #{price},
                 #{productTitle}, #{productDescription}, #{productImages}, #{productTradeLocation}, #{productCategory},
-                #{state}, #{createTime}, #{updateTime})
+                #{state}, NOW(), NOW())
     </insert>
 
     <!-- 纯 product_order 单表：买卖双方昵称头像由仓储查 bs_user 批量回查拼装（SQL 层零 JOIN） -->
-    <select id="selectById" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO">
+    <select id="selectById" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrder">
         SELECT <include refid="baseColumns"/>
         FROM product_order po
         WHERE po.product_order_id = #{orderId}
@@ -72,7 +72,7 @@
           AND state = 'PENDING_PAYMENT'
     </update>
 
-    <select id="selectMineByBuyer" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO">
+    <select id="selectMineByBuyer" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrder">
         SELECT <include refid="baseColumns"/>
         FROM product_order po
         WHERE po.buyer_id = #{userId}
@@ -86,7 +86,7 @@
         WHERE buyer_id = #{userId}
     </select>
 
-    <select id="selectMineBySeller" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO">
+    <select id="selectMineBySeller" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrder">
         SELECT <include refid="baseColumns"/>
         FROM product_order po
         WHERE po.seller_id = #{userId}
@@ -101,11 +101,11 @@
     </select>
 
     <!-- 订单状态流转事件（只插入，纠纷溯源事实源）：随条件 UPDATE 成功在同一事务写入 -->
-    <insert id="insertOrderEvent" parameterType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderEventPO">
+    <insert id="insertOrderEvent" parameterType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderEvent">
         INSERT INTO product_order_event (order_id, event_type, from_state, to_state, actor_id, actor_role,
                                          reason_type, reason, images, create_time, update_time)
         VALUES (#{orderId}, #{eventType}, #{fromState}, #{toState}, #{actorId}, #{actorRole},
-                #{reasonType}, #{reason}, #{images}, #{createTime}, #{updateTime})
+                #{reasonType}, #{reason}, #{images}, NOW(), NOW())
     </insert>
 
 </mapper>

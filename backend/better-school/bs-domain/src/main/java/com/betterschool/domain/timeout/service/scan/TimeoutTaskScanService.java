@@ -11,7 +11,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -25,7 +24,8 @@ import java.util.Map;
  * 裁决权仍在库上（三条 UPDATE 都只打未终态行），所以「回调在途被取消」这类竞态不会把 CANCELED 翻回来。
  * <p>
  * <b>不用 {@code INTERVAL ?}</b>（票 02 实测的 SQL 形态避让）：datasource 已坐在 ShardingSphere 驱动上，
- * 「函数内嵌占位符」会被解析器弄丢参数，所以退避时刻在域服务里算成普通 {@code LocalDateTime} 参数传下去。
+ * 「函数内嵌占位符」会被解析器弄丢参数，所以退避在域服务里算成普通<b>秒数</b>参数传下去，
+ * SQL 侧 TIMESTAMPADD 换算绝对时刻（占位符在普通参数位，不受影响；时刻一律数据库时钟）。
  */
 @Slf4j
 @Service
@@ -75,15 +75,15 @@ public class TimeoutTaskScanService implements ITimeoutTaskScanService {
         int successCount = 0;
         int retryCount = 0;
         int deadCount = 0;
-        LocalDateTime earliestNextFireTime = null;
+        Integer earliestBackoffSeconds = null;
         for (Map.Entry<String, BucketIds> entry : byTaskType.entrySet()) {
             String taskType = entry.getKey();
             BucketIds buckets = entry.getValue();
 
             successCount += buckets.successIds.size();
             deadCount += buckets.deadIds.size();
-            retryCount += buckets.retryTimes.size();
-            earliestNextFireTime = earliestOf(earliestNextFireTime, buckets.retryTimes.values());
+            retryCount += buckets.backoffSeconds.size();
+            earliestBackoffSeconds = earliestOf(earliestBackoffSeconds, buckets.backoffSeconds.values());
 
             // 死信逐行报：一行只会死一次，低频且每条都值得单独可查（要人工处理的就它）
             for (String bizId : buckets.deadIds) {
@@ -95,7 +95,8 @@ public class TimeoutTaskScanService implements ITimeoutTaskScanService {
         // 重试是**热路径**（每次回调失败都走它），逐行 WARN 在「业务方整体不可用」时会一个 tick 刷出
         // 几千行、把真正的告警淹掉——按批汇总一条，行级细节本来就在库里查得到。
         if (retryCount > 0) {
-            log.warn("[超时中心告警] 本批 {} 条回调失败进入重试（最早一次重投 {}）", retryCount, earliestNextFireTime);
+            log.warn("[超时中心告警] 本批 {} 条回调失败进入重试（最早一次重投在 {}s 后，SQL 侧按 DB 时钟换算）",
+                    retryCount, earliestBackoffSeconds);
         }
         return new SettleOutcomeVO(successCount, retryCount, deadCount);
     }
@@ -116,7 +117,7 @@ public class TimeoutTaskScanService implements ITimeoutTaskScanService {
             } else if (reachesRetryLimit(task)) {
                 buckets.deadIds.add(task.getBizId());
             } else {
-                buckets.retryTimes.put(task.getBizId(), nextFireTimeAfterFailure(task));
+                buckets.backoffSeconds.put(task.getBizId(), backoffSecondsAfterFailure(task));
             }
         }
         return byTaskType;
@@ -130,17 +131,17 @@ public class TimeoutTaskScanService implements ITimeoutTaskScanService {
      * 不是错误，账本口径仍是「按回报归到哪一桶」（{@link SettleOutcomeVO}）。
      */
     private void markBuckets(int slot, String taskType, BucketIds buckets) {
-        if (buckets.successIds.isEmpty() && buckets.retryTimes.isEmpty() && buckets.deadIds.isEmpty()) {
+        if (buckets.successIds.isEmpty() && buckets.backoffSeconds.isEmpty() && buckets.deadIds.isEmpty()) {
             return;
         }
         int succeeded = timeoutRepository.markSuccessBatch(slot, taskType, buckets.successIds);
-        int retried = timeoutRepository.markRetryBatch(slot, taskType, buckets.retryTimes);
+        int retried = timeoutRepository.markRetryBatch(slot, taskType, buckets.backoffSeconds);
         int dead = timeoutRepository.markDeadBatch(slot, taskType, buckets.deadIds);
-        if (succeeded != buckets.successIds.size() || retried != buckets.retryTimes.size()
+        if (succeeded != buckets.successIds.size() || retried != buckets.backoffSeconds.size()
                 || dead != buckets.deadIds.size()) {
             log.info("[超时中心] 结算批实际改到的行数少于回报项数（被并发取消/已终态的行按设计不翻转）："
                             + "taskType={}, 成功 {}/{}, 重试 {}/{}, 死信 {}/{}", taskType,
-                    succeeded, buckets.successIds.size(), retried, buckets.retryTimes.size(),
+                    succeeded, buckets.successIds.size(), retried, buckets.backoffSeconds.size(),
                     dead, buckets.deadIds.size());
         }
     }
@@ -159,22 +160,22 @@ public class TimeoutTaskScanService implements ITimeoutTaskScanService {
         return slot;
     }
 
-    /** 多桶里最早的退避时刻（只用于那条汇总 WARN） */
-    private static LocalDateTime earliestOf(LocalDateTime earliest, Collection<LocalDateTime> candidates) {
-        LocalDateTime result = earliest;
-        for (LocalDateTime candidate : candidates) {
-            if (result == null || candidate.isBefore(result)) {
+    /** 多桶里最短的退避秒数（只用于那条汇总 WARN；绝对时刻由 SQL 侧按数据库时钟换算） */
+    private static Integer earliestOf(Integer earliest, Collection<Integer> candidates) {
+        Integer result = earliest;
+        for (Integer candidate : candidates) {
+            if (result == null || candidate < result) {
                 result = candidate;
             }
         }
         return result;
     }
 
-    /** 一个 taskType 的三个互斥桶：成功项 / 重试项（键序 = 退避时刻的对应序，见仓储实现）/ 死信项 */
+    /** 一个 taskType 的三个互斥桶：成功项 / 重试项（键序 = 退避秒数的对应序，见仓储实现）/ 死信项 */
     private static final class BucketIds {
 
         private final List<String> successIds = new ArrayList<>();
-        private final LinkedHashMap<String, LocalDateTime> retryTimes = new LinkedHashMap<>();
+        private final LinkedHashMap<String, Integer> backoffSeconds = new LinkedHashMap<>();
         private final List<String> deadIds = new ArrayList<>();
     }
 
@@ -198,19 +199,19 @@ public class TimeoutTaskScanService implements ITimeoutTaskScanService {
     }
 
     /**
-     * 失败后的下次可触发时刻 = {@code now + base × 2^(失败次数-1)}，单次封顶 {@code max}
-     * ——30s、60s、120s…。
+     * 失败后的退避时长 = {@code base × 2^(失败次数-1)}，单次封顶 {@code max}（秒）
+     * ——30s、60s、120s…。Java 只产生时长，绝对时刻（next_fire_time）由 SQL 侧
+     * {@code TIMESTAMPADD(SECOND, ?, NOW())} 按数据库时钟落库。
      * <p>
      * 行上的 {@code retry_count} 是**已失败次数**：首次失败后它为 1，间隔就该是 base（30s），
      * 所以指数取 {@code 失败次数 - 1}。左移即乘 2 的幂（倍率固定 2，「指数翻倍」写死）。
      */
-    private LocalDateTime nextFireTimeAfterFailure(TimeoutTaskEntity task) {
+    private int backoffSecondsAfterFailure(TimeoutTaskEntity task) {
         int exponent = Math.min(Math.max(failedTimes(task) - 1, 0), MAX_BACKOFF_EXPONENT);
         // 两个配置项都兜底：底数 ≥1s、封顶 ≥1s（只兜底数是不够的——`max-seconds: 0` 会让退避算成 0，
-        // next_fire_time 贴住 tick 起始时刻，那一行在同一轮里被反复捞起 → 「循环拉批到空」拉不到空，
+        // next_fire_time 贴住落库时刻，那一行在同一轮里被反复捞起 → 「循环拉批到空」拉不到空，
         // 一次 tick 就把 16 次重试跑光。配置写错了也不该炸在这里）
         long cappedSeconds = Math.min(Math.max(retryBaseSeconds, 1) * (1L << exponent), Math.max(retryMaxSeconds, 1));
-        long delaySeconds = Math.max(cappedSeconds, 1);
-        return LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS).plusSeconds(delaySeconds);
+        return (int) Math.max(cappedSeconds, 1);
     }
 }

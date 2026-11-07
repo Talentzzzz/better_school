@@ -15,7 +15,7 @@ import com.betterschool.domain.chat.model.entity.RoomEntity;
 import com.betterschool.domain.chat.model.valobj.CardRefTypeVO;
 import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
 import com.betterschool.domain.chat.model.valobj.RoomMemberVO;
-import com.betterschool.domain.chat.model.valobj.RoomSourceVO;
+import com.betterschool.domain.chat.model.valobj.RoomSourceEnum;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
 import com.betterschool.domain.chat.model.valobj.TimelineItemVO;
 import com.betterschool.domain.chat.adapter.port.IWsTicketPort;
@@ -173,12 +173,12 @@ public class ChatController implements IChatService {
     }
 
     /** 会话来源可省略（首页/用户主页入口）；写了就必须是市集两域之一 */
-    private RoomSourceVO parseRoomSource(String source) {
+    private RoomSourceEnum parseRoomSource(String source) {
         if (source == null || source.isBlank()) {
             return null;
         }
         try {
-            return RoomSourceVO.valueOf(source);
+            return RoomSourceEnum.valueOf(source);
         } catch (IllegalArgumentException e) {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "会话来源不合法");
         }

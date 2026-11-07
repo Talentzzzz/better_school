@@ -38,8 +38,8 @@ public interface IErrandRepository {
      */
     void rebuildFeedIndex();
 
-    /** 支付确认：PENDING_PAYMENT → PENDING_REVIEW（已付款待审），并写入 deadline；同事务落 PAID 事件 */
-    boolean payById(String orderId, String actorId, LocalDateTime deadline);
+    /** 支付确认：PENDING_PAYMENT → PENDING_REVIEW（已付款待审），deadline = NOW()+timeLimitHours（数据库时钟起算）；同事务落 PAID 事件 */
+    boolean payById(String orderId, String actorId, int timeLimitHours);
 
     /** 抢单：PUBLISHED → LOCKED（状态 + 无人持有 + 时限三重校验，先到先得）；同事务 lock_seq+1 与 LOCKED 事件 */
     boolean grab(String orderId, String takerId);
@@ -132,14 +132,14 @@ public interface IErrandRepository {
 
 
     /** 创建订单后登记"15 分钟未支付"超时任务（同事务写注册 outbox，提交后即时注册、扫描兜底） */
-    void schedulePayTimeout(String orderId, LocalDateTime actionTime);
+    void schedulePayTimeout(String orderId, long delaySeconds);
 
     /**
      * 抢单后登记"5 分钟锁单超时"任务（同事务写注册 outbox，提交后即时注册）。
      * bizId 是复合键 {@code {orderId}:{lockSeq}}——每次锁单一个独立键，中心侧不再撞 {@code uk(type,biz_id)}、
      * 也不会把新锁的到期时刻幂等复位成旧锁的（陈旧任务只影响旧键）。
      */
-    void scheduleLockTimeout(String orderId, int lockSeq, LocalDateTime actionTime);
+    void scheduleLockTimeout(String orderId, int lockSeq, long delaySeconds);
 
     // ---------- 原子用例：仓储方法即一次事务（REQUIRED，与既有事务合流） ----------
     // 0 行口径：条件 UPDATE 未命中且属「状态已被别处改掉 → 本次必须失败」的，方法内抛 BUSINESS_ERROR；

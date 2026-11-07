@@ -1,6 +1,6 @@
 package com.betterschool.infrastructure.dao.outbox;
 
-import com.betterschool.infrastructure.dao.outbox.po.OutboxPO;
+import com.betterschool.infrastructure.dao.outbox.po.Outbox;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -12,9 +12,9 @@ import java.util.List;
 @Mapper
 public interface IOutboxDao {
 
-    int insert(OutboxPO outboxPO);
+    int insert(Outbox outbox);
 
-    List<OutboxPO> selectPendingList(@Param("limit") int limit);
+    List<Outbox> selectPendingList(@Param("limit") int limit);
 
     int markSentBatch(@Param("ids") List<Long> ids);
 

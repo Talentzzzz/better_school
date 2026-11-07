@@ -54,9 +54,6 @@ public class ProductEntity {
         productEntity.status = ProductStatusVO.PENDING_REVIEW;
         productEntity.reviewRound = 1;
         productEntity.viewCount = 0;
-        productEntity.createdAt = LocalDateTime.now();
-        productEntity.reviewEnteredAt = productEntity.createdAt;
-        productEntity.expireAt = productEntity.createdAt.plusDays(30);
         return productEntity;
     }
 
@@ -75,7 +72,6 @@ public class ProductEntity {
         productEntity.status = ProductStatusVO.DRAFT;
         productEntity.reviewRound = 0;
         productEntity.viewCount = 0;
-        productEntity.createdAt = LocalDateTime.now();
         return productEntity;
     }
 

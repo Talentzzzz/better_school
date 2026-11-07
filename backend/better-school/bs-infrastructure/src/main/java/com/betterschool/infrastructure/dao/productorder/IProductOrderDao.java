@@ -1,6 +1,6 @@
 package com.betterschool.infrastructure.dao.productorder;
 
-import com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO;
+import com.betterschool.infrastructure.dao.productorder.po.ProductOrder;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -13,9 +13,9 @@ import java.util.List;
 @Mapper
 public interface IProductOrderDao {
 
-    int insert(ProductOrderPO orderPO);
+    int insert(ProductOrder order);
 
-    ProductOrderPO selectById(@Param("orderId") String orderId);
+    ProductOrder selectById(@Param("orderId") String orderId);
 
     int payById(@Param("orderId") String orderId, @Param("buyerId") String buyerId);
 
@@ -27,16 +27,16 @@ public interface IProductOrderDao {
 
     int cancelPendingPayment(@Param("orderId") String orderId);
 
-    List<ProductOrderPO> selectMineByBuyer(@Param("userId") String userId, @Param("offset") int offset,
+    List<ProductOrder> selectMineByBuyer(@Param("userId") String userId, @Param("offset") int offset,
                                            @Param("limit") int limit);
 
     long countMineByBuyer(@Param("userId") String userId);
 
-    List<ProductOrderPO> selectMineBySeller(@Param("userId") String userId, @Param("offset") int offset,
+    List<ProductOrder> selectMineBySeller(@Param("userId") String userId, @Param("offset") int offset,
                                             @Param("limit") int limit);
 
     long countMineBySeller(@Param("userId") String userId);
 
     /** 订单状态流转事件落表（同事务，只插入） */
-    int insertOrderEvent(com.betterschool.infrastructure.dao.productorder.po.ProductOrderEventPO eventPO);
+    int insertOrderEvent(com.betterschool.infrastructure.dao.productorder.po.ProductOrderEvent event);
 }

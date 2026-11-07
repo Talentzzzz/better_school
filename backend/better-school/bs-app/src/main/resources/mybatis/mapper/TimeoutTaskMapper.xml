@@ -8,14 +8,18 @@
          漏塞 hint 时写语句会被路由校验拒掉、读语句会退化成 16 表广播。
          列里没有回调路由列：进程内分发后按应用名路由的列已删（内嵌化票 02）。 -->
 
+    <!-- 时刻一律数据库时钟：action_time/next_fire_time 由 SQL 侧 TIMESTAMPADD(SECOND, #{delaySeconds}, NOW())
+         换算（Java 只传时长秒数）。**不用 `INTERVAL ?`**：函数内嵌占位符会被 ShardingSphere 解析器弄丢参数
+         （票 02 实测）；TIMESTAMPADD 的占位符在普通函数参数位，与算术列位同形态，分片重写安全 -->
     <insert id="insert">
         INSERT INTO timeout_task (task_type, biz_id, action_time, next_fire_time,
                                   status, retry_count, created_at, updated_at)
-        VALUES (#{taskType}, #{bizId}, #{actionTime}, #{nextFireTime},
-                #{status}, #{retryCount}, #{createdAt}, #{updatedAt})
+        VALUES (#{taskType}, #{bizId}, TIMESTAMPADD(SECOND, #{delaySeconds}, NOW()),
+                TIMESTAMPADD(SECOND, #{delaySeconds}, NOW()),
+                #{status}, #{retryCount}, NOW(), NOW())
     </insert>
 
-    <select id="selectByKey" resultType="com.betterschool.infrastructure.dao.timeout.po.TimeoutTaskPO">
+    <select id="selectByKey" resultType="com.betterschool.infrastructure.dao.timeout.po.TimeoutTask">
         SELECT id, task_type, biz_id, action_time, next_fire_time,
                status, retry_count, created_at, updated_at
         FROM timeout_task
@@ -27,10 +31,10 @@
     <update id="reviveTerminal">
         UPDATE timeout_task
         SET status         = 'WAITING',
-            action_time    = #{actionTime},
-            next_fire_time = #{nextFireTime},
+            action_time    = TIMESTAMPADD(SECOND, #{delaySeconds}, NOW()),
+            next_fire_time = TIMESTAMPADD(SECOND, #{delaySeconds}, NOW()),
             retry_count    = 0,
-            updated_at     = #{updatedAt}
+            updated_at     = NOW()
         WHERE task_type = #{taskType}
           AND biz_id = #{bizId}
           AND status IN ('SUCCESS', 'FAILED', 'CANCELED')
@@ -40,7 +44,7 @@
     <update id="cancelActive">
         UPDATE timeout_task
         SET status     = 'CANCELED',
-            updated_at = #{updatedAt}
+            updated_at = NOW()
         WHERE task_type = #{taskType}
           AND biz_id = #{bizId}
           AND status IN ('WAITING', 'RETRYING')
@@ -51,7 +55,7 @@
     <!-- 捞批：只取未终态且已到点的行。本语句没有分片键，路由靠调用方（仓储层）塞进 HintManager 的槽位；
          状态过滤与到期判据都吃 idx_scan。dueBefore 是本次 tick 固定的时刻（不是 now()）：
          重试行结算后被推到「结算时刻 + 退避」，本轮一定不会再被捞起——这是「循环拉批到空」的终止条件。 -->
-    <select id="selectDueBatch" resultType="com.betterschool.infrastructure.dao.timeout.po.TimeoutTaskPO">
+    <select id="selectDueBatch" resultType="com.betterschool.infrastructure.dao.timeout.po.TimeoutTask">
         SELECT id, task_type, biz_id, action_time, next_fire_time,
                status, retry_count, created_at, updated_at
         FROM timeout_task
@@ -66,35 +70,36 @@
          三条都保留 status IN ('WAITING','RETRYING') 的条件——**行级裁决权仍在库上**：
          回调在途被取消/被死信重发的行不该被回调结果翻回来。
          后果是返回值不再是「这一行改了没」而是「本桶实际改了 N 行」（差值 = 已被别的路径改走/已终态的行数）。
-         退避时刻一律由域服务算好后当**普通参数**传进来：本工程 datasource 坐在 ShardingSphere 驱动上，
-         `INTERVAL ?` 这种「函数内嵌占位符」会被解析器弄丢参数（票 02 实测），新增结算 SQL 一律避开。 -->
+         退避**秒数**由域服务算好后当**普通参数**传进来，SQL 侧 TIMESTAMPADD 换算绝对时刻：
+         `INTERVAL ?` 这种「函数内嵌占位符」会被 ShardingSphere 解析器弄丢参数（票 02 实测），
+         TIMESTAMPADD 的占位符在普通参数位不受影响；updated_at 一律 NOW()（时刻一律数据库时钟）。 -->
 
     <!-- 成功桶：整桶同一个目标态，一条语句 -->
     <update id="markSuccessBatch">
         UPDATE timeout_task
         SET status     = 'SUCCESS',
-            updated_at = #{updatedAt}
+            updated_at = NOW()
         WHERE task_type = #{taskType}
           AND biz_id IN
           <foreach collection="bizIds" item="bizId" open="(" separator="," close=")">#{bizId}</foreach>
           AND status IN ('WAITING', 'RETRYING')
     </update>
 
-    <!-- 重试桶：进 RETRYING、计数 +1，各行后移到**各自的**退避时刻。
+    <!-- 重试桶：进 RETRYING、计数 +1，各行后移到**各自的**退避时刻（SQL 侧 TIMESTAMPADD 换算）。
          next_fire_time 是桶内唯一按行不同的列（重试行之间 retry_count 不同 ⇒ 退避不同），
          所以只有它走 CASE；rest 是整桶同一个值。参数 4N（CASE 判据 + CASE 取值各一遍），
          批长 200 时约 800 个占位符，远在 MySQL 的 65535 之内。
          下标必须写成 ${i}：`#{nextFireTimes[i]}` 会被 MyBatis 当成「参数名」去参数里找
          （报 NumberFormatException: For input string: "i"），${} 才是让 OGNL 先把下标算成数字。
-         bizIds 与 nextFireTimes 是**同一键序**的两个列表：错位就会把退避写到别的行上。 -->
+         bizIds 与 backoffSeconds 是**同一键序**的两个列表：错位就会把退避写到别的行上。 -->
     <update id="markRetryBatch">
         UPDATE timeout_task
         SET status         = 'RETRYING',
             retry_count    = retry_count + 1,
             next_fire_time = CASE
-            <foreach collection="bizIds" item="bizId" index="i">WHEN biz_id = #{bizId} THEN #{nextFireTimes[${i}]} </foreach>
+            <foreach collection="bizIds" item="bizId" index="i">WHEN biz_id = #{bizId} THEN TIMESTAMPADD(SECOND, #{backoffSeconds[${i}]}, NOW()) </foreach>
             ELSE next_fire_time END,
-            updated_at     = #{updatedAt}
+            updated_at     = NOW()
         WHERE task_type = #{taskType}
           AND biz_id IN
           <foreach collection="bizIds" item="bizId" open="(" separator="," close=")">#{bizId}</foreach>
@@ -107,7 +112,7 @@
         UPDATE timeout_task
         SET status      = 'FAILED',
             retry_count = retry_count + 1,
-            updated_at  = #{updatedAt}
+            updated_at  = NOW()
         WHERE task_type = #{taskType}
           AND biz_id IN
           <foreach collection="bizIds" item="bizId" open="(" separator="," close=")">#{bizId}</foreach>
@@ -120,8 +125,8 @@
         UPDATE timeout_task
         SET status         = 'RETRYING',
             retry_count    = 0,
-            next_fire_time = #{nextFireTime},
-            updated_at     = #{updatedAt}
+            next_fire_time = NOW(),
+            updated_at     = NOW()
         WHERE task_type = #{taskType}
           AND biz_id = #{bizId}
           AND status = 'FAILED'
@@ -131,7 +136,7 @@
     <update id="cancelDeadLetter">
         UPDATE timeout_task
         SET status     = 'CANCELED',
-            updated_at = #{updatedAt}
+            updated_at = NOW()
         WHERE task_type = #{taskType}
           AND biz_id = #{bizId}
           AND status = 'FAILED'
@@ -144,7 +149,7 @@
          归并阶段做排序与截断，ORDER BY + LIMIT/OFFSET 结果精确；
          id 是第二排序键，压住同表内 updated_at 同秒的翻页抖动（跨表自增 id 理论可撞值，
          撞值且同秒的极端行不为此加全局序——与原独立中心同口径）。 -->
-    <select id="selectDeadLetters" resultType="com.betterschool.infrastructure.dao.timeout.po.TimeoutTaskPO">
+    <select id="selectDeadLetters" resultType="com.betterschool.infrastructure.dao.timeout.po.TimeoutTask">
         SELECT id, task_type, biz_id, action_time, next_fire_time,
                status, retry_count, created_at, updated_at
         FROM timeout_task

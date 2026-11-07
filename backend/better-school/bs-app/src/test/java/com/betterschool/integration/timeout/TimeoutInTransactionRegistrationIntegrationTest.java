@@ -93,8 +93,8 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
 
         assertThatThrownBy(() -> transactionTemplate.execute(status -> {
             // 两个接入方的注册边都在业务事务内被调：这里直接驱动仓储方法复现同一事务边界
-            tradeRepository.schedulePayTimeout(tradeOrderId, LocalDateTime.now().plusMinutes(15));
-            errandRepository.schedulePayTimeout(errandOrderId, LocalDateTime.now().plusMinutes(15));
+            tradeRepository.schedulePayTimeout(tradeOrderId, 15 * 60L);
+            errandRepository.schedulePayTimeout(errandOrderId, 15 * 60L);
             throw new IllegalStateException("业务事务后续步骤失败");
         })).isInstanceOf(IllegalStateException.class);
 
@@ -114,7 +114,7 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
         String committedOrderId = transactionTemplate.execute(status -> {
             ErrandOrderEntity orderEntity = newErrandEntity(publisher.userId());
             errandRepository.save(orderEntity);
-            errandRepository.schedulePayTimeout(orderEntity.getOrderId(), LocalDateTime.now().plusMinutes(15));
+            errandRepository.schedulePayTimeout(orderEntity.getOrderId(), 15 * 60L);
             return orderEntity.getOrderId();
         });
 
@@ -128,7 +128,7 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
         String rolledBackOrderId = transactionTemplate.execute(status -> {
             ErrandOrderEntity orderEntity = newErrandEntity(publisher.userId());
             errandRepository.save(orderEntity);
-            errandRepository.schedulePayTimeout(orderEntity.getOrderId(), LocalDateTime.now().plusMinutes(15));
+            errandRepository.schedulePayTimeout(orderEntity.getOrderId(), 15 * 60L);
             status.setRollbackOnly();
             return orderEntity.getOrderId();
         });
@@ -146,9 +146,9 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
     void 在途同键重注册幂等成功不改期() {
         String bizId = uniqueUuid();
         try {
-            errandRepository.schedulePayTimeout(bizId, LocalDateTime.now().plusMinutes(15));
+            errandRepository.schedulePayTimeout(bizId, 15 * 60L);
             // 同键二次注册（原 outbox 语义是「复位 PENDING」；直插后由三分支接管：在途 = 幂等成功不改期）
-            errandRepository.schedulePayTimeout(bizId, LocalDateTime.now().plusMinutes(5));
+            errandRepository.schedulePayTimeout(bizId, 5 * 60L);
 
             assertThat(taskCountOf(Constants.ERRAND_PAY_TIMEOUT, bizId))
                     .as("同键重注册不插第二行").isEqualTo(1);
@@ -166,12 +166,12 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
     void 终态行复活刷新actionTime() {
         String bizId = uniqueUuid();
         try {
-            errandRepository.schedulePayTimeout(bizId, LocalDateTime.now().plusMinutes(15));
+            errandRepository.schedulePayTimeout(bizId, 15 * 60L);
             // 到终态（业务取消路径的软置 CANCELED）
             assertThat(timeoutRepository.cancelActive(Constants.ERRAND_PAY_TIMEOUT, bizId)).isTrue();
 
             // 终态后同键再注册 = 复活重开一轮：action_time 刷新为本次传入的新时刻
-            errandRepository.schedulePayTimeout(bizId, LocalDateTime.now().plusMinutes(5));
+            errandRepository.schedulePayTimeout(bizId, 5 * 60L);
 
             Map<String, Object> row = taskRowOf(Constants.ERRAND_PAY_TIMEOUT, bizId);
             assertThat(row.get("status")).as("复活回 WAITING").isEqualTo("WAITING");

@@ -13,24 +13,23 @@ import com.betterschool.domain.moderation.model.valobj.ReviewPendingWaitStats;
 import com.betterschool.domain.moderation.model.valobj.ReviewSourceVO;
 import com.betterschool.domain.moderation.model.valobj.ReviewTargetTypeVO;
 import com.betterschool.infrastructure.dao.comment.IPostCommentDao;
-import com.betterschool.infrastructure.dao.comment.po.PostCommentPO;
+import com.betterschool.infrastructure.dao.comment.po.PostComment;
 import com.betterschool.infrastructure.dao.errand.IErrandDao;
-import com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO;
+import com.betterschool.infrastructure.dao.errand.po.ErrandOrder;
 import com.betterschool.infrastructure.dao.moderation.IModerationDao;
-import com.betterschool.infrastructure.dao.moderation.po.ContentReportPO;
-import com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO;
-import com.betterschool.infrastructure.dao.moderation.po.ReviewQueueItemPO;
-import com.betterschool.infrastructure.dao.moderation.po.ReviewTaskPO;
-import com.betterschool.infrastructure.dao.moderation.po.ReviewTaskTargetPO;
-import com.betterschool.infrastructure.dao.moderation.po.SensitiveWordPO;
+import com.betterschool.infrastructure.dao.moderation.po.ContentReport;
+import com.betterschool.infrastructure.dao.moderation.po.ContentReview;
+import com.betterschool.infrastructure.dao.moderation.po.ReviewQueueItem;
+import com.betterschool.infrastructure.dao.moderation.po.ReviewTask;
+import com.betterschool.infrastructure.dao.moderation.po.ReviewTaskTarget;
+import com.betterschool.infrastructure.dao.moderation.po.SensitiveWord;
 import com.betterschool.infrastructure.dao.post.IPostDao;
-import com.betterschool.infrastructure.dao.post.po.PostPO;
+import com.betterschool.infrastructure.dao.post.po.Post;
 import com.betterschool.infrastructure.dao.product.IProductDao;
-import com.betterschool.infrastructure.dao.product.po.ProductPO;
+import com.betterschool.infrastructure.dao.product.po.Product;
 import com.betterschool.infrastructure.dao.user.IUserDao;
-import com.betterschool.infrastructure.dao.user.po.UserPO;
+import com.betterschool.infrastructure.dao.user.po.User;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.betterschool.types.id.IIdGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
@@ -40,6 +39,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 @Slf4j
 @Repository
@@ -49,8 +49,6 @@ public class ModerationRepository implements IModerationRepository {
     private final IModerationDao moderationDao;
     private final ReviewTaskPoolStore reviewTaskPoolStore;
     private final ObjectMapper objectMapper;
-    /** 业务 ID 发号器（review_id UUID，uuid-biz-id 票 06） */
-    private final IIdGenerator idGenerator;
     // 素材回查 DAO：队列/详情的素材列由 review_task 单表定位后按 target_id 集回查各业务表（SQL 层零 JOIN）
     private final IPostDao postDao;
     private final IPostCommentDao commentDao;
@@ -108,10 +106,10 @@ public class ModerationRepository implements IModerationRepository {
 
     @Override
     public String insertIgnoreReport(ContentReportEntity reportEntity) {
-        ContentReportPO reportPO = toReportPO(reportEntity);
+        ContentReport report = toReportPO(reportEntity);
         // 业务 ID 随 insert 一次写入（uuid-biz-id 票 06）；撞 uk_reporter_target 被 IGNORE 时本行未落库，发号作废无害
-        reportPO.setReportId(idGenerator.nextId());
-        return moderationDao.insertIgnoreReport(reportPO) == 1 ? reportPO.getReportId() : null;
+        report.setReportId(UUID.randomUUID().toString());
+        return moderationDao.insertIgnoreReport(report) == 1 ? report.getReportId() : null;
     }
 
     @Override
@@ -136,20 +134,20 @@ public class ModerationRepository implements IModerationRepository {
 
     @Override
     public List<ReviewQueueItemEntity> pageReviewQueue(String targetType, int offset, int limit) {
-        List<ReviewQueueItemPO> rows = moderationDao.selectReviewQueue(targetType, offset, limit);
+        List<ReviewQueueItem> rows = moderationDao.selectReviewQueue(targetType, offset, limit);
         if (rows.isEmpty()) {
             return List.of();
         }
         // 工单只存定位列：素材与作者昵称按 target_id 集回查业务表 + bs_user 拼装（SQL 层零 JOIN）。
         // 业务行缺失或已不在待审态 = 原 INNER JOIN + state 谓词语义，跳过（工单与业务行状态同事务收口，
         // 正常流不会漂移；真漂移交补偿，页可能缩水是可接受的降级）
-        Map<String, PostPO> posts = postsById(targetIdsOf(rows, ReviewTargetTypeVO.POST));
-        Map<String, PostCommentPO> comments = commentsById(targetIdsOf(rows, ReviewTargetTypeVO.COMMENT));
-        Map<String, ProductPO> products = productsById(targetIdsOf(rows, ReviewTargetTypeVO.PRODUCT));
-        Map<String, ErrandOrderPO> errands = errandsById(targetIdsOf(rows, ReviewTargetTypeVO.ERRAND));
-        Map<String, UserPO> users = usersByIds(rows.stream().map(ReviewQueueItemPO::getAuthorId).toList());
-        List<ReviewQueueItemPO> visible = new ArrayList<>(rows.size());
-        for (ReviewQueueItemPO row : rows) {
+        Map<String, Post> posts = postsById(targetIdsOf(rows, ReviewTargetTypeVO.POST));
+        Map<String, PostComment> comments = commentsById(targetIdsOf(rows, ReviewTargetTypeVO.COMMENT));
+        Map<String, Product> products = productsById(targetIdsOf(rows, ReviewTargetTypeVO.PRODUCT));
+        Map<String, ErrandOrder> errands = errandsById(targetIdsOf(rows, ReviewTargetTypeVO.ERRAND));
+        Map<String, User> users = usersByIds(rows.stream().map(ReviewQueueItem::getAuthorId).toList());
+        List<ReviewQueueItem> visible = new ArrayList<>(rows.size());
+        for (ReviewQueueItem row : rows) {
             if (fillQueueMaterial(row, posts, comments, products, errands, users)) {
                 visible.add(row);
             }
@@ -164,12 +162,12 @@ public class ModerationRepository implements IModerationRepository {
 
     @Override
     public ReviewQueueItemEntity findReviewDetail(String targetType, String targetId) {
-        ReviewQueueItemPO row = moderationDao.selectReviewDetail(targetType, targetId);
+        ReviewQueueItem row = moderationDao.selectReviewDetail(targetType, targetId);
         if (row == null) {
             return null;
         }
         // 作者昵称（原 LEFT JOIN bs_user 列）：单行即单元素回查
-        UserPO author = usersByIds(List.of(row.getAuthorId())).get(row.getAuthorId());
+        User author = usersByIds(List.of(row.getAuthorId())).get(row.getAuthorId());
         row.setAuthorNickname(author == null ? null : author.getNickname());
         return toQueueItemEntity(row);
     }
@@ -191,28 +189,28 @@ public class ModerationRepository implements IModerationRepository {
 
     @Override
     public ReviewTargetDetailEntity findTargetDetail(String targetType, String targetId) {
-        ReviewTaskTargetPO targetPO = moderationDao.selectTaskTargetDetail(targetType, targetId);
-        if (targetPO == null) {
+        ReviewTaskTarget target = moderationDao.selectTaskTargetDetail(targetType, targetId);
+        if (target == null) {
             return null;
         }
         // 作者昵称头像（原 LEFT JOIN bs_user 列）
-        UserPO author = usersByIds(List.of(targetPO.getAuthorId())).get(targetPO.getAuthorId());
+        User author = usersByIds(List.of(target.getAuthorId())).get(target.getAuthorId());
         if (author != null) {
-            targetPO.setAuthorNickname(author.getNickname());
-            targetPO.setAuthorAvatar(author.getAvatar());
+            target.setAuthorNickname(author.getNickname());
+            target.setAuthorAvatar(author.getAvatar());
         }
         // 评论类型专属上下文（原 LEFT JOIN post / post_comment 两列）：来源帖标题 + 父评论文本二次回查
         if (ReviewTargetTypeVO.COMMENT == ReviewTargetTypeVO.from(targetType)) {
-            if (targetPO.getContextPostId() != null) {
-                PostPO post = postDao.selectById(targetPO.getContextPostId());
-                targetPO.setContextPostTitle(post == null ? null : post.getTitle());
+            if (target.getContextPostId() != null) {
+                Post post = postDao.selectById(target.getContextPostId());
+                target.setContextPostTitle(post == null ? null : post.getTitle());
             }
-            if (targetPO.getContextParentId() != null) {
-                PostCommentPO parent = commentDao.selectById(targetPO.getContextParentId());
-                targetPO.setContextParentContent(parent == null ? null : parent.getContent());
+            if (target.getContextParentId() != null) {
+                PostComment parent = commentDao.selectById(target.getContextParentId());
+                target.setContextParentContent(parent == null ? null : parent.getContent());
             }
         }
-        return toTargetDetailEntity(targetPO);
+        return toTargetDetailEntity(target);
     }
 
     @Override
@@ -239,8 +237,8 @@ public class ModerationRepository implements IModerationRepository {
         }
         // 每 target 取最新一轮 REJECT 行（物理 id 最大）：单表取全部 REJECT 行后 Java 裁决
         // （原自连派生表 JOIN 的多查形态）。target_id 是 VARCHAR（POST/COMMENT=UUID，商品/跑腿为业务键）：按字符串原样收敛
-        Map<String, ContentReviewPO> latestByTarget = new HashMap<>();
-        for (ContentReviewPO row : moderationDao.selectRejectRowsByTargetIds(targetType, targetIds)) {
+        Map<String, ContentReview> latestByTarget = new HashMap<>();
+        for (ContentReview row : moderationDao.selectRejectRowsByTargetIds(targetType, targetIds)) {
             latestByTarget.merge(row.getTargetId(), row,
                     (older, newer) -> newer.getId() != null && (older.getId() == null || newer.getId() > older.getId()) ? newer : older);
         }
@@ -251,20 +249,20 @@ public class ModerationRepository implements IModerationRepository {
 
     @Override
     public List<ContentReportEntity> pageReports(String status, int offset, int limit) {
-        List<ContentReportPO> rows = moderationDao.selectReports(status, offset, limit);
+        List<ContentReport> rows = moderationDao.selectReports(status, offset, limit);
         if (rows.isEmpty()) {
             return List.of();
         }
         // 举报人/被举报人昵称（原两处 LEFT JOIN bs_user 列）批量回查拼装
         List<String> userIds = new ArrayList<>(rows.size() * 2);
-        for (ContentReportPO row : rows) {
+        for (ContentReport row : rows) {
             userIds.add(row.getReporterId());
             userIds.add(row.getAuthorId());
         }
-        Map<String, UserPO> users = usersByIds(userIds);
-        for (ContentReportPO row : rows) {
-            UserPO reporter = users.get(row.getReporterId());
-            UserPO author = users.get(row.getAuthorId());
+        Map<String, User> users = usersByIds(userIds);
+        for (ContentReport row : rows) {
+            User reporter = users.get(row.getReporterId());
+            User author = users.get(row.getAuthorId());
             row.setReporterNickname(reporter == null ? null : reporter.getNickname());
             row.setAuthorNickname(author == null ? null : author.getNickname());
         }
@@ -312,36 +310,32 @@ public class ModerationRepository implements IModerationRepository {
         return moderationDao.countWords();
     }
 
-    private ContentReviewPO toReviewPO(ContentReviewEntity reviewEntity) {
-        ContentReviewPO reviewPO = new ContentReviewPO();
-        reviewPO.setReviewId(idGenerator.nextId());
-        reviewPO.setTargetType(reviewEntity.getTargetType().name());
-        reviewPO.setTargetId(reviewEntity.getTargetId());
-        reviewPO.setAuthorId(reviewEntity.getAuthorId());
-        reviewPO.setReviewRound(reviewEntity.getReviewRound());
-        reviewPO.setAction(reviewEntity.getAction().name());
-        reviewPO.setSource(reviewEntity.getSource().name());
-        reviewPO.setOperatorId(reviewEntity.getOperatorId());
-        reviewPO.setReason(reviewEntity.getReason());
-        reviewPO.setReasonCode(reviewEntity.getReasonCode());
-        reviewPO.setCreateTime(reviewEntity.getCreatedAt());
-        reviewPO.setUpdateTime(reviewEntity.getCreatedAt());
-        return reviewPO;
+    private ContentReview toReviewPO(ContentReviewEntity reviewEntity) {
+        ContentReview review = new ContentReview();
+        review.setReviewId(UUID.randomUUID().toString());
+        review.setTargetType(reviewEntity.getTargetType().name());
+        review.setTargetId(reviewEntity.getTargetId());
+        review.setAuthorId(reviewEntity.getAuthorId());
+        review.setReviewRound(reviewEntity.getReviewRound());
+        review.setAction(reviewEntity.getAction().name());
+        review.setSource(reviewEntity.getSource().name());
+        review.setOperatorId(reviewEntity.getOperatorId());
+        review.setReason(reviewEntity.getReason());
+        review.setReasonCode(reviewEntity.getReasonCode());
+        return review;
     }
 
-    private ContentReportPO toReportPO(ContentReportEntity reportEntity) {
-        ContentReportPO reportPO = new ContentReportPO();
-        reportPO.setReportId(reportEntity.getReportId());
-        reportPO.setTargetType(reportEntity.getTargetType().name());
-        reportPO.setTargetId(reportEntity.getTargetId());
-        reportPO.setAuthorId(reportEntity.getAuthorId());
-        reportPO.setReporterId(reportEntity.getReporterId());
-        reportPO.setReason(reportEntity.getReason());
-        reportPO.setContentSnapshot(reportEntity.getContentSnapshot());
-        reportPO.setStatus(reportEntity.getStatus().name());
-        reportPO.setCreateTime(reportEntity.getCreatedAt());
-        reportPO.setUpdateTime(reportEntity.getCreatedAt());
-        return reportPO;
+    private ContentReport toReportPO(ContentReportEntity reportEntity) {
+        ContentReport report = new ContentReport();
+        report.setReportId(reportEntity.getReportId());
+        report.setTargetType(reportEntity.getTargetType().name());
+        report.setTargetId(reportEntity.getTargetId());
+        report.setAuthorId(reportEntity.getAuthorId());
+        report.setReporterId(reportEntity.getReporterId());
+        report.setReason(reportEntity.getReason());
+        report.setContentSnapshot(reportEntity.getContentSnapshot());
+        report.setStatus(reportEntity.getStatus().name());
+        return report;
     }
 
     // ---------- 素材拼装辅助（队列/详情/举报列表的 SQL 层零 JOIN 收口点） ----------
@@ -350,13 +344,13 @@ public class ModerationRepository implements IModerationRepository {
     private static final String PENDING_REVIEW = "PENDING_REVIEW";
 
     /** 按类型滤出本页 target_id 集 */
-    private static List<String> targetIdsOf(List<ReviewQueueItemPO> rows, ReviewTargetTypeVO type) {
+    private static List<String> targetIdsOf(List<ReviewQueueItem> rows, ReviewTargetTypeVO type) {
         String typeName = type.name();
         return rows.stream().filter(row -> typeName.equals(row.getTargetType()))
-                .map(ReviewQueueItemPO::getTargetId).toList();
+                .map(ReviewQueueItem::getTargetId).toList();
     }
 
-    private Map<String, PostPO> postsById(List<String> ids) {
+    private Map<String, Post> postsById(List<String> ids) {
         if (ids.isEmpty()) {
             return Map.of();
         }
@@ -364,7 +358,7 @@ public class ModerationRepository implements IModerationRepository {
                 .collect(HashMap::new, (m, p) -> m.put(p.getPostId(), p), HashMap::putAll);
     }
 
-    private Map<String, PostCommentPO> commentsById(List<String> ids) {
+    private Map<String, PostComment> commentsById(List<String> ids) {
         if (ids.isEmpty()) {
             return Map.of();
         }
@@ -372,7 +366,7 @@ public class ModerationRepository implements IModerationRepository {
                 .collect(HashMap::new, (m, c) -> m.put(c.getCommentId(), c), HashMap::putAll);
     }
 
-    private Map<String, ProductPO> productsById(List<String> ids) {
+    private Map<String, Product> productsById(List<String> ids) {
         if (ids.isEmpty()) {
             return Map.of();
         }
@@ -380,7 +374,7 @@ public class ModerationRepository implements IModerationRepository {
                 .collect(HashMap::new, (m, p) -> m.put(p.getProductId(), p), HashMap::putAll);
     }
 
-    private Map<String, ErrandOrderPO> errandsById(List<String> ids) {
+    private Map<String, ErrandOrder> errandsById(List<String> ids) {
         if (ids.isEmpty()) {
             return Map.of();
         }
@@ -389,7 +383,7 @@ public class ModerationRepository implements IModerationRepository {
     }
 
     /** userId 集 → bs_user 批量回查索引（作者昵称头像/举报人昵称共用） */
-    private Map<String, UserPO> usersByIds(List<String> userIds) {
+    private Map<String, User> usersByIds(List<String> userIds) {
         List<String> ids = userIds.stream().filter(Objects::nonNull).distinct().toList();
         if (ids.isEmpty()) {
             return Map.of();
@@ -404,12 +398,12 @@ public class ModerationRepository implements IModerationRepository {
      *
      * @return false = 业务行缺失或已不在待审态，调用方跳过该工单（原 INNER JOIN + state 谓词的 Java 收口）
      */
-    private boolean fillQueueMaterial(ReviewQueueItemPO row, Map<String, PostPO> posts,
-                                      Map<String, PostCommentPO> comments, Map<String, ProductPO> products,
-                                      Map<String, ErrandOrderPO> errands, Map<String, UserPO> users) {
+    private boolean fillQueueMaterial(ReviewQueueItem row, Map<String, Post> posts,
+                                      Map<String, PostComment> comments, Map<String, Product> products,
+                                      Map<String, ErrandOrder> errands, Map<String, User> users) {
         String targetType = row.getTargetType();
         if (ReviewTargetTypeVO.POST.name().equals(targetType)) {
-            PostPO post = posts.get(row.getTargetId());
+            Post post = posts.get(row.getTargetId());
             if (post == null || !PENDING_REVIEW.equals(post.getState())) {
                 return false;
             }
@@ -418,7 +412,7 @@ public class ModerationRepository implements IModerationRepository {
             row.setStatus(post.getState());
             row.setCreateTime(post.getCreateTime());
         } else if (ReviewTargetTypeVO.COMMENT.name().equals(targetType)) {
-            PostCommentPO comment = comments.get(row.getTargetId());
+            PostComment comment = comments.get(row.getTargetId());
             if (comment == null || !PENDING_REVIEW.equals(comment.getState())) {
                 return false;
             }
@@ -426,7 +420,7 @@ public class ModerationRepository implements IModerationRepository {
             row.setStatus(comment.getState());
             row.setCreateTime(comment.getCreateTime());
         } else if (ReviewTargetTypeVO.PRODUCT.name().equals(targetType)) {
-            ProductPO product = products.get(row.getTargetId());
+            Product product = products.get(row.getTargetId());
             if (product == null || !PENDING_REVIEW.equals(product.getState())) {
                 return false;
             }
@@ -436,7 +430,7 @@ public class ModerationRepository implements IModerationRepository {
             row.setStatus(product.getState());
             row.setCreateTime(product.getCreateTime());
         } else {
-            ErrandOrderPO errand = errands.get(row.getTargetId());
+            ErrandOrder errand = errands.get(row.getTargetId());
             if (errand == null || !PENDING_REVIEW.equals(errand.getState())) {
                 return false;
             }
@@ -446,7 +440,7 @@ public class ModerationRepository implements IModerationRepository {
             row.setStatus(errand.getState());
             row.setCreateTime(errand.getCreateTime());
         }
-        UserPO author = users.get(row.getAuthorId());
+        User author = users.get(row.getAuthorId());
         row.setAuthorNickname(author == null ? null : author.getNickname());
         return true;
     }
@@ -459,43 +453,43 @@ public class ModerationRepository implements IModerationRepository {
         return (title == null ? "" : title) + content;
     }
 
-    private ContentReportEntity toReportEntity(ContentReportPO reportPO) {
-        if (reportPO == null) {
+    private ContentReportEntity toReportEntity(ContentReport report) {
+        if (report == null) {
             return null;
         }
         ContentReportEntity reportEntity = new ContentReportEntity();
-        reportEntity.setReportId(reportPO.getReportId());
-        reportEntity.setTargetType(ReviewTargetTypeVO.from(reportPO.getTargetType()));
-        reportEntity.setTargetId(reportPO.getTargetId());
-        reportEntity.setAuthorId(reportPO.getAuthorId());
-        reportEntity.setReporterId(reportPO.getReporterId());
-        reportEntity.setReason(reportPO.getReason());
-        reportEntity.setContentSnapshot(reportPO.getContentSnapshot());
-        reportEntity.setStatus(ReportStatusVO.from(reportPO.getStatus()));
-        reportEntity.setHandlerId(reportPO.getHandlerId());
-        reportEntity.setHandledAt(reportPO.getHandledAt());
-        reportEntity.setCreatedAt(reportPO.getCreateTime());
-        reportEntity.setReporterNickname(reportPO.getReporterNickname());
-        reportEntity.setAuthorNickname(reportPO.getAuthorNickname());
+        reportEntity.setReportId(report.getReportId());
+        reportEntity.setTargetType(ReviewTargetTypeVO.from(report.getTargetType()));
+        reportEntity.setTargetId(report.getTargetId());
+        reportEntity.setAuthorId(report.getAuthorId());
+        reportEntity.setReporterId(report.getReporterId());
+        reportEntity.setReason(report.getReason());
+        reportEntity.setContentSnapshot(report.getContentSnapshot());
+        reportEntity.setStatus(ReportStatusVO.from(report.getStatus()));
+        reportEntity.setHandlerId(report.getHandlerId());
+        reportEntity.setHandledAt(report.getHandledAt());
+        reportEntity.setCreatedAt(report.getCreateTime());
+        reportEntity.setReporterNickname(report.getReporterNickname());
+        reportEntity.setAuthorNickname(report.getAuthorNickname());
         return reportEntity;
     }
 
-    private ReviewQueueItemEntity toQueueItemEntity(ReviewQueueItemPO queueItemPO) {
-        if (queueItemPO == null) {
+    private ReviewQueueItemEntity toQueueItemEntity(ReviewQueueItem queueItem) {
+        if (queueItem == null) {
             return null;
         }
         ReviewQueueItemEntity queueItemEntity = new ReviewQueueItemEntity();
-        queueItemEntity.setTargetType(ReviewTargetTypeVO.from(queueItemPO.getTargetType()));
-        queueItemEntity.setTargetId(queueItemPO.getTargetId());
-        queueItemEntity.setReviewRound(queueItemPO.getReviewRound() == null ? 1 : queueItemPO.getReviewRound());
-        queueItemEntity.setAuthorId(queueItemPO.getAuthorId());
-        queueItemEntity.setAuthorNickname(queueItemPO.getAuthorNickname());
-        queueItemEntity.setContent(queueItemPO.getContent());
-        queueItemEntity.setReward(queueItemPO.getReward());
-        queueItemEntity.setImages(toImagesList(queueItemPO.getImages()));
-        queueItemEntity.setStatus(queueItemPO.getStatus());
-        queueItemEntity.setCreatedAt(queueItemPO.getCreateTime());
-        queueItemEntity.setEnteredAt(queueItemPO.getEnteredAt());
+        queueItemEntity.setTargetType(ReviewTargetTypeVO.from(queueItem.getTargetType()));
+        queueItemEntity.setTargetId(queueItem.getTargetId());
+        queueItemEntity.setReviewRound(queueItem.getReviewRound() == null ? 1 : queueItem.getReviewRound());
+        queueItemEntity.setAuthorId(queueItem.getAuthorId());
+        queueItemEntity.setAuthorNickname(queueItem.getAuthorNickname());
+        queueItemEntity.setContent(queueItem.getContent());
+        queueItemEntity.setReward(queueItem.getReward());
+        queueItemEntity.setImages(toImagesList(queueItem.getImages()));
+        queueItemEntity.setStatus(queueItem.getStatus());
+        queueItemEntity.setCreatedAt(queueItem.getCreateTime());
+        queueItemEntity.setEnteredAt(queueItem.getEnteredAt());
         return queueItemEntity;
     }
 
@@ -513,86 +507,84 @@ public class ModerationRepository implements IModerationRepository {
         }
     }
 
-    private ReviewTaskEntity toTaskEntity(ReviewTaskPO taskPO) {
-        if (taskPO == null) {
+    private ReviewTaskEntity toTaskEntity(ReviewTask task) {
+        if (task == null) {
             return null;
         }
         ReviewTaskEntity taskEntity = new ReviewTaskEntity();
-        taskEntity.setTaskId(taskPO.getTaskId());
-        taskEntity.setTargetType(ReviewTargetTypeVO.from(taskPO.getTargetType()));
-        taskEntity.setTargetId(taskPO.getTargetId());
-        taskEntity.setReviewRound(taskPO.getReviewRound() == null ? 1 : taskPO.getReviewRound());
-        taskEntity.setAuthorId(taskPO.getAuthorId());
-        taskEntity.setSource(taskPO.getSource());
-        taskEntity.setClaimState(taskPO.getClaimState());
-        taskEntity.setClaimBy(taskPO.getClaimBy());
-        taskEntity.setClaimSeq(taskPO.getClaimSeq());
-        taskEntity.setLeaseExpireAt(taskPO.getLeaseExpireAt());
-        taskEntity.setRecycleCount(taskPO.getRecycleCount());
-        taskEntity.setEscalated(taskPO.getEscalated() != null && taskPO.getEscalated());
-        taskEntity.setEnteredAt(taskPO.getEnteredAt());
-        taskEntity.setDecidedAt(taskPO.getDecidedAt());
-        taskEntity.setCreatedAt(taskPO.getCreateTime());
-        taskEntity.setUpdateTime(taskPO.getUpdateTime());
+        taskEntity.setTaskId(task.getTaskId());
+        taskEntity.setTargetType(ReviewTargetTypeVO.from(task.getTargetType()));
+        taskEntity.setTargetId(task.getTargetId());
+        taskEntity.setReviewRound(task.getReviewRound() == null ? 1 : task.getReviewRound());
+        taskEntity.setAuthorId(task.getAuthorId());
+        taskEntity.setSource(task.getSource());
+        taskEntity.setClaimState(task.getClaimState());
+        taskEntity.setClaimBy(task.getClaimBy());
+        taskEntity.setClaimSeq(task.getClaimSeq());
+        taskEntity.setLeaseExpireAt(task.getLeaseExpireAt());
+        taskEntity.setRecycleCount(task.getRecycleCount());
+        taskEntity.setEscalated(task.getEscalated() != null && task.getEscalated());
+        taskEntity.setEnteredAt(task.getEnteredAt());
+        taskEntity.setDecidedAt(task.getDecidedAt());
+        taskEntity.setCreatedAt(task.getCreateTime());
+        taskEntity.setUpdateTime(task.getUpdateTime());
         return taskEntity;
     }
 
-    private ReviewTargetDetailEntity toTargetDetailEntity(ReviewTaskTargetPO targetPO) {
-        if (targetPO == null) {
+    private ReviewTargetDetailEntity toTargetDetailEntity(ReviewTaskTarget target) {
+        if (target == null) {
             return null;
         }
         ReviewTargetDetailEntity detailEntity = new ReviewTargetDetailEntity();
-        detailEntity.setTargetType(ReviewTargetTypeVO.from(targetPO.getTargetType()));
-        detailEntity.setTargetId(targetPO.getTargetId());
-        detailEntity.setAuthorId(targetPO.getAuthorId());
-        detailEntity.setAuthorNickname(targetPO.getAuthorNickname());
-        detailEntity.setAuthorAvatar(targetPO.getAuthorAvatar());
-        detailEntity.setContent(targetPO.getContent());
-        detailEntity.setImages(toImagesList(targetPO.getImages()));
-        detailEntity.setReward(targetPO.getReward());
-        detailEntity.setStatus(targetPO.getStatus());
-        detailEntity.setContextPostId(targetPO.getContextPostId());
-        detailEntity.setContextPostTitle(targetPO.getContextPostTitle());
-        detailEntity.setContextParentId(targetPO.getContextParentId());
-        detailEntity.setContextParentContent(targetPO.getContextParentContent());
+        detailEntity.setTargetType(ReviewTargetTypeVO.from(target.getTargetType()));
+        detailEntity.setTargetId(target.getTargetId());
+        detailEntity.setAuthorId(target.getAuthorId());
+        detailEntity.setAuthorNickname(target.getAuthorNickname());
+        detailEntity.setAuthorAvatar(target.getAuthorAvatar());
+        detailEntity.setContent(target.getContent());
+        detailEntity.setImages(toImagesList(target.getImages()));
+        detailEntity.setReward(target.getReward());
+        detailEntity.setStatus(target.getStatus());
+        detailEntity.setContextPostId(target.getContextPostId());
+        detailEntity.setContextPostTitle(target.getContextPostTitle());
+        detailEntity.setContextParentId(target.getContextParentId());
+        detailEntity.setContextParentContent(target.getContextParentContent());
         return detailEntity;
     }
 
-    private ContentReviewEntity toReviewEntity(ContentReviewPO reviewPO) {
-        if (reviewPO == null) {
+    private ContentReviewEntity toReviewEntity(ContentReview review) {
+        if (review == null) {
             return null;
         }
         ContentReviewEntity reviewEntity = new ContentReviewEntity();
-        reviewEntity.setReviewId(reviewPO.getReviewId());
-        reviewEntity.setTargetType(ReviewTargetTypeVO.from(reviewPO.getTargetType()));
-        reviewEntity.setTargetId(reviewPO.getTargetId());
-        reviewEntity.setAuthorId(reviewPO.getAuthorId());
-        reviewEntity.setReviewRound(reviewPO.getReviewRound() == null ? 1 : reviewPO.getReviewRound());
-        reviewEntity.setAction(ReviewActionVO.from(reviewPO.getAction()));
-        reviewEntity.setSource(ReviewSourceVO.from(reviewPO.getSource()));
-        reviewEntity.setOperatorId(reviewPO.getOperatorId());
-        reviewEntity.setReason(reviewPO.getReason());
-        reviewEntity.setReasonCode(reviewPO.getReasonCode());
-        reviewEntity.setCreatedAt(reviewPO.getCreateTime());
+        reviewEntity.setReviewId(review.getReviewId());
+        reviewEntity.setTargetType(ReviewTargetTypeVO.from(review.getTargetType()));
+        reviewEntity.setTargetId(review.getTargetId());
+        reviewEntity.setAuthorId(review.getAuthorId());
+        reviewEntity.setReviewRound(review.getReviewRound() == null ? 1 : review.getReviewRound());
+        reviewEntity.setAction(ReviewActionVO.from(review.getAction()));
+        reviewEntity.setSource(ReviewSourceVO.from(review.getSource()));
+        reviewEntity.setOperatorId(review.getOperatorId());
+        reviewEntity.setReason(review.getReason());
+        reviewEntity.setReasonCode(review.getReasonCode());
+        reviewEntity.setCreatedAt(review.getCreateTime());
         return reviewEntity;
     }
 
-    private SensitiveWordPO toWordPO(SensitiveWordEntity wordEntity) {
-        SensitiveWordPO wordPO = new SensitiveWordPO();
-        wordPO.setId(wordEntity.getId());
-        wordPO.setWord(wordEntity.getWord());
-        wordPO.setEnabled(wordEntity.isEnabled() ? 1 : 0);
-        wordPO.setCreateTime(wordEntity.getCreatedAt());
-        wordPO.setUpdateTime(wordEntity.getCreatedAt());
-        return wordPO;
+    private SensitiveWord toWordPO(SensitiveWordEntity wordEntity) {
+        SensitiveWord word = new SensitiveWord();
+        word.setId(wordEntity.getId());
+        word.setWord(wordEntity.getWord());
+        word.setEnabled(wordEntity.isEnabled() ? 1 : 0);
+        return word;
     }
 
-    private SensitiveWordEntity toWordEntity(SensitiveWordPO wordPO) {
+    private SensitiveWordEntity toWordEntity(SensitiveWord word) {
         SensitiveWordEntity wordEntity = new SensitiveWordEntity();
-        wordEntity.setId(wordPO.getId());
-        wordEntity.setWord(wordPO.getWord());
-        wordEntity.setEnabled(wordPO.getEnabled() != null && wordPO.getEnabled() == 1);
-        wordEntity.setCreatedAt(wordPO.getCreateTime());
+        wordEntity.setId(word.getId());
+        wordEntity.setWord(word.getWord());
+        wordEntity.setEnabled(word.getEnabled() != null && word.getEnabled() == 1);
+        wordEntity.setCreatedAt(word.getCreateTime());
         return wordEntity;
     }
 }

@@ -11,7 +11,7 @@ chat 域接口（room / user_room + room_member 名册 / message / timeline 模�
 - 服务端拼装展示字段：`peerUserId/peerNickname/peerAvatar`（对方）
 - `unread` = room.last_seq − 本人 read_seq（回查真源现算，无 COUNT）；`lastMsgType/lastMsgPreview/lastMsgAt` 为读时现算的展示字段（按 message 真相渲染，非库内副本）
 - `source`（ERRAND/PRODUCT，市集入口首建才有）供市集消息页按域分 tab
-- `peerRole`（TAKER/SELLER/BUYER）**按请求者现算**：闲置按「本人是不是首建发起人」分两侧（闲置发起人=买家、对家=卖家），跑腿来源列定不了方向、对家恒为跑手
+- `peerRole`（TAKER/SELLER/BUYER）**按请求者现算**：闲置按「本人是不是会话创建人」分两侧（闲置创建人=买家、对家=卖家），跑腿来源列定不了方向、对家恒为跑手
 - 返回 `{page, pageSize, total, list}`
 
 ### POST /rooms/{roomId}/read

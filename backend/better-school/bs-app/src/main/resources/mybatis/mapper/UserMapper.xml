@@ -7,13 +7,13 @@
         role, state, credit_score, last_login_at, create_time, update_time
     </sql>
 
-    <select id="selectByPhone" resultType="com.betterschool.infrastructure.dao.user.po.UserPO">
+    <select id="selectByPhone" resultType="com.betterschool.infrastructure.dao.user.po.User">
         SELECT <include refid="baseColumns"/>
         FROM bs_user
         WHERE phone = #{phone}
     </select>
 
-    <select id="selectById" resultType="com.betterschool.infrastructure.dao.user.po.UserPO">
+    <select id="selectById" resultType="com.betterschool.infrastructure.dao.user.po.User">
         SELECT <include refid="baseColumns"/>
         FROM bs_user
         WHERE user_id = #{userId}
@@ -40,26 +40,27 @@
         WHERE role = #{role}
     </select>
 
-    <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.user.po.UserPO">
+    <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.user.po.User">
         SELECT <include refid="baseColumns"/>
         FROM bs_user
         WHERE user_id IN
         <foreach collection="ids" item="userId" open="(" separator="," close=")">#{userId}</foreach>
     </select>
 
-    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.user.po.UserPO"
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.user.po.User"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO bs_user (user_id, phone, nickname, avatar, role, state, credit_score, last_login_at, create_time, update_time)
-        VALUES (#{userId}, #{phone}, #{nickname}, #{avatar}, #{role}, #{state}, #{creditScore}, #{lastLoginAt}, #{createTime}, #{updateTime})
+        VALUES (#{userId}, #{phone}, #{nickname}, #{avatar}, #{role}, #{state}, #{creditScore}, NOW(), NOW(), NOW())
     </insert>
 
     <!-- 业务 ID 应用层发号、insert 前一次写入（user_id 列 UUID 字符串） -->
-    <!-- 只更新资料与登录时间：role/state/credit_score 列归 credit 域写，防止登录写覆盖并发封禁/调分 -->
-    <update id="updateById" parameterType="com.betterschool.infrastructure.dao.user.po.UserPO">
+    <!-- 只更新资料与登录时间：role/state/credit_score 列归 credit 域写，防止登录写覆盖并发封禁/调分；
+         last_login_at 取数据库时钟（登录时刻），updateById 只被登录链路调用，资料编辑走 updateProfile/updatePrivacy -->
+    <update id="updateById" parameterType="com.betterschool.infrastructure.dao.user.po.User">
         UPDATE bs_user
         SET nickname      = #{nickname},
             avatar        = #{avatar},
-            last_login_at = #{lastLoginAt},
+            last_login_at = NOW(),
             update_time   = NOW()
         WHERE user_id = #{id}
     </update>

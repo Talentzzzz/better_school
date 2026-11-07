@@ -40,7 +40,7 @@ public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
     @Test
     void userPairRoomUnique_duplicateCreationRejectedByPairGate() {
         RoomEntity room = new RoomEntity();
-        room.setInitiatorId(USER_A);
+        room.setCreatorId(USER_A);
         String roomId = chatRepository.createDirectRoom(room, USER_B).getRoomId();
         assertUuidId(roomId); // uuid-biz-id 票 04：roomId 必须是可解析的 UUID 字符串
 
@@ -52,7 +52,7 @@ public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
 
         // pair 表收尾闸门：同一对人再建撞 uk_pair，事务内已写的 room/名册/user_room 行全部回滚
         RoomEntity again = new RoomEntity();
-        again.setInitiatorId(USER_B);
+        again.setCreatorId(USER_B);
         assertThatThrownBy(() -> chatRepository.createDirectRoom(again, USER_A))
                 .as("user_pair_room.uk_pair 应拦截同一对人重复建会话")
                 .isInstanceOf(DuplicateKeyException.class);
@@ -172,7 +172,7 @@ public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
 
     private String createDirectRoom(String userA, String userB) {
         RoomEntity room = new RoomEntity();
-        room.setInitiatorId(userA);
+        room.setCreatorId(userA);
         chatRepository.insertRoom(room);
         return room.getRoomId();
     }

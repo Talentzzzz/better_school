@@ -4,7 +4,7 @@ import com.betterschool.domain.credit.adapter.repository.ICreditRepository;
 import com.betterschool.domain.credit.model.entity.CreditDetailEntity;
 import com.betterschool.domain.credit.model.valobj.CreditChangeResult;
 import com.betterschool.infrastructure.dao.credit.ICreditDao;
-import com.betterschool.infrastructure.dao.credit.po.CreditDetailPO;
+import com.betterschool.infrastructure.dao.credit.po.CreditDetail;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -132,26 +132,24 @@ public class CreditRepository implements ICreditRepository {
         });
     }
 
-    private CreditDetailPO toPO(CreditDetailEntity creditDetailEntity) {
-        CreditDetailPO creditDetailPO = new CreditDetailPO();
-        creditDetailPO.setUserId(creditDetailEntity.getUserId());
-        creditDetailPO.setChange(creditDetailEntity.getChange());
-        creditDetailPO.setReasonType(creditDetailEntity.getReasonType());
-        creditDetailPO.setRefId(creditDetailEntity.getRefId());
-        creditDetailPO.setCreateTime(creditDetailEntity.getCreateTime());
-        creditDetailPO.setUpdateTime(creditDetailEntity.getUpdateTime());
-        return creditDetailPO;
+    private CreditDetail toPO(CreditDetailEntity creditDetailEntity) {
+        CreditDetail creditDetail = new CreditDetail();
+        creditDetail.setUserId(creditDetailEntity.getUserId());
+        creditDetail.setChange(creditDetailEntity.getChange());
+        creditDetail.setReasonType(creditDetailEntity.getReasonType());
+        creditDetail.setRefId(creditDetailEntity.getRefId());
+        return creditDetail;
     }
 
-    private CreditDetailEntity toEntity(CreditDetailPO creditDetailPO) {
+    private CreditDetailEntity toEntity(CreditDetail creditDetail) {
         CreditDetailEntity creditDetailEntity = new CreditDetailEntity();
-        creditDetailEntity.setId(creditDetailPO.getId());
-        creditDetailEntity.setUserId(creditDetailPO.getUserId());
-        creditDetailEntity.setChange(creditDetailPO.getChange());
-        creditDetailEntity.setReasonType(creditDetailPO.getReasonType());
-        creditDetailEntity.setRefId(creditDetailPO.getRefId());
-        creditDetailEntity.setCreateTime(creditDetailPO.getCreateTime());
-        creditDetailEntity.setUpdateTime(creditDetailPO.getUpdateTime());
+        creditDetailEntity.setId(creditDetail.getId());
+        creditDetailEntity.setUserId(creditDetail.getUserId());
+        creditDetailEntity.setChange(creditDetail.getChange());
+        creditDetailEntity.setReasonType(creditDetail.getReasonType());
+        creditDetailEntity.setRefId(creditDetail.getRefId());
+        creditDetailEntity.setCreateTime(creditDetail.getCreateTime());
+        creditDetailEntity.setUpdateTime(creditDetail.getUpdateTime());
         return creditDetailEntity;
     }
 }

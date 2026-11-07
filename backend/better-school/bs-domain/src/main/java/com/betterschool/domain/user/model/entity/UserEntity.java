@@ -35,7 +35,6 @@ public class UserEntity {
         userEntity.setRole(UserRoleVO.USER);
         userEntity.setStatus(UserStatusVO.NORMAL);
         userEntity.setCreditScore(100);
-        userEntity.setCreatedAt(LocalDateTime.now());
         return userEntity;
     }
 }

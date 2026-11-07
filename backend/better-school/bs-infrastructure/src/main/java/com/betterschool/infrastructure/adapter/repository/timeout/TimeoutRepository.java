@@ -4,7 +4,7 @@ import com.betterschool.domain.timeout.adapter.repository.ITimeoutRepository;
 import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
 import com.betterschool.domain.timeout.model.valobj.TaskStatusVO;
 import com.betterschool.infrastructure.dao.timeout.ITimeoutTaskDao;
-import com.betterschool.infrastructure.dao.timeout.po.TimeoutTaskPO;
+import com.betterschool.infrastructure.dao.timeout.po.TimeoutTask;
 import com.betterschool.infrastructure.sharding.TimeoutTaskShardSlots;
 import com.betterschool.types.timeout.TimeoutConstants;
 import lombok.RequiredArgsConstructor;
@@ -13,7 +13,6 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.function.Supplier;
@@ -65,7 +64,7 @@ public class TimeoutRepository implements ITimeoutRepository {
 
     @Override
     public TimeoutTaskEntity findByKey(String taskType, String bizId) {
-        TimeoutTaskPO po = withSlot(bizId, () -> timeoutTaskDao.selectByKey(taskType, bizId));
+        TimeoutTask po = withSlot(bizId, () -> timeoutTaskDao.selectByKey(taskType, bizId));
         return po == null ? null : toEntity(po);
     }
 
@@ -76,7 +75,7 @@ public class TimeoutRepository implements ITimeoutRepository {
 
     @Override
     public boolean cancelActive(String taskType, String bizId) {
-        return withSlot(bizId, () -> timeoutTaskDao.cancelActive(taskType, bizId, now())) > 0;
+        return withSlot(bizId, () -> timeoutTaskDao.cancelActive(taskType, bizId)) > 0;
     }
 
     @Override
@@ -92,18 +91,18 @@ public class TimeoutRepository implements ITimeoutRepository {
         if (bizIds.isEmpty()) {
             return 0;
         }
-        return withSlotHint(slot, () -> timeoutTaskDao.markSuccessBatch(taskType, bizIds, now()));
+        return withSlotHint(slot, () -> timeoutTaskDao.markSuccessBatch(taskType, bizIds));
     }
 
     @Override
-    public int markRetryBatch(int slot, String taskType, LinkedHashMap<String, LocalDateTime> retryTimes) {
-        if (retryTimes.isEmpty()) {
+    public int markRetryBatch(int slot, String taskType, LinkedHashMap<String, Integer> backoffSeconds) {
+        if (backoffSeconds.isEmpty()) {
             return 0;
         }
         // 两个列表按键序一一对应（mapper 里 CASE 与 IN 各用一遍同一个键序）：
-        // next_fire_time 是按行不同的那一列，键序错位就会把退避时刻写串行
+        // next_fire_time 是按行不同的那一列，键序错位就会把退避时长写串行
         return withSlotHint(slot, () -> timeoutTaskDao.markRetryBatch(taskType,
-                List.copyOf(retryTimes.keySet()), List.copyOf(retryTimes.values()), now()));
+                List.copyOf(backoffSeconds.keySet()), List.copyOf(backoffSeconds.values())));
     }
 
     @Override
@@ -111,19 +110,18 @@ public class TimeoutRepository implements ITimeoutRepository {
         if (bizIds.isEmpty()) {
             return 0;
         }
-        return withSlotHint(slot, () -> timeoutTaskDao.markDeadBatch(taskType, bizIds, now()));
+        return withSlotHint(slot, () -> timeoutTaskDao.markDeadBatch(taskType, bizIds));
     }
 
     @Override
     public boolean resendDeadLetter(String taskType, String bizId) {
-        // next_fire_time 取 now：重发＝立刻重开一轮，下一个扫描周期就捞它
-        return withSlot(bizId,
-                () -> timeoutTaskDao.resendDeadLetter(taskType, bizId, now(), now())) > 0;
+        // next_fire_time 取 NOW()：重发＝立刻重开一轮，下一个扫描周期就捞它
+        return withSlot(bizId, () -> timeoutTaskDao.resendDeadLetter(taskType, bizId)) > 0;
     }
 
     @Override
     public boolean cancelDeadLetter(String taskType, String bizId) {
-        return withSlot(bizId, () -> timeoutTaskDao.cancelDeadLetter(taskType, bizId, now())) > 0;
+        return withSlot(bizId, () -> timeoutTaskDao.cancelDeadLetter(taskType, bizId)) > 0;
     }
 
     @Override
@@ -139,11 +137,6 @@ public class TimeoutRepository implements ITimeoutRepository {
         return timeoutTaskDao.selectDeadLetters(offset, limit).stream()
                 .map(TimeoutRepository::toEntity)
                 .toList();
-    }
-
-    /** 库列是 DATETIME（秒级精度）：不截秒写进去会被 MySQL 四舍五入、读回来对不上 */
-    private static LocalDateTime now() {
-        return LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS);
     }
 
     /** 按键的读写：槽位由 bizId 算出（与注册、扫描同一个公式；hash 输入 = biz_id，见 TimeoutTaskShardSlots） */
@@ -175,21 +168,18 @@ public class TimeoutRepository implements ITimeoutRepository {
         }
     }
 
-    private static TimeoutTaskPO toPO(TimeoutTaskEntity task) {
-        TimeoutTaskPO po = new TimeoutTaskPO();
+    private static TimeoutTask toPO(TimeoutTaskEntity task) {
+        TimeoutTask po = new TimeoutTask();
         po.setId(task.getId());
         po.setTaskType(task.getTaskType());
         po.setBizId(task.getBizId());
-        po.setActionTime(task.getActionTime());
-        po.setNextFireTime(task.getNextFireTime());
+        po.setDelaySeconds(task.getDelaySeconds());
         po.setStatus(task.getStatus() == null ? null : task.getStatus().name());
         po.setRetryCount(task.getRetryCount());
-        po.setCreatedAt(task.getCreatedAt());
-        po.setUpdatedAt(task.getUpdatedAt());
         return po;
     }
 
-    private static TimeoutTaskEntity toEntity(TimeoutTaskPO po) {
+    private static TimeoutTaskEntity toEntity(TimeoutTask po) {
         TimeoutTaskEntity task = new TimeoutTaskEntity();
         task.setId(po.getId());
         task.setTaskType(po.getTaskType());

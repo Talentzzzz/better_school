@@ -141,7 +141,7 @@ class FeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     private String insertLegacyNormalPost(String userId) {
         // 时间参数 Java 侧算好再绑：ShardingSphere 解析 NOW() - INTERVAL n DAY 会 bad SQL grammar
         java.sql.Timestamp twoDaysAgo = java.sql.Timestamp.valueOf(LocalDateTime.now().minusDays(2));
-        // 票 03 起业务 id 由 IdGenerator 在应用层发号（自增同值回写已删），直插存量行走 UUID 形态
+        // 票 03 起业务 id 在应用层生成（UUID.randomUUID()，自增同值回写已删），直插存量行走 UUID 形态
         String postId = java.util.UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO post (post_id, user_id, title, content, state, create_time, update_time) "
                 + "VALUES (?, ?, '重建存量帖', '存量正文', 'NORMAL', ?, ?)", postId, userId, twoDaysAgo, twoDaysAgo);

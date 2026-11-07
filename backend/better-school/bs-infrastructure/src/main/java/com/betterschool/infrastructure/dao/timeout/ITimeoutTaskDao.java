@@ -1,6 +1,6 @@
 package com.betterschool.infrastructure.dao.timeout;
 
-import com.betterschool.infrastructure.dao.timeout.po.TimeoutTaskPO;
+import com.betterschool.infrastructure.dao.timeout.po.TimeoutTask;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -19,56 +19,50 @@ import java.util.List;
 public interface ITimeoutTaskDao {
 
     /** 插一行任务；撞 uk_type_biz 抛 DuplicateKeyException（由仓储层翻成「已存在」） */
-    int insert(TimeoutTaskPO timeoutTask);
+    int insert(TimeoutTask timeoutTask);
 
     /** 按自然键取行；不存在返回 null */
-    TimeoutTaskPO selectByKey(@Param("taskType") String taskType, @Param("bizId") String bizId);
+    TimeoutTask selectByKey(@Param("taskType") String taskType, @Param("bizId") String bizId);
 
     /** 终态行复活为 WAITING（条件 UPDATE）；返回影响行数，0 = 行不在终态（在途，幂等不改期） */
-    int reviveTerminal(TimeoutTaskPO timeoutTask);
+    int reviveTerminal(TimeoutTask timeoutTask);
 
-    /** 未终态行软置 CANCELED（条件 UPDATE）；返回影响行数，0 = 行不存在或已终态 */
-    int cancelActive(@Param("taskType") String taskType, @Param("bizId") String bizId,
-                     @Param("updatedAt") LocalDateTime updatedAt);
+    /** 未终态行软置 CANCELED（条件 UPDATE，updated_at 取数据库时钟）；返回影响行数，0 = 行不存在或已终态 */
+    int cancelActive(@Param("taskType") String taskType, @Param("bizId") String bizId);
 
     /**
      * 扫描捞批：{@code status IN ('WAITING','RETRYING') AND next_fire_time <= dueBefore}，
      * 按 {@code next_fire_time} 升序取 {@code limit} 条。本语句没有分片键，路由必须靠仓储层塞的槽位 hint。
      */
-    List<TimeoutTaskPO> selectDueBatch(@Param("dueBefore") LocalDateTime dueBefore, @Param("limit") int limit);
+    List<TimeoutTask> selectDueBatch(@Param("dueBefore") LocalDateTime dueBefore, @Param("limit") int limit);
 
-    /** 结算·成功桶：整桶一条 UPDATE 置 SUCCESS；带未终态守卫，返回实际改到的行数 */
-    int markSuccessBatch(@Param("taskType") String taskType, @Param("bizIds") List<String> bizIds,
-                         @Param("updatedAt") LocalDateTime updatedAt);
+    /** 结算·成功桶：整桶一条 UPDATE 置 SUCCESS（updated_at 取数据库时钟）；带未终态守卫，返回实际改到的行数 */
+    int markSuccessBatch(@Param("taskType") String taskType, @Param("bizIds") List<String> bizIds);
 
     /**
      * 结算·重试桶：整桶一条 UPDATE 置 RETRYING、{@code retry_count + 1}，
-     * {@code next_fire_time} 按 {@code bizIds}/{@code nextFireTimes} 的**同一键序**走 CASE 逐行取；
+     * {@code next_fire_time} 按 {@code bizIds}/{@code backoffSeconds} 的**同一键序**走 CASE 逐行取
+     * （SQL 侧 TIMESTAMPADD(SECOND, ?, NOW()) 换算绝对时刻）；
      * 带未终态守卫，返回实际改到的行数。
      */
     int markRetryBatch(@Param("taskType") String taskType, @Param("bizIds") List<String> bizIds,
-                       @Param("nextFireTimes") List<LocalDateTime> nextFireTimes,
-                       @Param("updatedAt") LocalDateTime updatedAt);
+                       @Param("backoffSeconds") List<Integer> backoffSeconds);
 
-    /** 结算·死信桶：整桶一条 UPDATE 置 FAILED、{@code retry_count + 1}；带未终态守卫 */
-    int markDeadBatch(@Param("taskType") String taskType, @Param("bizIds") List<String> bizIds,
-                      @Param("updatedAt") LocalDateTime updatedAt);
+    /** 结算·死信桶：整桶一条 UPDATE 置 FAILED、{@code retry_count + 1}（updated_at 取数据库时钟）；带未终态守卫 */
+    int markDeadBatch(@Param("taskType") String taskType, @Param("bizIds") List<String> bizIds);
 
-    /** 死信重发：只打 FAILED 行 → RETRYING、retry_count 清零、next_fire_time = 给定时刻 */
-    int resendDeadLetter(@Param("taskType") String taskType, @Param("bizId") String bizId,
-                         @Param("nextFireTime") LocalDateTime nextFireTime,
-                         @Param("updatedAt") LocalDateTime updatedAt);
+    /** 死信重发：只打 FAILED 行 → RETRYING、retry_count 清零、next_fire_time = NOW()（立即重开一轮） */
+    int resendDeadLetter(@Param("taskType") String taskType, @Param("bizId") String bizId);
 
-    /** 死信取消：只打 FAILED 行 → CANCELED */
-    int cancelDeadLetter(@Param("taskType") String taskType, @Param("bizId") String bizId,
-                         @Param("updatedAt") LocalDateTime updatedAt);
+    /** 死信取消：只打 FAILED 行 → CANCELED（updated_at 取数据库时钟） */
+    int cancelDeadLetter(@Param("taskType") String taskType, @Param("bizId") String bizId);
 
     /**
      * 死信列表的一页（管理面，票 06）：**全仓唯二不塞 hint 的语句**——按状态翻没有分片键，
      * 要让 ShardingSphere 广播 16 张分表再归并（塞 hint 会只查一张、翻不出全量死信）。
      * 只准经仓储的死信管理面方法调用，别复用到别的按键读上。
      */
-    List<TimeoutTaskPO> selectDeadLetters(@Param("offset") int offset, @Param("limit") int limit);
+    List<TimeoutTask> selectDeadLetters(@Param("offset") int offset, @Param("limit") int limit);
 
     /** 死信总数（管理面翻页的 total）；同 {@link #selectDeadLetters} 不塞 hint，走广播 */
     long countDeadLetters();

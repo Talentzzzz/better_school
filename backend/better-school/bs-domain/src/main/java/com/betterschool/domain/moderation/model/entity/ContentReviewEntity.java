@@ -39,7 +39,6 @@ public class ContentReviewEntity {
         reviewEntity.operatorId = operatorId;
         reviewEntity.reason = reason;
         reviewEntity.reasonCode = reasonCode;
-        reviewEntity.createdAt = LocalDateTime.now();
         return reviewEntity;
     }
 }

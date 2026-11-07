@@ -11,7 +11,7 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理主键（纯内部键；同刻入池 FIFO tie-break 用物理 id ASC——task_id 已 UUID 化，不再代表入池先后，uuid-biz-id 票 06）|
-|task_id|varchar(36)|NOT NULL, UNIQUE(`uk_task_id`)|工单业务 ID（UUID 字符串，对外唯一标识）：应用层 insert 前由 `IIdGenerator` 发号随行一次写入；工单详情按它寻址：`GET /api/moderation/tasks/{taskId}`；租约复合 bizId 首段也是它（`{taskId}:{claimSeq}`）|
+|task_id|varchar(36)|NOT NULL, UNIQUE(`uk_task_id`)|工单业务 ID（UUID 字符串，对外唯一标识）：应用层 insert 前生成（`UUID.randomUUID()`）随行一次写入；工单详情按它寻址：`GET /api/moderation/tasks/{taskId}`；租约复合 bizId 首段也是它（`{taskId}:{claimSeq}`）|
 |target_type|varchar(20)|NOT NULL, `uk_target_round` 首列|内容类型 POST/COMMENT/PRODUCT/ERRAND（`ReviewTargetTypeVO` 可审值；USER/MESSAGE 仅举报用不入池）|
 |target_id|varchar(36)|NOT NULL|内容业务 ID（post_id/comment_id/product_id/errand_order_id，UUID 字符串）|
 |review_round|int|NOT NULL, DEFAULT 1, `uk_target_round` 第三列|审核轮次，与 `content_review.review_round` 同源（COMMENT/ERRAND 恒 1）|
@@ -23,7 +23,7 @@
 |lease_expire_at|datetime|NULL|租约到期时刻（claim 时 = NOW()+5min）|
 |recycle_count|int|NOT NULL, DEFAULT 0|回收次数（≥3 置 escalated + 告警）|
 |escalated|tinyint(1)|NOT NULL, DEFAULT 0|需人工干预标记|
-|entered_at|datetime|NOT NULL|进入待审时刻（FIFO 排序/等待时长锚点；**回收不改**，等待时长继续累加）。取值：POST/PRODUCT 直取业务表 `review_entered_at`，COMMENT 取发布时刻、ERRAND 取支付成功时刻|
+|entered_at|datetime|NOT NULL|进入待审时刻（FIFO 排序/等待时长锚点；**回收不改**，等待时长继续累加）。取值：入池开单 SQL `NOW()` 落库（开单与各业务的进入待审动作——POST/PRODUCT 发布、COMMENT 发布、ERRAND 支付——同事务，开单时刻即该时刻本身）|
 |decided_at|datetime|NULL|裁决时刻（DONE 时写）|
 |create_time / update_time|datetime|NOT NULL|时间戳|
 
@@ -46,7 +46,7 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理主键：纯内部键，永不对外|
-|review_id|varchar(36)|NOT NULL, UNIQUE(`uk_review_id`)|审核记录业务 ID（UUID 字符串，uuid-biz-id 票 06 起）：应用层 insert 前由 `IIdGenerator` 发号随行一次写入|
+|review_id|varchar(36)|NOT NULL, UNIQUE(`uk_review_id`)|审核记录业务 ID（UUID 字符串，uuid-biz-id 票 06 起）：应用层 insert 前生成（`UUID.randomUUID()`）随行一次写入|
 |target_type|varchar(20)|NOT NULL, `uk_target_action_round` 首列|审核对象 POST/COMMENT/ERRAND/PRODUCT|
 |target_id|varchar(36)|NOT NULL|审核对象业务 ID（各业务表的业务键，非物理 id）|
 |author_id|varchar(36)|NOT NULL|作者用户 ID（冗余；对齐 `content_report.author_id`，按作者聚合历史裁决单表可查、免反查业务表，票 06/07）|
@@ -75,7 +75,7 @@
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理主键（纯内部键，永不对外）|
-|report_id|varchar(36)|NOT NULL, UNIQUE(`uk_report_id`)|举报单业务 ID（UUID 字符串，uuid-biz-id 票 06 起）：应用层 insert 前由 `IIdGenerator` 发号随行一次写入；信用分 REPORT_CONFIRMED 流水 `ref_id` 引用它；对外按它寻址|
+|report_id|varchar(36)|NOT NULL, UNIQUE(`uk_report_id`)|举报单业务 ID（UUID 字符串，uuid-biz-id 票 06 起）：应用层 insert 前生成（`UUID.randomUUID()`）随行一次写入；信用分 REPORT_CONFIRMED 流水 `ref_id` 引用它；对外按它寻址|
 |target_type|varchar(20)|NOT NULL, `uk_reporter_target` 第二列|举报对象 POST/COMMENT/USER/MESSAGE（MESSAGE = 1v1 会话零审核的举报兜底）|
 |target_id|varchar(36)|NOT NULL|举报对象业务 ID（USER/POST/COMMENT = user_id/内容 id UUID；MESSAGE = `message.msg_id` UUID 字符串，票 04）|
 |author_id|varchar(36)|NOT NULL|被举报人用户 ID（冗余，免举报时回查业务表）|

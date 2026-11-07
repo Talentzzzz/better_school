@@ -22,10 +22,10 @@
     </update>
 
     <!-- 流水先行：uk_user_reason_ref(user_id, reason_type, ref_id) 冲突 → INSERT IGNORE 影响 0 行 = 已处理过（幂等跳过） -->
-    <insert id="insertIgnoreCreditDetail" parameterType="com.betterschool.infrastructure.dao.credit.po.CreditDetailPO"
+    <insert id="insertIgnoreCreditDetail" parameterType="com.betterschool.infrastructure.dao.credit.po.CreditDetail"
             useGeneratedKeys="true" keyProperty="id">
         INSERT IGNORE INTO user_credit_detail (user_id, `change`, reason_type, ref_id, create_time, update_time)
-        VALUES (#{userId}, #{change}, #{reasonType}, #{refId}, #{createTime}, #{updateTime})
+        VALUES (#{userId}, #{change}, #{reasonType}, #{refId}, NOW(), NOW())
     </insert>
 
     <select id="sumTodayChange" resultType="int">
@@ -56,7 +56,7 @@
           AND create_time &lt; #{end}
     </select>
 
-    <select id="selectPage" resultType="com.betterschool.infrastructure.dao.credit.po.CreditDetailPO">
+    <select id="selectPage" resultType="com.betterschool.infrastructure.dao.credit.po.CreditDetail">
         SELECT id, user_id, `change`, reason_type, ref_id, create_time, update_time
         FROM user_credit_detail
         WHERE user_id = #{userId}

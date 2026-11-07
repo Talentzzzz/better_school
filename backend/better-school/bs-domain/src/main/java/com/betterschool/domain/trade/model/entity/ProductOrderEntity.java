@@ -46,8 +46,6 @@ public class ProductOrderEntity {
         orderEntity.productTradeLocation = product.getTradeLocation();
         orderEntity.productCategory = product.getCategory();
         orderEntity.status = ProductOrderStatusVO.PENDING_PAYMENT;
-        orderEntity.createdAt = LocalDateTime.now();
-        orderEntity.updatedAt = orderEntity.createdAt;
         return orderEntity;
     }
 

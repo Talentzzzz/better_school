@@ -7,10 +7,9 @@ import com.betterschool.domain.notification.model.valobj.NotificationBroadcastMe
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.infrastructure.dao.notification.INotificationDao;
-import com.betterschool.infrastructure.dao.notification.po.NotificationPO;
+import com.betterschool.infrastructure.dao.notification.po.Notification;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
 import com.betterschool.types.common.Constants;
-import com.betterschool.types.id.IIdGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -19,6 +18,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @Repository
 @RequiredArgsConstructor
@@ -28,21 +28,19 @@ public class NotificationRepository implements INotificationRepository {
     private final OutboxMessageStore outboxMessageStore;
     private final IBroadcastRecipientPort broadcastRecipientPort;
     private final TransactionTemplate transactionTemplate;
-    /** 业务 ID 发号器（notification_id UUID，uuid-biz-id 票 06） */
-    private final IIdGenerator idGenerator;
 
     @Override
     public List<NotificationEntity> pageList(String userId, NotificationScopeVO scope, int offset, int limit) {
         String scopeName = scope == null ? null : scope.name();
-        List<NotificationPO> rows = notificationDao.selectPage(userId, scopeName, offset, limit);
+        List<Notification> rows = notificationDao.selectPage(userId, scopeName, offset, limit);
         // is_read（原 LEFT JOIN notification_read 的计算列）：页内 scope 集逐 scope 查水位后 Java 计算
         // ——水位每 user_id × scope 一行，scope 个数有界（当前两个），不随页大小增长
         Map<String, Long> watermarks = new HashMap<>();
-        for (String rowScope : rows.stream().map(NotificationPO::getScope).distinct().toList()) {
+        for (String rowScope : rows.stream().map(Notification::getScope).distinct().toList()) {
             Long lastReadSeq = notificationDao.selectLastReadSeq(userId, rowScope);
             watermarks.put(rowScope, lastReadSeq == null ? 0L : lastReadSeq);
         }
-        for (NotificationPO row : rows) {
+        for (Notification row : rows) {
             row.setIsRead(row.getSeq() != null && row.getSeq() <= watermarks.getOrDefault(row.getScope(), 0L));
         }
         return rows.stream().map(this::toEntity).toList();
@@ -115,52 +113,49 @@ public class NotificationRepository implements INotificationRepository {
         String scope = notificationEntity.getScope().name();
         notificationDao.upsertIncreaseSeq(notificationEntity.getUserId(), scope);
         notificationEntity.setSeq(notificationDao.selectSeq(notificationEntity.getUserId(), scope));
-        NotificationPO notificationPO = toPO(notificationEntity);
-        if (notificationPO.getNotificationId() == null) {
+        Notification notification = toPO(notificationEntity);
+        if (notification.getNotificationId() == null) {
             // 业务 ID 随 insert 一次写入（uuid-biz-id 票 06）；撞 uk_dedup 被 IGNORE 时本行未落库，发号作废无害
-            notificationPO.setNotificationId(idGenerator.nextId());
+            notification.setNotificationId(UUID.randomUUID().toString());
         }
         if (notificationEntity.getDedupKey() != null) {
-            notificationDao.insertIgnore(notificationPO);
+            notificationDao.insertIgnore(notification);
         } else {
-            notificationDao.insert(notificationPO);
+            notificationDao.insert(notification);
         }
-        notificationEntity.setNotificationId(notificationPO.getNotificationId());
+        notificationEntity.setNotificationId(notification.getNotificationId());
     }
 
-    private NotificationPO toPO(NotificationEntity notificationEntity) {
-        LocalDateTime now = LocalDateTime.now();
-        NotificationPO notificationPO = new NotificationPO();
-        notificationPO.setUserId(notificationEntity.getUserId());
-        notificationPO.setScope(notificationEntity.getScope().name());
-        notificationPO.setSeq(notificationEntity.getSeq());
-        notificationPO.setSenderId(notificationEntity.getSenderId());
-        notificationPO.setType(notificationEntity.getType().name());
-        notificationPO.setTitle(notificationEntity.getTitle());
-        notificationPO.setContent(notificationEntity.getContent());
-        notificationPO.setRefType(notificationEntity.getRefType());
-        notificationPO.setRefId(notificationEntity.getRefId());
-        notificationPO.setBroadcastMsgId(notificationEntity.getBroadcastMsgId());
-        notificationPO.setDedupKey(notificationEntity.getDedupKey());
-        notificationPO.setCreateTime(now);
-        notificationPO.setUpdateTime(now);
-        return notificationPO;
+    private Notification toPO(NotificationEntity notificationEntity) {
+        Notification notification = new Notification();
+        notification.setUserId(notificationEntity.getUserId());
+        notification.setScope(notificationEntity.getScope().name());
+        notification.setSeq(notificationEntity.getSeq());
+        notification.setSenderId(notificationEntity.getSenderId());
+        notification.setType(notificationEntity.getType().name());
+        notification.setTitle(notificationEntity.getTitle());
+        notification.setContent(notificationEntity.getContent());
+        notification.setRefType(notificationEntity.getRefType());
+        notification.setRefId(notificationEntity.getRefId());
+        notification.setBroadcastMsgId(notificationEntity.getBroadcastMsgId());
+        notification.setDedupKey(notificationEntity.getDedupKey());
+        return notification;
     }
 
-    private NotificationEntity toEntity(NotificationPO notificationPO) {
+    private NotificationEntity toEntity(Notification notification) {
         NotificationEntity notificationEntity = new NotificationEntity();
-        notificationEntity.setNotificationId(notificationPO.getNotificationId());
-        notificationEntity.setUserId(notificationPO.getUserId());
-        notificationEntity.setScope(NotificationScopeVO.valueOf(notificationPO.getScope()));
-        notificationEntity.setSeq(notificationPO.getSeq());
-        notificationEntity.setSenderId(notificationPO.getSenderId());
-        notificationEntity.setType(NotificationTypeVO.valueOf(notificationPO.getType()));
-        notificationEntity.setTitle(notificationPO.getTitle());
-        notificationEntity.setContent(notificationPO.getContent());
-        notificationEntity.setRead(notificationPO.getIsRead() != null && notificationPO.getIsRead());
-        notificationEntity.setRefType(notificationPO.getRefType());
-        notificationEntity.setRefId(notificationPO.getRefId());
-        notificationEntity.setCreatedAt(notificationPO.getCreateTime());
+        notificationEntity.setNotificationId(notification.getNotificationId());
+        notificationEntity.setUserId(notification.getUserId());
+        notificationEntity.setScope(NotificationScopeVO.valueOf(notification.getScope()));
+        notificationEntity.setSeq(notification.getSeq());
+        notificationEntity.setSenderId(notification.getSenderId());
+        notificationEntity.setType(NotificationTypeVO.valueOf(notification.getType()));
+        notificationEntity.setTitle(notification.getTitle());
+        notificationEntity.setContent(notification.getContent());
+        notificationEntity.setRead(notification.getIsRead() != null && notification.getIsRead());
+        notificationEntity.setRefType(notification.getRefType());
+        notificationEntity.setRefId(notification.getRefId());
+        notificationEntity.setCreatedAt(notification.getCreateTime());
         return notificationEntity;
     }
 }

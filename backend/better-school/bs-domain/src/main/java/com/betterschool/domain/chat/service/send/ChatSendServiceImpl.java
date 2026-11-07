@@ -8,7 +8,7 @@ import com.betterschool.domain.chat.model.entity.RoomEntity;
 import com.betterschool.domain.chat.model.valobj.CardRefTypeVO;
 import com.betterschool.domain.chat.model.valobj.DirectRoomPairVO;
 import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
-import com.betterschool.domain.chat.model.valobj.RoomSourceVO;
+import com.betterschool.domain.chat.model.valobj.RoomSourceEnum;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
 import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
 import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
@@ -46,7 +46,7 @@ public class ChatSendServiceImpl implements IChatSendService {
     private String imagePublicUrl;
 
     @Override
-    public RoomEntity createDirectRoom(String userId, String targetUserId, RoomSourceVO source) {
+    public RoomEntity createDirectRoom(String userId, String targetUserId, RoomSourceEnum source) {
         if (targetUserId == null || targetUserId.equals(userId)) {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "不能与自己建立会话");
         }
@@ -56,14 +56,14 @@ public class ChatSendServiceImpl implements IChatSendService {
         // user_id 是 UUID 字符串后无数值序，配对键改按字符串字典序取规范序（仅用于撞键收敛，语义与数值 min/max 等价）
         DirectRoomPairVO pairKey = DirectRoomPairVO.canonicalOf(userId, targetUserId);
 
-        // 首来源钉死：既有会话原样返回，带来源的二次进入（如先私信后从市集联系）不覆盖来源与发起人
+        // 首来源钉死：既有会话原样返回，带来源的二次进入（如先私信后从市集联系）不覆盖来源与创建人
         RoomEntity existing = chatRepository.findDirectRoom(pairKey.getUserMin(), pairKey.getUserMax());
         if (existing != null) {
             return existing;
         }
         RoomEntity room = new RoomEntity();
         room.setSource(source);
-        room.setInitiatorId(userId);
+        room.setCreatorId(userId);
         try {
             // 建会话 + 两名成员 + 配对行是一个原子用例（仓储内事务，配对行收尾兜幂等）
             return chatRepository.createDirectRoom(room, targetUserId);

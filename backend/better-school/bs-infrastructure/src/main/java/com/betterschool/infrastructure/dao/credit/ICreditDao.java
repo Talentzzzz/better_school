@@ -1,6 +1,6 @@
 package com.betterschool.infrastructure.dao.credit;
 
-import com.betterschool.infrastructure.dao.credit.po.CreditDetailPO;
+import com.betterschool.infrastructure.dao.credit.po.CreditDetail;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -21,7 +21,7 @@ public interface ICreditDao {
     int updateCreditScore(@Param("userId") String userId, @Param("delta") int delta);
 
     /** 返回影响行数：0 = 该变动已处理过（幂等跳过） */
-    int insertIgnoreCreditDetail(CreditDetailPO creditDetailPO);
+    int insertIgnoreCreditDetail(CreditDetail creditDetail);
 
     Integer sumTodayChange(@Param("userId") String userId, @Param("reasonType") String reasonType,
                            @Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
@@ -32,7 +32,7 @@ public interface ICreditDao {
     long countReasonToday(@Param("userId") String userId, @Param("reasonType") String reasonType,
                           @Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
 
-    List<CreditDetailPO> selectPage(@Param("userId") String userId, @Param("offset") int offset, @Param("limit") int limit);
+    List<CreditDetail> selectPage(@Param("userId") String userId, @Param("offset") int offset, @Param("limit") int limit);
 
     long countDetails(@Param("userId") String userId);
 

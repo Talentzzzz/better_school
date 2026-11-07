@@ -21,8 +21,6 @@ public class VirtualWalletEntity {
         walletEntity.userId = userId;
         walletEntity.balance = initialBalance;
         walletEntity.frozenAmount = BigDecimal.ZERO;
-        walletEntity.createdAt = LocalDateTime.now();
-        walletEntity.updatedAt = walletEntity.createdAt;
         return walletEntity;
     }
 }

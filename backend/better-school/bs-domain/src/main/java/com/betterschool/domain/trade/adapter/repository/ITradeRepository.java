@@ -163,7 +163,7 @@ public interface ITradeRepository {
      * 登记"15 分钟未支付"超时任务（必须与下单同事务调用，实现层直插 timeout_task 分表）；
      * actionTime = 理论到期时刻，超时行随业务事务同生同死（内嵌超时中心票 03）
      */
-    void schedulePayTimeout(String orderId, LocalDateTime actionTime);
+    void schedulePayTimeout(String orderId, long delaySeconds);
 
     // ---------- 跨商品与订单的原子用例（实现内编程式事务，REQUIRED） ----------
 

@@ -8,7 +8,7 @@
 |post_like|帖子点赞关系（明细，uk_post_user 幂等）|
 |post_like_count|帖子点赞计数窄表（点赞计数真源，进程内合并同步落库）|
 
-**主键口径（uuid-biz-id 起）**：`id` 是纯内部物理自增，业务 ID 为 `post_id`（`uk_post_id`）；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`IIdGenerator` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
+**主键口径（uuid-biz-id 起）**：`id` 是纯内部物理自增，业务 ID 为 `post_id`（`uk_post_id`）；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`UUID.randomUUID()` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
 
 # post
 

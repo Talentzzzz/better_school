@@ -6,9 +6,8 @@ import com.betterschool.domain.moderation.model.valobj.ReviewTargetTypeVO;
 import com.betterschool.domain.timeout.adapter.repository.ITimeoutRepository;
 import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
 import com.betterschool.infrastructure.dao.moderation.IModerationDao;
-import com.betterschool.infrastructure.dao.moderation.po.ReviewTaskPO;
+import com.betterschool.infrastructure.dao.moderation.po.ReviewTask;
 import com.betterschool.types.common.Constants;
-import com.betterschool.types.id.IIdGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -19,6 +18,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * 审核工单池存储（基础设施内部组件）：各域仓储在**进入待审的同事务**内调用（spec §5.1：状态迁移与开单原子，不会出现「已待审但没工单」）。
@@ -46,8 +46,6 @@ public class ReviewTaskPoolStore {
     private final ITimeoutRepository timeoutRepository;
     private final TransactionTemplate transactionTemplate;
     private final IReviewDispatchMetricsPort reviewDispatchMetrics;
-    /** 业务 ID 发号器（task_id UUID，uuid-biz-id 票 06） */
-    private final IIdGenerator idGenerator;
     /**
      * 派单信号端口走惰性解析（ObjectProvider）：信号实现在 trigger 层、其依赖链回到本仓
      * （pushService → ReviewService → ModerationRepository → 本类），构造器直注入会成环；
@@ -62,27 +60,22 @@ public class ReviewTaskPoolStore {
      * @param targetId   内容业务 ID
      * @param reviewRound 审核轮次（与业务表 review_round 同源；COMMENT/ERRAND 恒 1）
      * @param authorId   作者用户 ID
-     * @param enteredAt  进入待审时刻（FIFO 排序锚点：POST/PRODUCT 取 review_entered_at，
-     *                   COMMENT 取发布时刻，ERRAND 取支付成功时刻）
+     * 入池即开单：entered_at（FIFO 排序锚点）由开单 SQL NOW() 落库（时刻一律数据库时钟），
+     * 与各业务的进入待审动作（POST/PRODUCT 发布、COMMENT 发布、ERRAND 支付）同事务，即该时刻本身
      */
-    public void enter(ReviewTargetTypeVO targetType, String targetId, int reviewRound, String authorId,
-                      LocalDateTime enteredAt) {
-        LocalDateTime now = LocalDateTime.now();
+    public void enter(ReviewTargetTypeVO targetType, String targetId, int reviewRound, String authorId) {
         // 同轮重提＝新轮次＝新工单行：先关旧轮遗留（业务行已在待审，旧工单必是遗留），再开新单
         moderationDao.closeStaleRoundTasks(targetType.name(), targetId, reviewRound);
-        ReviewTaskPO taskPO = new ReviewTaskPO();
+        ReviewTask task = new ReviewTask();
         // 业务 ID 随 insert 一次写入（uuid-biz-id 票 06）；撞 uk_target_round 被 IGNORE 时本行未落库，发号作废无害
-        taskPO.setTaskId(idGenerator.nextId());
-        taskPO.setTargetType(targetType.name());
-        taskPO.setTargetId(targetId);
-        taskPO.setReviewRound(reviewRound);
-        taskPO.setAuthorId(authorId);
-        taskPO.setSource("MANUAL");
-        taskPO.setEnteredAt(enteredAt);
-        taskPO.setCreateTime(now);
-        taskPO.setUpdateTime(now);
+        task.setTaskId(UUID.randomUUID().toString());
+        task.setTargetType(targetType.name());
+        task.setTargetId(targetId);
+        task.setReviewRound(reviewRound);
+        task.setAuthorId(authorId);
+        task.setSource("MANUAL");
         // uk_target_round 冲突 = 同轮已开单（幂等入池，0 行不报错）
-        boolean inserted = moderationDao.insertIgnoreTask(taskPO) > 0;
+        boolean inserted = moderationDao.insertIgnoreTask(task) > 0;
         if (inserted) {
             // 派单信号（票 11）：真实开了新工单才广播；afterCommit 触发（回滚随事务消失、不推），
             // 虚拟线程异步执行——业务线程不得阻塞在「查积压数 + 遍历推送」上（对齐 outbox 即时发送先例）
@@ -135,10 +128,10 @@ public class ReviewTaskPoolStore {
      * @param claimerId    审核员用户 ID
      * @param leaseMinutes 租约时长（分钟，spec 固定 5）
      */
-    public Optional<ReviewTaskPO> claim(String targetType, String claimerId, int leaseMinutes) {
+    public Optional<ReviewTask> claim(String targetType, String claimerId, int leaseMinutes) {
         // 观测计数（票 11）随事务提交后落：惰性回收条数与是否真领到单，都在事务内捕获、提交后写 Redis
         int[] lazyRecycledHolder = {0};
-        Optional<ReviewTaskPO> claimed = Optional.ofNullable(transactionTemplate.execute(status -> {
+        Optional<ReviewTask> claimed = Optional.ofNullable(transactionTemplate.execute(status -> {
             int lazyRecycled = moderationDao.recycleExpiredLeases();
             lazyRecycledHolder[0] = lazyRecycled;
             if (lazyRecycled > 0) {
@@ -162,8 +155,9 @@ public class ReviewTaskPoolStore {
             // taskId 是 UUID 字符串（uuid-biz-id 票 06），与 claimSeq 冒号拼接不受影响（UUID 无冒号）
             int claimSeq = moderationDao.selectClaimSeqById(taskId);
             // 租约超时注册与抢占同事务直插 timeout_task（内嵌超时中心）：回滚即无行，无幽灵租约
+            // Java 只传时长（租约分钟 → 秒），到期时刻由 SQL 侧 TIMESTAMPADD 按数据库时钟落库
             timeoutRepository.register(TimeoutTaskEntity.newWaiting(Constants.REVIEW_LEASE_TIMEOUT,
-                    taskId + ":" + claimSeq, LocalDateTime.now().plusMinutes(leaseMinutes), LocalDateTime.now()));
+                    taskId + ":" + claimSeq, leaseMinutes * 60L));
             return moderationDao.selectTaskById(taskId);
         }));
         if (lazyRecycledHolder[0] > 0) {
@@ -213,12 +207,12 @@ public class ReviewTaskPoolStore {
 
     /** 回收次数达阈值置 escalated 后告警（spec §5.2「≥3 置需人工干预标记并告警」，沿用 WARN 日志告警先例） */
     private void alertIfEscalated(String taskId, String action) {
-        ReviewTaskPO taskPO = moderationDao.selectTaskById(taskId);
-        if (taskPO != null && taskPO.getRecycleCount() != null
-                && taskPO.getRecycleCount() >= ESCALATE_RECYCLE_THRESHOLD) {
+        ReviewTask task = moderationDao.selectTaskById(taskId);
+        if (task != null && task.getRecycleCount() != null
+                && task.getRecycleCount() >= ESCALATE_RECYCLE_THRESHOLD) {
             log.warn("[审核工单告警] 工单 {} 因{}累计回收 {} 次（≥{}），已置需人工干预标记 targetType={} targetId={}",
-                    taskId, action, taskPO.getRecycleCount(), ESCALATE_RECYCLE_THRESHOLD,
-                    taskPO.getTargetType(), taskPO.getTargetId());
+                    taskId, action, task.getRecycleCount(), ESCALATE_RECYCLE_THRESHOLD,
+                    task.getTargetType(), task.getTargetId());
         }
     }
 }

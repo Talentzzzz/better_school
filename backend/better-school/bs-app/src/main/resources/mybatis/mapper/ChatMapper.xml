@@ -8,7 +8,7 @@
          room_member = 会话维度名册「这个会话有谁」（贴 room_id 片键）——对家回查/成员扇出只走名册，
          user_room 只做 user_id 前缀查询（逐用户写路径由仓储按名册成员集驱动） -->
     <sql id="roomColumns">
-        r.id, r.room_id, r.source, r.initiator_id, r.last_seq, r.create_time, r.update_time
+        r.id, r.room_id, r.source, r.creator_id, r.last_seq, r.create_time, r.update_time
     </sql>
 
     <!-- 消息表列口径（sql.md）：id 物理自增，msg_id 业务 ID（UUID 字符串，应用层 insert 前发号；跨表引用与对外暴露用它）；
@@ -20,12 +20,12 @@
 
     <!-- ===== room ===== -->
 
-    <insert id="insertRoom" parameterType="com.betterschool.infrastructure.dao.chat.po.RoomPO">
-        INSERT INTO room (room_id, source, initiator_id, last_seq, create_time, update_time)
-        VALUES (#{roomId}, #{source}, #{initiatorId}, #{lastSeq}, #{createTime}, #{updateTime})
+    <insert id="insertRoom" parameterType="com.betterschool.infrastructure.dao.chat.po.Room">
+        INSERT INTO room (room_id, source, creator_id, last_seq, create_time, update_time)
+        VALUES (#{roomId}, #{source}, #{creatorId}, #{lastSeq}, NOW(), NOW())
     </insert>
 
-    <select id="selectRoomById" resultType="com.betterschool.infrastructure.dao.chat.po.RoomPO">
+    <select id="selectRoomById" resultType="com.betterschool.infrastructure.dao.chat.po.Room">
         SELECT <include refid="roomColumns"/>
         FROM room r
         WHERE r.room_id = #{roomId}
@@ -41,9 +41,9 @@
 
     <!-- 建会话事务的收尾闸门：撞 uk_pair（同一对人恒一行）即 DuplicateKeyException，
          事务内已写的 room/room_member 全部回滚，服务层捕获后幂等回读既有 room_id -->
-    <insert id="insertUserPairRoom" parameterType="com.betterschool.infrastructure.dao.chat.po.UserPairRoomPO">
+    <insert id="insertUserPairRoom" parameterType="com.betterschool.infrastructure.dao.chat.po.UserPairRoom">
         INSERT INTO user_pair_room (user_min, user_max, room_id, create_time, update_time)
-        VALUES (#{userMin}, #{userMax}, #{roomId}, #{createTime}, #{updateTime})
+        VALUES (#{userMin}, #{userMax}, #{roomId}, NOW(), NOW())
     </insert>
 
     <!-- 发消息事务内原子取号：行锁到提交，失败回滚无空洞；取号后由 selectLastSeq 读回（须同事务同连接） -->
@@ -71,11 +71,11 @@
     </update>
 
     <!-- 会话列表四段查之①（user_room.idx_user_msg 主路径）：本人用户行分页，排除隐藏，last_msg_time
-         倒序；排序键在本人用户行上，room 真相（source/initiator_id/last_seq——未读数真源）与对家
+         倒序；排序键在本人用户行上，room 真相（source/creator_id/last_seq——未读数真源）与对家
          user_id 由仓储按 room_id 集二次回查拼装（②selectRoomsByIds ③selectPeerMembers 名册回查
          ④selectMessage 按 (room_id, last_seq) 逐会话点查预览真源，SQL 层零 JOIN；1v1 恒两行名册）；
          unread = r.last_seq − ur.read_seq 服务端拼装，不落副本 -->
-    <select id="selectUserRoomPage" resultType="com.betterschool.infrastructure.dao.chat.po.RoomListItemPO">
+    <select id="selectUserRoomPage" resultType="com.betterschool.infrastructure.dao.chat.po.RoomListItem">
         SELECT ur.room_id AS roomId,
                ur.last_msg_time,
                ur.read_seq AS readSeq
@@ -86,8 +86,8 @@
         LIMIT #{limit} OFFSET #{offset}
     </select>
 
-    <!-- 会话列表三段查之②：按 room_id 集批量回查会话行（lastSeq 未读数真源 + source/initiator_id 角色标签锚点） -->
-    <select id="selectRoomsByIds" resultType="com.betterschool.infrastructure.dao.chat.po.RoomPO">
+    <!-- 会话列表三段查之②：按 room_id 集批量回查会话行（lastSeq 未读数真源 + source/creator_id 角色标签锚点） -->
+    <select id="selectRoomsByIds" resultType="com.betterschool.infrastructure.dao.chat.po.Room">
         SELECT <include refid="roomColumns"/>
         FROM room r
         WHERE r.room_id IN
@@ -96,7 +96,7 @@
 
     <!-- 会话列表三段查之③：本批会话的对家名册行（名册表回查替代旧「成员表 user_id != 我」过滤；
          1v1 恒两行名册，每会话恰出一行对家） -->
-    <select id="selectPeerMembers" resultType="com.betterschool.infrastructure.dao.chat.po.RoomPeerRowPO">
+    <select id="selectPeerMembers" resultType="com.betterschool.infrastructure.dao.chat.po.RoomPeerRow">
         SELECT rm.room_id AS roomId, rm.user_id AS userId
         FROM room_member rm
         WHERE rm.room_id IN
@@ -118,11 +118,11 @@
         INSERT INTO room_member (room_id, user_id, join_seq, create_time, update_time)
         VALUES
         <foreach collection="members" item="m" separator=",">
-            (#{m.roomId}, #{m.userId}, 0, #{m.createTime}, #{m.updateTime})
+            (#{m.roomId}, #{m.userId}, 0, NOW(), NOW())
         </foreach>
     </insert>
 
-    <select id="listRoomMembers" resultType="com.betterschool.infrastructure.dao.chat.po.RoomMemberPO">
+    <select id="listRoomMembers" resultType="com.betterschool.infrastructure.dao.chat.po.RoomMember">
         SELECT id, room_id, user_id, join_seq AS joinSeq, create_time AS createTime, update_time
         FROM room_member
         WHERE room_id = #{roomId}
@@ -142,11 +142,11 @@
         INSERT INTO user_room (room_id, user_id, read_seq, create_time, update_time)
         VALUES
         <foreach collection="userRooms" item="u" separator=",">
-            (#{u.roomId}, #{u.userId}, 0, #{u.createTime}, #{u.updateTime})
+            (#{u.roomId}, #{u.userId}, 0, NOW(), NOW())
         </foreach>
     </insert>
 
-    <select id="selectUserRoom" resultType="com.betterschool.infrastructure.dao.chat.po.UserRoomPO">
+    <select id="selectUserRoom" resultType="com.betterschool.infrastructure.dao.chat.po.UserRoom">
         SELECT id, room_id, user_id, last_msg_time,
                read_seq AS readSeq, hidden_at, create_time AS createTime, update_time
         FROM user_room
@@ -155,7 +155,7 @@
 
     <!-- 成员页两段查之②：名册给定成员集的用户行批量回查（水位线拼装，SQL 层零 JOIN；
          uk_user_room 前缀 user_id 等值 + room_id 等值，逐成员走索引） -->
-    <select id="selectUserRooms" resultType="com.betterschool.infrastructure.dao.chat.po.UserRoomPO">
+    <select id="selectUserRooms" resultType="com.betterschool.infrastructure.dao.chat.po.UserRoom">
         SELECT id, room_id, user_id, last_msg_time,
                read_seq AS readSeq, hidden_at, create_time AS createTime, update_time
         FROM user_room
@@ -174,10 +174,10 @@
           AND read_seq &lt; #{readSeq}
     </update>
 
-    <!-- 用户侧隐藏会话（软删） -->
+    <!-- 用户侧隐藏会话（软删）：hidden_at 只作「非 NULL 即隐藏」判断，时刻取数据库时钟 -->
     <update id="updateUserRoomHiddenAt">
         UPDATE user_room
-        SET hidden_at   = #{hiddenAt},
+        SET hidden_at   = NOW(),
             update_time = NOW()
         WHERE room_id = #{roomId}
           AND user_id = #{userId}
@@ -195,31 +195,31 @@
 
     <!-- ===== message ===== -->
 
-    <insert id="insertMessage" parameterType="com.betterschool.infrastructure.dao.chat.po.MessagePO">
+    <insert id="insertMessage" parameterType="com.betterschool.infrastructure.dao.chat.po.Message">
         INSERT INTO message (msg_id, room_id, seq, from_user_id, msg_type, content, client_msg_id,
                              ref_type, ref_id, state, create_time, update_time)
         VALUES (#{msgId}, #{roomId}, #{seq}, #{fromUserId}, #{msgType}, #{content}, #{clientMsgId},
-                #{refType}, #{refId}, #{state}, #{createTime}, #{updateTime})
+                #{refType}, #{refId}, #{state}, NOW(), NOW())
     </insert>
 
-    <select id="selectMessage" resultType="com.betterschool.infrastructure.dao.chat.po.MessagePO">
+    <select id="selectMessage" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
         SELECT <include refid="messageColumns"/>
         FROM message m
         WHERE m.room_id = #{roomId} AND m.seq = #{seq}
     </select>
 
-    <select id="selectMessageByClientMsgId" resultType="com.betterschool.infrastructure.dao.chat.po.MessagePO">
+    <select id="selectMessageByClientMsgId" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
         SELECT <include refid="messageColumns"/>
         FROM message m
         WHERE m.room_id = #{roomId} AND m.client_msg_id = #{clientMsgId}
     </select>
 
     <!-- 撤回占 seq 不回退、不动水位线，content 库内保留取证（读路径脱敏为「已撤回」空壳）；
-         state=NORMAL 守卫：用户撤回与强制撤回并发先到先得，已撤回行不被覆盖 -->
+         state=NORMAL 守卫：用户撤回与强制撤回并发先到先得，已撤回行不被覆盖；recalled_at 取数据库时钟 -->
     <update id="recallMessage">
         UPDATE message
         SET state       = 'RECALLED',
-            recalled_at = #{recalledAt},
+            recalled_at = NOW(),
             recalled_by = #{recalledBy},
             update_time = NOW()
         WHERE room_id = #{roomId}
@@ -228,14 +228,14 @@
     </update>
 
     <!-- 举报回查/强制撤回入口：按业务 ID（msg_id）取消息 -->
-    <select id="selectMessageById" resultType="com.betterschool.infrastructure.dao.chat.po.MessagePO">
+    <select id="selectMessageById" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
         SELECT <include refid="messageColumns"/>
         FROM message m
         WHERE m.msg_id = #{messageId}
     </select>
 
     <!-- 历史分页（uk_room_seq 主路径）：beforeSeq 为 NULL 取最新一页，页内 seq 倒序 -->
-    <select id="selectMessagesBefore" resultType="com.betterschool.infrastructure.dao.chat.po.MessagePO">
+    <select id="selectMessagesBefore" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
         SELECT <include refid="messageColumns"/>
         FROM message m
         WHERE m.room_id = #{roomId}
@@ -252,14 +252,14 @@
         INSERT INTO timeline (user_id, room_id, seq, msg_id, delivery_seq, create_time, update_time)
         VALUES
         <foreach collection="timelines" item="t" separator=",">
-            (#{t.userId}, #{t.roomId}, #{t.seq}, #{t.msgId}, #{t.deliverySeq}, #{t.createTime}, #{t.updateTime})
+            (#{t.userId}, #{t.roomId}, #{t.seq}, #{t.msgId}, #{t.deliverySeq}, NOW(), NOW())
         </foreach>
     </insert>
 
     <!-- 增量补拉两段查之①（timeline.uk_user_delivery 主路径）：delivery_seq 升序扫本人投递行；
          消息全量由仓储按 msg_id 集二次回查拼装（selectMessagesByIds，SQL 层零 JOIN；
          timeline.msg_id 外联的是消息业务 ID（message.msg_id），不是物理主键） -->
-    <select id="selectTimelineRows" resultType="com.betterschool.infrastructure.dao.chat.po.TimelineDeliveryRowPO">
+    <select id="selectTimelineRows" resultType="com.betterschool.infrastructure.dao.chat.po.TimelineDeliveryRow">
         SELECT t.msg_id AS msgId, t.delivery_seq AS deliverySeq
         FROM timeline t
         WHERE t.user_id = #{userId}
@@ -269,7 +269,7 @@
     </select>
 
     <!-- 增量补拉两段查之②：按 msg_id 集批量回查消息全量 -->
-    <select id="selectMessagesByIds" resultType="com.betterschool.infrastructure.dao.chat.po.MessagePO">
+    <select id="selectMessagesByIds" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
         SELECT <include refid="messageColumns"/>
         FROM message m
         WHERE m.msg_id IN

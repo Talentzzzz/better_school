@@ -22,8 +22,6 @@ public class CreditDetailEntity {
         creditDetailEntity.change = change;
         creditDetailEntity.reasonType = reasonType;
         creditDetailEntity.refId = refId;
-        creditDetailEntity.createTime = LocalDateTime.now();
-        creditDetailEntity.updateTime = creditDetailEntity.createTime;
         return creditDetailEntity;
     }
 }

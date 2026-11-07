@@ -4,7 +4,7 @@ import com.betterschool.domain.chat.model.entity.MessageEntity;
 import com.betterschool.domain.chat.model.entity.RoomEntity;
 import com.betterschool.domain.chat.model.valobj.CardRefTypeVO;
 import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
-import com.betterschool.domain.chat.model.valobj.RoomSourceVO;
+import com.betterschool.domain.chat.model.valobj.RoomSourceEnum;
 
 /**
  * chat 发送用例（落地票 02）：建/取 1v1 会话 + 消息发送主链路。
@@ -19,7 +19,7 @@ public interface IChatSendService {
      * @param source 会话来源（市集三入口各带一个；首页/用户主页私信入口传 null）；
      *               仅在**首次建会话**时写入，既有会话原样返回（首来源钉死）
      */
-    RoomEntity createDirectRoom(String userId, String targetUserId, RoomSourceVO source);
+    RoomEntity createDirectRoom(String userId, String targetUserId, RoomSourceEnum source);
 
     /**
      * 发送消息（用户侧四类型中 SYSTEM 仅系统侧不可经此发送）。

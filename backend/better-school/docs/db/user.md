@@ -9,7 +9,7 @@
 |wallet_detail|钱包流水（资金事实源，uk_order_type 幂等）|
 |user_credit_detail|信用分流水（信用分事实源，uk_user_reason_ref 幂等）|
 
-**主键口径（全库统一，uuid-biz-id 起）**：`id` 是纯内部物理自增，**对外与跨表引用一律用业务 ID 列**（本组表为 `user_id` / `wallet_id`）；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`IIdGenerator` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
+**主键口径（全库统一，uuid-biz-id 起）**：`id` 是纯内部物理自增，**对外与跨表引用一律用业务 ID 列**（本组表为 `user_id` / `wallet_id`）；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`UUID.randomUUID()` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
 
 # bs_user
 
@@ -30,8 +30,8 @@
 |state|varchar(20)|NOT NULL, DEFAULT 'NORMAL'|状态 NORMAL/BANNED（原 `status` 列改名；信用分跌破 30 由 credit 域条件 UPDATE 置 BANNED）|
 |credit_score|int|NOT NULL, DEFAULT 100|信用分，区间 0–100（credit 域写：`GREATEST(0, LEAST(100, credit_score + delta))`），勿在 user 域写|
 |last_login_at|datetime|NULL|最近登录时间|
-|create_time|datetime|NOT NULL|注册时间（应用写入，**无 DB 默认值**）|
-|update_time|datetime|NOT NULL|更新时间（应用写入，无 `ON UPDATE`）|
+|create_time|datetime|NOT NULL|注册时间（SQL `NOW()` 写入，**无 DB 默认值**）|
+|update_time|datetime|NOT NULL|更新时间（SQL `NOW()` 写入，无 `ON UPDATE`）|
 
 ## 索引
 - `uk_user_id (user_id)`：业务键查用户
@@ -62,7 +62,7 @@
 |update_time|datetime|NOT NULL|更新时间|
 
 ## 注意
-- 建钱包走 `INSERT IGNORE`（撞 `uk_user` = 已存在，幂等）；`wallet_id` 由 `IIdGenerator` 在 insert 前发号随行写入（uuid-biz-id 票 06 起，不再回写）
+- 建钱包走 `INSERT IGNORE`（撞 `uk_user` = 已存在，幂等）；`wallet_id` 由应用层 `UUID.randomUUID()` 在 insert 前生成随行写入（uuid-biz-id 票 06 起，不再回写）
 - 可用余额 = `balance − frozen_amount`；冻结是条件 UPDATE（`balance − frozen_amount >= amount`，不满足=余额不足），解冻是 `GREATEST(0, frozen_amount − amount)`
 - **资金一律「流水先行」**：先 `INSERT IGNORE` wallet_detail（撞 `uk_order_type` = 已处理过，幂等跳过），影响 0 行就直接返回，不再动余额/冻结
 

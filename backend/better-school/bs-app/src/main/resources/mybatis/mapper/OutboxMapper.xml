@@ -6,13 +6,13 @@
         id, msg_id, destination, payload, state, retry_count, create_time, update_time
     </sql>
 
-    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.outbox.po.OutboxPO"
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.outbox.po.Outbox"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO outbox_message (msg_id, destination, payload, state, retry_count, create_time, update_time)
-        VALUES (#{msgId}, #{destination}, #{payload}, #{state}, #{retryCount}, #{createTime}, #{updateTime})
+        VALUES (#{msgId}, #{destination}, #{payload}, #{state}, #{retryCount}, NOW(), NOW())
     </insert>
 
-    <select id="selectPendingList" resultType="com.betterschool.infrastructure.dao.outbox.po.OutboxPO">
+    <select id="selectPendingList" resultType="com.betterschool.infrastructure.dao.outbox.po.Outbox">
         SELECT <include refid="baseColumns"/>
         FROM outbox_message
         WHERE state = 0

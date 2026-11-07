@@ -96,15 +96,16 @@ public interface ITimeoutRepository {
 
     /**
      * 结算·重试桶：一批未终态行批量置 RETRYING、{@code retry_count + 1}，并**逐行**后移到各自的退避时刻
-     * （退避公式在域服务里算好，仓储只管落库——SQL 里不用 {@code INTERVAL ?}，见票 02 的形态避让）。
+     * （退避公式在域服务里算成**秒数**，SQL 侧 TIMESTAMPADD 换算绝对时刻——SQL 里不用
+     * {@code INTERVAL ?}，见票 02 的形态避让；时刻一律数据库时钟）。
      * <p>
-     * 目标时刻按行不同（重试行的 {@code retry_count} 不同 ⇒ 退避不同），所以这条语句的
-     * {@code SET next_fire_time} 走 CASE；{@code bizId → nextFireTime} 的映射由域服务算好，
+     * 退避秒数按行不同（重试行的 {@code retry_count} 不同 ⇒ 退避不同），所以这条语句的
+     * {@code SET next_fire_time} 走 CASE；{@code bizId → backoffSeconds} 的映射由域服务算好，
      * **键序必须在语句里两次出现时保持一致**（错位会把退避写到别的行上）。
      *
      * @return 本桶实际改到的行数（差值 = 已被取消/已终态的行）
      */
-    int markRetryBatch(int slot, String taskType, LinkedHashMap<String, LocalDateTime> retryTimes);
+    int markRetryBatch(int slot, String taskType, LinkedHashMap<String, Integer> backoffSeconds);
 
     /**
      * 结算·死信桶：一批未终态行批量置 FAILED 终态、{@code retry_count + 1}。

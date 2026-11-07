@@ -12,10 +12,10 @@
          （SQL 层零 JOIN）。like_count 不在列清单里（票 02）：真源在 post_comment_like_count，
          由仓储按页内 id 集批量回查填充 -->
 
-    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO"
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.comment.po.PostComment"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO post_comment (comment_id, post_id, user_id, content, state, root_id, parent_id, create_time, update_time)
-        VALUES (#{commentId}, #{postId}, #{userId}, #{content}, #{state}, #{rootId}, #{parentId}, #{createTime}, #{updateTime})
+        VALUES (#{commentId}, #{postId}, #{userId}, #{content}, #{state}, #{rootId}, #{parentId}, NOW(), NOW())
     </insert>
 
     <!-- 根评论列表（默认档 / sort=new）：只查 root_id='0'；NORMAL 公开，作者本人的待审/被拒根评论对其可见
@@ -23,7 +23,7 @@
          排序 = create_time 升序 + 业务 ID 升序（uuid-biz-id 票 03：业务 ID 是 UUID、无序，发布时间先后由
          create_time 表达，业务 ID 只做同值收敛）；最热档不走这条——它在 post_comment_feed_index 上两级取数
          （见 selectRootFeedCommentIds），顺序来自索引、且只有已过审根评论（热评档不自见） -->
-    <select id="selectRootPageByPostId" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO">
+    <select id="selectRootPageByPostId" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
         FROM post_comment c
         WHERE c.post_id = #{postId}
@@ -55,7 +55,7 @@
     <!-- 最热档第二步：按 id 集回查评论行（纯单表，与默认档同列清单；作者昵称/驳回理由仓储拼装）。
          顺序由调用方按扫描序重排，本语句不排序；只取 NORMAL 根行——索引行集本应与之一致，
          漂移（索引行未随软删退场）时缺行由调用方跳过，不补位 -->
-    <select id="selectNormalRootsByIds" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO">
+    <select id="selectNormalRootsByIds" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
         FROM post_comment c
         WHERE c.comment_id IN
@@ -78,7 +78,7 @@
          （被指向评论被删/未通过时昵称仍可读）。
          like_count 不在列清单里（票 02，真源在 post_comment_like_count，仓储批量回查填充）；
          reply_count 只对根评论有意义，楼内不取 -->
-    <select id="selectRepliesByRootId" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO">
+    <select id="selectRepliesByRootId" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
         FROM post_comment c
         WHERE c.root_id = #{rootId}
@@ -121,7 +121,7 @@
          源帖 NORMAL 过滤与来源帖标题/封面（评论行不存）由仓储回查 post 拼装
          （用户自己的评论行有界，total = 过滤后集合大小，与原 JOIN COUNT 同口径）。
          like_count 不在列清单里（票 02，真源在 post_comment_like_count，仓储批量回查填充） -->
-    <select id="selectNormalRowsByUser" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO">
+    <select id="selectNormalRowsByUser" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
         FROM post_comment c
         WHERE c.user_id = #{userId}
@@ -131,7 +131,7 @@
 
     <!-- 单条评论（点赞/审核前置检查、详情组装）。like_count 不在列清单里（票 02）：
          真源在 post_comment_like_count，仓储按单元素 id 集同一条回查通路填充 -->
-    <select id="selectById" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO">
+    <select id="selectById" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
         FROM post_comment c
         WHERE c.comment_id = #{commentId}
@@ -139,7 +139,7 @@
 
     <!-- 按 id 集批量回查（不分状态：楼内指向评论回查要忽略父行状态；审核队列素材回查只取待审行时
          由调用方按 state 过滤） -->
-    <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentPO">
+    <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
         FROM post_comment c
         WHERE c.comment_id IN
@@ -170,7 +170,7 @@
 
     <!-- 展示取数：按页内评论 id 集一次回查窄表（不 JOIN：三条列表 + 单行同一通路，单行即单元素）。
          缺行由调用方补 0（存量语义：窄表行诞生于审核通过，未过审的历史行没有计数行） -->
-    <select id="selectLikeCountsByIds" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentLikeCountPO">
+    <select id="selectLikeCountsByIds" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentLikeCount">
         SELECT comment_id, like_count
         FROM post_comment_like_count
         WHERE comment_id IN
@@ -297,7 +297,7 @@
          ③ create_time 取审核记录最近一次 APPROVE 时刻 = 行诞生时的口径（通过时刻，经
          IModerationDao.selectApproveRowsByTargetType），查不到审批流水的存量行取评论 create_time 兜底；
          组装后走 insertFeedIndexRows 批量写回。update_time 每次重建刷 NOW()：技术时间戳、非排序键 -->
-    <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.comment.po.CommentFeedIndexRowPO">
+    <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.comment.po.CommentFeedIndexRow">
         SELECT c.comment_id AS commentId, c.post_id AS postId, c.create_time AS createTime
         FROM post_comment c
         WHERE c.root_id = '0'

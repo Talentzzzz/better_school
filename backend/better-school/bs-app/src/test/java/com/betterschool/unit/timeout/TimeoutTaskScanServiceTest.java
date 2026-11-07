@@ -84,9 +84,9 @@ class TimeoutTaskScanServiceTest {
         assertThat(repository.writeCalls).isEqualTo(2);
         assertThat(repository.deadBatchSizes).containsExactly(100);
         assertThat(repository.retryBatchSizes).containsExactly(100);
-        // 重试桶里 100 行、退避时刻只有 1 种 ⇒ SQL 的 CASE 就一个分支，不随行数长
-        assertThat(repository.lastRetryTimes).hasSize(100);
-        assertThat(repository.lastRetryTimes.values().stream().distinct()).hasSize(1);
+        // 重试桶里 100 行、退避秒数只有 1 档 ⇒ SQL 的 CASE 就一个分支，不随行数长
+        assertThat(repository.lastBackoffSeconds).hasSize(100);
+        assertThat(repository.lastBackoffSeconds.values().stream().distinct()).hasSize(1);
     }
 
     @Test
@@ -119,38 +119,32 @@ class TimeoutTaskScanServiceTest {
     }
 
     @Test
-    void 退避时刻按行算_同桶内两行不同退避互不串序() {
-        // 一个批里两行都失败、retry_count 不同 ⇒ 同一条 CASE 语句里两个分支各取各的时刻。
-        // 键序错位（bizIds 与 nextFireTimes 不对齐）会在这里露出来：断言「每个 bizId 拿到自己那一档」
-        LocalDateTime before = LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS);
+    void 退避按行算_同桶内两行不同退避互不串序() {
+        // 一个批里两行都失败、retry_count 不同 ⇒ 同一条 CASE 语句里两个分支各取各的退避秒数。
+        // 键序错位（bizIds 与 backoffSeconds 不对齐）会在这里露出来：断言「每个 bizId 拿到自己那一档」
+        //（域服务只算秒数，绝对时刻由 SQL 侧 TIMESTAMPADD 按数据库时钟换算，故这里断精确秒值）
         List<TimeoutTaskEntity> batch = List.of(task("order-first", 0), task("order-second", 1));
 
         service.settle(batch, CallbackReportVO.none());
 
-        LinkedHashMap<String, LocalDateTime> times = repository.lastRetryTimes;
-        assertThat(times.keySet()).containsExactly("order-first", "order-second");
-        assertThat(times.get("order-first"))
-                .isAfterOrEqualTo(before.plusSeconds(BASE_SECONDS))
-                .isBefore(before.plusSeconds(BASE_SECONDS + 5));
-        assertThat(times.get("order-second"))
-                .isAfterOrEqualTo(before.plusSeconds(BASE_SECONDS * 2))
-                .isBefore(before.plusSeconds(BASE_SECONDS * 2 + 5));
+        LinkedHashMap<String, Integer> backoffSeconds = repository.lastBackoffSeconds;
+        assertThat(backoffSeconds.keySet()).containsExactly("order-first", "order-second");
+        assertThat(backoffSeconds.get("order-first")).isEqualTo((int) BASE_SECONDS);
+        assertThat(backoffSeconds.get("order-second")).isEqualTo((int) (BASE_SECONDS * 2));
     }
 
     @Test
     void 退避封顶配成零也要落到未来_别让同一tick把重试跑光() {
         TimeoutTaskScanService scanService = service();
-        // 配置事故（封顶写成 0）：退避若算成 0，next_fire_time 贴住 tick 起始时刻，
+        // 配置事故（封顶写成 0）：退避若算成 0，next_fire_time 贴住落库时刻，
         // 同一轮「循环拉批到空」会把这一行反复捞起来，一次 tick 就跑光 16 次重试
         setField(scanService, "retryMaxSeconds", 0L);
-        LocalDateTime before = LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS);
 
         scanService.settle(List.of(task("order-zero-cap", 0)), CallbackReportVO.none());
 
-        assertThat(repository.lastRetryTimes.get("order-zero-cap"))
-                .as("退避必须落在未来（封顶兜底 1s），否则本轮就会被重捞")
-                .isAfterOrEqualTo(before.plusSeconds(1))
-                .isBefore(before.plusSeconds(6));
+        assertThat(repository.lastBackoffSeconds.get("order-zero-cap"))
+                .as("退避秒数必须 ≥1（封顶兜底 1s），否则本轮就会被重捞")
+                .isGreaterThanOrEqualTo(1);
     }
 
     @Test
@@ -171,18 +165,14 @@ class TimeoutTaskScanServiceTest {
 
     // ---------- 辅助 ----------
 
-    /** 摆一行「已失败 {@code retryCount} 次」的失败任务，结算后断言退避落在「now + 期望间隔」附近 */
+    /** 摆一行「已失败 {@code retryCount} 次」的失败任务，结算后断言传给仓储的退避秒数 = 精确期望值 */
     private void assertNextRetryDelay(int retryCount, long expectedDelaySeconds) {
-        LocalDateTime before = LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS);
-
         service.settle(List.of(task("order-backoff-" + retryCount, retryCount)), CallbackReportVO.none());
 
-        LocalDateTime nextFireTime = repository.lastRetryTimes.get("order-backoff-" + retryCount);
-        // ±5s 是给「结算时刻比 before 晚几秒」留的余量；间隔本身是精确值
-        assertThat(nextFireTime)
+        // 域服务只算秒数（绝对时刻由 SQL 侧按数据库时钟换算），这里断精确值
+        assertThat(repository.lastBackoffSeconds.get("order-backoff-" + retryCount))
                 .as("retry_count=%d 时的退避间隔应为 %ds", retryCount, expectedDelaySeconds)
-                .isAfterOrEqualTo(before.plusSeconds(expectedDelaySeconds))
-                .isBefore(before.plusSeconds(expectedDelaySeconds + 5));
+                .isEqualTo((int) expectedDelaySeconds);
     }
 
     private static TimeoutTaskEntity task(String bizId, int retryCount) {
@@ -190,8 +180,7 @@ class TimeoutTaskScanServiceTest {
     }
 
     private static TimeoutTaskEntity task(String taskType, String bizId, int retryCount) {
-        LocalDateTime now = LocalDateTime.now();
-        TimeoutTaskEntity task = TimeoutTaskEntity.newWaiting(taskType, bizId, now.plusMinutes(1), now);
+        TimeoutTaskEntity task = TimeoutTaskEntity.newWaiting(taskType, bizId, 60L);
         task.setStatus(TaskStatusVO.RETRYING);
         task.setRetryCount(retryCount);
         task.setShardSlot(SLOT);
@@ -231,7 +220,7 @@ class TimeoutTaskScanServiceTest {
         private final List<Integer> deadBatchSizes = new ArrayList<>();
         private final List<String> successTaskTypes = new ArrayList<>();
         private final List<String> retryTaskTypes = new ArrayList<>();
-        private LinkedHashMap<String, LocalDateTime> lastRetryTimes = new LinkedHashMap<>();
+        private LinkedHashMap<String, Integer> lastBackoffSeconds = new LinkedHashMap<>();
 
         @Override
         public List<TimeoutTaskEntity> selectDueBatch(int slot, LocalDateTime dueBefore, int limit) {
@@ -250,15 +239,15 @@ class TimeoutTaskScanServiceTest {
         }
 
         @Override
-        public int markRetryBatch(int slot, String taskType, LinkedHashMap<String, LocalDateTime> retryTimes) {
-            if (retryTimes.isEmpty()) {
+        public int markRetryBatch(int slot, String taskType, LinkedHashMap<String, Integer> backoffSeconds) {
+            if (backoffSeconds.isEmpty()) {
                 return 0;
             }
             writeCalls++;
-            retryBatchSizes.add(retryTimes.size());
+            retryBatchSizes.add(backoffSeconds.size());
             retryTaskTypes.add(taskType);
-            lastRetryTimes = retryTimes;
-            return retryTimes.size();
+            lastBackoffSeconds = backoffSeconds;
+            return backoffSeconds.size();
         }
 
         @Override

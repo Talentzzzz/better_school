@@ -1,14 +1,14 @@
 package com.betterschool.infrastructure.dao.chat;
 
-import com.betterschool.infrastructure.dao.chat.po.UserPairRoomPO;
-import com.betterschool.infrastructure.dao.chat.po.MessagePO;
-import com.betterschool.infrastructure.dao.chat.po.RoomPO;
-import com.betterschool.infrastructure.dao.chat.po.RoomListItemPO;
-import com.betterschool.infrastructure.dao.chat.po.RoomMemberPO;
-import com.betterschool.infrastructure.dao.chat.po.RoomPeerRowPO;
-import com.betterschool.infrastructure.dao.chat.po.TimelineDeliveryRowPO;
-import com.betterschool.infrastructure.dao.chat.po.TimelinePO;
-import com.betterschool.infrastructure.dao.chat.po.UserRoomPO;
+import com.betterschool.infrastructure.dao.chat.po.UserPairRoom;
+import com.betterschool.infrastructure.dao.chat.po.Message;
+import com.betterschool.infrastructure.dao.chat.po.Room;
+import com.betterschool.infrastructure.dao.chat.po.RoomListItem;
+import com.betterschool.infrastructure.dao.chat.po.RoomMember;
+import com.betterschool.infrastructure.dao.chat.po.RoomPeerRow;
+import com.betterschool.infrastructure.dao.chat.po.TimelineDeliveryRow;
+import com.betterschool.infrastructure.dao.chat.po.Timeline;
+import com.betterschool.infrastructure.dao.chat.po.UserRoom;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -25,9 +25,9 @@ public interface IChatDao {
 
     // ===== room =====
 
-    int insertRoom(RoomPO roomPO);
+    int insertRoom(Room room);
 
-    RoomPO selectRoomById(@Param("roomId") String roomId);
+    Room selectRoomById(@Param("roomId") String roomId);
 
     int increaseLastSeq(@Param("roomId") String roomId);
 
@@ -37,14 +37,14 @@ public interface IChatDao {
      * 会话列表四段查之①（user_room.idx_user_msg 主路径）：本人用户行分页（排除隐藏，last_msg_time 倒序），
      * 只带排序键列；room 真相、对家 user_id 与预览真源由仓储按 room_id 集回查拼装（SQL 层零 JOIN）
      */
-    List<RoomListItemPO> selectUserRoomPage(@Param("userId") String userId,
+    List<RoomListItem> selectUserRoomPage(@Param("userId") String userId,
                                             @Param("offset") int offset, @Param("limit") int limit);
 
-    /** 会话列表三段查之②：按 room_id 集批量回查会话行（lastSeq 未读数真源 + source/initiator_id） */
-    List<RoomPO> selectRoomsByIds(@Param("roomIds") List<String> roomIds);
+    /** 会话列表三段查之②：按 room_id 集批量回查会话行（lastSeq 未读数真源 + source/creator_id） */
+    List<Room> selectRoomsByIds(@Param("roomIds") List<String> roomIds);
 
     /** 会话列表三段查之③：本批会话的对家名册行（1v1 恒两行名册，每会话恰出一行对家） */
-    List<RoomPeerRowPO> selectPeerMembers(@Param("roomIds") List<String> roomIds,
+    List<RoomPeerRow> selectPeerMembers(@Param("roomIds") List<String> roomIds,
                                           @Param("userId") String userId);
 
     long countRoomsForUser(@Param("userId") String userId);
@@ -52,32 +52,31 @@ public interface IChatDao {
     // ===== user_pair_room（用户对 → 1v1 会话映射，建会话的幂等裁决者） =====
 
     /** 建会话事务的收尾闸门：撞 uk_pair 即 DuplicateKeyException，整个事务回滚 */
-    int insertUserPairRoom(UserPairRoomPO pairPO);
+    int insertUserPairRoom(UserPairRoom pair);
 
     String selectUserPairRoomId(@Param("userMin") String userMin, @Param("userMax") String userMax);
 
     // ===== room_member（会话维度名册，「这个会话有谁」，每会话恒两行） =====
 
-    int insertRoomMembers(@Param("members") List<RoomMemberPO> members);
+    int insertRoomMembers(@Param("members") List<RoomMember> members);
 
-    List<RoomMemberPO> listRoomMembers(@Param("roomId") String roomId);
+    List<RoomMember> listRoomMembers(@Param("roomId") String roomId);
 
     long countRoomMembers(@Param("roomId") String roomId);
 
     // ===== user_room（用户维度会话状态，每用户每会话一行） =====
 
-    int insertUserRooms(@Param("userRooms") List<UserRoomPO> userRooms);
+    int insertUserRooms(@Param("userRooms") List<UserRoom> userRooms);
 
-    UserRoomPO selectUserRoom(@Param("roomId") String roomId, @Param("userId") String userId);
+    UserRoom selectUserRoom(@Param("roomId") String roomId, @Param("userId") String userId);
 
     /** 成员页两段查之②：名册给定成员集的用户行批量回查（水位线拼装，SQL 层零 JOIN） */
-    List<UserRoomPO> selectUserRooms(@Param("roomId") String roomId, @Param("userIds") List<String> userIds);
+    List<UserRoom> selectUserRooms(@Param("roomId") String roomId, @Param("userIds") List<String> userIds);
 
     int updateUserRoomReadSeq(@Param("roomId") String roomId, @Param("userId") String userId,
                               @Param("readSeq") long readSeq);
 
-    int updateUserRoomHiddenAt(@Param("roomId") String roomId, @Param("userId") String userId,
-                               @Param("hiddenAt") LocalDateTime hiddenAt);
+    int updateUserRoomHiddenAt(@Param("roomId") String roomId, @Param("userId") String userId);
 
     /** 新消息扇出时清空单个成员的隐藏位（删除的会话弹回；成员集由名册给定，逐用户执行） */
     int clearUserRoomHidden(@Param("roomId") String roomId, @Param("userId") String userId);
@@ -88,31 +87,31 @@ public interface IChatDao {
 
     // ===== message =====
 
-    int insertMessage(MessagePO messagePO);
+    int insertMessage(Message message);
 
-    MessagePO selectMessage(@Param("roomId") String roomId, @Param("seq") Long seq);
+    Message selectMessage(@Param("roomId") String roomId, @Param("seq") Long seq);
 
-    MessagePO selectMessageByClientMsgId(@Param("roomId") String roomId, @Param("clientMsgId") String clientMsgId);
+    Message selectMessageByClientMsgId(@Param("roomId") String roomId, @Param("clientMsgId") String clientMsgId);
 
     int recallMessage(@Param("roomId") String roomId, @Param("seq") Long seq,
-                      @Param("recalledAt") LocalDateTime recalledAt, @Param("recalledBy") String recalledBy);
+                      @Param("recalledBy") String recalledBy);
 
-    MessagePO selectMessageById(@Param("messageId") String messageId);
+    Message selectMessageById(@Param("messageId") String messageId);
 
-    List<MessagePO> selectMessagesBefore(@Param("roomId") String roomId, @Param("beforeSeq") Long beforeSeq,
+    List<Message> selectMessagesBefore(@Param("roomId") String roomId, @Param("beforeSeq") Long beforeSeq,
                                          @Param("limit") int limit);
 
     // ===== timeline =====
 
-    int insertTimelines(@Param("timelines") List<TimelinePO> timelines);
+    int insertTimelines(@Param("timelines") List<Timeline> timelines);
 
     /** 增量补拉两段查之①（timeline 单表）：本人投递行（msg_id + delivery_seq 升序）；消息全量仓储回查拼装 */
-    List<TimelineDeliveryRowPO> selectTimelineRows(@Param("userId") String userId,
+    List<TimelineDeliveryRow> selectTimelineRows(@Param("userId") String userId,
                                                    @Param("afterDeliverySeq") long afterDeliverySeq,
                                                    @Param("limit") int limit);
 
     /** 增量补拉两段查之②：按 msg_id 集批量回查消息全量 */
-    List<MessagePO> selectMessagesByIds(@Param("msgIds") List<String> msgIds);
+    List<Message> selectMessagesByIds(@Param("msgIds") List<String> msgIds);
 
     // ===== user_seq =====
 

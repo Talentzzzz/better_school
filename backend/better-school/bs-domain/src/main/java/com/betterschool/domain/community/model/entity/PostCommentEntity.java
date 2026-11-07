@@ -48,7 +48,6 @@ public class PostCommentEntity {
         commentEntity.status = initialStatus;
         commentEntity.rootId = NO_REFERENCE;
         commentEntity.parentId = NO_REFERENCE;
-        commentEntity.createdAt = LocalDateTime.now();
         return commentEntity;
     }
 

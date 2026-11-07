@@ -26,10 +26,10 @@ public class RoomListItemVO {
     private RoomPeerRoleVO peerRole;
 
     /** 会话来源（由市集入口首建时非空）：市集消息页按它分 tab */
-    private RoomSourceVO source;
+    private RoomSourceEnum source;
 
-    /** 首建发起人用户 ID（peerRole 的推导锚点） */
-    private String initiatorId;
+    /** 会话创建人用户 ID（peerRole 的推导锚点） */
+    private String creatorId;
 
     /** 未读数 = 本人在会话的水位副本 − 已读水位线（用户维度行上就地可算） */
     private long unread;

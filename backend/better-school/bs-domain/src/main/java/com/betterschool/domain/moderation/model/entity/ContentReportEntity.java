@@ -37,7 +37,6 @@ public class ContentReportEntity {
         reportEntity.reason = reason;
         reportEntity.contentSnapshot = contentSnapshot;
         reportEntity.status = ReportStatusVO.PENDING;
-        reportEntity.createdAt = LocalDateTime.now();
         return reportEntity;
     }
 }

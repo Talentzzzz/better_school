@@ -1,7 +1,7 @@
 package com.betterschool.infrastructure.mq;
 
 import com.betterschool.infrastructure.dao.outbox.IOutboxDao;
-import com.betterschool.infrastructure.dao.outbox.po.OutboxPO;
+import com.betterschool.infrastructure.dao.outbox.po.Outbox;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.AllArgsConstructor;
@@ -52,31 +52,31 @@ public class OutboxMessageSender {
     /**
      * 异步发送一条 outbox 消息：回调只入队状态标记任务，由专用线程批量落库
      */
-    public void sendAsync(OutboxPO outboxPO) {
+    public void sendAsync(Outbox outbox) {
         try {
-            rocketMQTemplate.asyncSend(outboxPO.getDestination(), outboxPO.getPayload(), new SendCallback() {
+            rocketMQTemplate.asyncSend(outbox.getDestination(), outbox.getPayload(), new SendCallback() {
                 @Override
                 public void onSuccess(SendResult sendResult) {
-                    log.info("outbox 消息发送成功 msgId={}, id={}", outboxPO.getMsgId(), outboxPO.getId());
-                    markQueue.offer(MarkTask.sent(outboxPO.getId()));
+                    log.info("outbox 消息发送成功 msgId={}, id={}", outbox.getMsgId(), outbox.getId());
+                    markQueue.offer(MarkTask.sent(outbox.getId()));
                 }
 
                 @Override
                 public void onException(Throwable throwable) {
-                    handleSendFailure(outboxPO, throwable);
+                    handleSendFailure(outbox, throwable);
                 }
             });
         } catch (Exception e) {
             // asyncSend 同步抛错（如 broker 不可达）
-            handleSendFailure(outboxPO, e);
+            handleSendFailure(outbox, e);
         }
     }
 
-    private void handleSendFailure(OutboxPO outboxPO, Throwable throwable) {
-        log.warn("outbox 消息发送失败 msgId={}, id={}, retryCount={}", outboxPO.getMsgId(), outboxPO.getId(), outboxPO.getRetryCount(), throwable);
-        MarkTask task = outboxPO.getRetryCount() + 1 >= MAX_RETRY_COUNT
-                ? MarkTask.dead(outboxPO.getId())
-                : MarkTask.retry(outboxPO.getId());
+    private void handleSendFailure(Outbox outbox, Throwable throwable) {
+        log.warn("outbox 消息发送失败 msgId={}, id={}, retryCount={}", outbox.getMsgId(), outbox.getId(), outbox.getRetryCount(), throwable);
+        MarkTask task = outbox.getRetryCount() + 1 >= MAX_RETRY_COUNT
+                ? MarkTask.dead(outbox.getId())
+                : MarkTask.retry(outbox.getId());
         markQueue.offer(task);
     }
 
@@ -130,7 +130,7 @@ public class OutboxMessageSender {
      */
     @XxlJob("outboxScan")
     public String scanPending(String param) {
-        List<OutboxPO> pendingList = outboxDao.selectPendingList(SCAN_BATCH_SIZE);
+        List<Outbox> pendingList = outboxDao.selectPendingList(SCAN_BATCH_SIZE);
         if (!pendingList.isEmpty()) {
             log.info("outbox 扫描到 {} 条待发送消息", pendingList.size());
             pendingList.forEach(this::sendAsync);

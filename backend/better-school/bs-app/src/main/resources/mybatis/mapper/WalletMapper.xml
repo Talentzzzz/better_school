@@ -2,13 +2,13 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.betterschool.infrastructure.dao.wallet.IWalletDao">
 
-    <!-- wallet_id 业务 ID（UUID 字符串）由应用层 IIdGenerator 随 insert 一次写入（uuid-biz-id 票 06） -->
-    <insert id="insertIgnore" parameterType="com.betterschool.infrastructure.dao.wallet.po.VirtualWalletPO">
+    <!-- wallet_id 业务 ID（UUID 字符串）由应用层 UUID.randomUUID() 随 insert 一次写入（uuid-biz-id 票 06） -->
+    <insert id="insertIgnore" parameterType="com.betterschool.infrastructure.dao.wallet.po.VirtualWallet">
         INSERT IGNORE INTO virtual_wallet (wallet_id, user_id, balance, frozen_amount, create_time, update_time)
-        VALUES (#{walletId}, #{userId}, #{balance}, #{frozenAmount}, #{createTime}, #{updateTime})
+        VALUES (#{walletId}, #{userId}, #{balance}, #{frozenAmount}, NOW(), NOW())
     </insert>
 
-    <select id="selectByUserId" resultType="com.betterschool.infrastructure.dao.wallet.po.VirtualWalletPO">
+    <select id="selectByUserId" resultType="com.betterschool.infrastructure.dao.wallet.po.VirtualWallet">
         SELECT id, wallet_id, user_id, balance, frozen_amount, create_time, update_time
         FROM virtual_wallet
         WHERE user_id = #{userId}
@@ -38,14 +38,14 @@
 
     <!-- 流水先行：uk_order_type(order_id, type, biz_round, user_id) 冲突 → INSERT IGNORE 影响 0 行 = 该操作已执行过（幂等跳过）；
          biz_round 支撑同一订单同类型多轮合法资金操作（预留），当前业务恒 0 -->
-    <insert id="insertIgnoreDetail" parameterType="com.betterschool.infrastructure.dao.wallet.po.WalletDetailPO">
+    <insert id="insertIgnoreDetail" parameterType="com.betterschool.infrastructure.dao.wallet.po.WalletDetail">
         INSERT IGNORE INTO wallet_detail (wallet_id, user_id, type, amount, order_id, biz_round, create_time, update_time)
-        SELECT wallet_id, user_id, #{type}, #{amount}, #{orderId}, #{bizRound}, #{createTime}, #{updateTime}
+        SELECT wallet_id, user_id, #{type}, #{amount}, #{orderId}, #{bizRound}, NOW(), NOW()
         FROM virtual_wallet
         WHERE user_id = #{userId}
     </insert>
 
-    <select id="selectDetails" resultType="com.betterschool.infrastructure.dao.wallet.po.WalletDetailPO">
+    <select id="selectDetails" resultType="com.betterschool.infrastructure.dao.wallet.po.WalletDetail">
         SELECT id, wallet_id, user_id, type, amount, order_id, biz_round, create_time, update_time
         FROM wallet_detail
         WHERE user_id = #{userId}

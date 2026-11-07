@@ -45,7 +45,6 @@ public class NotificationEntity {
         notificationEntity.content = content;
         notificationEntity.refType = refType;
         notificationEntity.refId = refId;
-        notificationEntity.createdAt = LocalDateTime.now();
         return notificationEntity;
     }
 

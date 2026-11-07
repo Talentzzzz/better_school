@@ -13,7 +13,7 @@
 |task_type|varchar(64)|NOT NULL, `uk_type_biz` 首列|任务类型（业务对象上的一种超时动作，如 `PRODUCT_ORDER_PAY_TIMEOUT`）|
 |biz_id|varchar(64)|NOT NULL|业务引用 id（复合引用编码进此列，如 `{orderId}:{lockSeq}`）；**分片 hash 输入**|
 |action_time|datetime|NOT NULL|理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）|
-|next_fire_time|datetime|NOT NULL|下次可触发时刻（注册时=action_time；失败重试后=now+退避）|
+|next_fire_time|datetime|NOT NULL|下次可触发时刻（注册时=action_time；失败重试后=落库时刻+退避，SQL `TIMESTAMPADD` 按数据库时钟换算）|
 |status|varchar(16)|NOT NULL|WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，**无 PROCESSING**）|
 |retry_count|int|NOT NULL, DEFAULT 0|已重试次数（16 次封顶进 FAILED）|
 |created_at|datetime|NOT NULL|创建时间（**全库 create_time/update_time 口径的唯一例外**：按原样自原独立超时库迁入）|

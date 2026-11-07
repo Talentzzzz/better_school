@@ -186,7 +186,7 @@ class CommentFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
      */
     private String insertLegacyNormalRoot(String postId, String userId) {
         // 时间参数 Java 侧算好再绑：ShardingSphere 解析 NOW() - INTERVAL n DAY 会 bad SQL grammar。
-        // 票 03 起业务 id 由 IdGenerator 在应用层发号（自增同值回写已删），直插存量行走 UUID 形态
+        // 票 03 起业务 id 在应用层生成（UUID.randomUUID()，自增同值回写已删），直插存量行走 UUID 形态
         java.sql.Timestamp twoDaysAgo = java.sql.Timestamp.valueOf(LocalDateTime.now().minusDays(2));
         String commentId = java.util.UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO post_comment "

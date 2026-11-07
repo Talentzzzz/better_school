@@ -69,11 +69,13 @@ abstract class TimeoutScanTestBase extends CommunityApiTestBase {
 
     // ---------- 夹具 ----------
 
-    /** 注册一行「已到点」的任务（actionTime = {@code minutesFromNow} 分钟前/后，next_fire_time 同值） */
+    /**
+     * 注册一行「已到点」的任务（延时 = {@code minutesFromNow} 分钟，负数即过去时刻 = 已到点；
+     * Java 只传时长，action_time/next_fire_time 由 SQL 侧 TIMESTAMPADD 按数据库时钟落库）
+     */
     protected void registerDue(String taskType, String bizId, int minutesFromNow) {
-        LocalDateTime actionTime = LocalDateTime.now().plusMinutes(minutesFromNow).truncatedTo(ChronoUnit.SECONDS);
         assertThat(timeoutRepository.register(
-                TimeoutTaskEntity.newWaiting(taskType, bizId, actionTime, LocalDateTime.now())))
+                TimeoutTaskEntity.newWaiting(taskType, bizId, minutesFromNow * 60L)))
                 .as("注册超时任务 %s/%s 失败", taskType, bizId)
                 .isTrue();
     }

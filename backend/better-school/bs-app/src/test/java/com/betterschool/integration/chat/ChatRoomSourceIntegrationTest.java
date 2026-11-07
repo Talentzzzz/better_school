@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 public class ChatRoomSourceIntegrationTest extends CommunityApiTestBase {
 
     @Test
-    @DisplayName("市集入口建会话：来源与发起人落库，列表出对家角色；对方视角角色相反")
+    @DisplayName("市集入口建会话：来源与创建人落库，列表出对家角色；对方视角角色相反")
     void marketEntryWritesSourceAndServesPeerRolePerViewer() {
         Session seller = registerAndLogin("13800007001", "来源卖家");
         Session buyer = registerAndLogin("13800007002", "来源买家");
@@ -27,7 +27,7 @@ public class ChatRoomSourceIntegrationTest extends CommunityApiTestBase {
         String roomId = createRoom(buyer, seller.userId(), "PRODUCT");
         sendText(roomId, buyer, "m1", "东西还在吗");
 
-        // 发起人（商品详情「联系卖家」= 买家）：对家是卖家
+        // 创建人（商品详情「联系卖家」= 买家）：对家是卖家
         JsonNode forBuyer = onlyRoom(buyer);
         assertThat(forBuyer.path("roomId").asText()).isEqualTo(roomId);
         assertThat(forBuyer.path("source").asText()).isEqualTo("PRODUCT");
@@ -43,7 +43,7 @@ public class ChatRoomSourceIntegrationTest extends CommunityApiTestBase {
 
         assertThat(jdbcTemplate.queryForObject("SELECT source FROM room WHERE room_id = ?", String.class, roomId))
                 .isEqualTo("PRODUCT");
-        assertThat(jdbcTemplate.queryForObject("SELECT initiator_id FROM room WHERE room_id = ?", String.class, roomId))
+        assertThat(jdbcTemplate.queryForObject("SELECT creator_id FROM room WHERE room_id = ?", String.class, roomId))
                 .isEqualTo(buyer.userId());
     }
 
@@ -72,8 +72,8 @@ public class ChatRoomSourceIntegrationTest extends CommunityApiTestBase {
         assertThat(again).as("user_pair_room.uk_pair 只认人对，来源不拆会话").isEqualTo(roomId);
         assertThat(jdbcTemplate.queryForObject("SELECT source FROM room WHERE room_id = ?", String.class, roomId))
                 .as("二次进入不覆盖首来源").isEqualTo("PRODUCT");
-        assertThat(jdbcTemplate.queryForObject("SELECT initiator_id FROM room WHERE room_id = ?", String.class, roomId))
-                .as("发起人也不被覆盖").isEqualTo(userA.userId());
+        assertThat(jdbcTemplate.queryForObject("SELECT creator_id FROM room WHERE room_id = ?", String.class, roomId))
+                .as("创建人也不被覆盖").isEqualTo(userA.userId());
     }
 
     @Test

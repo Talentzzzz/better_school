@@ -2,9 +2,9 @@ package com.betterschool.infrastructure.dao.errand;
 
 import com.betterschool.domain.errand.model.valobj.ErrandFeedCursorVO;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO;
-import com.betterschool.infrastructure.dao.errand.po.ErrandFeedIndexRowPO;
-import com.betterschool.infrastructure.dao.errand.po.ErrandOrderEventPO;
-import com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO;
+import com.betterschool.infrastructure.dao.errand.po.ErrandFeedIndexRow;
+import com.betterschool.infrastructure.dao.errand.po.ErrandOrderEvent;
+import com.betterschool.infrastructure.dao.errand.po.ErrandOrder;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -17,16 +17,16 @@ import java.util.List;
 @Mapper
 public interface IErrandDao {
 
-    int insert(ErrandOrderPO orderPO);
+    int insert(ErrandOrder order);
 
     /** 详情内容查询：纯 errand_order 单表（昵称头像与浏览 UV 仓储回查拼装，SQL 层零 JOIN） */
-    ErrandOrderPO selectById(@Param("orderId") String orderId);
+    ErrandOrder selectById(@Param("orderId") String orderId);
 
     /** 按 id 列表查询（不分状态，搜索同步反查/搜索结果组装用） */
-    List<ErrandOrderPO> selectByIds(@Param("ids") List<String> orderIds);
+    List<ErrandOrder> selectByIds(@Param("ids") List<String> orderIds);
 
     /** 浏览 UV 计数窄表批量读：按 id 集单表 IN 查询，仓储补 0 拼装（详情 UV 回填与列表展示共用） */
-    List<ErrandOrderPO> selectViewCountsByOrderIds(@Param("orderIds") List<String> orderIds);
+    List<ErrandOrder> selectViewCountsByOrderIds(@Param("orderIds") List<String> orderIds);
 
     /**
      * 搜索索引全量重建的游标页（uuid-biz-id 票 05）：业务 ID 是 UUID 字符串，按 errand_order_id
@@ -35,12 +35,12 @@ public interface IErrandDao {
     List<String> selectIdsAfter(@Param("lastId") String lastId, @Param("limit") int limit);
 
     /** 旧直查降级路径 price/time 三档：公开口径 SQL 分页（hot 档走 {@link #selectVisibleRows} 内存排序） */
-    List<ErrandOrderPO> selectPage(@Param("type") String type, @Param("state") String state,
+    List<ErrandOrder> selectPage(@Param("type") String type, @Param("state") String state,
                                    @Param("sort") String sort,
                                    @Param("offset") int offset, @Param("limit") int limit);
 
     /** hot 档降级取数：公开口径全集（筛选条件同 {@link #selectPage}，无 LIMIT），窄表批量回查后仓储内存排序切片 */
-    List<ErrandOrderPO> selectVisibleRows(@Param("type") String type, @Param("state") String state);
+    List<ErrandOrder> selectVisibleRows(@Param("type") String type, @Param("state") String state);
 
     long count(@Param("type") String type, @Param("state") String state);
 
@@ -54,7 +54,7 @@ public interface IErrandDao {
                                                 @Param("cursor") ErrandFeedCursorVO cursor,
                                                 @Param("limit") int limit);
 
-    int payById(@Param("orderId") String orderId, @Param("deadline") LocalDateTime deadline);
+    int payById(@Param("orderId") String orderId, @Param("timeLimitHours") int timeLimitHours);
 
     int grab(@Param("orderId") String orderId, @Param("takerId") String takerId);
 
@@ -98,7 +98,7 @@ public interface IErrandDao {
     int cancelPendingPayment(@Param("orderId") String orderId);
 
     /** 草稿全量编辑（仅 DRAFT 行生效；作者与状态位不在 SET 列内） */
-    int updateDraft(ErrandOrderPO orderPO);
+    int updateDraft(ErrandOrder order);
 
     /** 提交草稿：DRAFT → PENDING_PAYMENT（条件 UPDATE，带作者守卫） */
     int submitDraft(@Param("orderId") String orderId, @Param("publisherId") String publisherId);
@@ -127,24 +127,24 @@ public interface IErrandDao {
     /** 送达后自动完成：DELIVERED → COMPLETED（发布方 24h 未确认） */
     int autoCompleteById(@Param("orderId") String orderId);
 
-    List<ErrandOrderPO> selectMyPublished(@Param("userId") String userId, @Param("state") String state,
+    List<ErrandOrder> selectMyPublished(@Param("userId") String userId, @Param("state") String state,
                                           @Param("offset") int offset, @Param("limit") int limit);
 
     long countMyPublished(@Param("userId") String userId, @Param("state") String state);
 
     /** 某用户发布的进行中跑腿单分页（作者主页「跑腿」tab，访客口径）：publisher_id 且 state IN ('PUBLISHED','LOCKED','CONFIRMED') */
-    List<ErrandOrderPO> selectPublicPageByPublisher(@Param("userId") String userId,
+    List<ErrandOrder> selectPublicPageByPublisher(@Param("userId") String userId,
                                                     @Param("offset") int offset, @Param("limit") int limit);
 
     long countPublicByPublisher(@Param("userId") String userId);
 
-    List<ErrandOrderPO> selectMyTaken(@Param("userId") String userId, @Param("state") String state,
+    List<ErrandOrder> selectMyTaken(@Param("userId") String userId, @Param("state") String state,
                                       @Param("offset") int offset, @Param("limit") int limit);
 
     long countMyTaken(@Param("userId") String userId, @Param("state") String state);
 
     /** 订单状态流转事件落表（同事务，只插入） */
-    int insertOrderEvent(ErrandOrderEventPO eventPO);
+    int insertOrderEvent(ErrandOrderEvent event);
 
     // ── 跑腿浏览 UV 三步（market-feed-uv 票 02，照帖子 user_view_history / post_view_count 先例）──
     // 一组一个事务：INSERT IGNORE 明细（影响行数 = 真正新增的 UV 数）→ 全组刷 viewed_at → 加速列 += 新增数
@@ -184,10 +184,10 @@ public interface IErrandDao {
     int clearFeedIndex();
 
     /** 重灌取数①：errand_order 全量 (errand_order_id, state, create_time, reward)——行集 = PUBLISHED ∪ 有过审批通过，仓储拼装 */
-    List<ErrandFeedIndexRowPO> selectRebuildRows();
+    List<ErrandFeedIndexRow> selectRebuildRows();
 
     /** 重灌写回：仓储拼装好的行集批量 INSERT（feed_time = MAX(APPROVE) 兜底 create_time；view_count 抄计数窄表） */
-    int insertFeedIndexRows(@Param("rows") List<ErrandFeedIndexRowPO> rows);
+    int insertFeedIndexRows(@Param("rows") List<ErrandFeedIndexRow> rows);
 
     /** 浏览 UV 加速列校准收尾：清掉没有明细行的孤儿计数行（重投影由 {@link #recalibrateViewCounts} 完成） */
     int deleteViewCountsMissingHistory();

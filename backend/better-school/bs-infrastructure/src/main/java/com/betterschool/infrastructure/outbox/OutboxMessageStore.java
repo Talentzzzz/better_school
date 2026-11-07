@@ -1,7 +1,7 @@
 package com.betterschool.infrastructure.outbox;
 
 import com.betterschool.infrastructure.dao.outbox.IOutboxDao;
-import com.betterschool.infrastructure.dao.outbox.po.OutboxPO;
+import com.betterschool.infrastructure.dao.outbox.po.Outbox;
 import com.betterschool.infrastructure.mq.OutboxMessageSender;
 import com.betterschool.types.enums.OutboxStatus;
 import com.betterschool.types.exception.FrameworkException;
@@ -13,7 +13,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
@@ -30,21 +29,18 @@ public class OutboxMessageStore {
     private final ObjectMapper objectMapper;
 
     public void save(String destination, Object payload) {
-        OutboxPO outboxPO = new OutboxPO();
-        outboxPO.setMsgId(UUID.randomUUID().toString());
-        outboxPO.setDestination(destination);
-        outboxPO.setPayload(toJson(payload));
-        outboxPO.setState(OutboxStatus.PENDING.getCode());
-        outboxPO.setRetryCount(0);
-        LocalDateTime now = LocalDateTime.now();
-        outboxPO.setCreateTime(now);
-        outboxPO.setUpdateTime(now);
-        outboxDao.insert(outboxPO);
+        Outbox outbox = new Outbox();
+        outbox.setMsgId(UUID.randomUUID().toString());
+        outbox.setDestination(destination);
+        outbox.setPayload(toJson(payload));
+        outbox.setState(OutboxStatus.PENDING.getCode());
+        outbox.setRetryCount(0);
+        outboxDao.insert(outbox);
         // 事务提交后立即异步发送一次（降延迟）；事务回滚时 afterCommit 不触发，记录随回滚消失
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                messageSender.sendAsync(outboxPO);
+                messageSender.sendAsync(outbox);
             }
         });
     }

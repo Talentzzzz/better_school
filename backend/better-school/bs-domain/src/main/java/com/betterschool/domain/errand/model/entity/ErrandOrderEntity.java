@@ -61,8 +61,6 @@ public class ErrandOrderEntity {
         // 先付后审：创建进入待支付（不冻结），支付确认转待审；deadline 从支付时间起算
         orderEntity.timeLimitHours = timeLimit.getHours();
         orderEntity.status = ErrandStatusVO.PENDING_PAYMENT;
-        orderEntity.createdAt = LocalDateTime.now();
-        orderEntity.updatedAt = orderEntity.createdAt;
         orderEntity.deadline = null;
         return orderEntity;
     }
@@ -84,8 +82,6 @@ public class ErrandOrderEntity {
         orderEntity.timeLimitHours = timeLimitHours;
         orderEntity.images = images == null ? List.of() : images;
         orderEntity.status = ErrandStatusVO.DRAFT;
-        orderEntity.createdAt = LocalDateTime.now();
-        orderEntity.updatedAt = orderEntity.createdAt;
         orderEntity.deadline = null;
         return orderEntity;
     }

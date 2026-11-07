@@ -17,7 +17,6 @@ public class SensitiveWordEntity {
         SensitiveWordEntity wordEntity = new SensitiveWordEntity();
         wordEntity.word = word;
         wordEntity.enabled = true;
-        wordEntity.createdAt = LocalDateTime.now();
         return wordEntity;
     }
 }

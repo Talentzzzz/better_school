@@ -11,23 +11,25 @@
     <!-- 全部语句纯 errand_order / 窄表单表（SQL 层零 JOIN）：发布方/接单方昵称头像与浏览 UV 计数
          由仓储批量回查拼装 -->
 
-    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+    <!-- 时刻一律数据库时钟：create_time/update_time 取 NOW()；deadline 建单恒 NULL（支付确认时才由
+         payById 用 TIMESTAMPADD 从数据库时钟起算锚定），不进 INSERT 列清单 -->
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         INSERT INTO errand_order (errand_order_id, publisher_id, taker_id, type, description, pickup_location, delivery_location,
-                                  reward, time_limit_hours, images, deadline, state,
+                                  reward, time_limit_hours, images, state,
                                   create_time, update_time)
         VALUES (#{errandOrderId}, #{publisherId}, #{takerId}, #{type}, #{description}, #{pickupLocation}, #{deliveryLocation},
-                #{reward}, #{timeLimitHours}, #{images}, #{deadline}, #{state},
-                #{createTime}, #{updateTime})
+                #{reward}, #{timeLimitHours}, #{images}, #{state},
+                NOW(), NOW())
     </insert>
 
-    <select id="selectById" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+    <select id="selectById" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
         FROM errand_order e
         WHERE e.errand_order_id = #{orderId}
     </select>
 
     <!-- 按 id 列表查询：不分状态（搜索同步按 state 判定 upsert/删除，搜索命中组装按公开状态过滤） -->
-    <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+    <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
         FROM errand_order e
         WHERE e.errand_order_id IN
@@ -45,7 +47,7 @@
 
     <!-- 浏览 UV 计数窄表批量读：按 id 集单表 IN 查询，仓储补 0 拼装（详情 UV 回填与列表展示共用，
          market-feed-uv 票 04 两路口径对齐） -->
-    <select id="selectViewCountsByOrderIds" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+    <select id="selectViewCountsByOrderIds" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT c.errand_order_id AS errandOrderId, c.view_count AS viewCount
         FROM errand_view_count c
         WHERE c.errand_order_id IN
@@ -55,7 +57,7 @@
     <!-- 旧直查降级路径（market-feed-uv 票 04 起仅索引不可用/带筛选时走）：price/time 三档纯单表 SQL 分页；
          hot 档排序键 view_count 在窄表（不能 JOIN 进来），由仓储走 selectVisibleRows 全集 + 窄表批量回查 +
          内存排序切片（降级路径，数据集有界） -->
-    <select id="selectPage" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+    <select id="selectPage" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
         FROM errand_order e
         <where>
@@ -84,7 +86,7 @@
     </select>
 
     <!-- hot 档降级取数：公开口径全集（筛选条件同 selectPage，无 LIMIT），窄表批量回查后仓储内存排序切片 -->
-    <select id="selectVisibleRows" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+    <select id="selectVisibleRows" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
         FROM errand_order e
         <where>
@@ -159,11 +161,13 @@
         </where>
     </select>
 
-    <!-- 支付确认（先付后审）：PENDING_PAYMENT → PENDING_REVIEW（已付款待审），审核通过转 PUBLISHED -->
+    <!-- 支付确认（先付后审）：PENDING_PAYMENT → PENDING_REVIEW（已付款待审），审核通过转 PUBLISHED；
+         deadline = NOW() + timeLimitHours（时刻一律数据库时钟，Java 只传时长；TIMESTAMPADD 的占位符
+         在普通参数位，避开 ShardingSphere 丢 INTERVAL 占位符的形态） -->
     <update id="payById">
         UPDATE errand_order
         SET state      = 'PENDING_REVIEW',
-            deadline   = #{deadline},
+            deadline   = TIMESTAMPADD(HOUR, #{timeLimitHours}, NOW()),
             update_time = NOW()
         WHERE errand_order_id = #{orderId}
           AND state = 'PENDING_PAYMENT'
@@ -315,7 +319,7 @@
     </update>
 
     <!-- 草稿全量编辑：仅 DRAFT 行生效（作者守卫自证）；作者与状态位不在 SET 列内（编辑不产生状态迁移），字段可为 NULL -->
-    <update id="updateDraft" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+    <update id="updateDraft" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         UPDATE errand_order
         SET type              = #{type},
             description       = #{description},
@@ -413,7 +417,7 @@
           AND state = 'DELIVERED'
     </update>
 
-    <select id="selectMyPublished" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+    <select id="selectMyPublished" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
         FROM errand_order e
         WHERE e.publisher_id = #{userId}
@@ -437,7 +441,7 @@
 
     <!-- 某用户发布的进行中跑腿单（作者主页「跑腿」tab，访客口径）：只列发布、不含接单；
          待支付/待审/终态/争议一律不外露（锁单中可见，展示「锁单中」） -->
-    <select id="selectPublicPageByPublisher" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+    <select id="selectPublicPageByPublisher" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
         FROM errand_order e
         WHERE e.publisher_id = #{userId}
@@ -454,7 +458,7 @@
     </select>
 
     <!-- 我接的：按 taker_id -->
-    <select id="selectMyTaken" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderPO">
+    <select id="selectMyTaken" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
         FROM errand_order e
         WHERE e.taker_id = #{userId}
@@ -477,11 +481,12 @@
     </select>
 
     <!-- 订单状态流转事件（只插入，纠纷溯源事实源）：随条件 UPDATE 成功在同一事务写入 -->
-    <insert id="insertOrderEvent" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderEventPO">
+    <insert id="insertOrderEvent" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderEvent">
+        <!-- create_time/update_time 取数据库时钟 -->
         INSERT INTO errand_order_event (order_id, event_type, from_state, to_state, actor_id, actor_role,
                                         reason_type, reason, images, create_time, update_time)
         VALUES (#{orderId}, #{eventType}, #{fromState}, #{toState}, #{actorId}, #{actorRole},
-                #{reasonType}, #{reason}, #{images}, #{createTime}, #{updateTime})
+                #{reasonType}, #{reason}, #{images}, NOW(), NOW())
     </insert>
 
     <!-- 防占单降级回落（票 05）：窗口内主动放弃次数（事实源查询；走 idx_actor_type_time） -->
@@ -601,7 +606,7 @@
          （经 IModerationDao.selectApproveRowsByTargetType，与票 01 回填脚本同口径），查不到审批流水的
          存量老单取 create_time 兜底；③ view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步
          同时把「过审前被浏览、旁路命中 0 行」漏计的那部分追平。组装后走 insertFeedIndexRows 批量写回 -->
-    <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandFeedIndexRowPO">
+    <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandFeedIndexRow">
         SELECT e.errand_order_id AS errandOrderId, e.state AS state, e.create_time AS createTime, e.reward AS price
         FROM errand_order e
     </select>

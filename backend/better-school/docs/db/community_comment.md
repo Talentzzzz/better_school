@@ -10,7 +10,7 @@
 |post_comment_like|评论点赞关系（明细，uk_comment_user 幂等）|
 |post_comment_feed_index|根评论热评排序投影（只服务「最热」序，不是真值源）|
 
-**主键口径（uuid-biz-id 起）**：`id` 是纯内部物理自增，业务 ID 为 `comment_id`（`uk_comment_id`）；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`IIdGenerator` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
+**主键口径（uuid-biz-id 起）**：`id` 是纯内部物理自增，业务 ID 为 `comment_id`（`uk_comment_id`）；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`UUID.randomUUID()` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
 
 # post_comment
 

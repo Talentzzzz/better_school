@@ -1,6 +1,6 @@
 package com.betterschool.infrastructure.dao.user;
 
-import com.betterschool.infrastructure.dao.user.po.UserPO;
+import com.betterschool.infrastructure.dao.user.po.User;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -12,13 +12,13 @@ import java.util.List;
 @Mapper
 public interface IUserDao {
 
-    UserPO selectByPhone(@Param("phone") String phone);
+    User selectByPhone(@Param("phone") String phone);
 
-    UserPO selectById(@Param("userId") String userId);
+    User selectById(@Param("userId") String userId);
 
-    int insert(UserPO userPO);
+    int insert(User user);
 
-    int updateById(UserPO userPO);
+    int updateById(User user);
 
     /** 编辑资料：仅写 signature/gender 两列 */
     int updateProfile(@Param("userId") String userId, @Param("signature") String signature,
@@ -38,5 +38,5 @@ public interface IUserDao {
     List<String> selectIdsByRole(@Param("role") String role);
 
     /** 按 id 列表查询（搜索同步反查/搜索结果组装用） */
-    List<UserPO> selectByIds(@Param("ids") List<String> userIds);
+    List<User> selectByIds(@Param("ids") List<String> userIds);
 }

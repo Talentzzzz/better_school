@@ -4,7 +4,6 @@ import com.betterschool.domain.timeout.model.valobj.TaskStatusVO;
 import lombok.Data;
 
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 
 /**
  * 超时任务（一行 = 一个「到某时刻触发一次业务动作」的任务）。
@@ -20,6 +19,8 @@ public class TimeoutTaskEntity {
     private Long id;
     private String taskType;
     private String bizId;
+    /** 注册/终态复活的延时秒数（仅写路径入参）：SQL 侧 TIMESTAMPADD 换算绝对时刻，读路径无值 */
+    private Long delaySeconds;
     /** 理论到期时刻：单轮内不可变（终态复活=重开一轮时刷新），回调时携带，供业务监控精度 */
     private LocalDateTime actionTime;
     /** 下次可触发时刻：注册时 = actionTime，失败重试后 = now + 退避 */
@@ -38,21 +39,16 @@ public class TimeoutTaskEntity {
     /**
      * 注册态的新任务行：WAITING、{@code nextFireTime = actionTime}、{@code retryCount = 0}。
      * <p>
-     * 时间截到秒：库列是 DATETIME（秒级精度），不截的话 MySQL 存进去会四舍五入、读回来对不上。
+     * 时刻一律数据库时钟：Java 只传时长（{@code delaySeconds}），action_time/next_fire_time 由
+     * SQL 侧 TIMESTAMPADD(SECOND, #{delaySeconds}, NOW()) 落库（NOW() 与库列同为秒级精度）。
      */
-    public static TimeoutTaskEntity newWaiting(String taskType, String bizId,
-                                               LocalDateTime actionTime, LocalDateTime now) {
-        LocalDateTime fireTime = actionTime.truncatedTo(ChronoUnit.SECONDS);
-        LocalDateTime createdAt = now.truncatedTo(ChronoUnit.SECONDS);
+    public static TimeoutTaskEntity newWaiting(String taskType, String bizId, long delaySeconds) {
         TimeoutTaskEntity task = new TimeoutTaskEntity();
         task.setTaskType(taskType);
         task.setBizId(bizId);
-        task.setActionTime(fireTime);
-        task.setNextFireTime(fireTime);
+        task.setDelaySeconds(delaySeconds);
         task.setStatus(TaskStatusVO.WAITING);
         task.setRetryCount(0);
-        task.setCreatedAt(createdAt);
-        task.setUpdatedAt(createdAt);
         return task;
     }
 }

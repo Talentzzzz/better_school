@@ -1,8 +1,8 @@
 package com.betterschool.infrastructure.dao.comment;
 
-import com.betterschool.infrastructure.dao.comment.po.CommentFeedIndexRowPO;
-import com.betterschool.infrastructure.dao.comment.po.PostCommentLikeCountPO;
-import com.betterschool.infrastructure.dao.comment.po.PostCommentPO;
+import com.betterschool.infrastructure.dao.comment.po.CommentFeedIndexRow;
+import com.betterschool.infrastructure.dao.comment.po.PostCommentLikeCount;
+import com.betterschool.infrastructure.dao.comment.po.PostComment;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -14,13 +14,13 @@ import java.util.List;
 @Mapper
 public interface IPostCommentDao {
 
-    int insert(PostCommentPO postCommentPO);
+    int insert(PostComment postComment);
 
     /**
      * 根评论列表分页默认档（root_id='0'；NORMAL 公开 + viewerId 本人待审/未通过可见；按 create_time + 业务 ID 升序）。
      * 最热档不走这条，见 {@link #selectRootFeedCommentIds} + {@link #selectNormalRootsByIds}
      */
-    List<PostCommentPO> selectRootPageByPostId(@Param("postId") String postId, @Param("viewerId") String viewerId,
+    List<PostComment> selectRootPageByPostId(@Param("postId") String postId, @Param("viewerId") String viewerId,
                                                @Param("offset") int offset, @Param("limit") int limit);
 
     /**
@@ -31,7 +31,7 @@ public interface IPostCommentDao {
                                           @Param("offset") int offset, @Param("limit") int limit);
 
     /** 最热档第二步：按 id 集回查 NORMAL 根评论行（纯单表，不排序；昵称/驳回理由仓储拼装） */
-    List<PostCommentPO> selectNormalRootsByIds(@Param("commentIds") List<String> commentIds);
+    List<PostComment> selectNormalRootsByIds(@Param("commentIds") List<String> commentIds);
 
     /** 根评论真实总数：他人可见口径（仅 NORMAL 根评论，不含待审/未通过） */
     long countVisibleRootsByPostId(@Param("postId") String postId);
@@ -40,7 +40,7 @@ public interface IPostCommentDao {
      * 楼内子回复平铺（root_id 归组、id 升序；NORMAL 公开 + viewerId 本人待审/未通过；
      * 指向评论行与指向昵称由仓储按 parent_id 集回查拼装、忽略其状态）
      */
-    List<PostCommentPO> selectRepliesByRootId(@Param("rootId") String rootId, @Param("viewerId") String viewerId,
+    List<PostComment> selectRepliesByRootId(@Param("rootId") String rootId, @Param("viewerId") String viewerId,
                                               @Param("offset") int offset, @Param("limit") int limit);
 
     /** 楼内可见子回复总数（viewerId 非空时含其本人待审/未通过） */
@@ -53,13 +53,13 @@ public interface IPostCommentDao {
      * 按用户列评论（作者主页「评论」tab）：该用户的全部 NORMAL 评论行（单表，按评论时间倒序）；
      * 源帖 NORMAL 过滤与来源帖标题/封面由仓储回查 post 拼装（total = 过滤后集合大小）
      */
-    List<PostCommentPO> selectNormalRowsByUser(@Param("userId") String userId);
+    List<PostComment> selectNormalRowsByUser(@Param("userId") String userId);
 
     /** 单条评论（纯 post_comment 单表；点赞/审核前置检查、详情组装用） */
-    PostCommentPO selectById(@Param("commentId") String commentId);
+    PostComment selectById(@Param("commentId") String commentId);
 
     /** 按 id 集批量回查（不分状态：楼内指向评论忽略父行状态；审核队列素材回查按 state 过滤在调用方） */
-    List<PostCommentPO> selectByIds(@Param("ids") List<String> commentIds);
+    List<PostComment> selectByIds(@Param("ids") List<String> commentIds);
 
     /** 楼根 reply_count 变更（调用方保证同事务） */
     int updateReplyCount(@Param("rootId") String rootId, @Param("delta") int delta);
@@ -101,7 +101,7 @@ public interface IPostCommentDao {
      * 展示取数：按页内评论 id 集一次回查窄表（列表/楼内/主页 tab/单行同一通路）。
      * 缺行由调用方补 0（存量语义），因此返回行数可能少于入参 id 数
      */
-    List<PostCommentLikeCountPO> selectLikeCountsByIds(@Param("commentIds") List<String> commentIds);
+    List<PostCommentLikeCount> selectLikeCountsByIds(@Param("commentIds") List<String> commentIds);
 
     /** 评论计数窄表 upsert（评论通过 +1 / 软删 -1，只计 NORMAL 态；同事务调用，不再锁 post 行） */
     int upsertPostCommentCount(@Param("postId") String postId, @Param("delta") int delta);
@@ -144,8 +144,8 @@ public interface IPostCommentDao {
      * {@code like_count} 从计数窄表抄入（无行 = 0）——拼装在仓储、写回走 {@link #insertFeedIndexRows}。
      * 只兜索引、不兜窄表——窄表是真值源，重建不改写它
      */
-    List<CommentFeedIndexRowPO> selectRebuildRows();
+    List<CommentFeedIndexRow> selectRebuildRows();
 
     /** 重灌写回：仓储拼装好的行集批量 INSERT */
-    int insertFeedIndexRows(@Param("rows") List<CommentFeedIndexRowPO> rows);
+    int insertFeedIndexRows(@Param("rows") List<CommentFeedIndexRow> rows);
 }

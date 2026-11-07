@@ -18,27 +18,26 @@ import com.betterschool.infrastructure.adapter.merge.CountEvent;
 import com.betterschool.infrastructure.adapter.merge.LikeState;
 import com.betterschool.infrastructure.adapter.merge.ViewMergeWriter;
 import com.betterschool.infrastructure.dao.product.IProductDao;
-import com.betterschool.infrastructure.dao.product.po.ProductPO;
+import com.betterschool.infrastructure.dao.product.po.Product;
 import com.betterschool.infrastructure.dao.productorder.IProductOrderDao;
-import com.betterschool.infrastructure.dao.productorder.po.ProductOrderEventPO;
-import com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO;
+import com.betterschool.infrastructure.dao.productorder.po.ProductOrderEvent;
+import com.betterschool.infrastructure.dao.productorder.po.ProductOrder;
 import com.betterschool.infrastructure.adapter.repository.moderation.ReviewTaskPoolStore;
 import com.betterschool.infrastructure.dao.moderation.IModerationDao;
-import com.betterschool.infrastructure.dao.moderation.po.ContentReviewPO;
+import com.betterschool.infrastructure.dao.moderation.po.ContentReview;
 import com.betterschool.infrastructure.dao.product.IProductDao;
-import com.betterschool.infrastructure.dao.product.po.ProductFeedIndexRowPO;
-import com.betterschool.infrastructure.dao.product.po.ProductPO;
+import com.betterschool.infrastructure.dao.product.po.ProductFeedIndexRow;
+import com.betterschool.infrastructure.dao.product.po.Product;
 import com.betterschool.infrastructure.dao.productorder.IProductOrderDao;
-import com.betterschool.infrastructure.dao.productorder.po.ProductOrderEventPO;
-import com.betterschool.infrastructure.dao.productorder.po.ProductOrderPO;
+import com.betterschool.infrastructure.dao.productorder.po.ProductOrderEvent;
+import com.betterschool.infrastructure.dao.productorder.po.ProductOrder;
 import com.betterschool.infrastructure.dao.user.IUserDao;
-import com.betterschool.infrastructure.dao.user.po.UserPO;
+import com.betterschool.infrastructure.dao.user.po.User;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
 import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import com.betterschool.types.exception.FrameworkException;
-import com.betterschool.types.id.IIdGenerator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -55,6 +54,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -83,8 +83,6 @@ public class TradeRepository implements ITradeRepository {
     private final TransactionTemplate transactionTemplate;
     /** 浏览类写入的唯一通道（fire-and-forget，窗口后一组一个事务三步落 UV 明细 + 加速列） */
     private final ViewMergeWriter viewMergeWriter;
-    /** 业务 ID 发号器（uuid-biz-id 票 05）：36 位小写 UUID 字符串，insert 前生成、随行一次写入 */
-    private final IIdGenerator idGenerator;
     /** 卖家昵称头像批量回查（SQL 层零 JOIN：商品列表/详情的 bs_user 信息在这里多查一次拼装） */
     private final IUserDao userDao;
     /** feed 索引重建取 APPROVE 审批流水（content_review 单表，IModerationDao 内该语句零 JOIN） */
@@ -96,13 +94,14 @@ public class TradeRepository implements ITradeRepository {
     public void save(ProductEntity productEntity) {
         transactionTemplate.execute(status -> {
             // 业务 ID 落库前发号（uuid-biz-id 票 05）：随行一次写入，不再自增同值回写
-            productEntity.setProductId(idGenerator.nextId());
-            ProductPO productPO = toPO(productEntity);
-            productDao.insert(productPO);
-            // 入池点（spec §5.1）：提交落库即待审，工单开单与状态同事务（草稿行 DRAFT 不入池）
+            productEntity.setProductId(UUID.randomUUID().toString());
+            Product product = toPO(productEntity);
+            productDao.insert(product);
+            // 入池点（spec §5.1）：提交落库即待审，工单开单与状态同事务（草稿行 DRAFT 不入池）；
+            // entered_at 由开单 SQL NOW() 落库（时刻一律数据库时钟，≈发布时刻，同事务同秒）
             if (productEntity.getStatus() == ProductStatusVO.PENDING_REVIEW) {
                 reviewTaskPoolStore.enter(ReviewTargetTypeVO.PRODUCT, productEntity.getProductId(),
-                        productEntity.getReviewRound(), productEntity.getUserId(), productEntity.getReviewEnteredAt());
+                        productEntity.getReviewRound(), productEntity.getUserId());
             }
             return null;
         });
@@ -110,7 +109,7 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public ProductEntity findById(String productId) {
-        ProductPO row = productDao.selectById(productId);
+        Product row = productDao.selectById(productId);
         fillProductExtras(row == null ? List.of() : List.of(row));
         return toProductEntity(row);
     }
@@ -221,15 +220,15 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public boolean editOnSaleContent(ProductEntity productEntity) {
+        // 手工组装编辑 PO（不用 toPO：未变更字段保持 null，动态 SQL 才不会覆盖）
+        Product product = new Product();
+        product.setProductId(productEntity.getProductId());
+        product.setTitle(productEntity.getTitle());
+        product.setDescription(productEntity.getDescription());
+        product.setImages(productEntity.getImages() == null ? null : toImagesJson(productEntity.getImages()));
+        product.setPrice(productEntity.getPrice());
         Boolean edited = transactionTemplate.execute(status -> {
-            // 手工组装编辑 PO（不用 toPO：未变更字段保持 null，动态 SQL 才不会覆盖）
-            ProductPO productPO = new ProductPO();
-            productPO.setProductId(productEntity.getProductId());
-            productPO.setTitle(productEntity.getTitle());
-            productPO.setDescription(productEntity.getDescription());
-            productPO.setImages(productEntity.getImages() == null ? null : toImagesJson(productEntity.getImages()));
-            productPO.setPrice(productEntity.getPrice());
-            boolean updated = productDao.editOnSaleContent(productPO) > 0;
+            boolean updated = productDao.editOnSaleContent(product) > 0;
             if (updated) {
                 // 入池点：在售改内容回待审（轮次递增同事务可见）；读回本事务内新值开单
                 enterPoolForPendingReview(productEntity.getProductId());
@@ -322,16 +321,16 @@ public class TradeRepository implements ITradeRepository {
         String categoryName = category == null ? null : category.name();
         // hot 档排序键 view_count 在窄表（SQL 不能 JOIN 进来）：ON_SALE 全集 + 窄表批量回查 + 内存排序切片。
         // 旧直查路径仅作降级（索引不可用时），数据集有界，可接受
-        List<ProductPO> rows;
+        List<Product> rows;
         if ("hot".equals(sort)) {
-            List<ProductPO> allOnSale = productDao.selectOnSaleRows(categoryName, minPrice, maxPrice);
-            Map<String, ProductPO> viewRows = viewCountRowsById(productDao.selectViewCountsByProductIds(
-                    allOnSale.stream().map(ProductPO::getProductId).toList()));
+            List<Product> allOnSale = productDao.selectOnSaleRows(categoryName, minPrice, maxPrice);
+            Map<String, Product> viewRows = viewCountRowsById(productDao.selectViewCountsByProductIds(
+                    allOnSale.stream().map(Product::getProductId).toList()));
             rows = allOnSale.stream()
                     .sorted(Comparator
-                            .comparing((ProductPO p) -> viewCountOf(viewRows, p.getProductId())).reversed()
-                            .thenComparing(ProductPO::getCreateTime, Comparator.reverseOrder())
-                            .thenComparing(ProductPO::getProductId, Comparator.reverseOrder()))
+                            .comparing((Product p) -> viewCountOf(viewRows, p.getProductId())).reversed()
+                            .thenComparing(Product::getCreateTime, Comparator.reverseOrder())
+                            .thenComparing(Product::getProductId, Comparator.reverseOrder()))
                     .skip(offset)
                     .limit(limit)
                     .toList();
@@ -379,11 +378,11 @@ public class TradeRepository implements ITradeRepository {
      */
     private int rebuildFeedIndexRows() {
         Map<String, LocalDateTime> approveTimes = new HashMap<>();
-        for (ContentReviewPO approveRow : moderationDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.PRODUCT.name())) {
+        for (ContentReview approveRow : moderationDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.PRODUCT.name())) {
             approveTimes.put(approveRow.getTargetId(), approveRow.getCreateTime());
         }
-        List<ProductFeedIndexRowPO> rows = new ArrayList<>();
-        for (ProductFeedIndexRowPO candidate : productDao.selectRebuildRows()) {
+        List<ProductFeedIndexRow> rows = new ArrayList<>();
+        for (ProductFeedIndexRow candidate : productDao.selectRebuildRows()) {
             boolean approved = approveTimes.containsKey(candidate.getProductId());
             if (!ProductStatusVO.ON_SALE.name().equals(candidate.getState()) && !approved) {
                 // 从未通过审的待审/驳回/草稿商品不凭空进索引
@@ -393,9 +392,9 @@ public class TradeRepository implements ITradeRepository {
             rows.add(candidate);
         }
         if (!rows.isEmpty()) {
-            Map<String, ProductPO> viewRows = viewCountRowsById(productDao.selectViewCountsByProductIds(
-                    rows.stream().map(ProductFeedIndexRowPO::getProductId).toList()));
-            for (ProductFeedIndexRowPO row : rows) {
+            Map<String, Product> viewRows = viewCountRowsById(productDao.selectViewCountsByProductIds(
+                    rows.stream().map(ProductFeedIndexRow::getProductId).toList()));
+            for (ProductFeedIndexRow row : rows) {
                 row.setViewCount(viewCountOf(viewRows, row.getProductId()));
             }
             for (int from = 0; from < rows.size(); from += REBUILD_INSERT_BATCH) {
@@ -432,23 +431,23 @@ public class TradeRepository implements ITradeRepository {
         if (favoriteIds.isEmpty()) {
             return List.of();
         }
-        Map<String, ProductPO> productsById = productDao.selectByIds(favoriteIds).stream()
-                .collect(Collectors.toMap(ProductPO::getProductId, product -> product, (a, b) -> a));
-        List<ProductPO> visibleRows = new ArrayList<>(favoriteIds.size());
+        Map<String, Product> productsById = productDao.selectByIds(favoriteIds).stream()
+                .collect(Collectors.toMap(Product::getProductId, product -> product, (a, b) -> a));
+        List<Product> visibleRows = new ArrayList<>(favoriteIds.size());
         for (String productId : favoriteIds) {
-            ProductPO product = productsById.get(productId);
+            Product product = productsById.get(productId);
             if (product != null && !ProductStatusVO.DELETED.name().equals(product.getState())) {
                 visibleRows.add(product);
             }
         }
-        List<ProductPO> page = visibleRows.stream().skip(offset).limit(limit).toList();
+        List<Product> page = visibleRows.stream().skip(offset).limit(limit).toList();
         fillProductExtras(page);
         return page.stream().map(this::toProductEntity).toList();
     }
 
     @Override
     public List<ProductEntity> pageBySeller(String userId, int offset, int limit) {
-        List<ProductPO> rows = productDao.selectPageBySeller(userId, offset, limit);
+        List<Product> rows = productDao.selectPageBySeller(userId, offset, limit);
         fillProductExtras(rows);
         return rows.stream().map(this::toProductEntity).toList();
     }
@@ -460,7 +459,7 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public List<ProductEntity> pageOnSaleByUser(String userId, int offset, int limit) {
-        List<ProductPO> rows = productDao.selectOnSalePageByUser(userId, offset, limit);
+        List<Product> rows = productDao.selectOnSalePageByUser(userId, offset, limit);
         fillProductExtras(rows);
         return rows.stream().map(this::toProductEntity).toList();
     }
@@ -485,7 +484,7 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public List<ProductEntity> listByIds(List<String> productIds) {
-        List<ProductPO> rows = productDao.selectByIds(productIds);
+        List<Product> rows = productDao.selectByIds(productIds);
         fillProductExtras(rows);
         return rows.stream().map(this::toProductEntity).toList();
     }
@@ -578,17 +577,17 @@ public class TradeRepository implements ITradeRepository {
     @Override
     public void saveOrder(ProductOrderEntity orderEntity) {
         // 业务 ID 落库前发号（uuid-biz-id 票 05）：随行一次写入，不再自增同值回写
-        orderEntity.setOrderId(idGenerator.nextId());
-        ProductOrderPO orderPO = toPO(orderEntity);
-        productOrderDao.insert(orderPO);
+        orderEntity.setOrderId(UUID.randomUUID().toString());
+        ProductOrder order = toPO(orderEntity);
+        productOrderDao.insert(order);
         // 创建事件：from_state 为 NULL（sql.md 口径），操作方恒买家
-        saveEvent(orderPO.getProductOrderId(), "CREATED", null, orderPO.getState(),
-                orderPO.getBuyerId(), "BUYER");
+        saveEvent(order.getProductOrderId(), "CREATED", null, order.getState(),
+                order.getBuyerId(), "BUYER");
     }
 
     @Override
     public ProductOrderEntity findOrderById(String orderId) {
-        ProductOrderPO row = productOrderDao.selectById(orderId);
+        ProductOrder row = productOrderDao.selectById(orderId);
         fillOrderUserExtras(row == null ? List.of() : List.of(row));
         return toOrderEntity(row);
     }
@@ -623,7 +622,7 @@ public class TradeRepository implements ITradeRepository {
     @Override
     public boolean cancelOrderById(String orderId, String buyerId) {
         // 取消允许 PENDING_PAYMENT/PAID 两个前态，前态要落事件必须在 UPDATE 之前读（更新后该行已是新态）
-        ProductOrderPO prior = productOrderDao.selectById(orderId);
+        ProductOrder prior = productOrderDao.selectById(orderId);
         String fromState = prior == null ? null : prior.getState();
         boolean updated = productOrderDao.cancelById(orderId, buyerId) > 0;
         if (updated) {
@@ -643,7 +642,7 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public List<ProductOrderEntity> listMineByBuyer(String userId, int offset, int limit) {
-        List<ProductOrderPO> rows = productOrderDao.selectMineByBuyer(userId, offset, limit);
+        List<ProductOrder> rows = productOrderDao.selectMineByBuyer(userId, offset, limit);
         fillOrderUserExtras(rows);
         return rows.stream().map(this::toOrderEntity).toList();
     }
@@ -655,7 +654,7 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public List<ProductOrderEntity> listMineBySeller(String userId, int offset, int limit) {
-        List<ProductOrderPO> rows = productOrderDao.selectMineBySeller(userId, offset, limit);
+        List<ProductOrder> rows = productOrderDao.selectMineBySeller(userId, offset, limit);
         fillOrderUserExtras(rows);
         return rows.stream().map(this::toOrderEntity).toList();
     }
@@ -666,11 +665,12 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public void schedulePayTimeout(String orderId, LocalDateTime actionTime) {
+    public void schedulePayTimeout(String orderId, long delaySeconds) {
         // 业务事务内直插超时任务行（内嵌超时中心，注册 outbox 已删）：与业务写同一条连接同一事务，
-        // 回滚即无行、提交即被扫描可见；同键重入的三分支幂等（新插入/在途不改期/终态复活）在仓储内裁决
+        // 回滚即无行、提交即被扫描可见；同键重入的三分支幂等（新插入/在途不改期/终态复活）在仓储内裁决；
+        // 时刻一律数据库时钟，Java 只传时长
         timeoutRepository.register(TimeoutTaskEntity.newWaiting(
-                Constants.PRODUCT_ORDER_PAY_TIMEOUT, orderId, actionTime, LocalDateTime.now()));
+                Constants.PRODUCT_ORDER_PAY_TIMEOUT, orderId, delaySeconds));
     }
 
     // ---------- 跨商品与订单的原子用例 ----------
@@ -685,8 +685,8 @@ public class TradeRepository implements ITradeRepository {
             // 锁定后商品退出搜索，落同步消息（消费方反查 LOCKED 删文档）
             saveSearchSyncMessage(productId);
             // "15 分钟未支付"超时任务与下单同事务直插 timeout_task（内嵌超时中心）：
-            // 到期时刻在下单事务内算（与改造前同口径）
-            schedulePayTimeout(orderEntity.getOrderId(), LocalDateTime.now().plusMinutes(payTimeoutMinutes));
+            // Java 只传时长，到期时刻由 SQL 侧 TIMESTAMPADD 按数据库时钟落库
+            schedulePayTimeout(orderEntity.getOrderId(), payTimeoutMinutes * 60L);
             return null;
         });
         return orderEntity.getOrderId();
@@ -820,18 +820,18 @@ public class TradeRepository implements ITradeRepository {
      * 商品行补齐浏览 UV 加速列 + 卖家昵称头像：product_view_count 一次 IN 批量回查、bs_user 一次 IN 批量回查。
      * 缺行补 0 / 补 null（与原 LEFT JOIN 合成口径一致）；列表与详情共用
      */
-    private void fillProductExtras(List<ProductPO> rows) {
+    private void fillProductExtras(List<Product> rows) {
         if (rows.isEmpty()) {
             return;
         }
-        Map<String, ProductPO> viewRows = viewCountRowsById(
-                productDao.selectViewCountsByProductIds(rows.stream().map(ProductPO::getProductId).toList()));
-        List<String> userIds = rows.stream().map(ProductPO::getUserId).filter(Objects::nonNull).distinct().toList();
-        Map<String, UserPO> users = userIds.isEmpty() ? Map.of() : userDao.selectByIds(userIds).stream()
-                .collect(Collectors.toMap(UserPO::getUserId, user -> user, (a, b) -> a));
-        for (ProductPO row : rows) {
+        Map<String, Product> viewRows = viewCountRowsById(
+                productDao.selectViewCountsByProductIds(rows.stream().map(Product::getProductId).toList()));
+        List<String> userIds = rows.stream().map(Product::getUserId).filter(Objects::nonNull).distinct().toList();
+        Map<String, User> users = userIds.isEmpty() ? Map.of() : userDao.selectByIds(userIds).stream()
+                .collect(Collectors.toMap(User::getUserId, user -> user, (a, b) -> a));
+        for (Product row : rows) {
             row.setViewCount(viewCountOf(viewRows, row.getProductId()));
-            UserPO user = users.get(row.getUserId());
+            User user = users.get(row.getUserId());
             if (user != null) {
                 row.setSellerNickname(user.getNickname());
                 row.setSellerAvatar(user.getAvatar());
@@ -840,13 +840,13 @@ public class TradeRepository implements ITradeRepository {
     }
 
     /** 部分列计数行 → productId 索引 */
-    private static Map<String, ProductPO> viewCountRowsById(List<ProductPO> viewRows) {
-        return viewRows.stream().collect(Collectors.toMap(ProductPO::getProductId, row -> row, (a, b) -> a));
+    private static Map<String, Product> viewCountRowsById(List<Product> viewRows) {
+        return viewRows.stream().collect(Collectors.toMap(Product::getProductId, row -> row, (a, b) -> a));
     }
 
     /** 窄表缺行 = 计数 0（与原 LEFT JOIN IFNULL(x, 0) 同口径） */
-    private static Integer viewCountOf(Map<String, ProductPO> viewRows, String productId) {
-        ProductPO row = viewRows.get(productId);
+    private static Integer viewCountOf(Map<String, Product> viewRows, String productId) {
+        Product row = viewRows.get(productId);
         return row == null ? 0 : row.getViewCount();
     }
 
@@ -854,21 +854,21 @@ public class TradeRepository implements ITradeRepository {
      * 订单行补齐买卖双方昵称头像（原 SELECT 里 bs_user ×2 的 LEFT JOIN 列）：
      * 买卖双方 userId 合并一次 bs_user 批量回查，缺行补 null（与 LEFT JOIN 一致）
      */
-    private void fillOrderUserExtras(List<ProductOrderPO> rows) {
+    private void fillOrderUserExtras(List<ProductOrder> rows) {
         if (rows.isEmpty()) {
             return;
         }
         List<String> userIds = new ArrayList<>(rows.size() * 2);
-        for (ProductOrderPO row : rows) {
+        for (ProductOrder row : rows) {
             userIds.add(row.getBuyerId());
             userIds.add(row.getSellerId());
         }
-        Map<String, UserPO> users = userDao.selectByIds(
+        Map<String, User> users = userDao.selectByIds(
                 userIds.stream().filter(Objects::nonNull).distinct().toList()).stream()
-                .collect(Collectors.toMap(UserPO::getUserId, user -> user, (a, b) -> a));
-        for (ProductOrderPO row : rows) {
-            UserPO buyer = users.get(row.getBuyerId());
-            UserPO seller = users.get(row.getSellerId());
+                .collect(Collectors.toMap(User::getUserId, user -> user, (a, b) -> a));
+        for (ProductOrder row : rows) {
+            User buyer = users.get(row.getBuyerId());
+            User seller = users.get(row.getSellerId());
             row.setBuyerNickname(buyer == null ? null : buyer.getNickname());
             row.setBuyerAvatar(buyer == null ? null : buyer.getAvatar());
             row.setSellerNickname(seller == null ? null : seller.getNickname());
@@ -880,101 +880,96 @@ public class TradeRepository implements ITradeRepository {
 
     /**
      * 商品入池开单（须处于状态迁移的同事务内）：读回刚翻转为 PENDING_REVIEW 的行的
-     * 轮次 / 进入待审时刻 / 作者，交 ReviewTaskPoolStore 幂等开单（uk_target_round 吸收重复）
+     * 轮次 / 作者，交 ReviewTaskPoolStore 幂等开单（uk_target_round 吸收重复；
+     * entered_at 由开单 SQL NOW() 落库，时刻一律数据库时钟）
      */
     private void enterPoolForPendingReview(String productId) {
-        ProductPO pending = productDao.selectById(productId);
+        Product pending = productDao.selectById(productId);
         reviewTaskPoolStore.enter(ReviewTargetTypeVO.PRODUCT, productId,
                 pending.getReviewRound() == null ? 1 : pending.getReviewRound(),
-                pending.getUserId(), pending.getReviewEnteredAt());
+                pending.getUserId());
     }
 
-    private ProductPO toPO(ProductEntity productEntity) {
-        ProductPO productPO = new ProductPO();
-        productPO.setProductId(productEntity.getProductId());
-        productPO.setUserId(productEntity.getUserId());
-        productPO.setTitle(productEntity.getTitle());
-        productPO.setDescription(productEntity.getDescription());
-        productPO.setImages(toImagesJson(productEntity.getImages()));
-        productPO.setPrice(productEntity.getPrice());
+    private Product toPO(ProductEntity productEntity) {
+        Product product = new Product();
+        product.setProductId(productEntity.getProductId());
+        product.setUserId(productEntity.getUserId());
+        product.setTitle(productEntity.getTitle());
+        product.setDescription(productEntity.getDescription());
+        product.setImages(toImagesJson(productEntity.getImages()));
+        product.setPrice(productEntity.getPrice());
         // 草稿行可空：tradeLocation/category 未填时存 NULL，提交时才要求必填
-        productPO.setTradeLocation(productEntity.getTradeLocation());
-        productPO.setCategory(productEntity.getCategory() == null ? null : productEntity.getCategory().name());
-        productPO.setState(productEntity.getStatus().name());
-        productPO.setReviewRound(productEntity.getReviewRound());
-        productPO.setReviewEnteredAt(productEntity.getReviewEnteredAt());
-        productPO.setViewCount((int) productEntity.getViewCount());
-        productPO.setCreateTime(productEntity.getCreatedAt());
-        productPO.setUpdateTime(productEntity.getCreatedAt());
-        productPO.setExpireAt(productEntity.getExpireAt());
-        return productPO;
+        product.setTradeLocation(productEntity.getTradeLocation());
+        product.setCategory(productEntity.getCategory() == null ? null : productEntity.getCategory().name());
+        product.setState(productEntity.getStatus().name());
+        product.setReviewRound(productEntity.getReviewRound());
+        product.setViewCount((int) productEntity.getViewCount());
+        return product;
     }
 
-    private ProductEntity toProductEntity(ProductPO productPO) {
-        if (productPO == null) {
+    private ProductEntity toProductEntity(Product product) {
+        if (product == null) {
             return null;
         }
         ProductEntity productEntity = new ProductEntity();
-        productEntity.setProductId(productPO.getProductId());
-        productEntity.setUserId(productPO.getUserId());
-        productEntity.setTitle(productPO.getTitle());
-        productEntity.setDescription(productPO.getDescription());
-        productEntity.setImages(toImagesList(productPO.getImages()));
-        productEntity.setPrice(productPO.getPrice());
-        productEntity.setTradeLocation(productPO.getTradeLocation());
-        productEntity.setCategory(productPO.getCategory() == null ? null : ProductCategoryVO.valueOf(productPO.getCategory()));
-        productEntity.setStatus(ProductStatusVO.valueOf(productPO.getState()));
-        productEntity.setReviewRound(productPO.getReviewRound() == null ? 0 : productPO.getReviewRound());
-        productEntity.setReviewEnteredAt(productPO.getReviewEnteredAt());
-        productEntity.setViewCount(productPO.getViewCount());
-        productEntity.setCreatedAt(productPO.getCreateTime());
-        productEntity.setExpireAt(productPO.getExpireAt());
-        productEntity.setSellerNickname(productPO.getSellerNickname());
-        productEntity.setSellerAvatar(productPO.getSellerAvatar());
+        productEntity.setProductId(product.getProductId());
+        productEntity.setUserId(product.getUserId());
+        productEntity.setTitle(product.getTitle());
+        productEntity.setDescription(product.getDescription());
+        productEntity.setImages(toImagesList(product.getImages()));
+        productEntity.setPrice(product.getPrice());
+        productEntity.setTradeLocation(product.getTradeLocation());
+        productEntity.setCategory(product.getCategory() == null ? null : ProductCategoryVO.valueOf(product.getCategory()));
+        productEntity.setStatus(ProductStatusVO.valueOf(product.getState()));
+        productEntity.setReviewRound(product.getReviewRound() == null ? 0 : product.getReviewRound());
+        productEntity.setReviewEnteredAt(product.getReviewEnteredAt());
+        productEntity.setViewCount(product.getViewCount());
+        productEntity.setCreatedAt(product.getCreateTime());
+        productEntity.setExpireAt(product.getExpireAt());
+        productEntity.setSellerNickname(product.getSellerNickname());
+        productEntity.setSellerAvatar(product.getSellerAvatar());
         return productEntity;
     }
 
-    private ProductOrderPO toPO(ProductOrderEntity orderEntity) {
-        ProductOrderPO orderPO = new ProductOrderPO();
-        orderPO.setProductOrderId(orderEntity.getOrderId());
-        orderPO.setBuyerId(orderEntity.getBuyerId());
-        orderPO.setSellerId(orderEntity.getSellerId());
-        orderPO.setProductId(orderEntity.getProductId());
-        orderPO.setPrice(orderEntity.getPrice());
-        orderPO.setProductTitle(orderEntity.getProductTitle());
-        orderPO.setProductDescription(orderEntity.getProductDescription());
-        orderPO.setProductImages(toOrderImagesJson(orderEntity.getProductImages()));
-        orderPO.setProductTradeLocation(orderEntity.getProductTradeLocation());
-        orderPO.setProductCategory(orderEntity.getProductCategory() == null ? null : orderEntity.getProductCategory().name());
-        orderPO.setState(orderEntity.getStatus().name());
-        orderPO.setCreateTime(orderEntity.getCreatedAt());
-        orderPO.setUpdateTime(orderEntity.getUpdatedAt());
-        return orderPO;
+    private ProductOrder toPO(ProductOrderEntity orderEntity) {
+        ProductOrder order = new ProductOrder();
+        order.setProductOrderId(orderEntity.getOrderId());
+        order.setBuyerId(orderEntity.getBuyerId());
+        order.setSellerId(orderEntity.getSellerId());
+        order.setProductId(orderEntity.getProductId());
+        order.setPrice(orderEntity.getPrice());
+        order.setProductTitle(orderEntity.getProductTitle());
+        order.setProductDescription(orderEntity.getProductDescription());
+        order.setProductImages(toOrderImagesJson(orderEntity.getProductImages()));
+        order.setProductTradeLocation(orderEntity.getProductTradeLocation());
+        order.setProductCategory(orderEntity.getProductCategory() == null ? null : orderEntity.getProductCategory().name());
+        order.setState(orderEntity.getStatus().name());
+        return order;
     }
 
-    private ProductOrderEntity toOrderEntity(ProductOrderPO orderPO) {
-        if (orderPO == null) {
+    private ProductOrderEntity toOrderEntity(ProductOrder order) {
+        if (order == null) {
             return null;
         }
         ProductOrderEntity orderEntity = new ProductOrderEntity();
-        orderEntity.setOrderId(orderPO.getProductOrderId());
-        orderEntity.setBuyerId(orderPO.getBuyerId());
-        orderEntity.setSellerId(orderPO.getSellerId());
-        orderEntity.setProductId(orderPO.getProductId());
-        orderEntity.setPrice(orderPO.getPrice());
-        orderEntity.setProductTitle(orderPO.getProductTitle());
-        orderEntity.setProductDescription(orderPO.getProductDescription());
-        orderEntity.setProductImages(toOrderImagesList(orderPO.getProductImages()));
-        orderEntity.setProductTradeLocation(orderPO.getProductTradeLocation());
-        orderEntity.setProductCategory(orderPO.getProductCategory() == null ? null : ProductCategoryVO.valueOf(orderPO.getProductCategory()));
-        orderEntity.setStatus(ProductOrderStatusVO.valueOf(orderPO.getState()));
-        orderEntity.setCreatedAt(orderPO.getCreateTime());
-        orderEntity.setUpdatedAt(orderPO.getUpdateTime());
-        orderEntity.setBuyerNickname(orderPO.getBuyerNickname());
-        orderEntity.setBuyerAvatar(orderPO.getBuyerAvatar());
-        orderEntity.setSellerNickname(orderPO.getSellerNickname());
-        orderEntity.setSellerAvatar(orderPO.getSellerAvatar());
-        orderEntity.setProductImage(orderPO.getProductImage());
+        orderEntity.setOrderId(order.getProductOrderId());
+        orderEntity.setBuyerId(order.getBuyerId());
+        orderEntity.setSellerId(order.getSellerId());
+        orderEntity.setProductId(order.getProductId());
+        orderEntity.setPrice(order.getPrice());
+        orderEntity.setProductTitle(order.getProductTitle());
+        orderEntity.setProductDescription(order.getProductDescription());
+        orderEntity.setProductImages(toOrderImagesList(order.getProductImages()));
+        orderEntity.setProductTradeLocation(order.getProductTradeLocation());
+        orderEntity.setProductCategory(order.getProductCategory() == null ? null : ProductCategoryVO.valueOf(order.getProductCategory()));
+        orderEntity.setStatus(ProductOrderStatusVO.valueOf(order.getState()));
+        orderEntity.setCreatedAt(order.getCreateTime());
+        orderEntity.setUpdatedAt(order.getUpdateTime());
+        orderEntity.setBuyerNickname(order.getBuyerNickname());
+        orderEntity.setBuyerAvatar(order.getBuyerAvatar());
+        orderEntity.setSellerNickname(order.getSellerNickname());
+        orderEntity.setSellerAvatar(order.getSellerAvatar());
+        orderEntity.setProductImage(order.getProductImage());
         return orderEntity;
     }
 
@@ -1033,17 +1028,14 @@ public class TradeRepository implements ITradeRepository {
 
     private void saveEvent(String orderId, String eventType, String fromState, String toState,
                            String actorId, String actorRole, String reasonType) {
-        LocalDateTime now = LocalDateTime.now();
-        ProductOrderEventPO eventPO = new ProductOrderEventPO();
-        eventPO.setOrderId(orderId);
-        eventPO.setEventType(eventType);
-        eventPO.setFromState(fromState);
-        eventPO.setToState(toState);
-        eventPO.setActorId(actorId);
-        eventPO.setActorRole(actorRole);
-        eventPO.setReasonType(reasonType);
-        eventPO.setCreateTime(now);
-        eventPO.setUpdateTime(now);
-        productOrderDao.insertOrderEvent(eventPO);
+        ProductOrderEvent event = new ProductOrderEvent();
+        event.setOrderId(orderId);
+        event.setEventType(eventType);
+        event.setFromState(fromState);
+        event.setToState(toState);
+        event.setActorId(actorId);
+        event.setActorRole(actorRole);
+        event.setReasonType(reasonType);
+        productOrderDao.insertOrderEvent(event);
     }
 }
