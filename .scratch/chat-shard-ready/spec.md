@@ -2,6 +2,7 @@
 
 > Status: ready-for-agent
 > 2026-11-01 定稿。决策论证过程见 `.scratch/chat-refactor/research/05-业界IM存储方案对比与库表设计评估.md`（8 个 IM 系统源码/文档级调研）及本轮对话推演。本 spec 是 chat 域「分库就绪」改造的唯一需求来源。
+> **chat-member-table-refactor 票 01/02/03 注记（2026-11-07）**：成员表双维度拆分已落地——用户维度表更名 **`user_room`**（`last_read_seq`→`read_seq`、`last_msg_at`→`last_msg_time`，预览两列删除、读时按 message 真相现算），另立会话维度名册 **`room_member`**（`join_seq` 入群水位）。本 spec §3.1–§3.4 中「room_member 增四列 / `last_seq_copy` / 刷 `last_msg_*` 三件套 / 撤回刷预览」的旧 DDL 与副本维护方案**已被取代**（未读数回归 `room.last_seq − user_room.read_seq` 服务端现算、撤回零 member 写）；§3.5 分库预案的片键表与读路径清单已按新表名改写。票 02–05 仍有效，但其涉 member 表细节一律按 user_room/名册拆分口径执行。
 
 ## 0. 目标与范围
 
@@ -42,6 +43,8 @@
 
 ## 3. Implementation Decisions
 
+> **存档取代注记（chat-member-table-refactor 票 01/02，2026-11-07）**：§3.1「room_member 增四列 / last_seq_copy」、§3.2 消费端「刷 last_msg_* 三件套 + last_seq_copy」、§3.3 撤回「消费端刷 last_msg_preview」与建会话「room + 2 room_member + pair」均已由双维度拆分**取代**——现状：用户维度表更名 `user_room`（只装排序键 `last_msg_time` + `read_seq` + `hidden_at`），预览两列删除、读时按 message 真相现算，未读数 = `room.last_seq − read_seq` 服务端现算，撤回**零 member 写**，建会话 = room + 2 user_room + 2 room_member 名册 + pair。下文按原稿保留存档，执行一律以取代后口径与 §3.5 片键表为准。
+
 ### 3.1 DDL（6 张表，2 张动、4 张不动）
 
 | 表 | 变更 | 说明 |
@@ -76,16 +79,18 @@
 - 超期离线客户端兜底协议：补拉返回的首行 `delivery_seq` 与游标不连续（缺口）→ 客户端检测到缺口 → 改按 `room_member.last_seq_copy` 逐会话拉缺口（读扩散式兜底，仅长尾场景）。
 - 与业界对齐：Signal 30 天、Tablestore 同步库 7 天、野火队列上限、本项目补拉 200/500 上限。
 
-### 3.5 分库预案（文档重写，本 spec 不实施）
+### 3.5 分库预案（文档重写，本 spec 不实施；片键表与读路径清单已按 chat-member-table-refactor 票 01 终形对齐）
 
 | 片键 | 表 | 写路径 |
 |---|---|---|
-| `room_id` | `room`、`message` | 发消息 = 唯一强一致事务（单片） |
-| `user_id` | `room_member`、`timeline`、`user_seq` | 全部由扩散消费端写，最终一致 |
-| `user_min` | `direct_room_pair` | 建会话先行事务 |
+| `room_id` | `room`、`message`、`room_member`（名册） | 发消息 = 唯一强一致事务（room/message 同片单片）；名册由建会话链路写 |
+| `user_id` | `user_room`、`timeline`、`user_seq` | user_room 排序键与水位线由扩散消费端写，最终一致；水位线推高由读路径写 |
+| `user_min` | `user_pair_room` | 建会话先行事务（幂等裁决） |
 
 - 预案必须废除「发消息单事务」假设：业界零跨片强一致先例，正确性 = 片内事务 + outbox 可靠投递 + 幂等消费 + 游标对账。
-- 读路径：列表/未读/补拉全部 user 片单分片；历史按 `room_id` 点路由；「已读回执」跨片精确点查；`msg_id` 单键查正文走举报人 timeline 路由。
+- 读路径清单：**会话列表/未读/增量补拉 = user 片单分片**（user_room 分页 + room/名册回查；预览读时按 message 现算——message 在 room 片，按 `(room_id, room.last_seq)` 逐会话精确点查、非广播）；**历史分页 = 按 `room_id` 点路由**；**已读回执 = 跨片精确点查**（直查对方 user_room 行，带 user_id 片键可路由）；**msg_id 查正文 = 举报人 timeline 路由**（票 05）。
+- **作废项注记（chat-member-table-refactor 票 03）**：`peer_id 盖章`（对家 id 盖在用户维度成员行上的旧预留）**作废**——名册表 `room_member` 结构性替代，「对家/成员是谁」从会话维度名册就地可取（分库后贴 room_id 片回查），不再需要每行盖章；`peer_read_seq` 副本**降级**为读路径触发点清单的后备开关（默认直查对方 user_room 行真源，量级逼出来才落列），不落列。
+- 建会话分库形态：pair 事务先行（幂等裁决）→ room 行首条消息 `INSERT ... ODKU` 懒物化 → **两行名册 `room_member` + 两行 `user_room`** 消费端异步建。
 - 参照：本仓库 `timeout_task` 分表先例（`dbCount=1` 硬约束、ShardingSphere hint、逻辑表名纪律）；野火 `t_user_messages_0..127` 按 uid 分表是同一路线的业界先例（单实例内）。
 
 ## 4. Testing Decisions

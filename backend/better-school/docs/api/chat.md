@@ -1,15 +1,15 @@
 # chat 会话模块接口
 
-chat 域接口（room/message/timeline 模型，spec 见 `.scratch/chat-refactor/spec.md`）。所有接口需登录（JWT Bearer）。会话恒为 1v1（恰两名成员），群形态（系统群/封盘/系统消息/成员上限）已随票 04 整体下线。
+chat 域接口（room / user_room + room_member 名册 / message / timeline 模型，spec 见 `.scratch/chat-refactor/spec.md` 与 `.scratch/chat-member-table-refactor/spec.md`）。所有接口需登录（JWT Bearer）。会话恒为 1v1（恰两名成员），群形态（系统群/封盘/系统消息/成员上限）已随票 04 整体下线。
 
 ## 会话
 
 ### GET /rooms
 会话列表（分页，`?page=1&pageSize=50`，pageSize ≤ 200）。Query 参数可省。
 
-- 排除 hidden_at 非空（自己隐藏）；按 last_msg_at 倒序
+- 排除 hidden_at 非空（自己隐藏）；按 last_msg_time 倒序
 - 服务端拼装展示字段：`peerUserId/peerNickname/peerAvatar`（对方）
-- `unread` = room.last_seq − 本人水位线（O(1) 无 COUNT）；`lastMsgType/lastMsgPreview/lastMsgAt` 列表冗余三列
+- `unread` = room.last_seq − 本人 read_seq（回查真源现算，无 COUNT）；`lastMsgType/lastMsgPreview/lastMsgAt` 为读时现算的展示字段（按 message 真相渲染，非库内副本）
 - `source`（ERRAND/PRODUCT，市集入口首建才有）供市集消息页按域分 tab
 - `peerRole`（TAKER/SELLER/BUYER）**按请求者现算**：闲置按「本人是不是首建发起人」分两侧（闲置发起人=买家、对家=卖家），跑腿来源列定不了方向、对家恒为跑手
 - 返回 `{page, pageSize, total, list}`
@@ -47,7 +47,7 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
   - CARD：`content` 恒空；`refType`（PRODUCT/POST/ERRAND）+ `refId` 必填；目标须存在且未删/未拒（post 非 DELETED/REJECTED/DRAFT、product 非 DELETED/REJECTED、errand 非 REJECTED/CANCELLED），失效报「内容已失效」
 - 非成员 403
 - **发送幂等**：同 `clientMsgId` 重复提交（双击/超时重发）撞 `uk_client_msg` 回查返回原消息，收敛同一条（已落库快路径 + 并发未落库回滚后回查两个时序）；幂等收敛优先于载荷校验，重发不受卡片目标失效影响
-- 事务内：room 取 seq（UPDATE+1 读回，失败回滚无空洞）→ message INSERT → user_seq 取号 → timeline 扇出（恒两行，同时清空 hidden_at 弹回列表）→ room.last_msg 三列冗余（TEXT 原文截 200 / IMAGE `[图片]` / CARD `[商品]`/`[帖子]`/`[跑腿卡片]`）→ outbox MSG 推送事件（WS 推送归票 04）
+- 事务内：room 取 seq（UPDATE+1 读回，失败回滚无空洞）→ message INSERT → user_seq 取号 → timeline 扇出（恒两行，同时清空 hidden_at 弹回列表）→ user_room×2 只刷 `last_msg_time` 排序键（预览不落副本，读时按 message 真相现算）→ outbox MSG 推送事件（WS 推送归票 04）
 - 200 返回完整消息体：`{roomId, messageId, seq, fromUserId, fromNickname, fromAvatar, msgType, status, content, refType, refId, clientMsgId, deliverySeq, createdAt}`（`status` NORMAL/RECALLED；`deliverySeq` 仅补拉返回）
 - 失败消息不占 seq：所有校验拒绝发生在取号之前
 
@@ -57,7 +57,7 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
 - 仅发送者本人（非本人/会话外路人 403）；超 2 分钟拒绝（500）；消息不存在 404
 - 占 seq 不回退、不动已读水位线（计入未读）；content 库内保留取证，读路径与补拉一律脱敏空壳
 - 已撤回消息重复撤回幂等静默成功，不重复投递事件
-- 事务内：message 三件套（state=RECALLED + recalled_at + recalled_by=USER）→ 该消息仍是会话最后一条时（last_seq 守卫）替换 `room.last_msg_preview` = `[已撤回]` → outbox RECALL 轻事件（outbox `destination` = `bs-chat-recall`，载荷 `{roomId, seq}`，WS 推送归票 04）
+- 事务内：message 三件套（state=RECALLED + recalled_at + recalled_by=USER）——**零 user_room 写**（列表「[已撤回]」由读时现算呈现，无预览维护写）→ outbox RECALL 轻事件（outbox `destination` = `bs-chat-recall`，载荷 `{roomId, seq}`，WS 推送归票 04）
 
 ## 系统侧内部撤回（无 HTTP）
 

@@ -2,7 +2,7 @@
 
 营销库总览在根 `backend/docs/db/README.md`（票 06 起积分、票 07 起抽奖，两域随 `backend/marketing/` 落位为同一个库 `bs_marketing`；票 09 起只余这两域）。
 
-**DDL 唯一来源**：`sql/schema.sql`（业务表见下方清单，另含 16 张 `timeout_task_00..15` 超时分表——票 05 按根 `sql.md` 重建、超时中心内嵌化票 02 增分表）。`sql/init-dev.sql` / `sql/init-test.sql` 只建库与 `USE`，**必须与 `schema.sql` 按序拼接喂给同一个连接**才建得出表；票 05 起不再有增量迁移脚本（`sql/migrations/` 与迁移测试已整体删除），改表 = 直接改 `schema.sql` + 重建库。**物理表数 = 40 张业务表 + 16 张超时分表 = 56**（原第 30 张注册意图表随内嵌化票 03 删除；此前漏登 12 张——`review_task`、两轮 feed 索引/浏览族 9 张（feed-index-uv / market-feed-uv 票 01）、评论计数与热评索引 2 张（comment-count-narrow-table 票 01/02）——本次随 `sql.md` 一并补齐；除 `review_task` 外这些表尚无独立小节，语义以 `sql.md` 对应表节为准）。
+**DDL 唯一来源**：`sql/schema.sql`（业务表见下方清单，另含 16 张 `timeout_task_00..15` 超时分表——票 05 按根 `sql.md` 重建、超时中心内嵌化票 02 增分表）。`sql/init-dev.sql` / `sql/init-test.sql` 只建库与 `USE`，**必须与 `schema.sql` 按序拼接喂给同一个连接**才建得出表；票 05 起不再有增量迁移脚本（`sql/migrations/` 与迁移测试已整体删除），改表 = 直接改 `schema.sql` + 重建库。**物理表数 = 42 张业务表 + 16 张超时分表 = 58**（原第 30 张注册意图表随内嵌化票 03 删除；此前漏登 12 张——`review_task`、两轮 feed 索引/浏览族 9 张（feed-index-uv / market-feed-uv 票 01）、评论计数与热评索引 2 张（comment-count-narrow-table 票 01/02）——本次随 `sql.md` 一并补齐；除 `review_task` 外这些表尚无独立小节，语义以 `sql.md` 对应表节为准）。
 
 | 库 | 归属 | DDL 来源 | 表文档 |
 | --- | --- | --- | --- |
@@ -39,8 +39,10 @@
 |errand_feed_index|[errand](errand.md)|跑腿大厅排序投影（一单一行）|
 |errand_view_history|[errand](errand.md)|跑腿浏览明细（UV 事实源）|
 |errand_view_count|[errand](errand.md)|跑腿浏览 UV 加速列|
-|room|[chat](chat.md)|会话表（1v1）|
-|room_member|[chat](chat.md)|会话成员状态（每会话恒两行）|
+|room|[chat](chat.md)|会话表（1v1，纯取号器 + 会话真相）|
+|user_pair_room|[chat](chat.md)|用户对 → 1v1 会话映射（查重与反查专用）|
+|user_room|[chat](chat.md)|用户会话状态（每用户每会话一行；会话列表排序键/已读水位/隐藏位，预览读时现算）|
+|room_member|[chat](chat.md)|会话成员名册（会话维度「这个会话有谁」，每会话恒两行）|
 |message|[chat](chat.md)|消息内容表（内容中心，只写一份）|
 |timeline|[chat](chat.md)|时间线（写扩散收件箱，只插不改）|
 |user_seq|[chat](chat.md)|投递序号计数器（每用户一行）|
@@ -61,4 +63,4 @@
 - **主键（uuid-biz-id 起）**：`id` 恒为无业务含义的物理自增（纯内部键，永不对外、永不再与业务键同值）；对外与跨表引用一律用业务 ID 列并配 `uk_*` 唯一键（`user_id` / `post_id` / `comment_id` / `product_id` / `product_order_id` / `errand_order_id` / `room_id` / `msg_id` / `notification_id` / `wallet_id` / `review_id` / `task_id` / `report_id`）。写入口径：业务 ID 是应用层发号的 **UUID 字符串（`VARCHAR(36)`）**，由统一 `IIdGenerator`（`UuidIdGenerator` 默认实现）在 insert 前生成、随行一次写入；全库禁止 Long/bigint 承载业务 ID，禁止「业务列插 0 同事务回写物理 id」的旧形态（历史割接脚本已随 uuid-biz-id 票 08 退役）。**例外**：各域 feed 索引 / 浏览明细 / 浏览计数 / 评论热评索引投影表不设 `id`，主键直接用业务键（清单见 `sql.md` 的主键口径例外段）。
 - **开发/测试库名隔离**：单体 `better_school` / `better_school_test`（测试栈 host 端口 +10000）。
 - 建库/重建命令见 [`../../../docker-compose.yml`](../../../docker-compose.yml) 头注释 1，或直接 `backend/scripts/test-env.sh up`；改了 `schema.sql` 必须 `scripts/test-env.sh reset-test-db`，否则测试跑在过期 schema 上出假绿。
-- **无自有业务 ID 列的表**：明细/流水/计数/事件/关系类表（`post_like`、`post_comment_like`、`post_like_count`、`post_comment_count`、`post_comment_like_count`、`product_favorite`、`product_order_event`、`errand_order_event`、`room_member`、`timeline`、`user_seq`、`notification_read`、`notification_seq`、`wallet_detail`、`user_credit_detail`、`sensitive_word`）靠自身 `uk_*`（或 `id`）寻址，不另设业务列。uuid-biz-id 票 06 起 `content_review` / `review_task` / `content_report` 分别补齐业务列 `review_id` / `task_id` / `report_id`（均 `VARCHAR(36)` + uk），不再在此列。
+- **无自有业务 ID 列的表**：明细/流水/计数/事件/关系类表（`post_like`、`post_comment_like`、`post_like_count`、`post_comment_count`、`post_comment_like_count`、`product_favorite`、`product_order_event`、`errand_order_event`、`user_pair_room`、`user_room`、`room_member`、`timeline`、`user_seq`、`notification_read`、`notification_seq`、`wallet_detail`、`user_credit_detail`、`sensitive_word`）靠自身 `uk_*`（或 `id`）寻址，不另设业务列。uuid-biz-id 票 06 起 `content_review` / `review_task` / `content_report` 分别补齐业务列 `review_id` / `task_id` / `report_id`（均 `VARCHAR(36)` + uk），不再在此列。

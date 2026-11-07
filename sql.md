@@ -1,7 +1,7 @@
 # 全库建表语句（SQL DDL 汇总）
 
 > 收录 2 个工程的建表语句：better-school 单体（库 better_school，超时中心已内嵌在此）、marketing 营销（库 bs_marketing；points / raffle / drawcount / config / inventory 同属 `backend/marketing/` 一个工程）。XXL-Job 调度库（原 backend/sql/xxl-job.sql 的 8 张表）不在本文档范围内。
-> **超时中心内嵌化（2026-10-16 起，[`.scratch/timeout-inline/`](.scratch/timeout-inline/map.md)）已完成**：原独立超时工程与独立库已下线，16 张 `timeout_task_00..15` 分表在 `better_school` / `better_school_test` 里（见 §1 末），与业务表同库、同事务。全库物理表数 = **41（单体业务）+ 16（单体超时分表）+ 18（营销）= 75**。
+> **超时中心内嵌化（2026-10-16 起，[`.scratch/timeout-inline/`](.scratch/timeout-inline/map.md)）已完成**：原独立超时工程与独立库已下线，16 张 `timeout_task_00..15` 分表在 `better_school` / `better_school_test` 里（见 §1 末），与业务表同库、同事务。全库物理表数 = **42（单体业务）+ 16（单体超时分表）+ 18（营销）= 76**。
 > **业务 ID 全面 UUID 化（2026-11-02 起，[`.scratch/uuid-biz-id/`](.scratch/uuid-biz-id/spec.md)）已完成**：全部业务对象的对外唯一标识统一为 **UUID 字符串**（DB 列 `VARCHAR(36)`，由应用层统一 `IIdGenerator` 在 insert 前发号、随行一次写入），Java 实体/PO/DTO 全链路 String；marketing 的雪花发号器退役。**存量数据不迁移——开发/测试库删库重建**，历史上按 BIGINT 体系书写的割接/回填脚本（`sql/backfill/`、`sql/cutover/` 全目录）已随收口整体退役删除。
 > 不含种子数据 `INSERT`（schema 内置的敏感词/单行配置种子除外）；开发库与测试库共用同一份 DDL，建库语句在各自的 `init-dev.sql` / `init-test.sql`。
 > 命名口径：每张表固定以 `create_time DATETIME NOT NULL COMMENT '创建时间'` 与 `update_time DATETIME NOT NULL COMMENT '更新时间'` 收尾（不带默认值，由应用写入），全库不再出现 `created_at` / `updated_at`。例外共两处：**① §1 的 `timeout_task_00..15`**（`created_at` / `updated_at`）：那是分批表从原独立超时库迁入时的既有形态、且已进 16 张分表与 mapper XML，本口径不回溯改它（见 §1 说明）；**② §1 的各域 feed 索引表与浏览明细表**（feed-index-uv 票 01 的 `post_feed_index` / `user_view_history`，market-feed-uv 票 01 的 `product_feed_index` / `errand_feed_index` / `product_view_history` / `errand_view_history`）：时间列按各自需要收窄——索引表只留 `update_time`（`feed_time` 承担行诞生时刻），明细表只留 `viewed_at`（首刷建行、重复浏览全量刷新），见 §1 对应表注释。
@@ -11,7 +11,7 @@
 
 ## 1. 单体 better-school（库 better_school，bs-* 七模块）
 
-来源：`backend/better-school/sql/schema.sql` · 本文档收录 41 张业务表 + 16 张 `timeout_task` 分表。以下 6 张不在本文档范围：want_to_buy、errand_order_member、agent_review_log 已随求购/多人单下线及审核去 agent 化删除；errand_evaluation、user_daily_active、delay_outbox_message 本轮重构不收录。原第 30 张「超时注册意图表」已随超时内嵌化票 03 删除——注册改为业务事务内直插 `timeout_task` 分表，见下节
+来源：`backend/better-school/sql/schema.sql` · 本文档收录 42 张业务表 + 16 张 `timeout_task` 分表。以下 6 张不在本文档范围：want_to_buy、errand_order_member、agent_review_log 已随求购/多人单下线及审核去 agent 化删除；errand_evaluation、user_daily_active、delay_outbox_message 本轮重构不收录。原第 30 张「超时注册意图表」已随超时内嵌化票 03 删除——注册改为业务事务内直插 `timeout_task` 分表，见下节
 
 社区（帖子/评论/二手）、用户、钱包、chat（会话/消息/时间线，仅 1v1）、通知、审核（人工 + 举报）、跑腿与二手托管交易、信用分、敏感词、outbox。
 
@@ -419,17 +419,17 @@ CREATE TABLE IF NOT EXISTS room (
     id               BIGINT       NOT NULL AUTO_INCREMENT,
     room_id          VARCHAR(36)  NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串，应用层 insert 前由 IdGenerator 生成一次写入）',
     source           VARCHAR(20)  NULL COMMENT '会话来源（首次由市集「私信联系」入口建会话时写入、首来源钉死不覆盖；首页/主页入口建的为 NULL）：ERRAND/PRODUCT',
-    initiator_id     VARCHAR(36)  NULL COMMENT '首建发起人 user_id（对家角色标签的相对视角锚点；来源为 NULL 时也为 NULL）',
+    initiator_id     VARCHAR(36)       NULL COMMENT '首建发起人 user_id（对家角色标签的相对视角锚点；来源为 NULL 时也为 NULL）',
     last_seq         BIGINT       NOT NULL DEFAULT 0 COMMENT '消息序号水位（取号器）：发消息事务内 UPDATE last_seq=last_seq+1 原子取号，回滚无空洞',
     state            VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE' COMMENT '与取号器同行：一把行锁完成取号+终态判定；ACTIVE/SEALED（封盘即宿主业务终态，禁发言禁成员变更，历史只读；当前恒 1v1，SEALED 不再产生，列随口径保留）',
     create_time      DATETIME     NOT NULL COMMENT '创建时间',
     update_time      DATETIME     NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
     UNIQUE KEY uk_room_id (room_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '会话表（1v1，纯取号器 + 会话真相：预览/排序已迁用户维度 room_member，未读数由 last_seq − 水位线现算）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '会话表（1v1，纯取号器 + 会话真相：预览/排序已迁用户维度 user_room，未读数由 last_seq − 水位线现算）';
 ```
 
-> room.user_min / room.user_max / uk_direct_pair 已迁出（配对收口：1v1 查重与配对映射独立成 user_pair_room 表，room 回归纯会话实体、不知道「配对」的存在）；room.last_msg_type / last_msg_preview / last_msg_at 已迁出（列表职责迁用户维度：排序键与预览三件套落 room_member，room 回归纯取号器 + 会话真相）。存量库不迁移（uuid-biz-id：删库重建），历史割接脚本已随 uuid-biz-id 票 08 退役。
+> room.user_min / room.user_max / uk_direct_pair 已迁出（配对收口：1v1 查重与配对映射独立成 user_pair_room 表，room 回归纯会话实体、不知道「配对」的存在）；room.last_msg_type / last_msg_preview / last_msg_at 已迁出（排序键迁用户维度 user_room；预览去副本化后连 user_room 也不落，读时按 message 真相现算，room 回归纯取号器 + 会话真相）。存量库不迁移（uuid-biz-id：删库重建），历史割接脚本已随 uuid-biz-id 票 08 退役。
 
 ### user_pair_room
 
@@ -447,27 +447,44 @@ CREATE TABLE IF NOT EXISTS user_pair_room (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '用户对 → 1v1 会话映射（查重与反查专用，room 不再承载配对）';
 ```
 
-说明：建会话事务的收尾闸门：room + 两行 room_member + 一行配对同事务；并发建同一对人时后到者撞 uk_pair 整事务回滚（room/成员行不落），服务层捕获 DuplicateKeyException 后经本表幂等回读既有 room_id。配对键沿用归一化（无序对在有序存储里的规范表示），uuid-biz-id 票 04 起取**字符串字典序**规范序（user_min = 字典序在前的一方；原数值 min/max 已失效——UUID 不可比大小），由 `DirectRoomPairVO` 收敛。会话列表的对家 user_id 不再由 room 列推导：列表 SQL 自连 room_member（1v1 恒两行）直出。
+说明：建会话事务的收尾闸门：room + 两行 user_room + 两行 room_member 名册 + 一行配对同事务；并发建同一对人时后到者撞 uk_pair 整事务回滚（room/成员行不落），服务层捕获 DuplicateKeyException 后经本表幂等回读既有 room_id。配对键沿用归一化（无序对在有序存储里的规范表示），uuid-biz-id 票 04 起取**字符串字典序**规范序（user_min = 字典序在前的一方；原数值 min/max 已失效——UUID 不可比大小），由 `DirectRoomPairVO` 收敛。会话列表的对家 user_id 由会话维度名册表 room_member 回查直出（列表四段查之③，见下）。
 
-### room_member
+### user_room（chat-member-table-refactor 票 01/02）
 
 ```sql
-CREATE TABLE IF NOT EXISTS room_member (
+CREATE TABLE IF NOT EXISTS user_room (
     id               BIGINT       NOT NULL AUTO_INCREMENT,
     room_id          VARCHAR(36)  NOT NULL COMMENT '会话业务键（room.room_id，UUID 字符串）',
-    user_id          VARCHAR(36)  NOT NULL COMMENT '成员 user_id',
-    last_msg_type    VARCHAR(20)  NULL COMMENT '最后一条消息类型副本（列表预览标签：IMAGE=[图片]、CARD=按 ref_type 出标签 [商品]/[帖子]/[跑腿]，不查标题）',
-    last_msg_preview VARCHAR(200) NULL COMMENT '最后一条消息预览文案副本（TEXT=原文截断至 200，撤回=[已撤回]）',
-    last_msg_at      DATETIME     NULL COMMENT '最后消息时间副本（会话列表排序键）',
-    last_read_seq    BIGINT       NOT NULL DEFAULT 0 COMMENT '已读水位线：未读数 = room.last_seq − 此列（服务端拼装，不落副本）；打开会话即推到 room.last_seq',
+    user_id          VARCHAR(36)       NOT NULL COMMENT '成员 user_id（用户维度行主：分库片键语义贴 user_id）',
+    last_msg_time    DATETIME     NULL COMMENT '最后消息时间副本（会话列表排序键；预览不落副本，读时按 message 真相现算）',
+    read_seq         BIGINT       NOT NULL DEFAULT 0 COMMENT '已读水位线：未读数 = room.last_seq − 此列（服务端多一次查询取真源现算）；打开会话即推到 room.last_seq',
     hidden_at        DATETIME     NULL COMMENT '会话隐藏时间（用户侧删除会话，软删）；新消息清空弹回',
     create_time      DATETIME     NOT NULL COMMENT '创建时间',
     update_time      DATETIME     NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_room_user (room_id, user_id),
-    KEY idx_user_msg (user_id, last_msg_at) COMMENT '会话列表驱动索引（user_id 等值 + last_msg_at 倒序取页，分库日即 user 片单分片查询面）'
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '会话成员状态（每会话恒两行；用户维度会话列表唯一查询面，排序键与预览三件套落此，未读数不落库）';
+    UNIQUE KEY uk_user_room (user_id, room_id) COMMENT '每用户每会话一行（片键 user_id 前置：分库日即 user 片唯一键查询面）',
+    KEY idx_user_msg (user_id, last_msg_time) COMMENT '会话列表驱动索引（user_id 等值 + last_msg_time 倒序取页，分库日即 user 片单分片查询面）'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '用户会话状态（每用户每会话一行；用户维度会话列表唯一查询面，只装 per-user 状态：排序键 last_msg_time + 水位线 + 隐藏位，预览读时现算、message 唯一真相，未读数不落库）';
 ```
+
+> chat-member-table-refactor 票 01（双维度拆分）：原 room_member（用户维度成员状态行）改名 user_room（last_read_seq→read_seq、last_msg_at→last_msg_time）；会话维度名册另立新表 room_member（「这个会话有谁」，1v1 恒两行，join_seq 入群水位）。票 02（预览去副本）：user_room.last_msg_type / last_msg_preview 已迁出——预览不落副本，列表读时按 (room_id, room.last_seq) 点查 message 现算渲染，message 是预览唯一真相（撤回即时反映）。分库片键语义：user_room 贴 user_id（uk 首列前置）、room_member 名册贴 room_id（chat-shard-ready 预案对齐归票 03）；存量库不迁移（uuid-biz-id：删库重建）。
+
+### room_member（会话成员名册，chat-member-table-refactor 票 01）
+
+```sql
+CREATE TABLE IF NOT EXISTS room_member (
+    id          BIGINT       NOT NULL AUTO_INCREMENT,
+    room_id     VARCHAR(36)  NOT NULL COMMENT '会话业务键（room.room_id，UUID 字符串；名册分库片键语义贴 room_id，uk 首列）',
+    user_id     VARCHAR(36)  NOT NULL COMMENT '成员 user_id',
+    join_seq    BIGINT       NOT NULL DEFAULT 0 COMMENT '入群水位：1v1 建会话时为 0；群聊上线即「新成员从哪条 seq 起收消息」',
+    create_time DATETIME     NOT NULL COMMENT '创建时间',
+    update_time DATETIME     NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_room_user (room_id, user_id) COMMENT '每会话每成员一行（1v1 恒两行；建会话事务与两行 user_room 同事务写入）'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '会话成员名册（会话维度「这个会话有谁」的正式查询面：对家回查/成员扇出，群聊上线即扇出名册与成员展示地基）';
+```
+
+说明：名册是**会话维度**行（与用户维度的 user_room 严格分工：名册答「会话有谁」、user_room 答「我看到的状态」），分库日贴 room_id 片键；会话列表的对家 user_id、将来的成员扇出/成员展示都从它取。无业务 ID 列：对外按 (room_id, user_id) 定位。
 
 ### message
 
