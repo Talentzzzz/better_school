@@ -12,7 +12,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * chat 撤回与举报集成测试（落地票 05）：单一 seam = REST 端点（recall / reports）+ 外部可观察状态（message/room/outbox/content_report/credit/notification）。
- * 覆盖：撤回窗口与本人校验、撤回三件套与预览替换、重复撤回幂等、消息举报入单幂等、AUDITOR 强制撤回无窗口、不走扣分流水、双方通知
+ * 覆盖：撤回窗口与本人校验、撤回三件套与预览读时现算（票 02 预览去副本：撤回零 user_room 写、
+ * 列表直接呈现 [已撤回]）、重复撤回幂等、消息举报入单幂等、AUDITOR 强制撤回无窗口、不走扣分流水、双方通知
  */
 public class ChatRecallReportIntegrationTest extends CommunityApiTestBase {
 
@@ -22,19 +23,26 @@ public class ChatRecallReportIntegrationTest extends CommunityApiTestBase {
         String msg1 = sendText(roomId, "cmid-1", "第一条，等会儿撤回", sessionA);
         String msg2 = sendText(roomId, "cmid-2", "第二条，最新的", sessionA);
 
-        // 撤回非最后一条：成员行列表预览不受影响
+        // 冻结 user_room 行时间戳：撤回若碰任何 user_room 写路径（预览维护类），update_time 必然离开冻结值
+        //（前提：user_room 现有全部写原语都显式刷 update_time=NOW()；将来新增不刷时间戳的写原语时此断言需同步补强）
+        jdbcTemplate.update("UPDATE user_room SET update_time = '2000-01-01 00:00:00' WHERE room_id = '" + roomId + "'");
+
+        // 撤回非最后一条：预览读时现算，仍按 message 真相渲染最新一条；user_room 行零写
         postJson("/api/chat/rooms/" + roomId + "/messages/1/recall", Map.of(), sessionA);
+        assertThat(listLastMsgPreview(sessionA)).as("列表预览 = 最新一条真相（无预览写路径可漂移）").isEqualTo("第二条，最新的");
         assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'"
-                + " AND last_msg_preview = '第二条，最新的'")).isEqualTo(2);
+                + " AND update_time = '2000-01-01 00:00:00'")).as("撤回非最后一条不碰 user_room 行").isEqualTo(2);
 
         // 幂等：重复撤回静默成功，不重复写 RECALL 事件
         assertSuccess(postJson("/api/chat/rooms/" + roomId + "/messages/1/recall", Map.of(), sessionA), "重复撤回");
         assertThat(queryLong("SELECT COUNT(1) FROM outbox_message WHERE destination = '" + Constants.CHAT_RECALL_TOPIC + "'")).isEqualTo(1);
 
-        // 撤回最后一条：预览替换 [已撤回]，占 seq 不回退、不动水位线（计入未读）
+        // 撤回最后一条：预览读时直接呈现 [已撤回]（不经过任何预览写路径），占 seq 不回退、不动水位线（计入未读）
         assertSuccess(postJson("/api/chat/rooms/" + roomId + "/messages/2/recall", Map.of(), sessionA), "撤回最新消息");
+        assertThat(listLastMsgPreview(sessionA)).as("A 列表读时现算 [已撤回]").isEqualTo("[已撤回]");
+        assertThat(listLastMsgPreview(sessionB)).as("B 列表读时现算 [已撤回]").isEqualTo("[已撤回]");
         assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'"
-                + " AND last_msg_preview = '[已撤回]'")).as("双方用户行预览替换").isEqualTo(2);
+                + " AND update_time = '2000-01-01 00:00:00'")).as("撤回全程零 user_room 写（预览去副本）").isEqualTo(2);
         assertThat(queryLong("SELECT last_seq FROM room WHERE room_id = '" + roomId + "'")).as("撤回占 seq 不回退").isEqualTo(2);
         assertThat(queryLong("SELECT read_seq FROM user_room WHERE room_id = '" + roomId + "'"
                 + " AND user_id = '" + sessionB.userId() + "'" )).as("不动已读水位线").isEqualTo(0);
@@ -205,6 +213,13 @@ public class ChatRecallReportIntegrationTest extends CommunityApiTestBase {
 
     private String msgIdOf(String roomId, long seq) {
         return queryString("SELECT msg_id FROM message WHERE room_id = '" + roomId + "' AND seq = " + seq);
+    }
+
+    /** 会话列表第一项的预览文案（预览读时现算断言入口） */
+    private String listLastMsgPreview(Session session) {
+        JsonNode response = getJson("/api/chat/rooms", session);
+        assertSuccess(response, "会话列表");
+        return response.path("data").path("list").get(0).path("lastMsgPreview").asText();
     }
 
     /** 审核员登录：JWT 的 role 是签发快照，改库后需重新登录 */

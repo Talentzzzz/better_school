@@ -34,8 +34,8 @@ public interface IChatDao {
     Long selectLastSeq(@Param("roomId") String roomId);
 
     /**
-     * 会话列表三段查之①（user_room.idx_user_msg 主路径）：本人用户行分页（排除隐藏，last_msg_time 倒序），
-     * 只带列表三件套列；room 真相与对家 user_id 由仓储按 room_id 集回查拼装（SQL 层零 JOIN）
+     * 会话列表四段查之①（user_room.idx_user_msg 主路径）：本人用户行分页（排除隐藏，last_msg_time 倒序），
+     * 只带排序键列；room 真相、对家 user_id 与预览真源由仓储按 room_id 集回查拼装（SQL 层零 JOIN）
      */
     List<RoomListItemPO> selectUserRoomPage(@Param("userId") String userId,
                                             @Param("offset") int offset, @Param("limit") int limit);
@@ -82,14 +82,9 @@ public interface IChatDao {
     /** 新消息扇出时清空单个成员的隐藏位（删除的会话弹回；成员集由名册给定，逐用户执行） */
     int clearUserRoomHidden(@Param("roomId") String roomId, @Param("userId") String userId);
 
-    /** 发送扇出时刷单个成员的列表副本（预览三件套；成员集由名册给定，逐用户执行） */
-    int updateUserRoomPreview(@Param("roomId") String roomId, @Param("userId") String userId,
-                              @Param("msgType") String msgType, @Param("preview") String preview,
-                              @Param("lastMsgTime") LocalDateTime lastMsgTime);
-
-    /** 撤回后替换单个成员的预览副本（room.last_seq 守卫；成员集由名册给定，逐用户执行） */
-    int markUserRoomLastMsgRecalled(@Param("roomId") String roomId, @Param("userId") String userId,
-                                    @Param("seq") Long seq, @Param("preview") String preview);
+    /** 发送扇出时刷单个成员的列表排序键（last_msg_time；预览读时现算不落副本；成员集由名册给定，逐用户执行） */
+    int updateUserRoomLastMsgTime(@Param("roomId") String roomId, @Param("userId") String userId,
+                                  @Param("lastMsgTime") LocalDateTime lastMsgTime);
 
     // ===== message =====
 

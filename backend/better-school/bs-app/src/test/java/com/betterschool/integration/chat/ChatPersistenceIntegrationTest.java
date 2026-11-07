@@ -7,6 +7,7 @@ import com.betterschool.domain.chat.model.entity.RoomMemberEntity;
 import com.betterschool.domain.chat.model.entity.TimelineEntity;
 import com.betterschool.domain.chat.model.entity.UserRoomEntity;
 import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
+import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.Test;
@@ -22,7 +23,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * chat 持久化层造数集成测试（落地票 01）：建 room/扇出/取号六表状态（room + user_room 用户维度 +
  * room_member 名册 + message + timeline + user_seq）+ user_pair_room 配对闸门语义。
  * 双维度拆分（chat-member-table-refactor 票 01）：user_room 只装 per-user 状态，名册装「这个会话有谁」。
- * 发送链路的域服务归票 02，本测试直接在事务内驱动仓储原语
+ * 发送链路的域服务归票 02，本测试直接在事务内驱动仓储原语；预览去副本（票 02）：user_room 只落
+ * last_msg_time 排序键，预览读时按 message 真相现算
  */
 public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
 
@@ -87,7 +89,7 @@ public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
                     timeline(USER_A, newRoomId, seq, message.getMessageId(), deliveryA),
                     timeline(USER_B, newRoomId, seq, message.getMessageId(), deliveryB)));
 
-            chatRepository.updateUserRoomPreview(newRoomId, MsgTypeVO.TEXT, "同学你好，帖子还在吗？", message.getCreatedAt());
+            chatRepository.updateUserRoomLastMsgTime(newRoomId, message.getCreatedAt());
             return newRoomId;
         });
 
@@ -98,12 +100,19 @@ public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
         assertThat(queryLong("SELECT COUNT(1) FROM room_member WHERE room_id = '" + roomId + "'")).isEqualTo(2);
         assertThat(queryLong("SELECT MIN(join_seq) FROM room_member WHERE room_id = '" + roomId + "'")).isEqualTo(0);
 
-        // user_room：双方用户行，列表副本（预览三件套）落用户维度、水位线 0；未读数不落库，由 room.last_seq 现算
+        // user_room：双方用户行，列表排序键（last_msg_time）落用户维度、水位线 0；预览不落副本
+        //（票 02：读时按 message 真相现算），未读数不落库，由 room.last_seq 现算
         assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'")).isEqualTo(2);
         assertThat(queryLong("SELECT MIN(read_seq) FROM user_room WHERE room_id = '" + roomId + "'")).isEqualTo(0);
         assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'"
-                + " AND last_msg_type = 'TEXT' AND last_msg_preview = '同学你好，帖子还在吗？'"
                 + " AND last_msg_time IS NOT NULL")).isEqualTo(2);
+
+        // 列表读路径（四段查④）：预览按 message 真相现算，无副本列也出全文
+        List<RoomListItemVO> items = chatRepository.listRoomItems(USER_A, 0, 10);
+        assertThat(items).hasSize(1);
+        assertThat(items.get(0).getRoomId()).isEqualTo(roomId);
+        assertThat(items.get(0).getLastMsgType()).as("lastMsgType 读时按 message 真相现算").isEqualTo(MsgTypeVO.TEXT);
+        assertThat(items.get(0).getLastMsgPreview()).as("预览读时现算 = message 原文").isEqualTo("同学你好，帖子还在吗？");
 
         // message：内容中心一行，NORMAL + client_msg_id
         assertThat(queryLong("SELECT seq FROM message WHERE room_id = '" + roomId + "'")).isEqualTo(1);

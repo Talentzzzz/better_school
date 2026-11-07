@@ -92,7 +92,7 @@ public class ChatRepository implements IChatRepository {
     }
 
     @Override
-    public MessageEntity deliverMessage(MessageEntity message, String preview, ChatMessagePushMessage pushMessage) {
+    public MessageEntity deliverMessage(MessageEntity message, ChatMessagePushMessage pushMessage) {
         return transactionTemplate.execute(status -> {
             long seq = increaseLastSeq(message.getRoomId());
             message.setSeq(seq);
@@ -115,8 +115,8 @@ public class ChatRepository implements IChatRepository {
             // 新消息清空成员隐藏位：删除的会话弹回列表顶部（微信行为；名册给定成员集，逐用户执行）
             clearHidden(message.getRoomId());
 
-            // 列表预览落用户维度 user_room 行（本票过渡：与取号同事务；票 02 起归扩散消费端单一写入方）
-            updateUserRoomPreview(message.getRoomId(), message.getMsgType(), preview, message.getCreatedAt());
+            // 列表排序键落用户维度 user_room 行（票 02 预览去副本：只刷 last_msg_time，预览读时现算）
+            updateUserRoomLastMsgTime(message.getRoomId(), message.getCreatedAt());
 
             // 推送载荷的事务内生成字段（序号/主键/时间）在这里补齐后与业务同事务落 outbox
             pushMessage.setSeq(seq);
@@ -142,16 +142,14 @@ public class ChatRepository implements IChatRepository {
     }
 
     @Override
-    public void recallMessageWithEvent(String roomId, Long seq, LocalDateTime recalledAt, RecallByVO recalledBy,
-                                       String preview) {
+    public void recallMessageWithEvent(String roomId, Long seq, LocalDateTime recalledAt, RecallByVO recalledBy) {
         transactionTemplate.executeWithoutResult(status -> {
             // 条件 UPDATE（status=NORMAL 才生效）：并发撤回先到先得，落空即已被撤回，幂等静默
             boolean recalled = recallMessage(roomId, seq, recalledAt, recalledBy);
             if (!recalled) {
                 return;
             }
-            // 预览替换带 last_seq 守卫：该消息已不是最后一条时落空
-            markLastMsgRecalled(roomId, seq, preview);
+            // 预览零维护写（票 02：读时按 message 真相现算，撤回即时反映）
             saveRecallMessage(ChatRecallPushMessage.builder()
                     .roomId(roomId)
                     .seq(seq)
@@ -200,15 +198,16 @@ public class ChatRepository implements IChatRepository {
     }
 
     @Override
-    public void updateUserRoomPreview(String roomId, MsgTypeVO msgType, String preview, LocalDateTime lastMsgTime) {
+    public void updateUserRoomLastMsgTime(String roomId, LocalDateTime lastMsgTime) {
         for (String memberId : rosterMemberIds(roomId)) {
-            chatDao.updateUserRoomPreview(roomId, memberId, msgType.name(), preview, lastMsgTime);
+            chatDao.updateUserRoomLastMsgTime(roomId, memberId, lastMsgTime);
         }
     }
 
     @Override
     public List<RoomListItemVO> listRoomItems(String userId, int offset, int limit) {
-        // 会话列表三段查（SQL 层零 JOIN）：①本人 user_room 行分页 → ②room 行批量回查 → ③名册回查对家，
+        // 会话列表四段查（SQL 层零 JOIN）：①本人 user_room 行分页 → ②room 行批量回查 → ③名册回查对家
+        // → ④按 (room_id, room.last_seq) 逐会话点查 message 最新一条（预览真源，票 02 预览去副本），
         // Java 按会话拼装。room 行或对家行缺失 = 原 INNER JOIN 语义，该会话不出现
         List<RoomListItemPO> rows = chatDao.selectUserRoomPage(userId, offset, limit);
         if (rows.isEmpty()) {
@@ -230,7 +229,15 @@ public class ChatRepository implements IChatRepository {
             row.setInitiatorId(room.getInitiatorId());
             row.setLastSeq(room.getLastSeq());
             row.setPeerUserId(peerUserId);
-            items.add(toRoomListItemVO(row));
+            RoomListItemVO item = toRoomListItemVO(row);
+            if (room.getLastSeq() != null && room.getLastSeq() > 0) {
+                // 四段查之④ 预览真源：按 (room_id, room.last_seq) 逐会话点查最新一条消息
+                //（last_seq=0 尚无消息不查；§9.7 批量回查的例外：锚点是 (room_id, seq) 复合键，
+                // msg_id 要点查后才知，无法先集后查——逐会话走 uk_room_seq 点查原语，
+                // 上限 = 页大小（controller MAX_PAGE_SIZE=200），非无界 N+1）
+                item.setLastMessage(toMessageEntity(chatDao.selectMessage(row.getRoomId(), room.getLastSeq())));
+            }
+            items.add(item);
         }
         return items;
     }
@@ -371,13 +378,6 @@ public class ChatRepository implements IChatRepository {
     }
 
     @Override
-    public void markLastMsgRecalled(String roomId, long seq, String preview) {
-        for (String memberId : rosterMemberIds(roomId)) {
-            chatDao.markUserRoomLastMsgRecalled(roomId, memberId, seq, preview);
-        }
-    }
-
-    @Override
     public List<MessageEntity> listMessagesBefore(String roomId, Long beforeSeq, int limit) {
         return chatDao.selectMessagesBefore(roomId, beforeSeq, limit).stream()
                 .map(this::toMessageEntity)
@@ -465,8 +465,6 @@ public class ChatRepository implements IChatRepository {
         vo.setPeerUserId(po.getPeerUserId());
         vo.setSource(po.getSource() == null ? null : RoomSourceVO.valueOf(po.getSource()));
         vo.setInitiatorId(po.getInitiatorId());
-        vo.setLastMsgType(po.getLastMsgType() == null ? null : MsgTypeVO.valueOf(po.getLastMsgType()));
-        vo.setLastMsgPreview(po.getLastMsgPreview());
         vo.setLastMsgTime(po.getLastMsgTime());
         vo.setUnread(po.getLastSeq() - po.getReadSeq());
         return vo;

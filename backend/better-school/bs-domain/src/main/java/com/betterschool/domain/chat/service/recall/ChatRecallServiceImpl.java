@@ -12,8 +12,9 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 
 /**
- * 撤回实现：窗口/本人校验在事务外快败；撤回 UPDATE + 预览替换 + RECALL 事件的原子性
- * 由 IChatRepository.recallMessageWithEvent 自带事务保证；
+ * 撤回实现：窗口/本人校验在事务外快败；撤回 UPDATE + RECALL 事件的原子性
+ * 由 IChatRepository.recallMessageWithEvent 自带事务保证；预览零维护写
+ * （票 02：读时按 message 真相现算，渲染归 RoomPreviewRenderer，撤回即时反映）；
  * 已撤回幂等静默（重复点击 / 强撤撞自行撤回），不重复投递 RECALL 事件
  */
 @Service
@@ -22,9 +23,6 @@ public class ChatRecallServiceImpl implements IChatRecallService {
 
     /** 发送者撤回窗口（spec §1 常量） */
     public static final Duration RECALL_WINDOW = Duration.ofMinutes(2);
-
-    /** 会话列表预览替换文案（spec §1 预览规则：已撤回→[已撤回]） */
-    public static final String PREVIEW_RECALLED = "[已撤回]";
 
     private final IChatRepository chatRepository;
 
@@ -61,7 +59,6 @@ public class ChatRecallServiceImpl implements IChatRecallService {
 
     private void doRecall(MessageEntity message, RecallByVO recalledBy) {
         // 条件 UPDATE（status=NORMAL 才生效）：并发撤回先到先得，落空即已被撤回，幂等静默
-        chatRepository.recallMessageWithEvent(message.getRoomId(), message.getSeq(), LocalDateTime.now(),
-                recalledBy, PREVIEW_RECALLED);
+        chatRepository.recallMessageWithEvent(message.getRoomId(), message.getSeq(), LocalDateTime.now(), recalledBy);
     }
 }

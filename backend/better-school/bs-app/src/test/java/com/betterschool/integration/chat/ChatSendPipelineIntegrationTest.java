@@ -22,7 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * chat 发送主链路集成测试（落地票 02）：单一 seam = REST 两端点 + 外部可观察状态（五表 + outbox）。
- * 覆盖：建/取 1v1 幂等、发送五表落地、撞 uk 两时序收敛、hidden_at 弹回、列表预览三件套（user_room 副本）、非成员/载荷校验拒绝
+ * 覆盖：建/取 1v1 幂等、发送五表落地、撞 uk 两时序收敛、hidden_at 弹回、列表预览读时现算
+ * （票 02 预览去副本：user_room 只落 last_msg_time，预览按 message 真相渲染）、非成员/载荷校验拒绝
  */
 public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
 
@@ -84,10 +85,9 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         assertThat(data.path("clientMsgId").asText()).isEqualTo("cmid-1");
         assertThat(data.path("msgType").asText()).isEqualTo("TEXT");
 
-        // room：水位推进；列表副本（水位 + 预览三件套）落用户维度 user_room
+        // room：水位推进；列表排序键（last_msg_time）落用户维度 user_room（预览不落副本，读时现算）
         assertThat(queryLong("SELECT last_seq FROM room WHERE room_id = '" + roomId + "'")).isEqualTo(1);
         assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'"
-                + " AND last_msg_type = 'TEXT' AND last_msg_preview = '同学你好，帖子还在吗？'"
                 + " AND last_msg_time IS NOT NULL")).isEqualTo(2);
 
         // message：内容中心一行
@@ -194,23 +194,27 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
     }
 
     @Test
-    void lastMsgPreviewFollowsTypeRules() {
+    void lastMsgPreviewRendersFromMessageTruthOnRead() {
         String roomId = createDirectRoomViaApi();
 
         String imageContent = "{\"url\":\"" + imagePublicUrl + "/chat/p1.jpg\",\"width\":800,\"height\":600}";
         JsonNode imageResp = postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
                 "clientMsgId", "cmid-img", "msgType", "IMAGE", "content", imageContent), sessionA);
         assertSuccess(imageResp, "发送图片消息");
-        assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'"
-                + " AND last_msg_preview = '[图片]'")).isEqualTo(2);
+        // 预览不落副本（票 02）：读列表时按 message 真相现算渲染
+        JsonNode listAfterImage = listRooms(sessionB);
+        assertThat(listAfterImage.path("list").get(0).path("lastMsgPreview").asText()).isEqualTo("[图片]");
+        assertThat(listAfterImage.path("list").get(0).path("lastMsgType").asText()).isEqualTo("IMAGE");
 
         String postId = publishPost(sessionA, "出闲置书");
         JsonNode cardResp = postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
                 "clientMsgId", "cmid-card", "msgType", "CARD", "refType", "POST", "refId", postId), sessionA);
         assertSuccess(cardResp, "发送卡片消息");
         assertThat(cardResp.path("data").path("content").isNull()).as("CARD content 恒空").isTrue();
-        assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'"
-                + " AND last_msg_preview = '[帖子]'")).isEqualTo(2);
+        JsonNode listAfterCard = listRooms(sessionA);
+        assertThat(listAfterCard.path("list").get(0).path("lastMsgPreview").asText())
+                .as("CARD 按 ref_type 出类型标签，不查标题").isEqualTo("[帖子]");
+        assertThat(listAfterCard.path("list").get(0).path("lastMsgType").asText()).isEqualTo("CARD");
         assertThat(queryString("SELECT ref_type FROM message WHERE room_id = '" + roomId + "' AND client_msg_id = 'cmid-card'")).isEqualTo("POST");
 
         // 两条消息 seq 连续推进
@@ -274,6 +278,12 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         timeline.setMsgId(msgId);
         timeline.setDeliverySeq(deliverySeq);
         return timeline;
+    }
+
+    private JsonNode listRooms(Session session) {
+        JsonNode response = getJson("/api/chat/rooms", session);
+        assertSuccess(response, "会话列表");
+        return response.path("data");
     }
 
     private Object query(String sql) {

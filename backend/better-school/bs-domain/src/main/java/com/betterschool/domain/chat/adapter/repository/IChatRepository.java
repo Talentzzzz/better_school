@@ -8,7 +8,6 @@ import com.betterschool.domain.chat.model.entity.UserRoomEntity;
 import com.betterschool.domain.chat.model.valobj.ChatMessagePushMessage;
 import com.betterschool.domain.chat.model.valobj.ChatReadPushMessage;
 import com.betterschool.domain.chat.model.valobj.ChatRecallPushMessage;
-import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
 import com.betterschool.domain.chat.model.valobj.RecallByVO;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
 import com.betterschool.domain.chat.model.valobj.TimelineItemVO;
@@ -43,12 +42,12 @@ public interface IChatRepository {
 
     /**
      * 发送落库段（一个原子用例）：取号 → 落消息 → 按名册扇出时间线（per-user delivery_seq 取号）
-     * → 逐用户清 hidden 弹回 → 逐用户刷 user_room 列表副本（水位 + 预览三件套）→ 写 MSG 推送事件。
-     * 预览文案与推送载荷（发送者昵称头像等）由调用方备好，实现内只补事务中生成的消息 ID/序号/时间
+     * → 逐用户清 hidden 弹回 → 逐用户刷 user_room 列表排序键（last_msg_time；预览不落副本，读时现算）
+     * → 写 MSG 推送事件。推送载荷（发送者昵称头像等）由调用方备好，实现内只补事务中生成的消息 ID/序号/时间
      *
      * @return 落库后的完整消息体（含 roomId/seq/messageId/createdAt）
      */
-    MessageEntity deliverMessage(MessageEntity message, String preview, ChatMessagePushMessage pushMessage);
+    MessageEntity deliverMessage(MessageEntity message, ChatMessagePushMessage pushMessage);
 
     /**
      * 已读水位线推进 + READ 事件（一个原子用例）。
@@ -57,10 +56,10 @@ public interface IChatRepository {
     void advanceReadWatermark(String roomId, String userId, long readSeq);
 
     /**
-     * 撤回 + 预览替换 + RECALL 事件（一个原子用例）。
+     * 撤回 + RECALL 事件（一个原子用例）：预览零维护写（读时按 message 真相现算，撤回即时反映）。
      * 条件 UPDATE（status=NORMAL 才生效）：并发撤回/强撤撞自行撤回时落空即静默，不重复投递事件
      */
-    void recallMessageWithEvent(String roomId, Long seq, LocalDateTime recalledAt, RecallByVO recalledBy, String preview);
+    void recallMessageWithEvent(String roomId, Long seq, LocalDateTime recalledAt, RecallByVO recalledBy);
 
     // ===== room（会话本体） =====
 
@@ -75,16 +74,17 @@ public interface IChatRepository {
     long increaseLastSeq(String roomId);
 
     /**
-     * 发送事务内刷用户行列表副本（本票过渡：与取号同事务，扩散消费端单一写入方归票 02）：
-     * 预览三件套按名册成员集逐用户刷新（1v1 恒两行）；未读数不落副本，由 room.last_seq 现算
+     * 发送事务内刷用户行列表排序键（与取号同事务）：last_msg_time 按名册成员集逐用户刷新（1v1 恒两行）；
+     * 预览不落副本（读时按 message 真相现算），未读数不落副本，由 room.last_seq 现算
      */
-    void updateUserRoomPreview(String roomId, MsgTypeVO msgType, String preview, LocalDateTime lastMsgTime);
+    void updateUserRoomLastMsgTime(String roomId, LocalDateTime lastMsgTime);
 
     /**
-     * 会话列表查询（idx_user_msg 主路径，用户维度单行可算）：排除 hidden_at 非空，
-     * 按 last_msg_time 倒序分页；unread = lastSeq − readSeq 由调用方拼装（lastSeq 由 room 行回查带出）
+     * 会话列表四段查（SQL 层零 JOIN）：排除 hidden_at 非空，按 last_msg_time 倒序分页；
+     * unread = lastSeq − readSeq 与预览（message 最新一条真源，lastMessage 中间态）由实现拼装，
+     * 预览文案渲染归域服务（RoomPreviewRenderer）
      *
-     * @return 按 last_msg_time 倒序的会话概要（含本人在会话的水位线）
+     * @return 按 last_msg_time 倒序的会话概要（含本人在会话的水位线与预览真源中间态）
      */
     List<RoomListItemVO> listRoomItems(String userId, int offset, int limit);
 
@@ -145,18 +145,12 @@ public interface IChatRepository {
      * 撤回三件套：status=RECALLED + recalled_at + recalled_by，占 seq 不回退。
      * 条件 UPDATE（status=NORMAL 才生效）：用户撤回与强制撤回并发先到先得
      *
-     * @return 是否实际撤回（0 = 已被撤回，调用方据此跳过预览替换与 RECALL 事件）
+     * @return 是否实际撤回（0 = 已被撤回，调用方据此跳过 RECALL 事件）
      */
     boolean recallMessage(String roomId, Long seq, LocalDateTime recalledAt, RecallByVO recalledBy);
 
     /** 举报回查：按消息全局主键取消息（MESSAGE 举报定位 / 强制撤回入口） */
     MessageEntity findMessageById(String messageId);
-
-    /**
-     * 撤回后按名册成员集逐用户替换会话列表预览（用户维度 user_room 行）：仅当该消息仍是会话最后一条
-     * （room.last_seq 守卫）才替换，并发新消息到达时守卫落空，不覆盖新消息预览
-     */
-    void markLastMsgRecalled(String roomId, long seq, String preview);
 
     // ===== timeline（不可变瘦收件箱） =====
 

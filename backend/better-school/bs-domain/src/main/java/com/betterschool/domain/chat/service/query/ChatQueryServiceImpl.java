@@ -59,6 +59,8 @@ public class ChatQueryServiceImpl implements IChatQueryService {
             room.setPeerNickname(peer == null ? null : peer.getNickname());
             room.setPeerAvatar(peer == null ? null : peer.getAvatar());
             room.setPeerRole(peerRoleOf(room, userId));
+            // 预览读时现算（票 02 预览去副本）：渲染规则单点收敛在 RoomPreviewRenderer，message 是唯一真相
+            RoomPreviewRenderer.renderInto(room, room.getLastMessage());
         }
         return rooms;
     }

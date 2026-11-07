@@ -60,25 +60,24 @@
         WHERE room_id = #{roomId}
     </select>
 
-    <!-- 扇出时在用户维度行上刷列表预览（本票过渡：与取号同事务，票 02 起归扩散消费端单一写入方）：
-         预览三件套逐用户刷新（成员集由名册给定，恒两行）；未读数不落副本，由 room.last_seq 现算 -->
-    <update id="updateUserRoomPreview">
+    <!-- 发送扇出时在用户维度行上刷列表排序键（票 02 预览去副本：只刷 last_msg_time，预览读时现算）：
+         成员集由名册给定（恒两行），逐用户执行；未读数不落副本，由 room.last_seq 现算 -->
+    <update id="updateUserRoomLastMsgTime">
         UPDATE user_room
-        SET last_msg_type    = #{msgType},
-            last_msg_preview = #{preview},
-            last_msg_time    = #{lastMsgTime},
-            update_time      = NOW()
+        SET last_msg_time = #{lastMsgTime},
+            update_time   = NOW()
         WHERE room_id = #{roomId}
           AND user_id = #{userId}
     </update>
 
-    <!-- 会话列表三段查之①（user_room.idx_user_msg 主路径）：本人用户行分页，排除隐藏，last_msg_time
-         倒序；列表三件套在本人用户行上，room 真相（source/initiator_id/last_seq——未读数真源）与对家
-         user_id 由仓储按 room_id 集二次回查拼装（②selectRoomsByIds ③selectPeerMembers 名册回查，
-         SQL 层零 JOIN；1v1 恒两行名册）；unread = r.last_seq − ur.read_seq 服务端拼装，不落副本 -->
+    <!-- 会话列表四段查之①（user_room.idx_user_msg 主路径）：本人用户行分页，排除隐藏，last_msg_time
+         倒序；排序键在本人用户行上，room 真相（source/initiator_id/last_seq——未读数真源）与对家
+         user_id 由仓储按 room_id 集二次回查拼装（②selectRoomsByIds ③selectPeerMembers 名册回查
+         ④selectMessage 按 (room_id, last_seq) 逐会话点查预览真源，SQL 层零 JOIN；1v1 恒两行名册）；
+         unread = r.last_seq − ur.read_seq 服务端拼装，不落副本 -->
     <select id="selectUserRoomPage" resultType="com.betterschool.infrastructure.dao.chat.po.RoomListItemPO">
         SELECT ur.room_id AS roomId,
-               ur.last_msg_type, ur.last_msg_preview, ur.last_msg_time,
+               ur.last_msg_time,
                ur.read_seq AS readSeq
         FROM user_room ur
         WHERE ur.user_id = #{userId}
@@ -148,7 +147,7 @@
     </insert>
 
     <select id="selectUserRoom" resultType="com.betterschool.infrastructure.dao.chat.po.UserRoomPO">
-        SELECT id, room_id, user_id, last_msg_type, last_msg_preview, last_msg_time,
+        SELECT id, room_id, user_id, last_msg_time,
                read_seq AS readSeq, hidden_at, create_time AS createTime, update_time
         FROM user_room
         WHERE room_id = #{roomId} AND user_id = #{userId}
@@ -157,7 +156,7 @@
     <!-- 成员页两段查之②：名册给定成员集的用户行批量回查（水位线拼装，SQL 层零 JOIN；
          uk_user_room 前缀 user_id 等值 + room_id 等值，逐成员走索引） -->
     <select id="selectUserRooms" resultType="com.betterschool.infrastructure.dao.chat.po.UserRoomPO">
-        SELECT id, room_id, user_id, last_msg_type, last_msg_preview, last_msg_time,
+        SELECT id, room_id, user_id, last_msg_time,
                read_seq AS readSeq, hidden_at, create_time AS createTime, update_time
         FROM user_room
         WHERE room_id = #{roomId}
@@ -234,17 +233,6 @@
         FROM message m
         WHERE m.msg_id = #{messageId}
     </select>
-
-    <!-- 撤回后替换单个成员的预览副本（用户维度 user_room 行）：仅当该消息仍是最后一条（room.last_seq 守卫，
-         标量子查询直取真源保持原子），并发新消息不被覆盖；成员集由名册给定，逐用户执行 -->
-    <update id="markUserRoomLastMsgRecalled">
-        UPDATE user_room
-        SET last_msg_preview = #{preview},
-            update_time      = NOW()
-        WHERE room_id = #{roomId}
-          AND user_id = #{userId}
-          AND (SELECT last_seq FROM room WHERE room_id = #{roomId}) = #{seq}
-    </update>
 
     <!-- 历史分页（uk_room_seq 主路径）：beforeSeq 为 NULL 取最新一页，页内 seq 倒序 -->
     <select id="selectMessagesBefore" resultType="com.betterschool.infrastructure.dao.chat.po.MessagePO">
