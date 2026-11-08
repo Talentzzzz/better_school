@@ -37,8 +37,8 @@
 
     <!-- ── feed 异构索引同事务直写（feed-index-uv 票 03：索引行与 post 行同库，状态流转 / 赞合并事务带写）── -->
 
-    <!-- 审核通过：行诞生 / 翻回 NORMAL。feed_time 只在 INSERT 侧落（行诞生时刻 = 本次通过时刻，重提再通过
-         的可见轮从本次起算）；ODKU 命中已有行（防御分支：NORMAL 不可重回待审，正常流不会走到）只翻 state，
+    <!-- 发布（insert/submitDraft）：行诞生。feed_time 只在 INSERT 侧落（行诞生时刻）；
+         ODKU 命中已有行（防御分支：NORMAL 不会重复发布，正常流不会走到）只翻 state，
          不刷 feed_time、不碰 like_count——like_count 由赞合并事务独占维护 -->
     <update id="upsertFeedIndexOnApprove">
         INSERT INTO post_feed_index (post_id, state, feed_time, like_count, update_time)
@@ -48,8 +48,8 @@
             update_time = NOW()
     </update>
 
-    <!-- 不可见化：state 快照同步成 post 的新状态（REJECTED / DRAFT / DELETED，feed 只查 NORMAL）。
-         行不存在（从未通过审，驳回/撤回/转草稿的常态）= 0 行静默，不 upsert——未通过过的帖子不该凭空进索引 -->
+    <!-- 不可见化：state 快照同步成 post 的新状态（DRAFT / DELETED，feed 只查 NORMAL）。
+         行不存在（草稿/已删帖常态）= 0 行静默，不 upsert——未发布过的帖子不该凭空进索引 -->
     <update id="updateFeedIndexState">
         UPDATE post_feed_index
         SET state       = #{state},
@@ -74,9 +74,9 @@
         DELETE FROM post_feed_index
     </delete>
 
-    <!-- 重灌取数：① 的 post 全量 (post_id, state, create_time) 在 IPostDao.selectRebuildRows（主表 post）；
-         ② content_review 的 APPROVE 流水经 IContentReviewDao.selectApproveRowsByTargetType 查（feed_time 真源）；
-         ③ like_count 从窄表批量抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径），
+    <!-- 重灌取数：① 的 post 全量 (post_id, state, create_time) 在 IPostDao.selectRebuildRows（主表 post），
+         feed_time = create_time；
+         ② like_count 从窄表批量抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径），
          仓储组装成行集后走本 mapper 的 insertFeedIndexRows 批量写入 -->
 
     <!-- 重灌写回：一帖一行 1:1 投影，行集由仓储组装（见 IPostDao.selectRebuildRows 注释） -->

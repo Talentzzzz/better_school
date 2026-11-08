@@ -90,10 +90,9 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
         assertSuccess(getJson("/api/community/posts/" + postId, null), "第一次读详情（回填缓存）");
         assertThat(detailCacheBucket(postId).isExists()).as("预热后详情缓存应存在").isTrue();
 
-        // 先赞（同步合并写，返回即精确）+ 评论并人工通过（同事务 +1）：两个计数动作都不碰缓存
+        // 先赞（同步合并写，返回即精确）+ 评论（发布即计数）：两个计数动作都不碰缓存
         assertSuccess(postJson("/api/community/posts/" + postId + "/like", null, liker), "点赞");
-        String commentId = publishCommentAndGetId(postId, commenter, "缓存不存计数");
-        driveCommentReview(commentId);
+        publishCommentAndGetId(postId, commenter, "缓存不存计数");
 
         // 排空在途浏览件，让 view_count 的库值在「取库值 → 读详情」之间保持静止（浏览允许丢，不能等它）
         assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();

@@ -87,12 +87,6 @@ minio:
   bucket: bs-files
   public-url: http://localhost:9000 # 图片访问前缀（浏览器直连，默认同 endpoint）
 
-# 审核派单可观测与积压告警（票 11，spec §9）：两条告警都只 WARN、不做自动扩容/自动派给离线者，
-# 由 reviewDispatchObservation job（每分钟）评估。
-review:
-  backlog-warn-threshold: 50      # 队列深度积压告警阈值（工单池 PENDING 总条数；沿用 backlog-warn-threshold 命名先例）
-  oldest-wait-warn-minutes: 30    # 最老待审等待时长告警阈值（分钟；entered_at 起算，回收不改、持续累加）
-
 # 内嵌超时中心（票 04）：扫描并行度与重试退避口径（与原独立中心同值，域服务按 @Value 默认值兜底）
 timeout:
   scan:

@@ -32,9 +32,6 @@ public class PostComment {
     private String replyToUserId;
     private String replyToNickname;
 
-    /** 查询冗余字段：审核未通过理由（仓储回查 content_review 最新 REJECT 行填充） */
-    private String rejectReason;
-
     /** 查询冗余字段：来源帖标题/封面（按用户列评论由仓储回查 post 填充，评论行本身不存） */
     private String postTitle;
     private String postCover;

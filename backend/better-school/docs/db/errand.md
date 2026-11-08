@@ -4,14 +4,14 @@
 
 |表名|说明|
 |----|----|
-|errand_order|跑腿订单主表（先付后审状态机）|
+|errand_order|跑腿订单主表（支付冻结即发布的状态机）|
 |errand_order_event|订单状态流转记录（只插不改，纠纷溯源事实源）|
 
 **主键口径（uuid-biz-id 起）**：`id` 是纯内部物理自增，业务 ID 为 `errand_order_id`；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`UUID.randomUUID()` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外（对外与 `errand_order_event.order_id`、钱包流水 `order_id` 都用业务 ID）。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
 
 # errand_order
 
-> 业务：跑腿订单（先付后审 + 单人单）；归属模块：errand
+> 业务：跑腿订单（支付冻结即发布 + 单人单）；归属模块：errand
 
 |字段|类型|约束|说明|
 |----|----|----|----|
@@ -28,7 +28,7 @@
 |time_limit_hours|int|NULL|时限（2/4/12/24 小时，支付时起算；草稿允许为空，提交时必填）|
 |images|varchar(1000)|NULL|配图 URL 列表（JSON 数组，最多 6 张，MinIO；创建/草稿链路校验上限）|
 |deadline|datetime|NULL|超时时间（支付确认时刻 + 时限；支付确认 SQL `TIMESTAMPADD` 按数据库时钟起算，Java 只传时限小时数）|
-|state|varchar(20)|NOT NULL, DEFAULT 'PENDING_PAYMENT'|DRAFT(草稿)/PENDING_PAYMENT/PENDING_REVIEW(已付款待审)/PUBLISHED/LOCKED(锁单中)/CONFIRMED(已确认，原 TAKEN 改名)/PICKED_UP/DELIVERED/COMPLETED/CANCELLED/DISPUTED/REJECTED/DELETED(软删，仅草稿可达)；先付后审：支付转待审，审核通过发布，拒绝转 REJECTED 退款（原 `status` 列改名；详见 ErrandStatusVO / ADR-0003）|
+|state|varchar(20)|NOT NULL, DEFAULT 'PENDING_PAYMENT'|DRAFT(草稿)/PENDING_PAYMENT/PUBLISHED(待接单)/LOCKED(锁单中)/CONFIRMED(已确认，原 TAKEN 改名)/PICKED_UP/DELIVERED/COMPLETED/CANCELLED/DISPUTED/DELETED(软删，仅草稿可达)；支付成功（悬赏冻结）即转 PUBLISHED 对外可见（原 `status` 列改名；详见 ErrandStatusVO）|
 |taker_canceled|tinyint(1)|NOT NULL, DEFAULT 0|接单方取消幂等位（取消过为 1，重试判定用，防重复扣分）|
 |version|bigint|NOT NULL, DEFAULT 0|乐观锁版本（预留）|
 |create_time|datetime|NOT NULL|创建时间|
@@ -65,13 +65,13 @@
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键，同订单内递增即流转顺序|
 |order_id|varchar(36)|NOT NULL, INDEX(idx_order)|跑腿订单**业务 ID**（= errand_order.errand_order_id，UUID 字符串）|
-|event_type|varchar(30)|NOT NULL|事件类型：CREATED/SUBMITTED(草稿提交)/PAID/**LOCKED(抢单)**/**CONFIRMED(确认接单)**/LOCK_ABANDONED(锁单放弃)/LOCK_TIMEOUT(锁单超时，票 04)/PICKED_UP/DELIVERED/COMPLETED(发布方确认完成)/CANCELLED/TAKER_CANCELLED/DISPUTED/ARBITRATED/TIMEOUT/PAY_TIMEOUT/REVIEW_APPROVED/REVIEW_REJECTED/AUTO_COMPLETED/DELETED(软删)|
+|event_type|varchar(30)|NOT NULL|事件类型：CREATED/SUBMITTED(草稿提交)/PAID/**LOCKED(抢单)**/**CONFIRMED(确认接单)**/LOCK_ABANDONED(锁单放弃)/LOCK_TIMEOUT(锁单超时，票 04)/PICKED_UP/DELIVERED/COMPLETED(发布方确认完成)/CANCELLED/TAKER_CANCELLED/DISPUTED/ARBITRATED/TIMEOUT/PAY_TIMEOUT/AUTO_COMPLETED/DELETED(软删)|
 |from_state|varchar(20)|NULL|变更前状态；创建事件为 NULL，**取消/超时/纠纷等由服务端直接置终态的事件也写 NULL（`to_state=CANCELLED/DISPUTED`），不要用「NULL = 创建事件」判定**|
 |to_state|varchar(20)|NOT NULL|变更后状态|
 |actor_id|varchar(36)|NULL|操作人用户 ID（仅 SYSTEM 事件允许 NULL）|
 |actor_role|varchar(20)|NOT NULL|操作方 PUBLISHER/TAKER/SYSTEM/ADMIN|
-|reason_type|varchar(50)|NULL|原因类型，仅取消/退出/争议/仲裁类事件写入：PUBLISHER_CANCEL / TAKER_CANCEL / **TAKER_ABANDON（锁单放弃）** / DISPUTE / ARBITRATION / REVIEW_REJECT（审核驳回）|
-|reason|varchar(200)|NULL|原因补充说明（用户输入，提交时先过同步初筛；SYSTEM 事件恒 NULL；审核驳回存拒绝理由）|
+|reason_type|varchar(50)|NULL|原因类型，仅取消/退出/争议/仲裁类事件写入：PUBLISHER_CANCEL / TAKER_CANCEL / **TAKER_ABANDON（锁单放弃）** / DISPUTE / ARBITRATION|
+|reason|varchar(200)|NULL|原因补充说明（用户输入；SYSTEM 事件恒 NULL）|
 |images|varchar(1000)|NULL|随附凭证图 URL 列表（JSON 数组，MinIO，INSERT 时定型不可改）|
 |create_time|datetime|NOT NULL|事件时间|
 |update_time|datetime|NOT NULL|固定等于写入时间，无更新业务|

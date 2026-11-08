@@ -84,10 +84,8 @@ export interface PostSummary {
   likeCount: number
   createdAt: string
   viewCount: number | null
-  /** 仅"我的"接口填充：NORMAL/PENDING_REVIEW/DRAFT/REJECTED */
+  /** 仅"我的"接口填充：NORMAL/DRAFT */
   status?: string | null
-  /** 拒绝理由：仅"我的"接口且 REJECTED 行填充 */
-  rejectReason?: string | null
   /** 当前用户是否已点赞（未登录 null） */
   liked?: boolean | null
   /** 当前用户是否浏览过（主页 feed 已读灰显标记；仅 /community/posts 填充，其余列表 null） */
@@ -128,8 +126,6 @@ export interface PostDetail {
   /** 原始独立封面（未回退相册，可空）：草稿编辑回填用 */
   independentCover?: string | null
   status: string
-  /** 拒绝理由：仅作者视角且 REJECTED/DRAFT（被拒转草稿自救期）时后端返回 */
-  rejectReason?: string | null
   likeCount: number
   commentCount: number
   viewCount: number | null
@@ -202,10 +198,8 @@ export type ErrandType = 'EXPRESS_PICKUP' | 'BUY' | 'DELIVER' | 'OTHER'
 export type ErrandTimeLimit = 'HOURS_2' | 'HOURS_4' | 'HOURS_12' | 'HOURS_24' | 'DAYS_7' | 'DAYS_30' | 'DAYS_365'
 export type ErrandStatus =
   | 'DRAFT'
-  | 'PENDING_REVIEW'
   | 'PENDING_PAYMENT'
   | 'PUBLISHED'
-  | 'REJECTED'
   | 'LOCKED'
   | 'CONFIRMED'
   | 'PICKED_UP'
@@ -237,8 +231,6 @@ export interface ErrandOrder {
   status: ErrandStatus
   createdAt: string
   images?: string[] | null
-  /** 拒绝理由：仅作者视角且 REJECTED 时后端返回 */
-  rejectReason?: string | null
   /** 当前用户是否浏览过（仅大厅推荐列表接口填充，其余列表与详情为 null；未登录 false） */
   viewed?: boolean | null
 }
@@ -338,8 +330,6 @@ export interface RoomMembers {
 
 export type NotificationType =
   | 'ANNOUNCEMENT'
-  | 'AUDIT_RESULT'
-  | 'REPORT_RESULT'
   | 'ORDER_EVENT'
   | 'CREDIT_CHANGE'
 

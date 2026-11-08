@@ -36,13 +36,12 @@ class FeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13900002501", "重建作者");
         Session liker = registerAndLogin("13900002502", "重建点赞人");
 
-        // 真实链路四态：通过（有审批流水 + 赞）、通过后删除（有行的不可见态）、待审（从未通过、不该有行）、
-        // 存量老帖（直插 NORMAL、无审批流水，feed_time 取 create_time 兜底）
+        // 真实链路三态：发布（有赞）、发布后删除（有行的不可见态）、
+        // 存量老帖（直插 NORMAL，feed_time 取 create_time）
         String approvedId = publishPost(author, "重建通过帖");
         like(approvedId, liker);
         String deletedId = publishPost(author, "重建删除帖");
         deleteJson("/api/community/posts/" + deletedId, author);
-        String pendingId = publishPendingPost(author, "重建待审帖");
         String legacyId = insertLegacyNormalPost(author.userId());
 
         // 0 行更新边角：赞合并旁路的 UPDATE 命中 0 行（索引行缺失）——窄表继续涨、快照丢失
@@ -64,10 +63,11 @@ class FeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         assertThat(feedState(deletedId)).as("删除帖的索引行保留且不可见化").isEqualTo("DELETED");
         assertThat(((Number) feedRow(deletedId).get("like_count")).intValue()).isZero();
 
-        // 从未通过审的帖子不凭空进索引
-        assertThat(feedRow(pendingId)).as("待审帖不进索引").isNull();
+        // 发布后索引行诞生（likedId 有一条 like_count = 1 的行）
+        assertThat(feedRow(approvedId)).as("发布帖进索引").isNotNull();
+        assertThat(((Number) feedRow(approvedId).get("like_count")).intValue()).as("赞数抄窄表").isEqualTo(1);
 
-        // 存量老帖：无审批流水，feed_time 兜底 = create_time
+        // 存量老帖：feed_time = create_time
         assertThat(feedRow(legacyId)).as("存量 NORMAL 帖进索引").isNotNull();
         assertThat(queryFeedTime(legacyId)).isEqualTo(jdbcTemplate.queryForObject(
                 "SELECT create_time FROM post WHERE post_id = ?", java.sql.Timestamp.class, legacyId).toLocalDateTime());
@@ -121,14 +121,6 @@ class FeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 夹具与可观察状态 ----------
 
-    /** 发帖不裁决（先审后发：落库即待审），返回 postId */
-    private String publishPendingPost(Session author, String content) {
-        JsonNode response = postJson("/api/community/posts",
-                Map.of("title", "测试帖子", "content", content), author);
-        assertSuccess(response, "发帖");
-        return response.path("data").asText();
-    }
-
     private void like(String postId, Session user) {
         assertSuccess(postJson("/api/community/posts/" + postId + "/like", Map.of(), user), "点赞");
     }
@@ -137,7 +129,7 @@ class FeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         assertSuccess(getJson("/api/community/posts/" + postId, user), "浏览详情");
     }
 
-    /** 直插一行存量 NORMAL 帖（绕过审核链路：无审批流水），返回 postId */
+    /** 直插一行存量 NORMAL 帖（绕过发布链路），返回 postId */
     private String insertLegacyNormalPost(String userId) {
         // 时间参数 Java 侧算好再绑：ShardingSphere 解析 NOW() - INTERVAL n DAY 会 bad SQL grammar
         java.sql.Timestamp twoDaysAgo = java.sql.Timestamp.valueOf(LocalDateTime.now().minusDays(2));
@@ -176,16 +168,14 @@ class FeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         return value == null ? 0 : value;
     }
 
-    /** 逐行扫一致性破坏者：state ≠ post.state、like_count ≠ 窄表（无行 = 0）或 feed_time ≠ 最近通过（兜底 create_time）的索引行 */
+    /** 逐行扫一致性破坏者：state ≠ post.state、like_count ≠ 窄表（无行 = 0）或 feed_time ≠ post.create_time 的索引行 */
     private List<String> inconsistentIndexPostIds() {
         return jdbcTemplate.queryForList(
                 "SELECT fi.post_id FROM post_feed_index fi "
                         + "JOIN post p ON p.post_id = fi.post_id "
                         + "LEFT JOIN post_like_count lc ON lc.post_id = fi.post_id "
                         + "WHERE fi.state <> p.state OR fi.like_count <> COALESCE(lc.like_count, 0) "
-                        + "OR fi.feed_time <> COALESCE((SELECT MAX(cr.create_time) FROM content_review cr "
-                        + "  WHERE cr.target_type = 'POST' AND cr.target_id = fi.post_id AND cr.action = 'APPROVE'), "
-                        + "  p.create_time)", String.class);
+                        + "OR fi.feed_time <> p.create_time", String.class);
     }
 
     /** 覆盖破坏者：该有行而没有行的 NORMAL 帖 */

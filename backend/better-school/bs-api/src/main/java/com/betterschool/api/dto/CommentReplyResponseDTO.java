@@ -23,6 +23,4 @@ public class CommentReplyResponseDTO {
     private LocalDateTime createdAt;
     private String replyToUserId;
     private String replyToNickname;
-    /** 审核未通过理由（仅评论作者本人可见；通过/待审为 null） */
-    private String rejectReason;
 }

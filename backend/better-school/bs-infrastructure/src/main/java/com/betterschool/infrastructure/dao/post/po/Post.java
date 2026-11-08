@@ -16,10 +16,6 @@ public class Post {
     private String images;
     private String cover;
     private String state;
-    /** 审核轮次：累计进入待审次数（直接发布=1，草稿创建=0、提交进待审时 +1） */
-    private Integer reviewRound;
-    /** 最近一次进入待审时间（24h 待审超时提醒扫描用） */
-    private LocalDateTime reviewEnteredAt;
     private Integer viewCount;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;

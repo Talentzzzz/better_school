@@ -187,10 +187,10 @@ async function onSubmit() {
       leaveQuietly.value = true
       router.replace('/home')
     } else {
-      // 先落草稿再提交：初筛命中/缺项时报错停留，修改后可重试
+      // 先落草稿再发布：缺项等报错停留，修改后可重试
       await updatePostDraft(draftId.value, formBody())
       await submitPostDraft(draftId.value)
-      toast('已提交审核')
+      toast('发布成功')
       leaveQuietly.value = true
       router.replace('/me/post-drafts')
     }
@@ -260,7 +260,7 @@ async function onSubmit() {
           {{ savingDraft ? '保存中…' : '存草稿' }}
         </button>
         <button class="btn-primary submit-btn" :disabled="submitting || loadingDraft" @click="onSubmit">
-          {{ submitting ? (isDraftEdit ? '提交中…' : '发布中…') : isDraftEdit ? '提交审核' : '发布' }}
+          {{ submitting ? '发布中…' : '发布' }}
         </button>
       </div>
     </div>

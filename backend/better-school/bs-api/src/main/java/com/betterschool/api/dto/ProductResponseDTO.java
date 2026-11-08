@@ -20,8 +20,6 @@ public class ProductResponseDTO {
     private String tradeLocation;
     private String category;
     private String status;
-    /** 拒绝理由（仅 REJECTED 且卖家本人可见） */
-    private String rejectReason;
     private long viewCount;
     private long favoriteCount;
     private boolean favorited;

@@ -12,11 +12,10 @@ better-school 演示数据一键灌入（作品演示用，可重复执行）。
     缺图时用 picsum.photos 真实图库兜底），经 /api/files/upload 真传 MinIO
 
 流程：
-  1. 注册/登录演示用户；本人号提权为 ADMIN（走 DB，仅此一步绕接口；提权后重新登录）
+  1. 注册/登录演示用户
   2. 钱包充值（跑腿支付/押金用）
-  3. 发布帖子/商品/跑腿单
-  4. 用 ADMIN token 把审核队列里的 POST/COMMENT/PRODUCT/ERRAND 全部通过
-  5. 造互动：点赞、收藏、评论、楼中楼、评论点赞（评论二轮过审）、跑腿状态机推进
+  3. 发布帖子/商品/跑腿单（发布即对外可见，无需审批）
+  4. 造互动：点赞、收藏、评论、楼中楼、评论点赞、跑腿状态机推进
 
 用法：
   python backend/scripts/seed-demo.py            # 全量
@@ -26,7 +25,6 @@ import json
 import os
 import random
 import re
-import subprocess
 import sys
 import time
 import urllib.parse
@@ -705,33 +703,23 @@ def main():
     skip_users = '--skip-users' in sys.argv
     rng = random.Random(42)
 
-    print('== 1/5 用户')
+    print('== 1/4 用户')
     tokens = {}
     for phone, nick in USERS:
         tokens[nick] = register_or_login(phone, nick)[0]
-    if not skip_users:
-        tokens[ME[1]] = register_or_login(ME[0], ME[1])[0]
-        # 本人号提权 ADMIN（JWT 里带 role，必须提权后重新登录拿新 token）。
-        # 注意：全新库里本人号也是刚注册的，UPDATE 必须在注册之后执行才更新得到行。
-        subprocess.run(['docker', 'exec', 'bs-mysql', 'mysql', '-uroot', '-pbs123456', '-e',
-                        "UPDATE better_school.bs_user SET role='ADMIN' WHERE phone='%s';" % ME[0]],
-                       check=True, capture_output=True)
-        print('  已把 %s 提权为 ADMIN' % ME[0])
-        tokens[ME[1]] = register_or_login(ME[0], ME[1])[0]
-    else:
-        tokens[ME[1]] = register_or_login(ME[0], ME[1])[0]
+    for phone, nick in [ME]:
+        tokens[nick] = register_or_login(phone, nick)[0]
 
-    admin = tokens[ME[1]]
     nicks = list(tokens.keys())
     toks = [tokens[k] for k in nicks]
 
-    print('== 2/5 充值钱包（跑腿支付/押金用）')
+    print('== 2/4 充值钱包（跑腿支付/押金用）')
     for nick, tok in tokens.items():
         r = api('POST', '/api/wallet/recharge', tok, {'amount': 5000})
         print('  %s recharge -> %s' % (nick, r.get('info')))
 
     posts_data, products_data, errands_data = build_content()
-    print('== 3/5 发内容（帖子 %d / 商品 %d / 跑腿 %d）'
+    print('== 3/4 发内容（帖子 %d / 商品 %d / 跑腿 %d）'
           % (len(posts_data), len(products_data), len(errands_data)))
     posts, products, errands = [], [], []
 
@@ -782,29 +770,7 @@ def main():
             print('  ...跑腿进度 %d/%d' % (i + 1, len(errands_data)))
     print('  发布完成：帖子 %d / 商品 %d / 跑腿 %d' % (len(posts), len(products), len(errands)))
 
-    def approve_queue(target_type):
-        # 防御式写法：队列翻页超过 50 条后可能拿不到第二页，所以反复刷第一页、
-        # 按已审 id 去重，直到没有新条目为止
-        seen = set()
-        while True:
-            q = api('GET', '/api/moderation/queue?targetType=%s&page=1&pageSize=50' % target_type, admin)
-            items = (q.get('data') or {}).get('list') or []
-            fresh = [it for it in items if it['targetId'] not in seen]
-            if not fresh:
-                break
-            for it in fresh:
-                seen.add(it['targetId'])
-                r = api('POST', '/api/admin/reviews/decide', admin,
-                        {'targetType': target_type, 'targetId': it['targetId'], 'approve': True})
-                if r.get('code') != '200':
-                    print('  [fail] 过审 %s#%s -> %s' % (target_type, it['targetId'], r.get('info')))
-            print('  过审 %s 累计 %d 条' % (target_type, len(seen)))
-
-    print('== 4/5 审核队列全过（ADMIN）')
-    approve_queue('POST')
-    approve_queue('PRODUCT')
-
-    print('== 5/5 互动')
+    print('== 4/4 互动')
     # 帖子点赞：每帖 3~6 个
     for pid in posts:
         k = rng.randint(3, 6)
@@ -849,7 +815,7 @@ def main():
         for tok in rng.sample(toks, rng.randint(1, 3)):
             api('POST', '/api/trade/products/%d/favorite' % pid, tok)
 
-    # 跑腿状态机（先付后审）：i%6==5 不支付留 PENDING_PAYMENT；
+    # 跑腿状态机：i%6==5 不支付留 PENDING_PAYMENT；
     # 0=全链完成 1=取货中 2=已接单 3=等抢单 4=全链完成
     def step(order_id, action, tok):
         r = api('POST', '/api/errand/orders/%d/%s' % (order_id, action), tok)
@@ -862,11 +828,10 @@ def main():
         j = (i * 5 + salt) % len(toks)
         return toks[j + 1 if j == pub_idx else j]
 
-    print('  跑腿支付/过审/推进...')
+    print('  跑腿支付/推进...')
     for i, (order_id, pub_tok) in enumerate(errands):
         if i % 6 != 5:
             step(order_id, 'pay', pub_tok)
-    approve_queue('ERRAND')
     done = picked = taken = 0
     for i, (order_id, pub_tok) in enumerate(errands):
         mode = i % 6
@@ -887,8 +852,7 @@ def main():
     print('  跑腿状态推进完成：完成 %d / 配送中 %d / 已接单 %d / 其余待抢或待付'
           % (done, picked, taken))
 
-    # 评论区二轮过审（根评论 + 楼中楼一起清），随后评论点赞
-    approve_queue('COMMENT')
+    # 评论点赞
     liked = 0
     for pid, root_ids in comments:
         for cid in root_ids:

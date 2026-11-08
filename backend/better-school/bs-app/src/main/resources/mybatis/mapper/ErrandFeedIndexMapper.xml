@@ -49,9 +49,9 @@
         LIMIT #{limit}
     </select>
 
-    <!-- 审核通过：行诞生（唯一诞生点，彼时悬赏必已支付冻结满足 price 非空）。INSERT...SELECT 从
-         errand_order 行取 reward 快照；feed_time = 进入大厅时刻，行诞生落第一次——跑腿无重提再过审
-         （REJECTED 终态），ODKU 属防御分支（双审并发重放）只翻 state，不刷 feed_time、不碰 price。
+    <!-- 支付完成（payById）：行诞生（唯一诞生点，彼时悬赏必已支付冻结满足 price 非空）。INSERT...SELECT 从
+         errand_order 行取 reward 快照；feed_time = 进入大厅时刻，行诞生落第一次——跑腿无重提再上架，
+         ODKU 属防御分支（并发重放）只翻 state，不刷 feed_time、不碰 price。
          create_time = 主表创建时刻快照随行写入（uuid-biz-id 票 05：热度档同值收敛键，业务 ID 是
          UUID 无序、不能再拿它当「创建先后」的代理） -->
     <update id="upsertFeedIndexOnApprove">
@@ -65,7 +65,7 @@
     </update>
 
     <!-- 状态快照同步：镜像 errand_order 的新状态（大厅可见 = PUBLISHED；LOCKED/CONFIRMED 等中间态
-         行常驻但不可见）。行不存在的常态 = 审核通过前的取消/驳回，0 行静默，不 upsert -->
+         行常驻但不可见）。行不存在的常态 = 支付前的取消/软删，0 行静默，不 upsert -->
     <update id="updateFeedIndexState">
         UPDATE errand_feed_index
         SET state       = #{state},
@@ -73,8 +73,8 @@
         WHERE errand_order_id = #{orderId}
     </update>
 
-    <!-- 浏览合并事务旁路 ±N：纯 UPDATE 不 upsert；命中 0 行 = 索引行缺失（过审前被发布方浏览、
-         或存量异常），调用方落 warn 交重建 job（票 06），不在写路径凭空补行 -->
+    <!-- 浏览合并事务旁路 ±N：纯 UPDATE 不 upsert；命中 0 行 = 索引行缺失（存量异常），
+         调用方落 warn 交重建 job（票 06），不在写路径凭空补行 -->
     <update id="updateFeedIndexViewCount">
         UPDATE errand_feed_index
         SET view_count  = view_count + #{delta},
@@ -87,7 +87,7 @@
         DELETE FROM errand_feed_index
     </delete>
 
-    <!-- 重灌写回：仓储拼装好的行集批量 INSERT（feed_time = MAX(APPROVE) 兜底 create_time；view_count 抄计数窄表） -->
+    <!-- 重灌写回：仓储拼装好的行集批量 INSERT（feed_time = create_time；view_count 抄计数窄表） -->
     <insert id="insertFeedIndexRows">
         INSERT INTO errand_feed_index (errand_order_id, state, feed_time, create_time, price, view_count, update_time)
         VALUES

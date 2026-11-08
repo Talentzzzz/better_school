@@ -110,7 +110,7 @@
 |ref_id|varchar(36)|NULL|CARD 引用对象业务 ID（POST/PRODUCT/ERRAND 均为 UUID 字符串；渲染实时查，失效显示「内容已失效」）|
 |state|varchar(20)|NOT NULL, DEFAULT 'NORMAL'|NORMAL/RECALLED：撤回占 seq 不回退、计入未读，`content` 库内保留取证、读路径脱敏为「已撤回」空壳|
 |recalled_at|datetime|NULL|撤回时间|
-|recalled_by|varchar(20)|NULL|USER=发送者限时窗口内自撤 / AUDITOR=举报强制撤回|
+|recalled_by|varchar(20)|NULL|USER=发送者限时窗口内自撤|
 |create_time|datetime|NOT NULL|发送时间|
 |update_time|datetime|NOT NULL|更新时间（撤回置 RECALLED 时刷新）|
 
@@ -163,7 +163,6 @@
 - user_pair_room N:1 → room（走 `room_id` 业务键；1v1 查重与反查专用）
 - room 1:N → user_room / room_member / message / timeline（逻辑外键走 `room_id` 业务键；user_room 用户维度将来贴 user_id 片、名册 room_member 会话维度将来贴 room_id 片）
 - message 1:N → timeline（走 `msg_id` 业务键）
-- 被 content_report（target_type=MESSAGE）引用：chat 零审核的举报兜底
 
 ## 谁在写
 - 发消息事务：room.last_seq 取号 + message 插入（`msg_id` insert 前发号一次写入）+ timeline 扇出 + user_seq 计数 + user_room×2 只刷 `last_msg_time`（预览不落副本）
@@ -181,14 +180,14 @@
 |id|bigint|PK, AUTO_INCREMENT|物理自增，**禁止当已读水位**（分配序 ≠ 提交序，并发跳读）|
 |notification_id|varchar(36)|NOT NULL, UNIQUE `uk_notification_id`|业务 ID（对外唯一标识，UUID 字符串）：应用层 insert 前生成（`UUID.randomUUID()`）、随行一次写入（uuid-biz-id 票 06 起，不再有 bindBizId 回写）|
 |user_id|varchar(36)|NOT NULL|接收用户|
-|scope|varchar(20)|NOT NULL|收件范围：MARKET_ERRAND/MARKET_PRODUCT(预留)/BOTTOM_SYSTEM/INTERACTION_LIKE/INTERACTION_COMMENT；**生产点写入时显式标注，禁止从 (type,refType) 推导**（同一 ORDER_EVENT×ERRAND 发用户=MARKET_ERRAND、发审核员=BOTTOM_SYSTEM）|
+|scope|varchar(20)|NOT NULL|收件范围：MARKET_ERRAND/MARKET_PRODUCT(预留)/BOTTOM_SYSTEM/INTERACTION_LIKE/INTERACTION_COMMENT；**生产点写入时显式标注，禁止从 (type,refType) 推导**（如 ORDER_EVENT×ERRAND 发用户=MARKET_ERRAND、公告发 BOTTOM_SYSTEM）|
 |seq|bigint|NOT NULL|per-(user,scope) 收件序号（notification_seq 写入事务内取号）|
 |sender_id|varchar(36)|NULL|触发者（互动通知：谁赞/评了你；广播类为空）|
-|type|varchar(20)|NOT NULL|ANNOUNCEMENT/AUDIT_RESULT/AUDIT_PENDING/REPORT_RESULT/ORDER_EVENT/CREDIT_CHANGE/POST_COMMENTED/COMMENT_REPLIED/POST_LIKED/COMMENT_LIKED/LOTTERY_WON/POINTS_CHANGED|
+|type|varchar(20)|NOT NULL|ANNOUNCEMENT/ORDER_EVENT/CREDIT_CHANGE/POST_COMMENTED/COMMENT_REPLIED/POST_LIKED/COMMENT_LIKED/LOTTERY_WON/POINTS_CHANGED|
 |title|varchar(100)|NOT NULL|标题|
 |content|varchar(500)|NOT NULL|内容|
 |ref_type|varchar(20)|NULL|关联类型；营销三类固定 MARKETING（营销票 09）|
-|ref_id|varchar(36)|NULL|关联业务 ID（POST/COMMENT/PRODUCT/ERRAND 均为 UUID 字符串，票 03/05；REPORT=report_id UUID，票 06）|
+|ref_id|varchar(36)|NULL|关联业务 ID（POST/COMMENT/PRODUCT/ERRAND 均为 UUID 字符串，票 03/05）|
 |broadcast_msg_id|varchar(64)|NULL|公告广播幂等键|
 |dedup_key|varchar(100)|NULL, UNIQUE `uk_dedup`|互动/系统通知幂等键（同一触发者对同一目标只发一条，取消不撤回）|
 |create_time|datetime|NOT NULL|创建时间|
@@ -199,7 +198,7 @@
 - `uk_dedup (dedup_key)`、`idx_broadcast (broadcast_msg_id)`：两类幂等锚点
 
 ## 注意
-- 归属映射：跑腿支付入审→MARKET_ERRAND；审核超时/转人工提醒、公告/审核结果/举报结果/信用分变动→BOTTOM_SYSTEM；赞→INTERACTION_LIKE；评论/回复→INTERACTION_COMMENT
+- 归属映射：跑腿订单动态→MARKET_ERRAND；公告/信用分变动→BOTTOM_SYSTEM；赞→INTERACTION_LIKE；评论/回复→INTERACTION_COMMENT
 - 营销两类（票 09 后存量，生产方=抽奖/积分服务，事件订阅投递，消费组 bs-monolith-<topic>-group）：LOTTERY_WON（bs-lottery-drawn，ref_id=抽奖记录 id，谢谢参与不发事件）/ POINTS_CHANGED（bs-points-changed，ref_id=事件 refId）→ 全部 BOTTOM_SYSTEM、ref_type=MARKETING
 - 营销 dedup_key 形状：`MARKETING:DRAWN:<recordId>` / `MARKETING:POINTS:<reasonType>:<refId>`（事件体无 txId，reasonType+refId 唯一标识一笔变动，同 points_bucket uk 口径）
 - dedup 幂等先查后插（不白耗 seq 号段），并发窗口由 uk_dedup + INSERT IGNORE 兜底——极端并发重复会留 seq 空号，推水位取计数器值一并越过

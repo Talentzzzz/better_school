@@ -34,7 +34,7 @@ class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
         notificationService.sendSystem(user.userId(), NotificationScopeVO.MARKET_ERRAND,
                 NotificationTypeVO.ORDER_EVENT, "订单已取消", "超时未接单已取消", "ERRAND", "1", "D2");
         notificationService.sendSystem(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
-                NotificationTypeVO.AUDIT_RESULT, "审核结果", "已通过审核", "POST", "2", "D3");
+                NotificationTypeVO.ANNOUNCEMENT, "平台公告", "系统维护通知", "BROADCAST", null, null);
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT seq FROM notification WHERE dedup_key = 'D1'", Long.class))
@@ -63,12 +63,12 @@ class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
     @Test
     void dedup幂等命中不耗号未读数不虚增() {
         var user = registerAndLogin("13900001002", "收件人");
-        String dedupKey = "ORDER_EVENT:REVIEW_TIMEOUT:1:" + user.userId();
+        String dedupKey = "ORDER_EVENT:ERRAND_PAY:1:" + user.userId();
 
         notificationService.sendSystem(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
-                NotificationTypeVO.ORDER_EVENT, "审核提醒", "已待审超过 24 小时", "ERRAND", "1", dedupKey);
+                NotificationTypeVO.ORDER_EVENT, "订单动态", "订单支付成功", "ERRAND", "1", dedupKey);
         notificationService.sendSystem(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
-                NotificationTypeVO.ORDER_EVENT, "审核提醒", "已待审超过 24 小时", "ERRAND", "1", dedupKey);
+                NotificationTypeVO.ORDER_EVENT, "订单动态", "订单支付成功", "ERRAND", "1", dedupKey);
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM notification WHERE user_id = ?", Long.class, user.userId()))

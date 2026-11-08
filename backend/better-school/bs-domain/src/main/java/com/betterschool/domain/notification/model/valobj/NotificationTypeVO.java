@@ -10,10 +10,6 @@ import lombok.Getter;
 public enum NotificationTypeVO {
 
     ANNOUNCEMENT("平台公告"),
-    AUDIT_RESULT("审核结果"),
-    /** 新内容进入人工审核的提醒（收件人 ADMIN+AUDITOR，MQ 消费方待审通知） */
-    AUDIT_PENDING("待审提醒"),
-    REPORT_RESULT("举报处理结果"),
     ORDER_EVENT("订单动态"),
     CREDIT_CHANGE("信用分变动"),
     POST_COMMENTED("帖子被评论"),

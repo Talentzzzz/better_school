@@ -1,12 +1,10 @@
 package com.betterschool.infrastructure.dao.post;
 
-import com.betterschool.domain.community.model.valobj.PostReviewTimeoutVO;
 import com.betterschool.infrastructure.dao.post.po.PostFeedIndexRow;
 import com.betterschool.infrastructure.dao.post.po.Post;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -27,14 +25,8 @@ public interface IPostDao {
     /** 覆盖草稿内容（仅 DRAFT 行生效） */
     int updateDraft(Post post);
 
-    /** 提交草稿：DRAFT → PENDING_REVIEW（update_time 即进入待审时间），返回影响行数（1=本次刚提交） */
+    /** 提交草稿：DRAFT → NORMAL，返回影响行数（1=本次刚提交） */
     int submitDraft(@Param("postId") String postId);
-
-    /** 撤回待审：PENDING_REVIEW → DRAFT，返回影响行数 */
-    int withdraw(@Param("postId") String postId);
-
-    /** 被拒转草稿箱：REJECTED → DRAFT，返回影响行数 */
-    int rejectToDraft(@Param("postId") String postId);
 
     /** 全量帖子 id（详情缓存布隆过滤器初始化用；一次性预热，刻意不设限） */
     List<String> selectAllIds();
@@ -47,15 +39,6 @@ public interface IPostDao {
 
     int softDelete(@Param("postId") String postId);
 
-    /** 审核通过：PENDING_REVIEW → NORMAL，返回影响行数（1=本次刚通过） */
-    int approveById(@Param("postId") String postId);
-
-    /** 审核驳回：PENDING_REVIEW → REJECTED，返回影响行数 */
-    int rejectById(@Param("postId") String postId);
-
-    /** 24h 待审超时提醒扫描：进入待审（update_time）早于 before 的待审帖子（部分列：post_id + 推导轮次） */
-    List<PostReviewTimeoutVO> selectReviewTimeoutPosts(@Param("before") LocalDateTime before, @Param("limit") int limit);
-
     /** 旧直查降级路径 time 档：NORMAL 按 (create_time, post_id) 倒序 SQL 分页（hot 档走 {@link #selectNormalRows} 内存排序） */
     List<Post> selectPage(@Param("offset") int offset, @Param("limit") int limit);
 
@@ -64,7 +47,7 @@ public interface IPostDao {
 
     long count();
 
-    /** 我的帖子分页（作者视角）：NORMAL/PENDING_REVIEW/REJECTED */
+    /** 我的帖子分页（作者视角）：NORMAL/DRAFT */
     List<Post> selectPageByUser(@Param("userId") String userId, @Param("offset") int offset, @Param("limit") int limit);
 
     long countByUser(@Param("userId") String userId);
@@ -77,6 +60,6 @@ public interface IPostDao {
     /** 某用户全部 NORMAL 帖 id 集（获赞统计取数①，UserRepository 回查 like_count 窄表求和） */
     List<String> selectNormalIdsByUser(@Param("userId") String userId);
 
-    /** 重灌取数①：post 全量 (post_id, state, create_time)——行集 = NORMAL ∪ 有过审批通过，仓储与 ②③ 拼装 */
+    /** 重灌取数①：post 全量 (post_id, state, create_time)——仓储按 state 裁行集后与计数拼装 */
     List<PostFeedIndexRow> selectRebuildRows();
 }

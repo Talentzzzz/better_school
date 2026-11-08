@@ -76,7 +76,6 @@ async function loadComments(reset = false) {
   if (!hasMoreComments.value) return
   const res = await listComments(postId, commentPage.value, 20, commentSort.value)
   comments.value = [...comments.value, ...res.list]
-  // total 为他人可见口径（作者自己的审核中评论可能使行数多于 total，此时已无更多可加载）
   hasMoreComments.value = comments.value.length < res.total
   commentPage.value++
 }
@@ -206,13 +205,11 @@ async function submitComment() {
       await createReply(id, content)
       replyTarget.value = null
       toast('回复成功')
-      // 评论异步审核：计数为他人可见口径，审核通过后随缓存刷新更新；楼内回复等可见后经刷新归位
       await loadComments(true)
       if (rootId !== null) await refreshThread(rootId)
     } else {
       const created = await createComment(postId, content)
-      // 乐观插顶（ADR-0002）：发布即待审，响应 DTO 无标识直接插顶；
-      // 刷新后按作者视角查询自然归位，他人审核通过后才可见
+      // 乐观插顶：响应 DTO 直接插顶，刷新后按服务端查询自然归位
       comments.value = [created, ...comments.value]
       toast('评论成功')
     }
@@ -260,7 +257,7 @@ async function onDeleteReply(r: CommentReply, rootId: number) {
 }
 
 /**
- * 删除后以服务端详情为准同步总数：删根扣 1+楼内可见数、待审删除不扣，前端无法精确本地推算；
+ * 删除后以服务端详情为准同步总数：删根扣 1+楼内可见数，前端无法精确本地推算；
  * 删除链路已失效详情缓存（计数变化时），重新拉取即得权威值
  */
 async function syncCommentCount() {

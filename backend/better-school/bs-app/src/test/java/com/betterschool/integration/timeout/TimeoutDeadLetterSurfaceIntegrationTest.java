@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 死信管理面集成测试（内嵌化票 06）：落点 = 单体 8080 的 {@code /api/admin/timeout-tasks/**}。
  * <p>
- * 覆盖：鉴权（未登录 401 / USER 与 AUDITOR 都 403 / ADMIN 放行）、列表跨槽广播归并
+ * 覆盖：鉴权（未登录 401 / USER 403 / ADMIN 放行）、列表跨槽广播归并
  * （两行摆进不同物理分表都能翻出来 + updated_at 倒序）、分页钳制（页宽 50 / 页码 1000，
  * 越界夹住不报错）、重发与取消只打 FAILED 行（条件 UPDATE：非 FAILED 无副作用进失败清单/false）。
  * <p>
@@ -50,15 +50,10 @@ class TimeoutDeadLetterSurfaceIntegrationTest extends TimeoutScanTestBase {
     }
 
     @Test
-    void 普通用户与审核员都被403_仅管理员放行() {
+    void 普通用户被403_仅管理员放行() {
         Session user = registerAndLogin("13800002001", "普通用户");
         assertThat(getJson(LIST_URL + "?page=1&pageSize=10", user).path("code").asText())
                 .as("USER 应 403（登录态由过滤链放行、角色在控制器收口）")
-                .isEqualTo("403");
-
-        Session auditor = promotedSession("13800002002", "审核员", "AUDITOR");
-        assertThat(getJson(LIST_URL + "?page=1&pageSize=10", auditor).path("code").asText())
-                .as("AUDITOR 也不放行：角色收口在 ADMIN")
                 .isEqualTo("403");
 
         assertThat(getJson(LIST_URL + "?page=1&pageSize=10", admin).path("code").asText())
@@ -204,7 +199,7 @@ class TimeoutDeadLetterSurfaceIntegrationTest extends TimeoutScanTestBase {
         return promotedSession("13900002101", "管理员", "ADMIN");
     }
 
-    /** 提权登录态：role 是签发快照，改库后必须重登（ AUDITOR 用例同款，见 ReviewDispatchSignalIntegrationTest） */
+    /** 提权登录态：role 是签发快照，改库后必须重登 */
     private Session promotedSession(String phone, String nickname, String role) {
         Session registered = registerAndLogin(phone, nickname);
         jdbcTemplate.update("UPDATE bs_user SET role = ? WHERE user_id = ?", role, registered.userId());

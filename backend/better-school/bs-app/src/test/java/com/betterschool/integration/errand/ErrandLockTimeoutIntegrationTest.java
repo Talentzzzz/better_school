@@ -232,7 +232,6 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
         String orderId = created.path("data").asText();
         assertUuidId(orderId);
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付");
-        reviewCase.decide("ERRAND", orderId, true, null, null, "auditor-1");
         assertThat(statusOf(orderId)).as("前置：订单应已发布").isEqualTo("PUBLISHED");
         return orderId;
     }

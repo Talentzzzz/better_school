@@ -84,17 +84,14 @@ const onConfirm = () =>
 const onCancel = () => {
   const status = order.value?.status
   let msg = '确认取消订单？'
-  if (status === 'PENDING_REVIEW') {
-    msg += '\n待审期取消，冻结悬赏将全额退回'
-  } else if (status === 'CONFIRMED' && isTaker.value) {
+  if (status === 'CONFIRMED' && isTaker.value) {
     msg += '\n接单后取消将扣除 20 信用分！'
   }
-  const successMsg = status === 'PENDING_REVIEW' ? '订单已取消，冻结悬赏将全额退回' : '订单已取消'
-  return doAction(() => cancelErrandOrder(orderId), successMsg, msg)
+  return doAction(() => cancelErrandOrder(orderId), '订单已取消', msg)
 }
 const onDispute = () =>
   doAction(() => disputeErrandOrder(orderId), '已提交争议，等待管理员处理', '确认发起争议？')
-// 草稿：提交进支付流程（必填 + 同步初筛由后端把关，命中则停留草稿）
+// 草稿：提交进支付流程（必填校验由后端把关，缺项则停留草稿）
 const onSubmitDraft = () =>
   doAction(() => submitErrandDraft(orderId), '草稿已提交，请完成支付', '确认提交？提交后进入待支付，15 分钟内需完成支付')
 // 草稿：软删后连同详情一起消失，故成功后回「我的-跑腿」而不是重载本页
@@ -128,17 +125,10 @@ onMounted(load)
           {{ order.status === 'LOCKED' ? '已被接单方锁定，等待其确认接单（抢到不等于开工）' : '' }}
           {{ order.status === 'DELIVERED' ? '等待发布者确认完成，确认后悬赏自动划转' : '' }}
           {{ order.status === 'PENDING_PAYMENT' ? '发布者还未支付悬赏资金' : '' }}
-          {{ order.status === 'PENDING_REVIEW' ? '支付成功，悬赏已冻结托管，审核通过后对外可见' : '' }}
-          {{ order.status === 'REJECTED' ? '订单未通过审核，冻结悬赏已全额退回' : '' }}
+          {{ order.status === 'PUBLISHED' ? '支付成功，悬赏已冻结托管，订单已对外可见' : '' }}
           {{ order.status === 'DISPUTED' ? '订单已进入仲裁，等待管理员处理' : '' }}
           {{ order.status === 'CANCELLED' ? '订单已关闭' : '' }}
         </div>
-      </div>
-
-      <div v-if="isPublisher && order.status === 'REJECTED' && order.rejectReason" class="detail-card reject-card">
-        <div class="reject-title">审核未通过理由</div>
-        <div class="reject-reason">{{ order.rejectReason }}</div>
-        <div class="reject-refund">冻结悬赏已全额退回钱包，可修改后重新发布</div>
       </div>
 
       <div class="detail-card">
@@ -213,11 +203,6 @@ onMounted(load)
       <div v-else-if="order.status === 'PENDING_PAYMENT' && isPublisher" class="action-group">
         <button class="btn-outline" :disabled="busy" @click="onCancel">取消</button>
         <button class="btn-primary" :disabled="busy" @click="onPay">立即支付 ¥{{ formatMoney(payAmount) }}</button>
-      </div>
-
-      <div v-else-if="order.status === 'PENDING_REVIEW' && isPublisher" class="action-group">
-        <span class="pending-hint">人工审核中，通过后对外可见</span>
-        <button class="btn-outline" :disabled="busy" @click="onCancel">取消并退款</button>
       </div>
 
       <div v-else-if="order.status === 'LOCKED'" class="action-group">
@@ -380,30 +365,6 @@ onMounted(load)
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
-}
-
-.reject-card {
-  border: 1px solid #ffd6d6;
-  background: #fff5f5;
-}
-
-.reject-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #c0392b;
-}
-
-.reject-reason {
-  margin-top: 6px;
-  font-size: 14px;
-  line-height: 1.6;
-  word-break: break-word;
-}
-
-.reject-refund {
-  margin-top: 8px;
-  font-size: 11px;
-  color: $text-3;
 }
 
 .people-card {

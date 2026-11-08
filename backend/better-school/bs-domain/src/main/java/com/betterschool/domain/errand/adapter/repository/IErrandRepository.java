@@ -32,13 +32,13 @@ public interface IErrandRepository {
 
     /**
      * feed 索引全量重建（market-feed-uv 票 06）：清空重灌 errand_feed_index（数据源 = errand_order +
-     * content_review + errand_view_count）并把 errand_view_count 校准成 errand_view_history 行数，
+     * errand_view_count）并把 errand_view_count 校准成 errand_view_history 行数，
      * 四条语句一个事务——读者要么看到重建前、要么看到重建后的完整索引，不见空窗。
      * 兜底场景 = 13 态快照 / 浏览旁路的同事务直写留下漂移（索引行缺失、计数窄表被绕过直改）
      */
     void rebuildFeedIndex();
 
-    /** 支付确认：PENDING_PAYMENT → PENDING_REVIEW（已付款待审），deadline = NOW()+timeLimitHours（数据库时钟起算）；同事务落 PAID 事件 */
+    /** 支付确认：PENDING_PAYMENT → PUBLISHED（冻结悬赏、进入大厅），deadline = NOW()+timeLimitHours（数据库时钟起算）；同事务落 PAID 事件 */
     boolean payById(String orderId, String actorId, int timeLimitHours);
 
     /** 抢单：PUBLISHED → LOCKED（状态 + 无人持有 + 时限三重校验，先到先得）；同事务 lock_seq+1 与 LOCKED 事件 */
@@ -75,7 +75,7 @@ public interface IErrandRepository {
     /** 发布方确认完成：DELIVERED → COMPLETED */
     boolean confirmById(String orderId, String publisherId);
 
-    /** 发布方取消（限取货前，含锁单期）：PENDING_PAYMENT/PENDING_REVIEW/PUBLISHED/LOCKED/CONFIRMED → CANCELLED */
+    /** 发布方取消（限取货前，含锁单期）：PENDING_PAYMENT/PUBLISHED/LOCKED/CONFIRMED → CANCELLED */
     boolean cancelByPublisher(String orderId, String publisherId);
 
     /** 接单方取消（仅 CONFIRMED）：回 PUBLISHED 并清空接单方 */
@@ -102,17 +102,8 @@ public interface IErrandRepository {
     /** 订单超时 id 列表（PUBLISHED/LOCKED/CONFIRMED/PICKED_UP 且 deadline 已过，XXL-Job 兜底扫描用） */
     List<String> listTimeoutOrderIds(int limit);
 
-    /** 待审超时 id 列表（PENDING_REVIEW 且进入待审早于 before，24h 提醒扫描用） */
-    List<String> listPendingReviewOrderIds(LocalDateTime before, int limit);
-
     /** 送达超时订单 id 列表（DELIVERED 且送达后超 24h 未确认，每批 100，自动完成扫描用） */
     List<String> listAutoCompleteOrderIds(LocalDateTime before, int limit);
-
-    /** 审核通过：PENDING_REVIEW → PENDING_PAYMENT（条件 UPDATE，返回是否本次生效） */
-    boolean reviewApproveById(String orderId, String operatorId);
-
-    /** 审核驳回：PENDING_REVIEW → CANCELLED（条件 UPDATE，返回是否本次生效） */
-    boolean reviewRejectById(String orderId, String operatorId, String reason);
 
     /** 送达后自动完成：DELIVERED → COMPLETED（发布方 24h 未确认，防白嫖） */
     boolean autoCompleteById(String orderId);
@@ -171,7 +162,7 @@ public interface IErrandRepository {
     /** 软删草稿：DRAFT → DELETED（条件 UPDATE，带作者守卫）+ DELETED 事件同事务；返回是否本次生效 */
     boolean softDeleteDraft(String orderId, String publisherId);
 
-    /** 支付转待审 + 落 bs-errand-paid 事件（条件 UPDATE 0 行抛 BUSINESS_ERROR） */
+    /** 支付转 PUBLISHED（冻结悬赏、进入大厅）+ feed 索引行诞生 + 落 bs-errand-paid 事件（条件 UPDATE 0 行抛 BUSINESS_ERROR） */
     void payWithPaidMessage(String orderId, String userId, int timeLimitHours);
 
     /** 送达（条件 UPDATE 0 行抛 BUSINESS_ERROR） */

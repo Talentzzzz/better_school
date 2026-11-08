@@ -50,8 +50,8 @@ public class CommentServiceImpl implements ICommunityCommentService {
     @Override
     public PostCommentEntity addComment(String postId, String userId, String content) {
         getNormalPost(postId);
-        PostCommentEntity commentEntity = PostCommentEntity.create(postId, userId, content, PostStatusVO.PENDING_REVIEW);
-        publishForAsyncReview(commentEntity);
+        PostCommentEntity commentEntity = PostCommentEntity.create(postId, userId, content, PostStatusVO.NORMAL);
+        publishVisible(commentEntity);
         commentEntity.setAuthorNickname(nicknameOf(userId));
         commentEntity.setReplyCount(0L);
         return commentEntity;
@@ -60,25 +60,25 @@ public class CommentServiceImpl implements ICommunityCommentService {
     @Override
     public PostCommentEntity addReply(String targetCommentId, String userId, String content) {
         PostCommentEntity targetEntity = communityRepository.findCommentById(targetCommentId);
-        // 允许回复待审中的评论（其作者本人可见，指向昵称也需可读）；驳回/下架评论对所有人不可见，视同不存在
-        if (targetEntity == null || targetEntity.getStatus() == PostStatusVO.REJECTED || targetEntity.getStatus() == PostStatusVO.DELETED) {
+        // 下架评论对所有人不可见，视同不存在
+        if (targetEntity == null || targetEntity.getStatus() == PostStatusVO.DELETED) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "评论不存在");
         }
         // 树模型（ADR-0001）：回复根评论 root=parent=根评论 id；回复子回复 root=楼根、parent=被回复子回复。
         // 归属一律由服务端推导，客户端无从伪造
         String rootId = targetEntity.isRoot() ? targetEntity.getCommentId() : targetEntity.getRootId();
         PostCommentEntity replyEntity = PostCommentEntity.createReply(targetEntity.getPostId(), rootId,
-                targetEntity.getCommentId(), userId, content, PostStatusVO.PENDING_REVIEW);
-        publishForAsyncReview(replyEntity);
+                targetEntity.getCommentId(), userId, content, PostStatusVO.NORMAL);
+        publishVisible(replyEntity);
         replyEntity.setAuthorNickname(nicknameOf(userId));
         replyEntity.setReplyToUserId(targetEntity.getUserId());
         replyEntity.setReplyToNickname(targetEntity.getAuthorNickname());
         return replyEntity;
     }
 
-    /** 零同步审核（ADR-0002）：落库即待审，同事务（仓储内）写 outbox 审核消息；计数在审核通过时 +1 */
-    private void publishForAsyncReview(PostCommentEntity commentEntity) {
-        communityRepository.saveCommentWithReviewMessage(commentEntity);
+    /** 落库即可见：评论行 + 评论数 +1 + 楼根 reply_count +1 + 计数窄表行 + 热评索引行（根评论）同一事务 */
+    private void publishVisible(PostCommentEntity commentEntity) {
+        communityRepository.saveVisibleCommentWithCount(commentEntity);
     }
 
     @Override
@@ -124,41 +124,6 @@ public class CommentServiceImpl implements ICommunityCommentService {
     }
 
     @Override
-    public boolean approveComment(String commentId) {
-        PostCommentEntity commentEntity = communityRepository.findCommentById(commentId);
-        if (commentEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "评论不存在");
-        }
-        if (commentEntity.getStatus() == PostStatusVO.NORMAL) {
-            return false; // 幂等：已通过，非本次
-        }
-        if (commentEntity.getStatus() != PostStatusVO.PENDING_REVIEW) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "评论已被处理，无法通过");
-        }
-        // 状态翻转 + 评论数 +1 + 楼根 reply_count +1 在仓储内同一事务；
-        // 0 行（并发双审）由仓储抛 BUSINESS_ERROR，故走到这里即本次刚通过
-        communityRepository.approveCommentWithCount(commentId, commentEntity.getPostId(), commentEntity.getRootId());
-        return true;
-    }
-
-    @Override
-    public void rejectComment(String commentId) {
-        PostCommentEntity commentEntity = communityRepository.findCommentById(commentId);
-        if (commentEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "评论不存在");
-        }
-        if (commentEntity.getStatus() == PostStatusVO.REJECTED) {
-            return; // 幂等：已驳回
-        }
-        if (commentEntity.getStatus() != PostStatusVO.PENDING_REVIEW) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "评论已被处理，无法驳回");
-        }
-        if (!communityRepository.rejectCommentById(commentId)) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "审核状态已变化，请刷新重试");
-        }
-    }
-
-    @Override
     public void markDeleted(String commentId) {
         PostCommentEntity commentEntity = communityRepository.findCommentById(commentId);
         if (commentEntity == null) {
@@ -174,7 +139,7 @@ public class CommentServiceImpl implements ICommunityCommentService {
 
     /**
      * 统一软删（用户删除与举报下架同轨，物理 DELETE 废弃）：状态转 DELETED、行保留。
-     * 扣减与否由条件 UPDATE 实际命中的前置状态决定（读到的旧态仅用于定位，防审核并发漂移）；
+     * 扣减与否由条件 UPDATE 实际命中的前置状态决定（读到的旧态仅用于定位，防并发漂移）；
      * 状态翻转与计数增减在仓储内同一事务
      */
     private void softDelete(PostCommentEntity commentEntity) {
@@ -184,7 +149,7 @@ public class CommentServiceImpl implements ICommunityCommentService {
 
     @Override
     public PostCommentEntity likeComment(String commentId, String userId) {
-        // 仅对可见评论有效：待审/驳回/下架一律拒绝（作者本人的待审评论也不可赞）
+        // 仅对可见评论有效：下架一律拒绝
         PostCommentEntity commentEntity = getNormalComment(commentId);
         // 合并写：评论点赞计数落窄表 post_comment_like_count（真源），不是主表列；
         // 返回的是点赞前读到的评论快照（前置检查用），计数由合并器在同一事务推进。

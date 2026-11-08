@@ -32,7 +32,7 @@ export function listCommentedPosts(page = 1, pageSize = 10) {
   return httpGet<PageResult<PostSummary>>('/community/posts/commented', { page, pageSize })
 }
 
-/** 我的浏览历史（最近浏览倒序；已删/被拒的他人帖过滤，feed-index-uv 票 05） */
+/** 我的浏览历史（最近浏览倒序；已删的他人帖过滤，feed-index-uv 票 05） */
 export function listViewHistory(page = 1, pageSize = 10) {
   return httpGet<PageResult<PostSummary>>('/community/posts/history', { page, pageSize })
 }
@@ -67,7 +67,7 @@ export function createPost(body: PostCreateBody) {
 }
 
 export interface PostDraftBody {
-  /** 全字段可缺省（草稿可留空），提交进待审时才校验正文必填 */
+  /** 全字段可缺省（草稿可留空），发布时才校验正文必填 */
   title?: string
   content?: string
   images?: string[]
@@ -79,24 +79,14 @@ export function savePostDraft(body: PostDraftBody) {
   return httpPost<number>('/community/posts/draft', body)
 }
 
-/** 编辑草稿（仅 DRAFT 可改，全量覆盖）；待审中需先撤回 */
+/** 编辑草稿（仅 DRAFT 可改，全量覆盖） */
 export function updatePostDraft(postId: number, body: PostDraftBody) {
   return httpPut<null>(`/community/posts/${postId}/draft`, body)
 }
 
-/** 提交草稿进待审：正文必填 + 同步初筛，命中/缺项停留草稿 */
+/** 发布草稿：正文必填，缺项停留草稿 */
 export function submitPostDraft(postId: number) {
   return httpPost<null>(`/community/posts/${postId}/submit`)
-}
-
-/** 撤回待审回草稿箱（仅 PENDING_REVIEW） */
-export function withdrawPost(postId: number) {
-  return httpPost<null>(`/community/posts/${postId}/withdraw`)
-}
-
-/** 被拒帖转草稿箱（仅 REJECTED） */
-export function moveRejectedPostToDraft(postId: number) {
-  return httpPost<null>(`/community/posts/${postId}/to-draft`)
 }
 
 export function getPost(postId: number) {
@@ -115,7 +105,7 @@ export function unlikePost(postId: number) {
   return httpDelete<null>(`/community/posts/${postId}/like`)
 }
 
-/** 点赞评论（根评论与子回复通用）：仅审核通过的可见评论可赞 */
+/** 点赞评论（根评论与子回复通用） */
 export function likeComment(commentId: number) {
   return httpPost<null>(`/community/comments/${commentId}/like`)
 }
@@ -131,7 +121,7 @@ export function listComments(postId: number, page = 1, pageSize = 20, sort: Comm
   return httpGet<PageResult<PostComment>>(`/community/posts/${postId}/comments`, { page, pageSize, sort })
 }
 
-/** 发布评论：审核异步执行，响应即返回完整新评论 DTO（乐观插顶用） */
+/** 发布评论：响应即返回完整新评论 DTO（乐观插顶用） */
 export function createComment(postId: number, content: string) {
   return httpPost<PostComment>(`/community/posts/${postId}/comments`, { content })
 }

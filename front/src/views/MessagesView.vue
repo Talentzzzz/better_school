@@ -93,7 +93,7 @@ onMounted(() => {
       </span>
       <span class="notice-main">
         <span class="notice-title">系统消息</span>
-        <span class="notice-sub ellipsis">审核通知、平台公告、信用分变动</span>
+        <span class="notice-sub ellipsis">平台公告、信用分变动</span>
       </span>
       <span v-if="latestSystem" class="notice-time">{{ formatTime(latestSystem.createdAt) }}</span>
       <span v-if="systemUnread > 0" class="notice-dot" />

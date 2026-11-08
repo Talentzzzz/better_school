@@ -3,11 +3,9 @@ package com.betterschool.infrastructure.adapter.repository.community;
 import com.betterschool.domain.community.adapter.repository.ICommunityRepository;
 import com.betterschool.domain.community.model.entity.PostCommentEntity;
 import com.betterschool.domain.community.model.entity.PostEntity;
-import com.betterschool.domain.community.model.valobj.CommentReviewMessage;
 import com.betterschool.domain.community.model.valobj.FeedCursorVO;
 import com.betterschool.domain.community.model.valobj.FeedIndexItemVO;
 import com.betterschool.domain.community.model.valobj.LikeStateVO;
-import com.betterschool.domain.community.model.valobj.PostReviewTimeoutVO;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
 import com.betterschool.domain.search.model.valobj.SearchEntityType;
 import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
@@ -18,7 +16,6 @@ import com.betterschool.infrastructure.adapter.merge.CountMergeWriter;
 import com.betterschool.infrastructure.adapter.merge.ICountFlushHandler;
 import com.betterschool.infrastructure.adapter.merge.LikeState;
 import com.betterschool.infrastructure.adapter.merge.ViewMergeWriter;
-import com.betterschool.infrastructure.adapter.repository.moderation.ReviewTaskPoolStore;
 import com.betterschool.infrastructure.dao.comment.IPostCommentDao;
 import com.betterschool.infrastructure.dao.comment.IPostCommentCountDao;
 import com.betterschool.infrastructure.dao.comment.IPostCommentFeedIndexDao;
@@ -27,8 +24,6 @@ import com.betterschool.infrastructure.dao.comment.IPostCommentLikeDao;
 import com.betterschool.infrastructure.dao.comment.po.CommentFeedIndexRow;
 import com.betterschool.infrastructure.dao.comment.po.PostCommentLikeCount;
 import com.betterschool.infrastructure.dao.comment.po.PostComment;
-import com.betterschool.infrastructure.dao.moderation.IContentReviewDao;
-import com.betterschool.infrastructure.dao.moderation.po.ContentReview;
 import com.betterschool.infrastructure.dao.post.IPostDao;
 import com.betterschool.infrastructure.dao.post.IPostFeedIndexDao;
 import com.betterschool.infrastructure.dao.post.IPostLikeCountDao;
@@ -41,7 +36,6 @@ import com.betterschool.infrastructure.dao.post.po.PostRelationRow;
 import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.infrastructure.dao.user.po.User;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
-import com.betterschool.domain.moderation.model.valobj.ReviewTargetTypeVO;
 import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
@@ -111,13 +105,10 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     private final IPostCommentFeedIndexDao postCommentFeedIndexDao;
     /** 作者昵称头像批量回查（SQL 层零 JOIN：列表/详情的 bs_user 信息在这里多查一次拼装） */
     private final IUserDao userDao;
-    /** feed 索引重建取 APPROVE 审批流水（content_review 单表，IContentReviewDao 内该语句零 JOIN） */
-    private final IContentReviewDao contentReviewDao;
     /** 业务 ID 统一发号入口（uuid-biz-id 票 01）：帖 / 评在 insert 前发号一次写入 */
     private final ObjectMapper objectMapper;
     private final OutboxMessageStore outboxMessageStore;
     private final PostDetailCache postDetailCache;
-    private final ReviewTaskPoolStore reviewTaskPoolStore;
     private final TransactionTemplate transactionTemplate;
     /** 点赞类写入的唯一通道（合并器 + 三条降级） */
     private final CountMergeWriter countMergeWriter;
@@ -133,11 +124,10 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
         Post post = toPO(postEntity);
         transactionTemplate.execute(status -> {
             postDao.insert(post);
-            // 入池点（spec §5.1）：发布落库即待审，工单开单与状态同事务（草稿行 DRAFT 不入池）；
-            // entered_at 由开单 SQL NOW() 落库（时刻一律数据库时钟，≈发布时刻，同事务同秒）
-            if (postEntity.getStatus() == PostStatusVO.PENDING_REVIEW) {
-                reviewTaskPoolStore.enter(ReviewTargetTypeVO.POST, postEntity.getPostId(),
-                        postEntity.getReviewRound(), postEntity.getUserId());
+            if (postEntity.getStatus() == PostStatusVO.NORMAL) {
+                // 发布即可见：feed 索引行诞生 + 搜索同步消息，与落库同一事务
+                postFeedIndexDao.upsertFeedIndexOnApprove(postEntity.getPostId());
+                saveSearchSyncMessage(postEntity.getPostId());
             }
             return null;
         });
@@ -199,83 +189,19 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     }
 
     @Override
-    public boolean submitDraft(String postId) {
+    public boolean submitDraftWithSearchSync(String postId) {
         Boolean submitted = transactionTemplate.execute(status -> {
             boolean updated = postDao.submitDraft(postId) > 0;
             if (updated) {
-                // 入池点：草稿提交进待审，轮次递增同事务可见；工单开单与状态迁移同事务
-                // （UPDATE 内联轮次 +1，读回本事务内的新值作开单入参；entered_at 由开单 SQL NOW() 落库）
-                Post submittedPost = postDao.selectById(postId);
-                reviewTaskPoolStore.enter(ReviewTargetTypeVO.POST, postId, submittedPost.getReviewRound(),
-                        submittedPost.getUserId());
-            }
-            return updated;
-        });
-        // 草稿从未进过缓存（仅 NORMAL 进缓存），提交后进待审也不可见，无需失效；条件 UPDATE 0 行时上层终态判定
-        return Boolean.TRUE.equals(submitted);
-    }
-
-    @Override
-    public boolean withdraw(String postId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            boolean withdrawn = postDao.withdraw(postId) > 0;
-            if (withdrawn) {
-                // 退出待审（撤回回草稿箱）：在途工单出池停 DONE，防池中遗留指向非待审行的幽灵工单
-                reviewTaskPoolStore.close(ReviewTargetTypeVO.POST, postId);
-                // 撤回同事务索引行不可见化（feed-index-uv 票 03）：行不存在（从未通过审）时 0 行静默
-                postFeedIndexDao.updateFeedIndexState(postId, PostStatusVO.DRAFT.name());
-            }
-            return withdrawn;
-        }));
-    }
-
-    @Override
-    public boolean rejectToDraft(String postId) {
-        Boolean moved = transactionTemplate.execute(status -> {
-            boolean updated = postDao.rejectToDraft(postId) > 0;
-            if (updated) {
-                // 被拒转草稿同事务索引行不可见化（feed-index-uv 票 03）：行不存在（从未通过审）时 0 行静默
-                postFeedIndexDao.updateFeedIndexState(postId, PostStatusVO.DRAFT.name());
-            }
-            return updated;
-        });
-        return Boolean.TRUE.equals(moved);
-    }
-
-    @Override
-    public boolean approvePostById(String postId) {
-        Boolean approved = transactionTemplate.execute(status -> {
-            boolean updated = postDao.approveById(postId) > 0;
-            if (updated) {
-                // feed 索引行诞生/翻回（feed-index-uv 票 03，同事务）：feed_time 只在 INSERT 侧落
+                // 提交即发布可见：feed 索引行诞生 + 搜索同步消息，与状态迁移同一事务
                 postFeedIndexDao.upsertFeedIndexOnApprove(postId);
+                saveSearchSyncMessage(postId);
             }
             return updated;
         });
-        // 审核动作后状态可能变化，缓存只存 NORMAL，无条件失效（条件 UPDATE 0 行时失效无害）
+        // 草稿从未进过缓存（仅 NORMAL 进缓存）；提交转 NORMAL 后走缓存装配，条件 UPDATE 0 行时上层终态判定
         postDetailCache.evict(postId);
-        return Boolean.TRUE.equals(approved);
-    }
-
-    @Override
-    public boolean rejectPostById(String postId) {
-        Boolean rejected = transactionTemplate.execute(status -> {
-            boolean updated = postDao.rejectById(postId) > 0;
-            if (updated) {
-                // 驳回同事务索引行不可见化（feed-index-uv 票 03）：行不存在（从未通过审）时 0 行静默
-                postFeedIndexDao.updateFeedIndexState(postId, PostStatusVO.REJECTED.name());
-            }
-            return updated;
-        });
-        // 驳回后帖子不可见，必须删掉可能存在的 NORMAL 缓存（否则用户仍能看到已驳回内容）
-        postDetailCache.evict(postId);
-        return Boolean.TRUE.equals(rejected);
-    }
-
-    @Override
-    public List<PostReviewTimeoutVO> listReviewTimeoutPosts(LocalDateTime before, int limit) {
-        // 部分列直映 VO（post_id + 推导轮次），不走 toPostEntity（state/计数等列为 null）
-        return postDao.selectReviewTimeoutPosts(before, limit);
+        return Boolean.TRUE.equals(submitted);
     }
 
     @Override
@@ -325,24 +251,18 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     }
 
     /**
-     * 重灌行集拼装（原 INSERT..SELECT 一步投影的多查形态）：行集 = NORMAL 帖 ∪ 有过审批通过的帖。
-     * 三段取数——① post 全量 (post_id, state, create_time)；② content_review 的 APPROVE 流水
-     * （feed_time 真源，经 IContentReviewDao 单表 GROUP BY）；③ like_count 窄表批量抄入（无行 = 0）——
-     * 组装后批量写回，与原「feed_time = 最近 APPROVE ?? create_time」口径逐行一致
+     * 重灌行集拼装（原 INSERT..SELECT 一步投影的多查形态）：行集 = NORMAL 帖。
+     * 两段取数——① post 全量 (post_id, state, create_time)，feed_time = create_time；
+     * ② like_count 窄表批量抄入（无行 = 0）——组装后批量写回
      */
     private int rebuildFeedIndexRows() {
-        Map<String, LocalDateTime> approveTimes = new HashMap<>();
-        for (ContentReview approveRow : contentReviewDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.POST.name())) {
-            approveTimes.put(approveRow.getTargetId(), approveRow.getCreateTime());
-        }
         List<PostFeedIndexRow> postFeedIndexRowList = new ArrayList<>();
         for (PostFeedIndexRow candidate : postDao.selectRebuildRows()) {
-            boolean approved = approveTimes.containsKey(candidate.getPostId());
-            if (!PostStatusVO.NORMAL.name().equals(candidate.getState()) && !approved) {
-                // 从未通过审的待审/驳回/草稿帖不凭空进索引
+            if (!PostStatusVO.NORMAL.name().equals(candidate.getState())) {
+                // 草稿/已删帖不凭空进索引
                 continue;
             }
-            candidate.setFeedTime(approveTimes.getOrDefault(candidate.getPostId(), candidate.getCreateTime()));
+            candidate.setFeedTime(candidate.getCreateTime());
             postFeedIndexRowList.add(candidate);
         }
         if (!postFeedIndexRowList.isEmpty()) {
@@ -480,44 +400,6 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
             deletePostById(postId);
             // 软删后贴文不可见，落搜索同步消息（消费方删除 ES 文档）
             saveSearchSyncMessage(postId);
-            // 待审帖可被作者删除：退出待审同事务出池（非待审行无在途工单，幂等 0 行无害）
-            reviewTaskPoolStore.close(ReviewTargetTypeVO.POST, postId);
-            return null;
-        });
-    }
-
-    @Override
-    public boolean approveWithSearchSync(String postId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            if (!approvePostById(postId)) {
-                return false;
-            }
-            // 审核通过后贴文公开可搜，落搜索同步消息（与状态变更同事务）
-            saveSearchSyncMessage(postId);
-            return true;
-        }));
-    }
-
-    @Override
-    public boolean rejectWithSearchSync(String postId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            if (!rejectPostById(postId)) {
-                return false;
-            }
-            // 驳回后贴文不再公开，落搜索同步消息（消费方删除 ES 文档）
-            saveSearchSyncMessage(postId);
-            return true;
-        }));
-    }
-
-    @Override
-    public void forceDeleteWithSearchSync(String postId) {
-        transactionTemplate.execute(status -> {
-            deletePostById(postId);
-            // 软删后贴文不可见，落搜索同步消息（消费方删除 ES 文档）
-            saveSearchSyncMessage(postId);
-            // 管理侧下架可命中待审帖：同事务出池（幂等 0 行无害）
-            reviewTaskPoolStore.close(ReviewTargetTypeVO.POST, postId);
             return null;
         });
     }
@@ -725,21 +607,22 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
         commentEntity.setCreatedAt(commentDao.selectById(commentEntity.getCommentId()).getCreateTime());
     }
 
-    /** 评论"发布即提醒"：审核提醒消息与发布事务同写 outbox（须处于发布事务内调用） */
     @Override
-    public void saveReviewMessage(CommentReviewMessage message) {
-        outboxMessageStore.save(Constants.COMMENT_REVIEW_TOPIC, message);
-    }
-
-    @Override
-    public void saveCommentWithReviewMessage(PostCommentEntity commentEntity) {
+    public void saveVisibleCommentWithCount(PostCommentEntity commentEntity) {
         transactionTemplate.execute(status -> {
             saveComment(commentEntity);
-            saveReviewMessage(new CommentReviewMessage(commentEntity.getCommentId()));
-            // 入池点（spec §5.1）：评论发布落库即待审；entered_at 由开单 SQL NOW() 落库，轮次恒 1
-            if (commentEntity.getStatus() == PostStatusVO.PENDING_REVIEW) {
-                reviewTaskPoolStore.enter(ReviewTargetTypeVO.COMMENT, commentEntity.getCommentId(),
-                        1, commentEntity.getUserId());
+            updatePostCommentCount(commentEntity.getPostId(), 1);
+            // 计数窄表行诞生（票 02）：根评论与子回复都入表，赞数恒 0。
+            // INSERT IGNORE 只吞重复键（漂移），0 行落 warn 留痕、不覆盖既有计数
+            if (postCommentLikeCountDao.insertLikeCountOnApprove(commentEntity.getCommentId()) == 0) {
+                log.warn("post_comment_like_count 行已存在，评论发布未新建计数行（commentId={}），需手工对账", commentEntity.getCommentId());
+            }
+            if (!PostCommentEntity.NO_REFERENCE.equals(commentEntity.getRootId())) {
+                // 楼内子回复 → 楼根 reply_count +1（与写入同事务）；子回复不入热评索引
+                updateReplyCount(commentEntity.getRootId(), 1);
+            } else {
+                // 根评论 → 热评索引行诞生（票 01，赞数恒 0）
+                postCommentFeedIndexDao.insertFeedIndexOnApprove(commentEntity.getCommentId(), commentEntity.getPostId());
             }
             return null;
         });
@@ -884,43 +767,9 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     }
 
     @Override
-    public boolean approveCommentById(String commentId) {
-        return commentDao.approveById(commentId) > 0;
-    }
-
-    @Override
-    public boolean rejectCommentById(String commentId) {
-        return commentDao.rejectById(commentId) > 0;
-    }
-
-    @Override
     public boolean markDeletedFromStatus(String commentId, PostStatusVO fromStatus) {
         // 统一软删：用户删除与举报下架同轨，状态转 DELETED、行保留
         return commentDao.markDeletedFromStatus(commentId, fromStatus.name()) > 0;
-    }
-
-    @Override
-    public void approveCommentWithCount(String commentId, String postId, String rootId) {
-        transactionTemplate.execute(status -> {
-            // 影响行数 = 1 才是本次刚通过，评论数 +1（与状态变更同事务，幂等）
-            if (!approveCommentById(commentId)) {
-                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "审核状态已变化，请刷新重试");
-            }
-            updatePostCommentCount(postId, 1);
-            // 计数窄表行诞生（票 02）：根评论与子回复都入表，赞数恒 0。
-            // INSERT IGNORE 只吞重复键（漂移），0 行落 warn 留痕、不覆盖既有计数
-            if (postCommentLikeCountDao.insertLikeCountOnApprove(commentId) == 0) {
-                log.warn("post_comment_like_count 行已存在，审核通过未新建计数行（commentId={}），需手工对账", commentId);
-            }
-            if (!PostCommentEntity.NO_REFERENCE.equals(rootId)) {
-                // 楼内子回复审核通过 → 楼根 reply_count +1（与状态变更同事务）；子回复不入热评索引
-                updateReplyCount(rootId, 1);
-            } else {
-                // 根评论通过 → 热评索引行诞生（票 01，赞数恒 0：待审态不可被赞）
-                postCommentFeedIndexDao.insertFeedIndexOnApprove(commentId, postId);
-            }
-            return null;
-        });
     }
 
     @Override
@@ -938,11 +787,8 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
                     // 评论软删是终态、无恢复路径，所以不需要帖子的「行常驻 + state 镜像」
                     postCommentFeedIndexDao.deleteFeedIndex(commentId);
                 }
-            } else {
-                markDeletedFromStatus(commentId, PostStatusVO.PENDING_REVIEW);
             }
-            // 待审评论可被作者/帖主删除：退出待审同事务出池（其余状态无在途工单，幂等 0 行无害）
-            reviewTaskPoolStore.close(ReviewTargetTypeVO.COMMENT, commentId);
+            // 未命中 = 已终态（DELETED），幂等跳过
             return null;
         });
     }
@@ -987,9 +833,8 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
 
     /**
      * 重灌行集拼装（原 INSERT..SELECT 一步投影的多查形态）：行集 = {@code root_id = '0' AND state = 'NORMAL'}
-     * 根评论。三段取数——① 根评论行（comment_id + post_id + create_time）；② like_count 从计数窄表抄入
-     * （无行 = 0，与运行期「窄表无行即计数 0」同口径）；③ create_time 取审核记录最近一次 APPROVE 时刻
-     * （行诞生时的口径 = 通过时刻，经 IContentReviewDao 单表 GROUP BY，查不到审批流水取评论 create_time 兜底）——
+     * 根评论。两段取数——① 根评论行（comment_id + post_id + create_time）；② like_count 从计数窄表抄入
+     * （无行 = 0，与运行期「窄表无行即计数 0」同口径）；feed_time = 评论 create_time——
      * 组装后批量写回。只兜索引、不兜窄表：窄表是真值源，重建不改写它
      */
     private int rebuildCommentFeedIndexRows() {
@@ -997,17 +842,13 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
         if (commentFeedIndexRowList.isEmpty()) {
             return 0;
         }
-        Map<String, LocalDateTime> approveTimes = new HashMap<>();
-        for (ContentReview approveRow : contentReviewDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.COMMENT.name())) {
-            approveTimes.put(approveRow.getTargetId(), approveRow.getCreateTime());
-        }
         Map<String, PostCommentLikeCount> likeRows = new HashMap<>(commentFeedIndexRowList.size());
         for (PostCommentLikeCount likeRow : postCommentLikeCountDao.selectLikeCountsByIds(
                 commentFeedIndexRowList.stream().map(CommentFeedIndexRow::getCommentId).toList())) {
             likeRows.put(likeRow.getCommentId(), likeRow);
         }
         for (CommentFeedIndexRow row : commentFeedIndexRowList) {
-            row.setFeedTime(approveTimes.getOrDefault(row.getCommentId(), row.getCreateTime()));
+            row.setFeedTime(row.getCreateTime());
             PostCommentLikeCount likeRow = likeRows.get(row.getCommentId());
             row.setLikeCount(likeRow == null ? 0L : likeRow.getLikeCount());
         }
@@ -1097,12 +938,9 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
         return pagePostList.stream().map(this::toPostEntity).toList();
     }
 
-    /** 点赞者视角可见性：NORMAL / 待审 / 驳回照常展示（草稿从未公开、已删除一律过滤） */
+    /** 点赞者视角可见性：NORMAL 照常展示（草稿从未公开、已删除一律过滤） */
     private static boolean visibleToLiker(Post post) {
-        String state = post.getState();
-        return PostStatusVO.NORMAL.name().equals(state)
-                || PostStatusVO.PENDING_REVIEW.name().equals(state)
-                || PostStatusVO.REJECTED.name().equals(state);
+        return PostStatusVO.NORMAL.name().equals(post.getState());
     }
 
     /** 他人视角可见性（作者主页 tab）：仅 NORMAL */
@@ -1127,7 +965,6 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
         post.setImages(toImagesJson(postEntity.getImages()));
         post.setCover(postEntity.getCover());
         post.setState(postEntity.getStatus().name());
-        post.setReviewRound(postEntity.getReviewRound());
         // post.view_count 停写（feed-index-uv 票 02）：浏览 UV 的真相源是 user_view_history，加速列 post_view_count
         return post;
     }
@@ -1144,8 +981,6 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
         postEntity.setImages(toImagesList(post.getImages()));
         postEntity.setCover(post.getCover());
         postEntity.setStatus(PostStatusVO.valueOf(post.getState()));
-        postEntity.setReviewRound(post.getReviewRound() == null ? 0 : post.getReviewRound());
-        postEntity.setReviewEnteredAt(post.getReviewEnteredAt());
         // 空安全：详情内容查询（selectById）已不带计数列（票 05，计数每次读单独取），投影列为 null
         postEntity.setLikeCount(post.getLikeCount() == null ? 0 : post.getLikeCount());
         postEntity.setCommentCount(post.getCommentCount() == null ? 0 : post.getCommentCount());
@@ -1182,8 +1017,8 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
      *
      * <p><b>为什么不在 SQL 里 JOIN</b>：与 feed 形态的 {@code listByIds} 同思路——主查询只拿评论行，
      * 页内 id 集一次 {@code IN} 回查窄表；三条列表（根列表两档 / 楼内 / 主页 tab）与单行共用这一条通路，
-     * 不为一处写一条 JOIN、另一处写一条子查询。作者昵称与驳回理由同理（bs_user / content_review
-     * 批量回查，{@link #fillAuthorsAndRejectReasons}）。
+     * 不为一处写一条 JOIN、另一处写一条子查询。作者昵称同理（bs_user
+     * 批量回查，{@link #fillAuthors}）。
      *
      * <p>{@code likeCount} 等填在 PO 上再交给 {@link #toCommentEntity}：PO 是本次查询自己组装的一次性载体，
      * 链上的搬运（PO → Entity → DTO）因此零改动（spec §4.4 的投影填充口径，同 Product）。
@@ -1195,7 +1030,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
             return List.of();
         }
         Map<String, Long> likeCounts = likeCountsOf(commentList.stream().map(PostComment::getCommentId).toList());
-        fillAuthorsAndRejectReasons(commentList);
+        fillAuthors(commentList);
         List<PostCommentEntity> commentEntityList = new ArrayList<>(commentList.size());
         for (PostComment commentRow : commentList) {
             commentRow.setLikeCount(likeCounts.getOrDefault(commentRow.getCommentId(), 0L));
@@ -1205,33 +1040,14 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     }
 
     /**
-     * 作者昵称（bs_user）与审核未通过理由（content_review 最新 REJECT 行）批量回填：
-     * 原 rootCommentJoins / 楼内 / 单行语句里的两个展示 JOIN 列，统一到这里多查一次
+     * 作者昵称（bs_user）批量回填：原 rootCommentJoins / 楼内 / 单行语句里的展示 JOIN 列，统一到这里多查一次
      */
-    private void fillAuthorsAndRejectReasons(List<PostComment> commentList) {
+    private void fillAuthors(List<PostComment> commentList) {
         Map<String, User> users = usersByIds(commentList.stream().map(PostComment::getUserId).toList());
-        Map<String, String> rejectReasons = latestRejectReasons(ReviewTargetTypeVO.COMMENT,
-                commentList.stream().map(PostComment::getCommentId).toList());
         for (PostComment row : commentList) {
             User user = users.get(row.getUserId());
             row.setAuthorNickname(user == null ? null : user.getNickname());
-            row.setRejectReason(rejectReasons.get(row.getCommentId()));
         }
-    }
-
-    /** 每 target 最新一轮 REJECT 行的理由（物理 id 最大者，单表取全量后 Java 裁决；缺行 = 未被拒过） */
-    private Map<String, String> latestRejectReasons(ReviewTargetTypeVO targetType, List<String> targetIdList) {
-        if (targetIdList.isEmpty()) {
-            return Map.of();
-        }
-        Map<String, ContentReview> latestByTarget = new HashMap<>();
-        for (ContentReview row : contentReviewDao.selectRejectRowsByTargetIds(targetType.name(), targetIdList)) {
-            latestByTarget.merge(row.getTargetId(), row,
-                    (older, newer) -> newer.getId() != null && (older.getId() == null || newer.getId() > older.getId()) ? newer : older);
-        }
-        Map<String, String> reasons = new HashMap<>(latestByTarget.size());
-        latestByTarget.forEach((targetId, row) -> reasons.put(targetId, row.getReason()));
-        return reasons;
     }
 
     /**
@@ -1302,8 +1118,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
         commentEntity.setAuthorNickname(comment.getAuthorNickname());
         commentEntity.setReplyToUserId(comment.getReplyToUserId());
         commentEntity.setReplyToNickname(comment.getReplyToNickname());
-        commentEntity.setRejectReason(comment.getRejectReason());
-        commentEntity.setPostTitle(comment.getPostTitle());
+                commentEntity.setPostTitle(comment.getPostTitle());
         commentEntity.setPostCover(comment.getPostCover());
         return commentEntity;
     }

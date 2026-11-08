@@ -29,7 +29,7 @@ class CommentFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     private CommentFeedIndexRebuildJob commentFeedIndexRebuildJob;
 
     @Test
-    @DisplayName("重建后索引与 NORMAL 根评论 1:1、快照追平窄表；缺行/刷偏/软删残行/待审凭空行四类漂移全修")
+    @DisplayName("重建后索引与 NORMAL 根评论 1:1、快照追平窄表；缺行/刷偏/软删残行/子回复凭空行四类漂移全修")
     void 重建后索引与NORMAL根评论严格一致且修复四类漂移() {
         Session postAuthor = registerAndLogin("13900002601", "重建帖主");
         Session commenter = registerAndLogin("13900002602", "重建评论人");
@@ -40,16 +40,7 @@ class CommentFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         String missingRowId = publishCommentAndGetId(postId, commenter, "索引行被误删的根评论");
         String driftedId = publishCommentAndGetId(postId, commenter, "索引快照被刷偏的根评论");
         String deletedId = publishCommentAndGetId(postId, commenter, "软删后残行留在索引里的根评论");
-        String pendingId = publishCommentAndGetId(postId, commenter, "留在待审的根评论");
-        String rejectedId = publishCommentAndGetId(postId, commenter, "会被驳回的根评论");
         String replyId = postReplyAndGetId(keptId, commenter, "楼内子回复");
-
-        driveCommentReview(keptId);
-        driveCommentReview(missingRowId);
-        driveCommentReview(driftedId);
-        driveCommentReview(deletedId);
-        driveCommentReview(replyId);
-        driveCommentReject(rejectedId, "OTHER", "内容不合规");
 
         // 真实链路先攒出正常态：kept 被赞 2 次、drifted 被赞 1 次（窄表 = 索引快照）
         likeComment(keptId, postAuthor);
@@ -64,18 +55,15 @@ class CommentFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         // 漂移三：根评论软删（走真实链路，会自动删索引行），再人工插回残行——模拟软删漏删索引行
         assertSuccess(deleteJson("/api/community/comments/" + deletedId, commenter), "作者删根评论");
         insertIndexRow(deletedId, postId, 3);
-        // 漂移四：待审根评论凭空进了索引（行集口径被绕过）
-        insertIndexRow(pendingId, postId, 5);
+        // 漂移四：子回复凭空进了索引（行集口径被绕过）
+        insertIndexRow(replyId, postId, 5);
 
-        // 时间列口径的判别器：把 kept 的评论行 create_time 倒回 2020——索引 create_time 若跟着评论行走，
-        // 重灌后就会是 2020 而不是审核通过时刻（该列不是排序键，倒回不影响本用例其他断言）
-        jdbcTemplate.update("UPDATE post_comment SET create_time = '2020-01-01 00:00:00' WHERE comment_id = ?", keptId);
-        // 存量行（本次改动前就已 NORMAL、没有 content_review 流水）：走评论 create_time 兜底
+        // 存量行（本次改动前就已存在的 NORMAL 根评论、没有计数窄表行）
         String legacyId = insertLegacyNormalRoot(postId, commenter.userId());
 
         commentFeedIndexRebuildJob.rebuild(null);
 
-        // 行集 1:1：只有 NORMAL 根评论有行——软删残行、待审凭空行、驳回、子回复都不在
+        // 行集 1:1：只有 NORMAL 根评论有行——软删残行、凭空子回复行、子回复本身都不在
         assertThat(indexCommentIdsOf(postId)).as("索引行集 = 本帖 NORMAL 根评论（1:1，无残行无凭空行；行集断言不依赖序，"
                 + "UUID 化后 ORDER BY comment_id 字典序 ≠ 发布顺序）")
                 .containsExactlyInAnyOrder(keptId, missingRowId, driftedId, legacyId);
@@ -89,15 +77,14 @@ class CommentFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         assertThat(rowsMismatchingNarrowLikeCount()).as("全表 like_count 与窄表逐行一致").isEmpty();
         assertThat(indexPostIdOf(keptId)).as("重灌带所属帖子").isEqualTo(postId);
 
-        // 时间列口径（票 01）：create_time = 审核通过时刻——不是重灌时刻，也不是评论行的 create_time
-        assertThat(indexCreateTimeOf(keptId)).as("create_time 取审核通过时刻").isEqualTo(approvedAt(keptId));
-        assertThat(indexCreateTimeOf(keptId)).as("不抄评论行的 create_time（已倒回 2020）")
-                .isAfter(LocalDateTime.of(2020, 1, 2, 0, 0));
-        assertThat(indexCreateTimeOf(legacyId)).as("查不到审批流水的存量行取评论 create_time 兜底")
+        // 时间列口径：create_time = 评论发布时刻（行诞生时刻），存量行同样取评论 create_time
+        assertThat(indexCreateTimeOf(keptId)).as("create_time 取评论发布时刻")
+                .isEqualTo(commentCreateTimeOf(keptId));
+        assertThat(indexCreateTimeOf(legacyId)).as("存量行取评论 create_time")
                 .isEqualTo(commentCreateTimeOf(legacyId));
 
         // 最热档跟随重建后的快照：2 → 1 → 0 / 0。同赞数的收敛键 = create_time ASC, comment_id ASC：
-        // 存量 legacy 行的索引 create_time 兜底自评论 create_time（两天前），排在今天过审的 missing 行之前
+        // 存量 legacy 行的索引 create_time 来自评论 create_time（两天前），排在今天发布的 missing 行之前
         assertThat(hotCommentIds(postId)).as("最热序按重建后的索引快照")
                 .containsExactly(keptId, driftedId, legacyId, missingRowId);
     }
@@ -112,7 +99,6 @@ class CommentFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         String likedId = publishCommentAndGetId(postId, commenter, "被赞两次的根评论");
         String driftedNarrowId = publishCommentAndGetId(postId, commenter, "窄表被直改的根评论");
         String lostNarrowId = publishCommentAndGetId(postId, commenter, "窄表行被误删的根评论");
-        driveAllCommentReviews();
 
         likeComment(likedId, postAuthor);
         likeComment(likedId, commenter);
@@ -142,7 +128,6 @@ class CommentFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         String postId = publishPost(postAuthor, "重建幂等的帖子");
         String likedId = publishCommentAndGetId(postId, commenter, "被赞的根评论");
         String plainId = publishCommentAndGetId(postId, commenter, "没被赞的根评论");
-        driveAllCommentReviews();
         likeComment(likedId, postAuthor);
         // 先造一条漂移，确保第一次重建真的在"改东西"，第二次才是纯不动点
         jdbcTemplate.update("UPDATE post_comment_feed_index SET like_count = 42 WHERE comment_id = ?", plainId);
@@ -161,7 +146,7 @@ class CommentFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 夹具与可观察状态 ----------
 
-    /** 对目标评论发子回复（走真实链路，落库即待审），返回新回复的 commentId */
+    /** 对目标评论发子回复（走真实链路），返回新回复的 commentId */
     private String postReplyAndGetId(String targetCommentId, Session author, String content) {
         JsonNode response = postJson("/api/community/comments/" + targetCommentId + "/replies",
                 Map.of("content", content), author);
@@ -181,8 +166,7 @@ class CommentFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     }
 
     /**
-     * 直插一条「本次改动前就已存在」的存量 NORMAL 根评论（绕过发布与审核链路：没有 content_review 流水、
-     * 没有计数窄表行），返回其 commentId
+     * 直插一条「本次改动前就已存在」的存量 NORMAL 根评论（绕过发布链路：没有计数窄表行），返回其 commentId
      */
     private String insertLegacyNormalRoot(String postId, String userId) {
         // 时间参数 Java 侧算好再绑：ShardingSphere 解析 NOW() - INTERVAL n DAY 会 bad SQL grammar。
@@ -220,21 +204,13 @@ class CommentFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
                 "SELECT create_time FROM post_comment_feed_index WHERE comment_id = ?", LocalDateTime.class, commentId);
     }
 
-    /** 该评论最近一次审核通过时刻（content_review 的 APPROVE 流水） */
-    private LocalDateTime approvedAt(String commentId) {
-        return jdbcTemplate.queryForObject(
-                "SELECT MAX(create_time) FROM content_review "
-                        + "WHERE target_type = 'COMMENT' AND target_id = ? AND action = 'APPROVE'",
-                LocalDateTime.class, commentId);
-    }
-
-    /** 评论行自己的 create_time（存量行没有审批流水时，索引 create_time 的兜底来源） */
+    /** 评论行自己的 create_time（索引 create_time 的口径来源） */
     private LocalDateTime commentCreateTimeOf(String commentId) {
         return jdbcTemplate.queryForObject(
                 "SELECT create_time FROM post_comment WHERE comment_id = ?", LocalDateTime.class, commentId);
     }
 
-    /** 破坏者：索引行对应的评论不是「NORMAL 根评论」（软删残行 / 待审凭空行 / 子回复行） */
+    /** 破坏者：索引行对应的评论不是「NORMAL 根评论」（软删残行 / 凭空子回复行） */
     private List<String> indexRowsWithoutNormalRoot() {
         return jdbcTemplate.queryForList(
                 "SELECT fi.comment_id FROM post_comment_feed_index fi "

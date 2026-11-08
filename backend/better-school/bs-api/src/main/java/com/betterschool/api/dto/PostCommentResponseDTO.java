@@ -18,7 +18,5 @@ public class PostCommentResponseDTO {
     private Long replyCount;
     /** 当前用户是否已赞（访客恒 false） */
     private boolean liked;
-    /** 审核未通过理由（仅评论作者本人可见；通过/待审为 null） */
-    private String rejectReason;
     private LocalDateTime createdAt;
 }

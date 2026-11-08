@@ -1,19 +1,19 @@
 # 全库建表语句（SQL DDL 汇总）
 
 > 收录 2 个工程的建表语句：better-school 单体（库 better_school，超时中心已内嵌在此）、marketing 营销（库 bs_marketing；points / raffle / drawcount / config / inventory 同属 `backend/marketing/` 一个工程）。XXL-Job 调度库（原 backend/sql/xxl-job.sql 的 8 张表）不在本文档范围内。
-> **超时中心内嵌化（2026-10-16 起，[`.scratch/timeout-inline/`](.scratch/timeout-inline/map.md)）已完成**：原独立超时工程与独立库已下线，16 张 `timeout_task_00..15` 分表在 `better_school` / `better_school_test` 里（见 §1 末），与业务表同库、同事务。全库物理表数 = **42（单体业务）+ 16（单体超时分表）+ 18（营销）= 76**。
+> **超时中心内嵌化（2026-10-16 起，[`.scratch/timeout-inline/`](.scratch/timeout-inline/map.md)）已完成**：原独立超时工程与独立库已下线，16 张 `timeout_task_00..15` 分表在 `better_school` / `better_school_test` 里（见 §1 末），与业务表同库、同事务。全库物理表数 = **38（单体业务）+ 16（单体超时分表）+ 18（营销）= 72**。
 > **业务 ID 全面 UUID 化（2026-11-02 起，[`.scratch/uuid-biz-id/`](.scratch/uuid-biz-id/spec.md)）已完成**：全部业务对象的对外唯一标识统一为 **UUID 字符串**（DB 列 `VARCHAR(36)`，由应用层统一 `IIdGenerator` 在 insert 前发号、随行一次写入），Java 实体/PO/DTO 全链路 String；marketing 的雪花发号器退役。**存量数据不迁移——开发/测试库删库重建**，历史上按 BIGINT 体系书写的割接/回填脚本（`sql/backfill/`、`sql/cutover/` 全目录）已随收口整体退役删除。
 > 不含种子数据 `INSERT`（schema 内置的敏感词/单行配置种子除外）；开发库与测试库共用同一份 DDL，建库语句在各自的 `init-dev.sql` / `init-test.sql`。
 > 命名口径：每张表固定以 `create_time DATETIME NOT NULL COMMENT '创建时间'` 与 `update_time DATETIME NOT NULL COMMENT '更新时间'` 收尾（不带默认值，由应用写入），全库不再出现 `created_at` / `updated_at`。例外共两处：**① §1 的 `timeout_task_00..15`**（`created_at` / `updated_at`）：那是分批表从原独立超时库迁入时的既有形态、且已进 16 张分表与 mapper XML，本口径不回溯改它（见 §1 说明）；**② §1 的各域 feed 索引表与浏览明细表**（feed-index-uv 票 01 的 `post_feed_index` / `user_view_history`，market-feed-uv 票 01 的 `product_feed_index` / `errand_feed_index` / `product_view_history` / `errand_view_history`）：时间列按各自需要收窄——索引表只留 `update_time`（`feed_time` 承担行诞生时刻），明细表只留 `viewed_at`（首刷建行、重复浏览全量刷新），见 §1 对应表注释。
-> 主键口径：每张表第一列恒为 `id BIGINT NOT NULL AUTO_INCREMENT`——纯物理自增、**纯内部键**，无业务含义、不写注释、禁止当对外标识或游标/水位，且（uuid-biz-id 起）**永不再与业务键同值**；业务标识一律单独成列（17 张实体主表 + `content_review`/`review_task`/`content_report` 三张治理表，如 `bs_user.user_id`、`post.post_id`、`errand_order.errand_order_id`、`content_report.report_id`），并配 `UNIQUE KEY uk_<列>`；关联表、流水表、计数器、单行配置、outbox 与超时任务表不设业务列。**例外是各域 feed 索引 / 浏览明细 / 浏览计数投影 / 评论热评索引表**（feed-index-uv 票 01 三张：`post_feed_index` / `user_view_history` / `post_view_count`；market-feed-uv 票 01 六张：`product_feed_index` / `errand_feed_index` / `product_view_history` / `errand_view_history` / `product_view_count` / `errand_view_count`；comment-count-narrow-table 票 01 一张：`post_comment_feed_index`）：投影/明细/加速列、不设独立业务列，主键直接用业务键（1:1 投影与计数表 ODKU upsert 直达，明细表二级索引叶子天然携带业务 ID 免回表），见 §1 对应表注释。
+> 主键口径：每张表第一列恒为 `id BIGINT NOT NULL AUTO_INCREMENT`——纯物理自增、**纯内部键**，无业务含义、不写注释、禁止当对外标识或游标/水位，且（uuid-biz-id 起）**永不再与业务键同值**；业务标识一律单独成列（17 张实体主表，如 `bs_user.user_id`、`post.post_id`、`errand_order.errand_order_id`），并配 `UNIQUE KEY uk_<列>`；关联表、流水表、计数器、单行配置、outbox 与超时任务表不设业务列。**例外是各域 feed 索引 / 浏览明细 / 浏览计数投影 / 评论热评索引表**（feed-index-uv 票 01 三张：`post_feed_index` / `user_view_history` / `post_view_count`；market-feed-uv 票 01 六张：`product_feed_index` / `errand_feed_index` / `product_view_history` / `errand_view_history` / `product_view_count` / `errand_view_count`；comment-count-narrow-table 票 01 一张：`post_comment_feed_index`）：投影/明细/加速列、不设独立业务列，主键直接用业务键（1:1 投影与计数表 ODKU upsert 直达，明细表二级索引叶子天然携带业务 ID 免回表），见 §1 对应表注释。
 
 ---
 
 ## 1. 单体 better-school（库 better_school，bs-* 七模块）
 
-来源：`backend/better-school/sql/schema.sql` · 本文档收录 42 张业务表 + 16 张 `timeout_task` 分表。以下 6 张不在本文档范围：want_to_buy、errand_order_member、agent_review_log 已随求购/多人单下线及审核去 agent 化删除；errand_evaluation、user_daily_active、delay_outbox_message 本轮重构不收录。原第 30 张「超时注册意图表」已随超时内嵌化票 03 删除——注册改为业务事务内直插 `timeout_task` 分表，见下节
+来源：`backend/better-school/sql/schema.sql` · 本文档收录 38 张业务表 + 16 张 `timeout_task` 分表。以下 10 张不在本文档范围：want_to_buy、errand_order_member、agent_review_log 已随求购/多人单下线及审核去 agent 化删除；sensitive_word、content_review、review_task、content_report 已随审核功能整体下线删除；errand_evaluation、user_daily_active、delay_outbox_message 本轮重构不收录。原第 30 张「超时注册意图表」已随超时内嵌化票 03 删除——注册改为业务事务内直插 `timeout_task` 分表，见下节
 
-社区（帖子/评论/二手）、用户、钱包、chat（会话/消息/时间线，仅 1v1）、通知、审核（人工 + 举报）、跑腿与二手托管交易、信用分、敏感词、outbox。
+社区（帖子/评论/二手）、用户、钱包、chat（会话/消息/时间线，仅 1v1）、通知、跑腿与二手托管交易、信用分、outbox。
 
 ### bs_user
 
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS bs_user (
     gender        VARCHAR(10)  NULL COMMENT '性别 MALE/FEMALE，NULL=不展示',
     show_liked    TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '隐私开关：公开我的"赞过"（1 公开 / 0 仅自己，仅他视生效）',
     show_comments TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '隐私开关：公开我的"评论"（1 公开 / 0 仅自己，仅他视生效）',
-    role          VARCHAR(20)  NOT NULL DEFAULT 'USER' COMMENT '角色 USER/AUDITOR/ADMIN',
+    role          VARCHAR(20)  NOT NULL DEFAULT 'USER' COMMENT '角色 USER/ADMIN',
     state         VARCHAR(20)  NOT NULL DEFAULT 'NORMAL' COMMENT '状态 NORMAL/BANNED',
     credit_score  INT          NOT NULL DEFAULT 100 COMMENT '信用分',
     last_login_at DATETIME     NULL COMMENT '最近登录时间',
@@ -53,9 +53,7 @@ CREATE TABLE IF NOT EXISTS post (
     content       TEXT          NULL COMMENT '正文（草稿可空，提交时校验必填）',
     images        VARCHAR(1000) NULL COMMENT '图片 URL 列表（JSON 数组，MinIO 后置）',
     cover         VARCHAR(500)  NULL COMMENT '独立封面 URL（可空，可传相册外的独立上传图；展示口径：独立封面 ?? 相册第一张）',
-    state         VARCHAR(20)   NOT NULL DEFAULT 'PENDING_REVIEW' COMMENT '状态 NORMAL/PENDING_REVIEW/REJECTED/DELETED/DRAFT（先审后发：发布落库即待审，人工通过转 NORMAL，拒绝 REJECTED，撤回/被拒/未发布进 DRAFT；待审 24h 超时提醒由本表 review_entered_at 驱动轮询扫描）',
-    review_round  INT           NOT NULL DEFAULT 1 COMMENT '审核轮次：累计进入待审次数（直接发布=1，草稿创建=0、提交进待审时 +1；content_review.review_round 取此列）',
-    review_entered_at DATETIME  NULL COMMENT '最近一次进入待审时间（24h 待审超时提醒扫描用；裁决/撤回不清空，下次进入待审由提交语句刷新）',
+    state         VARCHAR(20)   NOT NULL DEFAULT 'NORMAL' COMMENT '状态 NORMAL/DRAFT/DELETED（发布落库即可见；未发布进 DRAFT）',
     expire_at     DATETIME      NULL COMMENT '过期归档时间（满 30 天下架，XXL-Job 后置）',
     create_time   DATETIME      NOT NULL COMMENT '创建时间',
     update_time   DATETIME      NOT NULL COMMENT '更新时间',
@@ -77,7 +75,7 @@ CREATE TABLE IF NOT EXISTS post_comment (
     user_id     VARCHAR(36)  NOT NULL COMMENT '评论者用户 ID',
     content     VARCHAR(500)  NULL COMMENT '评论文字（可空：纯图评论时为空，与 images 至少有一个非空）',
     images      VARCHAR(1000) NULL COMMENT '图片 URL 列表（JSON 数组，最多 6 张，MinIO）',
-    state       VARCHAR(20)  NOT NULL DEFAULT 'NORMAL' COMMENT '状态 NORMAL/PENDING_REVIEW/REJECTED/DELETED（先审后发，存量默认 NORMAL；列表只查 NORMAL）',
+    state       VARCHAR(20)  NOT NULL DEFAULT 'NORMAL' COMMENT '状态 NORMAL/DELETED（发布即可见；列表只查 NORMAL）',
     root_id     VARCHAR(36)  NOT NULL DEFAULT '0' COMMENT '所在楼根评论业务 ID（''0''=根评论；回复根评论时=根评论 id；回复子回复时=楼根 id）',
     parent_id   VARCHAR(36)  NOT NULL DEFAULT '0' COMMENT '被回复评论业务 ID（根评论为 ''0''；回复根评论时=根评论 id；回复子回复时=该子回复 id）',
     reply_count INT          NOT NULL DEFAULT 0 COMMENT '楼内可见子回复数（仅根评论有意义，仅 NORMAL 计入，同事务维护）',
@@ -108,10 +106,8 @@ CREATE TABLE IF NOT EXISTS product (
     price          DECIMAL(10,2)  NULL COMMENT '价格（草稿允许为空，提交时必填）',
     trade_location VARCHAR(100)   NULL COMMENT '交易地点（校区+场所）（草稿允许为空，提交时必填）',
     category       VARCHAR(20)    NULL COMMENT '分类 DIGITAL/BOOKS/DAILY/SPORTS/TICKETS/OTHER（草稿允许为空，提交时必填）',
-    state          VARCHAR(20)    NOT NULL DEFAULT 'PENDING_REVIEW' COMMENT '状态 DRAFT(草稿)/PENDING_REVIEW(待审)/ON_SALE/LOCKED(交易中)/SOLD/REJECTED(审核未通过)/DELETED（先审后售：提交进待审，审核通过转在售，拒绝转 REJECTED）',
-    review_round   INT            NOT NULL DEFAULT 0 COMMENT '审核轮次：累计进入待审次数（直接发布=1，草稿提交/重新上架/在售改内容回审再 +1；content_review.review_round 取此列）',
-    review_entered_at DATETIME    NULL COMMENT '最近一次进入待审时间（24h 待审超时提醒扫描用）',
-    expire_at      DATETIME       NULL COMMENT '到期下架时间（进入待审时刷新满 30 天，XXL-Job 后置汇入草稿箱）',
+    state          VARCHAR(20)    NOT NULL DEFAULT 'ON_SALE' COMMENT '状态 DRAFT(草稿)/ON_SALE/LOCKED(交易中)/SOLD/DELETED（发布即可见；下架/到期汇入草稿箱）',
+    expire_at      DATETIME       NULL COMMENT '到期下架时间（上架时刷新满 30 天，XXL-Job 后置汇入草稿箱）',
     create_time    DATETIME       NOT NULL COMMENT '创建时间',
     update_time    DATETIME       NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -207,14 +203,14 @@ CREATE TABLE IF NOT EXISTS post_comment_like_count (
     id          BIGINT   NOT NULL AUTO_INCREMENT,
     comment_id  VARCHAR(36)   NOT NULL COMMENT '评论业务 ID（唯一；根评论与子回复都入表）',
     like_count  INT      NOT NULL DEFAULT 0 COMMENT '评论点赞数（点赞合并事务/取消赞同事务直写；GREATEST(0,±N) clamp；真源 = post_comment_like 条数）',
-    create_time DATETIME NOT NULL COMMENT '创建时间（= 审核通过时刻）',
+    create_time DATETIME NOT NULL COMMENT '创建时间',
     update_time DATETIME NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
     UNIQUE KEY uk_comment (comment_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '评论点赞计数表（专用窄行，不与评论内容/状态写入抢锁；行诞生于审核通过事务）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '评论点赞计数表（专用窄行，不与评论内容/状态写入抢锁；行诞生于评论发布事务）';
 ```
 
-说明：评论点赞的**计数真源**（原 `post_comment.like_count` 主列，票 04 已删）。全量评论都入表、根评论与子回复同形，行诞生于**审核通过事务**（`INSERT IGNORE`，affected = 0 落 warn）——不变式是「行诞生于审核通过」而非「行诞生于第一次点赞」，所以点赞/取消赞的 `UPDATE ... SET like_count = GREATEST(0, like_count + delta)` 命中 0 行只落 warn 交手工对账，**不 ODKU 补行**；计数写不刷 `post_comment` 主行 `update_time`（主行没有排序键依赖它）。**无二级索引**：取数全走 `comment_id` 唯一键点查，热评排序走 `post_comment_feed_index`（本表 like_count 索引给不出「单帖内按赞数排序」要的序）。拆窄表的动机是形状统一（不是性能改造）：照帖子侧「计数真源窄表 + 排序投影索引」两件套同构。存量点赞不回填（删库重建，无历史行）。
+说明：评论点赞的**计数真源**（原 `post_comment.like_count` 主列，票 04 已删）。全量评论都入表、根评论与子回复同形，行诞生于**评论发布事务**（`INSERT IGNORE`，affected = 0 落 warn）——不变式是「行诞生于评论发布」而非「行诞生于第一次点赞」，所以点赞/取消赞的 `UPDATE ... SET like_count = GREATEST(0, like_count + delta)` 命中 0 行只落 warn 交手工对账，**不 ODKU 补行**；计数写不刷 `post_comment` 主行 `update_time`（主行没有排序键依赖它）。**无二级索引**：取数全走 `comment_id` 唯一键点查，热评排序走 `post_comment_feed_index`（本表 like_count 索引给不出「单帖内按赞数排序」要的序）。拆窄表的动机是形状统一（不是性能改造）：照帖子侧「计数真源窄表 + 排序投影索引」两件套同构。存量点赞不回填（删库重建，无历史行）。
 
 ### post_comment_feed_index（comment-count-narrow-table 票 01）
 
@@ -223,14 +219,14 @@ CREATE TABLE IF NOT EXISTS post_comment_feed_index (
     comment_id  VARCHAR(36)   NOT NULL COMMENT '根评论业务 ID（唯一；子回复不入索引）',
     post_id     VARCHAR(36)   NOT NULL COMMENT '所属帖子业务 ID（「最热」按此前缀把扫描锁在单帖）',
     like_count  INT      NOT NULL DEFAULT 0 COMMENT '点赞数快照（点赞/取消赞同事务旁带 ±N，真源 post_comment_like_count——票 02 前为主列 post_comment.like_count；UPDATE 落 0 行落日志交重建 job；「最热」排序键）',
-    create_time DATETIME NOT NULL COMMENT '创建时间（= 审核通过时刻）：点赞数同值时按它升序收敛成确定序（发布先后；UUID 无序，不能再拿业务 ID 当时间代理）',
+    create_time DATETIME NOT NULL COMMENT '创建时间（= 评论发布时刻）：点赞数同值时按它升序收敛成确定序（发布先后；UUID 无序，不能再拿业务 ID 当时间代理）',
     update_time DATETIME NOT NULL COMMENT '更新时间（技术时间戳，禁止当排序键）',
     PRIMARY KEY (comment_id),
     KEY idx_post_like (post_id, like_count, create_time, comment_id) COMMENT '「最热」：单帖前缀扫描收窄范围（覆盖索引不回表）+ 帖内按 like_count DESC, create_time ASC, comment_id ASC 排序取页'
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '根评论热评排序投影（post_comment 的可见根行 1:1 索引，同事务直写）';
 ```
 
-说明：根评论「最热」档的**排序投影**，照帖子 `post_feed_index` 形态只做「单帖内按赞数取页」一件事；**不是真值源**（展示的 `likeCount` 仍取 `post_comment_like_count`）。行集 = 当前可见根评论：审核通过事务 `INSERT`、根评论软删事务物理 `DELETE`——评论软删是终态、无恢复路径，因此不像帖子那样「行常驻 + `state` 快照镜像」（该列在这里恒为 NORMAL）；子回复不入本表（楼内不按赞排，只展示赞数）。读法：`post_id` 前缀先把扫描锁在单帖（覆盖索引不回表），再在帖内按 `(like_count DESC, create_time ASC, comment_id ASC)` 取页——uuid-biz-id 票 03 起同值收敛键从「业务 id 升序」改为「发布时刻 + 业务 id」复合键（UUID 无序，业务 id 不再是时间代理），索引随之扩为四列；方向混合索引序给不全，排序落在「本帖那几十行」的窄范围内；offset 分页 + total 对外契约不变。漂移（点赞旁带命中 0 行的 warn、索引行被绕过直改、软删漏删）由全量重建 job `commentFeedIndexRebuildJob`（XXL-Job 手动触发）单事务「`DELETE` 清空 → `INSERT ... SELECT` 重灌」兜底，重灌行集 = `post_comment` 的 NORMAL 根评论、赞数取计数窄表（无行按 0）；它**只兜索引不兜窄表**，窄表缺行只能手工补行后重跑重建（点赞不会自愈）。
+说明：根评论「最热」档的**排序投影**，照帖子 `post_feed_index` 形态只做「单帖内按赞数取页」一件事；**不是真值源**（展示的 `likeCount` 仍取 `post_comment_like_count`）。行集 = 当前可见根评论：评论发布事务 `INSERT`、根评论软删事务物理 `DELETE`——评论软删是终态、无恢复路径，因此不像帖子那样「行常驻 + `state` 快照镜像」（该列在这里恒为 NORMAL）；子回复不入本表（楼内不按赞排，只展示赞数）。读法：`post_id` 前缀先把扫描锁在单帖（覆盖索引不回表），再在帖内按 `(like_count DESC, create_time ASC, comment_id ASC)` 取页——uuid-biz-id 票 03 起同值收敛键从「业务 id 升序」改为「发布时刻 + 业务 id」复合键（UUID 无序，业务 id 不再是时间代理），索引随之扩为四列；方向混合索引序给不全，排序落在「本帖那几十行」的窄范围内；offset 分页 + total 对外契约不变。漂移（点赞旁带命中 0 行的 warn、索引行被绕过直改、软删漏删）由全量重建 job `commentFeedIndexRebuildJob`（XXL-Job 手动触发）单事务「`DELETE` 清空 → `INSERT ... SELECT` 重灌」兜底，重灌行集 = `post_comment` 的 NORMAL 根评论、赞数取计数窄表（无行按 0）；它**只兜索引不兜窄表**，窄表缺行只能手工补行后重跑重建（点赞不会自愈）。
 
 ### post_feed_index（feed-index-uv 票 01）
 
@@ -247,7 +243,7 @@ CREATE TABLE IF NOT EXISTS post_feed_index (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '帖子 feed 异构索引（post 的 1:1 排序投影，同事务直写）';
 ```
 
-说明：主页 feed 排序查询从 `post` 直查切换的落点（MySQL 异构索引，不用 ES——feed 只需要排序+过滤，索引表与 post 同库可同事务直写；换 ES 的触发条件是个性化推荐/多路召回，届时只换索引层实现、读路径不动）。一帖一行 1:1 投影；排序键永远不用 `update_time`（技术时间戳，会被浏览回写等无关写污染）；游标分页弃 offset。「最新」档 `WHERE state = ? AND (feed_time, post_id) < (?, ?)` 两段谓词；「热榜」档同值收敛键是 `feed_time DESC, post_id DESC`（uuid-biz-id 票 03：UUID 无序化后确定序由时间键兜底），谓词相应三段展开。热榜 = 纯 `like_count`（去掉 `like_count + comment_count*2` 权重公式；评论数不参与 feed 排序）。全量重建 job `feedIndexRebuildJob`（feed-index-uv 票 07，xxl-job 手动触发）从 post + 窄表 + 审核记录清空重灌、顺带把 `post_view_count` 校准成明细行数，是同事务直写丢更新/漂移的兜底恢复手段。
+说明：主页 feed 排序查询从 `post` 直查切换的落点（MySQL 异构索引，不用 ES——feed 只需要排序+过滤，索引表与 post 同库可同事务直写；换 ES 的触发条件是个性化推荐/多路召回，届时只换索引层实现、读路径不动）。一帖一行 1:1 投影；排序键永远不用 `update_time`（技术时间戳，会被浏览回写等无关写污染）；游标分页弃 offset。「最新」档 `WHERE state = ? AND (feed_time, post_id) < (?, ?)` 两段谓词；「热榜」档同值收敛键是 `feed_time DESC, post_id DESC`（uuid-biz-id 票 03：UUID 无序化后确定序由时间键兜底），谓词相应三段展开。热榜 = 纯 `like_count`（去掉 `like_count + comment_count*2` 权重公式；评论数不参与 feed 排序）。全量重建 job `feedIndexRebuildJob`（feed-index-uv 票 07，xxl-job 手动触发）从 post + 窄表清空重灌、顺带把 `post_view_count` 校准成明细行数，是同事务直写丢更新/漂移的兜底恢复手段。
 
 ### user_view_history（feed-index-uv 票 01）
 
@@ -295,7 +291,7 @@ CREATE TABLE IF NOT EXISTS product_feed_index (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商品 feed 异构索引（product 的 1:1 排序投影，同事务直写）';
 ```
 
-说明：市集闲置 tab 推荐读路径的落点，照 `post_feed_index` 先例分域落表（不与 post 泛化合表，post 侧一行不动）。一商品一行 1:1 投影，feed 只取 `state = 'ON_SALE'`（大厅闲置 tab 直查同口径）；排序键 = 热度（`view_count` 降，浏览量显示为热度）/ 时间降 / 时间升（同索引反向扫描，不单设索引）/ 价格升 / 价格降。uuid-biz-id 票 05 起「热度」档是**三段收敛键** `view_count DESC, create_time DESC, product_id DESC`：新增 `create_time` 列为主表发布时刻快照（approve 事务随行写入，重建投影同口径回灌），同值排序在 UUID 无序化后仍确定，游标谓词与 VO 从四段扩为五段。`price` 进索引表是帖子没有的新排序键——商品在售改价立即生效不进审核，改价事务必须同事务旁路同步（market-feed-uv 票 03）。索引行与计数窄表的漂移（浏览旁路命中 0 行的 warn）由 `productFeedIndexRebuildJob` 手动重建兜底（票 06：清空重灌 + 计数校准，一个事务）。
+说明：市集闲置 tab 推荐读路径的落点，照 `post_feed_index` 先例分域落表（不与 post 泛化合表，post 侧一行不动）。一商品一行 1:1 投影，feed 只取 `state = 'ON_SALE'`（大厅闲置 tab 直查同口径）；排序键 = 热度（`view_count` 降，浏览量显示为热度）/ 时间降 / 时间升（同索引反向扫描，不单设索引）/ 价格升 / 价格降。uuid-biz-id 票 05 起「热度」档是**三段收敛键** `view_count DESC, create_time DESC, product_id DESC`：新增 `create_time` 列为主表发布时刻快照（approve 事务随行写入，重建投影同口径回灌），同值排序在 UUID 无序化后仍确定，游标谓词与 VO 从四段扩为五段。`price` 进索引表是帖子没有的新排序键——商品在售改价立即生效，改价事务必须同事务旁路同步（market-feed-uv 票 03）。索引行与计数窄表的漂移（浏览旁路命中 0 行的 warn）由 `productFeedIndexRebuildJob` 手动重建兜底（票 06：清空重灌 + 计数校准，一个事务）。
 
 ### errand_feed_index（market-feed-uv 票 01）
 
@@ -303,9 +299,9 @@ CREATE TABLE IF NOT EXISTS product_feed_index (
 CREATE TABLE IF NOT EXISTS errand_feed_index (
     errand_order_id VARCHAR(36) NOT NULL COMMENT '跑腿订单业务 ID（errand_order.errand_order_id，1:1 投影）',
     state           VARCHAR(20) NOT NULL DEFAULT 'PUBLISHED' COMMENT '跑腿状态快照（与 errand_order.state 同域，13 态流转点同步；feed 只查 PUBLISHED，行常驻其余状态不可见）',
-    feed_time       DATETIME    NOT NULL COMMENT '进入大厅的时刻（审核通过事务写入：行诞生落第一次；跑腿无重提再过审，其余写路径不碰；「最新」排序键）',
+    feed_time       DATETIME    NOT NULL COMMENT '进入大厅的时刻（支付事务写入：行诞生落第一次，其余写路径不碰；「最新」排序键）',
     create_time     DATETIME    NOT NULL COMMENT '订单创建时刻快照（errand_order.create_time，approve 事务随行写入；「热度」同值收敛键：view_count 同值时按 create_time DESC 收敛成确定序——UUID 无序，不能再拿 errand_order_id 当时间代理）',
-    price           DECIMAL(10,2) NOT NULL COMMENT '悬赏快照（errand_order.reward；行只在审核通过时诞生、彼时悬赏必已支付冻结，故非空；「价格升降」排序键）',
+    price           DECIMAL(10,2) NOT NULL COMMENT '悬赏快照（errand_order.reward；行在支付时诞生、彼时悬赏必已支付冻结，故非空；「价格升降」排序键）',
     view_count      INT         NOT NULL DEFAULT 0 COMMENT '浏览 UV 数快照（浏览合并事务旁路 ±N；真源 errand_view_count，UPDATE 落 0 行落日志交重建 job；「热度」排序键）',
     update_time     DATETIME    NOT NULL COMMENT '更新时间（技术时间戳，禁止当排序键）',
     PRIMARY KEY (errand_order_id),
@@ -502,7 +498,7 @@ CREATE TABLE IF NOT EXISTS message (
     ref_id        VARCHAR(36)   NULL COMMENT 'CARD 引用对象业务 ID（POST/PRODUCT/ERRAND 均为 UUID 字符串，票 03/05；渲染时实时查，失效显示「内容已失效」）',
     state         VARCHAR(20)   NOT NULL DEFAULT 'NORMAL' COMMENT 'NORMAL/RECALLED：撤回占 seq 不回退、计入未读',
     recalled_at   DATETIME      NULL COMMENT '撤回时间',
-    recalled_by   VARCHAR(20)   NULL COMMENT 'USER=发送者限时窗口内自撤 / AUDITOR=举报强制撤回',
+    recalled_by   VARCHAR(20)   NULL COMMENT 'USER=发送者限时窗口内自撤',
     create_time   DATETIME      NOT NULL COMMENT '创建时间',
     update_time   DATETIME      NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -512,7 +508,7 @@ CREATE TABLE IF NOT EXISTS message (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '消息内容表（内容中心，只写一份）';
 ```
 
-说明：uuid-biz-id 票 04 起/msg_id 由应用层发号（原「插 0 同事务回写 msg_id=id」已退役），发消息事务顺序改为「insert 前生成 msg_id → 插 message → timeline 扇出引用该 msg_id」；seq 仍是会话内单调序号（BIGINT 不变），与消息全局主键是两个空间。timeline.msg_id 外联本列（同为 UUID 字符串）；举报（content_report.target_type=MESSAGE）按 msg_id 字符串等值定位，经 timeline 路由语义不变；分库预案中 room_id/msg_id 片键哈希一律按字符串哈希（禁数值取模假设，见 chat-shard-ready spec 头注记）。
+说明：uuid-biz-id 票 04 起/msg_id 由应用层发号（原「插 0 同事务回写 msg_id=id」已退役），发消息事务顺序改为「insert 前生成 msg_id → 插 message → timeline 扇出引用该 msg_id」；seq 仍是会话内单调序号（BIGINT 不变），与消息全局主键是两个空间。timeline.msg_id 外联本列（同为 UUID 字符串）；分库预案中 room_id/msg_id 片键哈希一律按字符串哈希（禁数值取模假设，见 chat-shard-ready spec 头注记）。
 
 ### timeline
 
@@ -552,14 +548,14 @@ CREATE TABLE IF NOT EXISTS notification (
     id               BIGINT       NOT NULL AUTO_INCREMENT,
     notification_id  VARCHAR(36)  NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入，物理自增 id 保留纯内部键）',
     user_id          VARCHAR(36)  NOT NULL COMMENT '接收用户',
-    scope            VARCHAR(20)  NOT NULL COMMENT '收件范围（写入时由生产点显式标注，禁止从 (type,refType) 推导——同一 ORDER_EVENT×ERRAND 发用户=MARKET_ERRAND、发审核员=BOTTOM_SYSTEM）：MARKET_ERRAND/MARKET_PRODUCT(预留,当前无生产方)/BOTTOM_SYSTEM/INTERACTION_LIKE/INTERACTION_COMMENT',
+    scope            VARCHAR(20)  NOT NULL COMMENT '收件范围（写入时由生产点显式标注，禁止从 (type,refType) 推导——同一 ORDER_EVENT×ERRAND 发用户=MARKET_ERRAND、发全站系统位=BOTTOM_SYSTEM）：MARKET_ERRAND/MARKET_PRODUCT(预留,当前无生产方)/BOTTOM_SYSTEM/INTERACTION_LIKE/INTERACTION_COMMENT',
     seq              BIGINT       NOT NULL COMMENT 'per-(user,scope) 收件序号（notification_seq 计数器写入事务内取号，从 1 起递增）：已读态 = seq ≤ 该范围水位；水位只用本列，禁用 id——分配序≠提交序',
     sender_id        VARCHAR(36)  NULL COMMENT '触发者用户 ID（互动通知：谁评/回/赞了你；广播类为空）',
-    type             VARCHAR(20)  NOT NULL COMMENT '类型 ANNOUNCEMENT/AUDIT_RESULT/AUDIT_PENDING/REPORT_RESULT/ORDER_EVENT/CREDIT_CHANGE/POST_COMMENTED/COMMENT_REPLIED/POST_LIKED/COMMENT_LIKED',
+    type             VARCHAR(20)  NOT NULL COMMENT '类型 ANNOUNCEMENT/ORDER_EVENT/CREDIT_CHANGE/POST_COMMENTED/COMMENT_REPLIED/POST_LIKED/COMMENT_LIKED',
     title            VARCHAR(100) NOT NULL COMMENT '标题',
     content          VARCHAR(500) NOT NULL COMMENT '内容',
     ref_type         VARCHAR(20)  NULL COMMENT '关联类型',
-    ref_id           VARCHAR(36)  NULL COMMENT '关联业务 ID（POST/COMMENT/PRODUCT/ERRAND 订单均为 UUID 字符串，票 03/05；REPORT=report_id UUID，票 06）',
+    ref_id           VARCHAR(36)  NULL COMMENT '关联业务 ID（POST/COMMENT/PRODUCT/ERRAND 订单均为 UUID 字符串，票 03/05）',
     broadcast_msg_id VARCHAR(64)  NULL COMMENT '广播消息 msg_id（公告落库幂等键）',
     dedup_key        VARCHAR(100) NULL COMMENT '互动通知幂等键（type+目标+sender）；同一触发者对同一目标只发一条，取消动作不撤回',
     create_time      DATETIME     NOT NULL COMMENT '创建时间',
@@ -612,14 +608,14 @@ CREATE TABLE IF NOT EXISTS errand_order (
     taker_id          VARCHAR(36)    NULL COMMENT '接单方用户 ID（抢单后填充，接单方取消后清空）',
     lock_seq          INT            NOT NULL DEFAULT 0 COMMENT '锁单轮次（每次抢单 +1；超时中心复合 bizId={orderId}:{lock_seq} 的轮次与回调守卫比对值）',
     type              VARCHAR(20)    NULL COMMENT '类型 EXPRESS_PICKUP/BUY/DELIVER/OTHER（草稿允许为空，提交时必填）',
-    description       VARCHAR(200)   NULL COMMENT '任务描述（同步初筛覆盖；草稿允许为空，提交时必填）',
+    description       VARCHAR(200)   NULL COMMENT '任务描述（草稿允许为空，提交时必填）',
     pickup_location   VARCHAR(100)   NULL COMMENT '取件地点（草稿允许为空，提交时必填）',
     delivery_location VARCHAR(100)   NULL COMMENT '送达地点（草稿允许为空，提交时必填）',
     reward            DECIMAL(10,2)  NULL COMMENT '悬赏（校园币，支付时冻结；草稿允许为空，提交时必填）',
     time_limit_hours  INT            NULL COMMENT '时限（2/4/12/24 小时，支付时起算；草稿允许为空，提交时必填）',
     images            VARCHAR(1000)  NULL COMMENT '配图 URL 列表（JSON 数组，最多 6 张，MinIO）',
     deadline          DATETIME       NULL COMMENT '超时时间（支付时间 + 时限）',
-    state             VARCHAR(20)    NOT NULL DEFAULT 'PENDING_PAYMENT' COMMENT '状态 DRAFT(草稿)/PENDING_PAYMENT/PENDING_REVIEW(已付款待审)/PUBLISHED/LOCKED(锁单中)/CONFIRMED(已确认)/PICKED_UP/DELIVERED/COMPLETED/CANCELLED/DISPUTED/REJECTED/DELETED(软删，仅草稿可达)（先付后审：支付转待审，审核通过发布，拒绝转 REJECTED 退款）',
+    state             VARCHAR(20)    NOT NULL DEFAULT 'PENDING_PAYMENT' COMMENT '状态 DRAFT(草稿)/PENDING_PAYMENT/PUBLISHED/LOCKED(锁单中)/CONFIRMED(已确认)/PICKED_UP/DELIVERED/COMPLETED/CANCELLED/DISPUTED/DELETED(软删，仅草稿可达)（支付成功即 PUBLISHED 进大厅）',
     taker_canceled    TINYINT(1)     NOT NULL DEFAULT 0 COMMENT '接单方取消幂等位（取消过为 1，重试判定用，防重复扣分）',
     version           BIGINT         NOT NULL DEFAULT 0 COMMENT '乐观锁版本（预留）',
     create_time       DATETIME       NOT NULL COMMENT '创建时间',
@@ -748,8 +744,8 @@ CREATE TABLE IF NOT EXISTS user_credit_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
     user_id     VARCHAR(36) NOT NULL COMMENT '用户 ID',
     `change`    INT         NOT NULL COMMENT '信用分变化（可为负）',
-    reason_type VARCHAR(30) NOT NULL COMMENT '原因类型 ERRAND_TAKER_CANCEL/ERRAND_TIMEOUT/REPORT_CONFIRMED/TRADE_COMPLAINT/ADMIN_ADJUST/ADMIN_BAN/ADMIN_UNBAN（取值见 CreditReasonTypeVO）',
-    ref_id      VARCHAR(36) NULL COMMENT '关联业务 ID（跑腿=订单；内容类=被罚内容；ADMIN 类为空，不依赖幂等键）',
+    reason_type VARCHAR(30) NOT NULL COMMENT '原因类型 ERRAND_TAKER_CANCEL/ERRAND_TIMEOUT/TRADE_COMPLAINT/ADMIN_ADJUST/ADMIN_BAN/ADMIN_UNBAN（取值见 CreditReasonTypeVO）',
+    ref_id      VARCHAR(36) NULL COMMENT '关联业务 ID（跑腿=订单；ADMIN 类为空，不依赖幂等键）',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -757,103 +753,6 @@ CREATE TABLE IF NOT EXISTS user_credit_detail (
     KEY idx_user (user_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '信用分流水表';
 ```
-
-### sensitive_word
-
-```sql
-CREATE TABLE IF NOT EXISTS sensitive_word (
-    id         BIGINT       NOT NULL AUTO_INCREMENT,
-    word       VARCHAR(50)  NOT NULL COMMENT '敏感词',
-    enabled    TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '是否启用',
-    create_time DATETIME     NOT NULL COMMENT '创建时间',
-    update_time DATETIME     NOT NULL COMMENT '更新时间',
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_word (word)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '敏感词库表';
-```
-
-### content_review
-
-```sql
-CREATE TABLE IF NOT EXISTS content_review (
-    id            BIGINT       NOT NULL AUTO_INCREMENT,
-    review_id     VARCHAR(36)  NOT NULL COMMENT '审核记录业务 ID（UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入；物理自增 id 保留纯内部键）',
-    target_type   VARCHAR(20)  NOT NULL COMMENT '审核对象 POST/COMMENT/ERRAND/PRODUCT',
-    target_id     VARCHAR(36)  NOT NULL COMMENT '审核对象业务 ID（POST/COMMENT/PRODUCT/ERRAND 均为 UUID 字符串，票 03/05）',
-    author_id     VARCHAR(36)  NOT NULL COMMENT '作者用户 ID（冗余；对齐 content_report.author_id，按作者聚合历史裁决免反查业务表）',
-    review_round  INT          NOT NULL DEFAULT 1 COMMENT '审核轮次（同一目标第 N 次进入待审，取自业务表的 review_round；COMMENT/ERRAND 恒为 1），重放裁决撞 uk 即幂等跳过',
-    action        VARCHAR(20)  NOT NULL COMMENT '动作 APPROVE/REJECT',
-    source        VARCHAR(20)  NOT NULL DEFAULT 'MANUAL' COMMENT '触发来源 MANUAL/KEYWORD/RANDOM（KEYWORD=敏感词命中转审、RANDOM=随机抽查；当前仅 MANUAL，其余为扩展点）',
-    operator_id   VARCHAR(36)  NOT NULL COMMENT '审核员用户 ID',
-    reason        VARCHAR(200) NULL COMMENT '驳回原因/备注',
-    reason_code   VARCHAR(50)  NULL COMMENT '拒绝理由枚举 code（APPROVE/枚举化前历史数据为 NULL）',
-    create_time   DATETIME     NOT NULL COMMENT '创建时间',
-    update_time   DATETIME     NOT NULL COMMENT '更新时间',
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_review_id (review_id),
-    UNIQUE KEY uk_target_action_round (target_type, target_id, action, review_round),
-    KEY idx_create (create_time)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '审核动作记录表（只插入）';
-```
-
-### review_task
-
-审核工单（在途派单凭据；与 content_review 的「只插入审计/历史裁决」语义严格分离：工单单生命周期、可变（领单/回收/裁决），裁决结论落在 content_review，工单只有一个终态 DONE）。uk_target_round 同轮同内容只开一张在途工单，入池 INSERT IGNORE 幂等吸收重复；entered_at 是「业务行进入待审的时刻」而非工单创建时间（回收不改它，等待时长继续累加）：POST/PRODUCT 直取业务表 review_entered_at，COMMENT 取发布时刻、ERRAND 取支付成功时刻。**领单候选/队列 tie-break 口径（uuid-biz-id 票 06）**：task_id 已 UUID 化、不再代表入池先后，FIFO 同刻收敛改用**物理自增 id ASC**（纯内部键承担内部排序，不对外）。
-
-```sql
-CREATE TABLE IF NOT EXISTS review_task (
-    id              BIGINT       NOT NULL AUTO_INCREMENT,
-    task_id         VARCHAR(36)  NOT NULL COMMENT '工单业务 ID（UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入；物理自增 id 保留纯内部键，FIFO 同刻 tie-break 用）',
-    target_type     VARCHAR(20)  NOT NULL COMMENT '内容类型 POST/COMMENT/PRODUCT/ERRAND（ReviewTargetTypeVO 可审值）',
-    target_id       VARCHAR(36)  NOT NULL COMMENT '内容业务 ID（POST/COMMENT/PRODUCT/ERRAND 均为 UUID 字符串，票 03/05）',
-    review_round    INT          NOT NULL DEFAULT 1 COMMENT '审核轮次，与 content_review.review_round 同源（COMMENT/ERRAND 恒 1）',
-    author_id       VARCHAR(36)  NOT NULL COMMENT '作者用户 ID（冗余，工单详情/历史聚合免 join）',
-    source          VARCHAR(20)  NOT NULL DEFAULT 'MANUAL' COMMENT '入池来源 MANUAL/KEYWORD/RANDOM（ReviewSourceVO）',
-    claim_state     VARCHAR(20)  NOT NULL DEFAULT 'PENDING' COMMENT '工单态 PENDING(在池)/CLAIMED(租约中)/DONE(已裁决)；勿与业务表 state 混用',
-    claim_by        VARCHAR(36)  NULL COMMENT '当前持单人（审核员用户 ID）',
-    claim_seq       INT          NOT NULL DEFAULT 0 COMMENT '领单轮次（每次 claim +1；租约复合 bizId {id}:{claimSeq} 与回调守卫）',
-    lease_expire_at DATETIME     NULL COMMENT '租约到期时刻（claim 时 = NOW()+5min）',
-    recycle_count   INT          NOT NULL DEFAULT 0 COMMENT '回收次数（≥3 置 escalated + 告警）',
-    escalated       TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '需人工干预标记（recycle_count≥3）',
-    entered_at      DATETIME     NOT NULL COMMENT '进入待审时刻（FIFO 排序/等待时长锚点；POST/PRODUCT 取 review_entered_at，COMMENT 取 create_time，ERRAND 取支付时刻；回收不改）',
-    decided_at      DATETIME     NULL COMMENT '裁决时刻（DONE 时写）',
-    create_time     DATETIME     NOT NULL COMMENT '创建时间',
-    update_time     DATETIME     NOT NULL COMMENT '更新时间',
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_task_id (task_id),
-    UNIQUE KEY uk_target_round (target_type, target_id, review_round),
-    KEY idx_queue (claim_state, entered_at),
-    KEY idx_queue_type (claim_state, target_type, entered_at),
-    KEY idx_lease (claim_state, lease_expire_at)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '审核工单（在途派单；不承载裁决与可见性）';
-```
-
-### content_report
-
-```sql
-CREATE TABLE IF NOT EXISTS content_report (
-    id               BIGINT        NOT NULL AUTO_INCREMENT,
-    report_id        VARCHAR(36)   NOT NULL COMMENT '举报单业务 ID（UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入；信用分 REPORT_CONFIRMED 流水 ref_id 引用本列，物理自增 id 保留纯内部键）',
-    target_type      VARCHAR(20)   NOT NULL COMMENT '举报对象 POST/COMMENT/USER/MESSAGE（1v1 会话零审核的举报兜底）',
-    target_id        VARCHAR(36)   NOT NULL COMMENT '举报对象业务 ID（USER/POST/COMMENT=UUID user_id/内容 id；MESSAGE=msg_id UUID 字符串，uuid-biz-id 票 04）',
-    author_id        VARCHAR(36)   NOT NULL COMMENT '被举报人用户 ID（冗余）',
-    reporter_id      VARCHAR(36)   NOT NULL COMMENT '举报人用户 ID',
-    reason           VARCHAR(200)  NOT NULL COMMENT '举报理由',
-    content_snapshot VARCHAR(1000) NULL COMMENT '举报时内容摘要（证据）',
-    status           VARCHAR(20)   NOT NULL DEFAULT 'PENDING' COMMENT '状态 PENDING/PROCESSED(核实)/IGNORED(不实)',
-    handler_id       VARCHAR(36)   NULL COMMENT '处理人用户 ID（审核员）',
-    handled_at       DATETIME      NULL COMMENT '处理时间',
-    create_time      DATETIME      NOT NULL COMMENT '创建时间',
-    update_time      DATETIME      NOT NULL COMMENT '更新时间',
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_report_id (report_id),
-    UNIQUE KEY uk_reporter_target (reporter_id, target_type, target_id),
-    KEY idx_status (status, create_time),
-    KEY idx_target (target_type, target_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '举报单表';
-```
-
----
 
 ## 2. 营销服务 marketing（库 bs_marketing）
 

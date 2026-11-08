@@ -14,7 +14,7 @@ public interface IPostLikeDao {
 
     /**
      * 「我赞过的 / 某用户赞过的」关系行主查（post_like 单表，按点赞时间倒序）：分页、可见性过滤
-     * （自己赞的：NORMAL/PENDING_REVIEW/REJECTED；他人主页：仅 NORMAL）由仓储二次回查后 Java 侧收口
+     * （自己赞的：NORMAL；他人主页：仅 NORMAL）由仓储二次回查后 Java 侧收口
      */
     List<PostRelationRow> selectRelationLikedRows(@Param("userId") String userId);
 

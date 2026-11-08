@@ -6,8 +6,8 @@
     bash / WSL 在这台机器上是坏的（`execvpe(/bin/bash) failed`），所以 test-env.sh / run-app.sh
     这两个 .sh 入口在此不可用；本脚本是它们的 PowerShell 等价物，只依赖 docker / mvn / java。
 
-    参数解析：`Get-Content` 读中文 SQL 会按系统 ANSI 解码，管道喂给 mysql 会乱码入库（敏感词种子
-    会失配）——因此所有 SQL 都走 `cmd /c "type <file> | docker exec -i ..."`，字节原样透传。
+    参数解析：`Get-Content` 读中文 SQL 会按系统 ANSI 解码，管道喂给 mysql 会乱码入库——
+    因此所有 SQL 都走 `cmd /c "type <file> | docker exec -i ..."`，字节原样透传。
 
     拉起顺序与依赖（`up` 严格按此顺序执行，每一步都幂等、可重复跑）：
 
@@ -104,7 +104,6 @@ $MiddlewareNoHealth = @('bs-rocketmq-broker', 'bs-xxl-job-admin')
 
 # 已废弃的 RocketMQ topic / 消费组（票 17 编排收口）。
 # 判据：全仓 grep 两个工程源码，已无任何 @RocketMQMessageListener / Producer group / topic 常量引用它们
-#   bs-agent-review         旧审核链路（票 02 删除）
 #   bs-want-paid            旧支付下单链路（票 03 删除）
 #   bs-errand-grouped       旧跑腿成团（票 04 删除）
 #   bs-errand-member-changed 旧成团成员变更（票 04 删除）

@@ -7,7 +7,7 @@
         create_time, update_time
     </sql>
 
-    <!-- 各语句统一纯 post_comment 单表列清单：作者昵称（bs_user）、驳回理由（content_review 最新 REJECT 行）、
+    <!-- 各语句统一纯 post_comment 单表列清单：作者昵称（bs_user）、
          楼内的指向评论（post_comment 父行自连）、主页 tab 的来源帖标题封面（post）均由仓储二次回查拼装
          （SQL 层零 JOIN）。like_count 不在列清单里（票 02）：真源在 post_comment_like_count，
          由仓储按页内 id 集批量回查填充。评论点赞关系 / 点赞计数窄表 / 热评索引 / 评论计数窄表语句分别在
@@ -19,22 +19,16 @@
         VALUES (#{commentId}, #{postId}, #{userId}, #{content}, #{state}, #{rootId}, #{parentId}, NOW(), NOW())
     </insert>
 
-    <!-- 根评论列表（默认档 / sort=new）：只查 root_id='0'；NORMAL 公开，作者本人的待审/被拒根评论对其可见
-         （无标识、与正常评论同展示）。total 口径 = 他人可见（仅 NORMAL，不含待审），作者视角行数可能多于 total。
+    <!-- 根评论列表（默认档 / sort=new）：只查 root_id='0'；仅 NORMAL 公开。
          排序 = create_time 升序 + 业务 ID 升序（uuid-biz-id 票 03：业务 ID 是 UUID、无序，发布时间先后由
          create_time 表达，业务 ID 只做同值收敛）；最热档不走这条——它在 post_comment_feed_index 上两级取数
-         （见 IPostCommentFeedIndexDao.selectRootFeedCommentIds），顺序来自索引、且只有已过审根评论（热评档不自见） -->
+         （见 IPostCommentFeedIndexDao.selectRootFeedCommentIds），顺序来自索引 -->
     <select id="selectRootPageByPostId" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
         FROM post_comment c
         WHERE c.post_id = #{postId}
           AND c.root_id = '0'
-          AND (c.state = 'NORMAL'
-              <if test="viewerId != null">
-                  OR (c.state = 'PENDING_REVIEW' AND c.user_id = #{viewerId})
-                  OR (c.state = 'REJECTED' AND c.user_id = #{viewerId})
-              </if>
-          )
+          AND c.state = 'NORMAL'
         ORDER BY c.create_time, c.comment_id
         LIMIT #{offset}, #{limit}
     </select>
@@ -62,32 +56,24 @@
 
     <!-- 楼内子回复平铺：按 root_id 归组、create_time 升序 + 业务 ID 升序、仅 NORMAL；
          指向评论行（reply_to_*）由仓储按 parent_id 集单表回查拼装、忽略其状态
-         （被指向评论被删/未通过时昵称仍可读）。
+         （被指向评论被删时昵称仍可读）。
          like_count 不在列清单里（票 02，真源在 post_comment_like_count，仓储批量回查填充）；
          reply_count 只对根评论有意义，楼内不取 -->
     <select id="selectRepliesByRootId" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
         FROM post_comment c
         WHERE c.root_id = #{rootId}
-          AND (c.state = 'NORMAL'
-              <if test="viewerId != null">
-                  OR (c.state IN ('PENDING_REVIEW', 'REJECTED') AND c.user_id = #{viewerId})
-              </if>
-          )
+          AND c.state = 'NORMAL'
         ORDER BY c.create_time, c.comment_id
         LIMIT #{offset}, #{limit}
     </select>
 
-    <!-- 楼内可见子回复总数（viewerId 非空时含其本人待审/未通过，与分页口径一致） -->
+    <!-- 楼内可见子回复总数（仅 NORMAL，与分页口径一致） -->
     <select id="countRepliesForThread" resultType="long">
         SELECT COUNT(*)
         FROM post_comment
         WHERE root_id = #{rootId}
-          AND (state = 'NORMAL'
-              <if test="viewerId != null">
-                  OR (state IN ('PENDING_REVIEW', 'REJECTED') AND user_id = #{viewerId})
-              </if>
-          )
+          AND state = 'NORMAL'
     </select>
 
     <select id="countRepliesByRootId" resultType="long">
@@ -116,7 +102,7 @@
         ORDER BY c.create_time DESC, c.comment_id DESC
     </select>
 
-    <!-- 单条评论（点赞/审核前置检查、详情组装）。like_count 不在列清单里（票 02）：
+    <!-- 单条评论（点赞前置检查、详情组装）。like_count 不在列清单里（票 02）：
          真源在 post_comment_like_count，仓储按单元素 id 集同一条回查通路填充 -->
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
@@ -124,8 +110,7 @@
         WHERE c.comment_id = #{commentId}
     </select>
 
-    <!-- 按 id 集批量回查（不分状态：楼内指向评论回查要忽略父行状态；审核队列素材回查只取待审行时
-         由调用方按 state 过滤） -->
+    <!-- 按 id 集批量回查（不分状态：楼内指向评论回查要忽略父行状态） -->
     <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
         FROM post_comment c
@@ -144,26 +129,8 @@
         ORDER BY sortTime DESC, post_id DESC
     </select>
 
-    <!-- 审核通过：PENDING_REVIEW → NORMAL（条件 UPDATE，1 行才评论数 +1，幂等） -->
-    <update id="approveById">
-        UPDATE post_comment
-        SET state = 'NORMAL',
-            update_time = NOW()
-        WHERE comment_id = #{commentId}
-          AND state = 'PENDING_REVIEW'
-    </update>
-
-    <!-- 审核驳回：PENDING_REVIEW → REJECTED（终态，待审从未计数无需回补） -->
-    <update id="rejectById">
-        UPDATE post_comment
-        SET state = 'REJECTED',
-            update_time = NOW()
-        WHERE comment_id = #{commentId}
-          AND state = 'PENDING_REVIEW'
-    </update>
-
     <!-- 统一软删：用户删除与举报下架同轨，状态转 DELETED、行保留（物理 DELETE 已废弃）。
-         仅指定前置状态可翻转：REJECTED/DELETED 终态不翻；扣减计数与否由实际命中的前置状态决定，防审核并发漂移 -->
+         仅指定前置状态可翻转：DELETED 终态不翻；扣减计数与否由实际命中的前置状态决定 -->
     <update id="markDeletedFromStatus">
         UPDATE post_comment
         SET state = 'DELETED',
@@ -181,13 +148,11 @@
     </select>
 
     <!-- ── 热评索引全量重建的取数①（票 03）：主表 post_comment。重灌：根评论一行 1:1 投影，
-         行集 = root_id = '0' AND state = 'NORMAL'（与运行期口径一致：过审诞生、
+         行集 = root_id = '0' AND state = 'NORMAL'（与运行期口径一致：发布即诞生、
          软删物理退场，所以没有 state 列要投影）。这条 state 判据的前提是「评论软删是终态、没有恢复路径」——
          原文来自 spec §2.2 的建表理由；将来若给评论开恢复路径，这张表的行集语义与这条 SQL 要一起改。
-         原 INSERT..SELECT 一步投影改为仓储三段查拼装：① selectRebuildRows 取根评论行；
+         原 INSERT..SELECT 一步投影改为仓储多查拼装：① selectRebuildRows 取根评论行（createTime = 评论 create_time）；
          ② like_count 从计数窄表抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径）；
-         ③ create_time 取审核记录最近一次 APPROVE 时刻 = 行诞生时的口径（通过时刻，经
-         IContentReviewDao.selectApproveRowsByTargetType），查不到审批流水的存量行取评论 create_time 兜底；
          组装后走 IPostCommentFeedIndexDao.insertFeedIndexRows 批量写回。update_time 每次重建刷 NOW()：技术时间戳、非排序键 -->
     <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.comment.po.CommentFeedIndexRow">
         SELECT c.comment_id AS commentId, c.post_id AS postId, c.create_time AS createTime

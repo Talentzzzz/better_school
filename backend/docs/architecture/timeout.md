@@ -37,7 +37,7 @@
 
 1. `TimeoutTaskCallbackDispatcher` 实现 domain 端口却落在 `usecase.timeout`——分发要调其它域的 case，
    infrastructure 看不到 case 层。这是「端口由 infrastructure 实现」的显式例外（同款说明见 CLAUDE.md §4）。
-2. 三个业务仓储（trade / errand / review 侧，其中 review 的注册落在 `ReviewTaskPoolStore`）在自己的事务里
+2. 两个业务仓储（trade / errand 侧）在自己的事务里
    注入 `ITimeoutRepository` 注册超时行——「域不注入他域仓储」的显式例外。同事务注册是内嵌化的全部前提，
    注册必须落在**已经开着事务的那个仓储方法**里；域服务本身仍不注入超时仓储，也不自持事务边界（见 CLAUDE.md §1/§3）。
 
@@ -68,8 +68,7 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 - g 同时塞 `HintManager.addDatabaseShardingValue` + `addTableShardingValue` 两个 hint 值；
   认领只看全局号 `g % shardTotal == shardIndex && g < 16`，与库表两维解耦。
 - **不加 `user_id`**：主查询按 `(status, next_fire_time)` 扫、分片键不参与；路由键 ⊥ 幂等键会引入
-  「user 与幂等键绑定不可变」这条额外不变量，破了即双行双回调；且 `REVIEW_LEASE_TIMEOUT` 的复合
-  `bizId` 没有天然 user。
+  「user 与幂等键绑定不可变」这条额外不变量，破了即双行双回调。
 
 **ShardingSphere 5.5.3 的形态（票 01 实测，别改回去）**：
 
@@ -92,14 +91,13 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 
 ## 3. 注册：业务事务内直插（票 03）
 
-四个接入点在**各域仓储自己的事务方法**里调 `ITimeoutRepository.register`：
+三个接入点在**各域仓储自己的事务方法**里调 `ITimeoutRepository.register`：
 
 | taskType | 注册点 | 计时起点 | bizId |
 | --- | --- | --- | --- |
 | `PRODUCT_ORDER_PAY_TIMEOUT` | `TradeRepository.createOrderWithLock` | 下单时刻 + 15min | 裸 `productOrderId` |
 | `ERRAND_PAY_TIMEOUT` | `ErrandRepository.createWithPayTimeout` / `submitDraftWithPayTimeout` | 创建时刻 + 15min | 裸 `errandOrderId` |
 | `ERRAND_LOCK_TIMEOUT` | `ErrandRepository.grabWithLockTimeout`（`PUBLISHED→LOCKED` 同事务） | 锁单时刻 + 5min | `{orderId}:{lockSeq}` |
-| `REVIEW_LEASE_TIMEOUT` | `ReviewTaskPoolStore.claim`（条件 UPDATE 同事务） | 领单时刻 + 5min | `{taskId}:{claimSeq}` |
 
 **三分支幂等**（裁决权全在库上，与「读-判-写」时序无关）：
 
@@ -112,7 +110,7 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
   新计时被旧到点吞掉；回调侧轮次守卫（条件 UPDATE 带 seq）让陈旧回调幂等落空。
 - `cancelActive` 是业务取消（只打未终态行）；死信取消是管理面另一条（只打 `FAILED`），语义不混。
 - **同事务注册后，旧「先 cancel 再复位」纪律已不需要**：那是 outbox 时代「注册在途 vs 取消竞态」的产物；
-  当前四个接入方也都不调取消。
+  当前各接入方也都不调取消。
 
 ## 4. 调度：xxl 分片广播 + 有界并行（票 04）
 
@@ -165,16 +163,15 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 ## 6. 回调：进程内分发（票 05）
 
 `TimeoutTaskScanCase` 到点后逐项调用 `ITimeoutTaskCallbackPort`，生产实现是
-`usecase.timeout.TimeoutTaskCallbackDispatcher`——按 `taskType` switch 到四个既有域动作：
+`usecase.timeout.TimeoutTaskCallbackDispatcher`——按 `taskType` switch 到三个既有域动作：
 
 | taskType | 动作 | 说明 |
 | --- | --- | --- |
 | `PRODUCT_ORDER_PAY_TIMEOUT` | `ProductOrderCase.handlePayTimeout` | 条件 UPDATE 取消 + 商品回在售 + 搜索同步消息 |
 | `ERRAND_PAY_TIMEOUT` | `ErrandOrderCase.handlePayTimeout` | 条件 UPDATE 取消 |
 | `ERRAND_LOCK_TIMEOUT` | `ErrandOrderCase.handleLockTimeout` | `LOCKED→PUBLISHED`（`lock_seq` 轮次守卫）+ 落订单事件 + 通知被释放方 |
-| `REVIEW_LEASE_TIMEOUT` | `IReviewService.handleLeaseTimeout` | `CLAIMED→PENDING`（`claim_seq` 轮次守卫，`recycle_count+1`） |
 
-- **幂等责任仍在业务状态机**：未命中（已支付 / 已取消 / 已裁决 / 不存在）= 幂等成功、零副作用。
+- **幂等责任仍在业务状态机**：未命中（已支付 / 已取消 / 不存在）= 幂等成功、零副作用。
   **不要**在回调层加去重表或「已处理 key」。
 - **逐项隔离**：一项抛异常只让这一项算失败，同批其余项照常回调、照常结算；扫描 case 逐项 catch。
 - **未注册的 taskType、坏 `bizId` 一律按失败重投**（不静默当成功吞掉）：前者是注册与消费的 `Constants`
@@ -191,7 +188,7 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 | 重发 | `POST …/dead-letters/resend` | `FAILED → RETRYING`（`retry_count` 清零、`next_fire_time = now`，**不动 `action_time`**） |
 | 取消 | `POST …/dead-letters/cancel` | `FAILED → CANCELED` |
 
-- **鉴权**：登录态由 JWT 过滤链罩住（未登录 401），控制器内收 **ADMIN**（其余 403，与 `AdminReviewController` 同款）。
+- **鉴权**：登录态由 JWT 过滤链罩住（未登录 401），控制器内收 **ADMIN**（其余 403）。
 - **列表是唯一跨 16 分表广播的查询**（按状态翻，SQL 无分片键）：故意不塞 hint。**别给它塞 hint**——
   塞了只查一张表、翻不出全量死信。每页上限 50、页码上限 1000 是刻意夹住的（广播一次 = 16 张表各扫一遍，
   深 offset 每张各付一遍）；且与用户请求共享池 10，夹住比放开更必要。
@@ -215,7 +212,7 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 判据（防「内嵌中心 + 域内扫描」长期并存）：
 
 - **deadline 已是业务列、动作在同域** → 域内扫描（现状：`errandTimeoutScan` / `tradeExpireScan` /
-  `productTimeoutScan` / `postReviewTimeoutScan` 都不收编；`errandTimeoutScan` 还是 MQ 延迟消息的兜底）。
+  `productTimeoutScan` 都不收编；`errandTimeoutScan` 还是 MQ 延迟消息的兜底）。
 - **deadline 无处存放 / 动作跨域 / 需要重试-退避-死信-管理面** → 超时中心。
 
 接入四步：
@@ -241,7 +238,7 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
   （同 bizId 被三分支吸收）。
 - 相关集成测试：`TimeoutShardingRouteIntegrationTest`、`TimeoutInTransactionRegistrationIntegrationTest`、
   `TimeoutTaskScanIntegrationTest`（含多实例/退避/死信/竞态）、`TimeoutTaskScanParallelismIntegrationTest`、
-  `TimeoutTaskCallbackIntegrationTest`、`ErrandLockTimeoutIntegrationTest`、`ReviewTaskLeaseIntegrationTest`、
+  `TimeoutTaskCallbackIntegrationTest`、`ErrandLockTimeoutIntegrationTest`、
   `TimeoutDeadLetterSurfaceIntegrationTest`、`TimeoutTaskEndToEndIntegrationTest`。
 
 ## 11. 切换与存量（票 07，已完成）

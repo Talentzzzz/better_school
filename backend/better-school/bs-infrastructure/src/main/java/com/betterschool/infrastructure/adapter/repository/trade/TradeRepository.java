@@ -1,6 +1,5 @@
 package com.betterschool.infrastructure.adapter.repository.trade;
 
-import com.betterschool.domain.moderation.model.valobj.ReviewTargetTypeVO;
 import com.betterschool.domain.search.model.valobj.SearchEntityType;
 import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
 import com.betterschool.domain.timeout.adapter.repository.ITimeoutRepository;
@@ -22,9 +21,6 @@ import com.betterschool.infrastructure.dao.product.po.Product;
 import com.betterschool.infrastructure.dao.productorder.IProductOrderDao;
 import com.betterschool.infrastructure.dao.productorder.po.ProductOrderEvent;
 import com.betterschool.infrastructure.dao.productorder.po.ProductOrder;
-import com.betterschool.infrastructure.adapter.repository.moderation.ReviewTaskPoolStore;
-import com.betterschool.infrastructure.dao.moderation.IContentReviewDao;
-import com.betterschool.infrastructure.dao.moderation.po.ContentReview;
 import com.betterschool.infrastructure.dao.product.IProductDao;
 import com.betterschool.infrastructure.dao.product.po.ProductFeedIndexRow;
 import com.betterschool.infrastructure.dao.product.po.Product;
@@ -96,14 +92,11 @@ public class TradeRepository implements ITradeRepository {
     private final ObjectMapper objectMapper;
     private final OutboxMessageStore outboxMessageStore;
     private final ITimeoutRepository timeoutRepository;
-    private final ReviewTaskPoolStore reviewTaskPoolStore;
     private final TransactionTemplate transactionTemplate;
     /** 浏览类写入的唯一通道（fire-and-forget，窗口后一组一个事务三步落 UV 明细 + 加速列） */
     private final ViewMergeWriter viewMergeWriter;
     /** 卖家昵称头像批量回查（SQL 层零 JOIN：商品列表/详情的 bs_user 信息在这里多查一次拼装） */
     private final IUserDao userDao;
-    /** feed 索引重建取 APPROVE 审批流水（content_review 单表，IContentReviewDao 内该语句零 JOIN） */
-    private final IContentReviewDao contentReviewDao;
 
     // ---------- 商品 ----------
 
@@ -114,11 +107,10 @@ public class TradeRepository implements ITradeRepository {
             productEntity.setProductId(UUID.randomUUID().toString());
             Product product = toPO(productEntity);
             productDao.insert(product);
-            // 入池点（spec §5.1）：提交落库即待审，工单开单与状态同事务（草稿行 DRAFT 不入池）；
-            // entered_at 由开单 SQL NOW() 落库（时刻一律数据库时钟，≈发布时刻，同事务同秒）
-            if (productEntity.getStatus() == ProductStatusVO.PENDING_REVIEW) {
-                reviewTaskPoolStore.enter(ReviewTargetTypeVO.PRODUCT, productEntity.getProductId(),
-                        productEntity.getReviewRound(), productEntity.getUserId());
+            if (productEntity.getStatus() == ProductStatusVO.ON_SALE) {
+                // 发布即可见：feed 索引行诞生 + 搜索同步消息，与落库同一事务
+                productFeedIndexDao.upsertFeedIndexOnApprove(productEntity.getProductId());
+                saveSearchSyncMessage(productEntity.getProductId());
             }
             return null;
         });
@@ -158,10 +150,10 @@ public class TradeRepository implements ITradeRepository {
             if (productDao.relist(productId) == 0) {
                 return null; // 条件 UPDATE 0 行由上层终态判定
             }
-            // 入池点：重新上架回待审（SOLD→PENDING_REVIEW，轮次 +1）；读回本事务内新轮次/进入待审时刻开单
-            enterPoolForPendingReview(productId);
-            // 索引行同事务翻回不可见（行必存在：SOLD 前必经过 ON_SALE，行诞生于首次通过）
-            syncFeedIndexState(productId, ProductStatusVO.PENDING_REVIEW);
+            // 索引行同事务翻回可见（行必存在：SOLD 前必经过 ON_SALE）
+            syncFeedIndexState(productId, ProductStatusVO.ON_SALE);
+            // 重新对外可见，落搜索同步消息（消费方按状态 upsert）
+            saveSearchSyncMessage(productId);
             return null;
         });
     }
@@ -176,11 +168,9 @@ public class TradeRepository implements ITradeRepository {
         Boolean submitted = transactionTemplate.execute(status -> {
             boolean updated = productDao.submitDraft(productId) > 0;
             if (updated) {
-                // 入池点：草稿提交进待审，轮次递增同事务可见；读回本事务内新值开单
-                enterPoolForPendingReview(productId);
-                // 索引行同事务不可见化：行存在（下架回草稿箱后重提）时翻 PENDING_REVIEW，
-                // 从未通过审的草稿 0 行静默
-                syncFeedIndexState(productId, ProductStatusVO.PENDING_REVIEW);
+                // 提交即上架可见：feed 索引行诞生/翻回 + 搜索同步消息，同一事务
+                productFeedIndexDao.upsertFeedIndexOnApprove(productId);
+                saveSearchSyncMessage(productId);
             }
             return updated;
         });
@@ -205,37 +195,6 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public List<String> listReviewTimeoutIds(LocalDateTime before, int limit) {
-        return productDao.selectReviewTimeoutIds(before, limit);
-    }
-
-    @Override
-    public boolean withdraw(String productId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            boolean withdrawn = productDao.withdraw(productId) > 0;
-            if (withdrawn) {
-                // 退出待审（撤回回草稿箱）：在途工单出池停 DONE，防池中遗留指向非待审行的幽灵工单
-                reviewTaskPoolStore.close(ReviewTargetTypeVO.PRODUCT, productId);
-                // 索引行同事务不可见化：行不存在（从未通过审，撤回的常态）时 0 行静默
-                syncFeedIndexState(productId, ProductStatusVO.DRAFT);
-            }
-            return withdrawn;
-        }));
-    }
-
-    @Override
-    public boolean rejectToDraft(String productId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            boolean updated = productDao.rejectToDraft(productId) > 0;
-            if (updated) {
-                // 被拒转草稿同事务索引行不可见化：行不存在（从未通过审）时 0 行静默
-                syncFeedIndexState(productId, ProductStatusVO.DRAFT);
-            }
-            return updated;
-        }));
-    }
-
-    @Override
     public boolean editOnSaleContent(ProductEntity productEntity) {
         // 手工组装编辑 PO（不用 toPO：未变更字段保持 null，动态 SQL 才不会覆盖）
         Product product = new Product();
@@ -247,11 +206,13 @@ public class TradeRepository implements ITradeRepository {
         Boolean edited = transactionTemplate.execute(status -> {
             boolean updated = productDao.editOnSaleContent(product) > 0;
             if (updated) {
-                // 入池点：在售改内容回待审（轮次递增同事务可见）；读回本事务内新值开单
-                enterPoolForPendingReview(productEntity.getProductId());
-                // 索引行同事务不可见化（行必存在：ON_SALE 才可改内容）；混提的新价不在此同步，
-                // 恢复可见由 approve 语句的 price 快照兜住
-                syncFeedIndexState(productEntity.getProductId(), ProductStatusVO.PENDING_REVIEW);
+                // 改内容立即生效（状态不变，行必存在：ON_SALE 才可改内容）；
+                // 混提的新价同事务刷新索引 price 快照，防价格排序漂移
+                if (productEntity.getPrice() != null
+                        && productFeedIndexDao.updateFeedIndexPrice(productEntity.getProductId(), productEntity.getPrice()) == 0) {
+                    log.warn("[TradeRepository] 在售改内容的索引价格旁路落 0 行：索引行缺失（存量异常），交重建 job 兜底 productId={}",
+                            productEntity.getProductId());
+                }
             }
             return updated;
         });
@@ -269,31 +230,6 @@ public class TradeRepository implements ITradeRepository {
                 }
             }
             return updated;
-        }));
-    }
-
-    @Override
-    public boolean reviewApproveById(String productId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            boolean approved = productDao.reviewApproveById(productId) > 0;
-            if (approved) {
-                // feed 索引行诞生/翻回（同事务）：INSERT 侧落 price 快照与 feed_time（本次通过时刻），
-                // 重提再通过经 ODKU 刷新 feed_time 与 price（进入当前对外可见轮的口径）
-                productFeedIndexDao.upsertFeedIndexOnApprove(productId);
-            }
-            return approved;
-        }));
-    }
-
-    @Override
-    public boolean reviewRejectById(String productId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            boolean rejected = productDao.reviewRejectById(productId) > 0;
-            if (rejected) {
-                // 索引行同事务不可见化：从未通过审的商品 0 行静默（REJECTED 只可从待审可达）
-                syncFeedIndexState(productId, ProductStatusVO.REJECTED);
-            }
-            return rejected;
         }));
     }
 
@@ -388,24 +324,18 @@ public class TradeRepository implements ITradeRepository {
     }
 
     /**
-     * 重灌行集拼装（原 INSERT..SELECT 一步投影的多查形态）：行集 = ON_SALE 商品 ∪ 有过审批通过的商品。
-     * 三段取数——① product 全量 (product_id, state, create_time, price)；② content_review 的 APPROVE 流水
-     * （feed_time 真源，经 IContentReviewDao 单表 GROUP BY，查不到审批流水取 create_time 兜底）；
-     * ③ view_count 从计数窄表抄入（无行 = 0）——组装后批量写回
+     * 重灌行集拼装（原 INSERT..SELECT 一步投影的多查形态）：行集 = ON_SALE 商品。
+     * 两段取数——① product 全量 (product_id, state, create_time, price)，feed_time = create_time；
+     * ② view_count 从计数窄表抄入（无行 = 0）——组装后批量写回
      */
     private int rebuildFeedIndexRows() {
-        Map<String, LocalDateTime> approveTimes = new HashMap<>();
-        for (ContentReview approveRow : contentReviewDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.PRODUCT.name())) {
-            approveTimes.put(approveRow.getTargetId(), approveRow.getCreateTime());
-        }
         List<ProductFeedIndexRow> feedIndexRowList = new ArrayList<>();
         for (ProductFeedIndexRow candidate : productDao.selectRebuildRows()) {
-            boolean approved = approveTimes.containsKey(candidate.getProductId());
-            if (!ProductStatusVO.ON_SALE.name().equals(candidate.getState()) && !approved) {
-                // 从未通过审的待审/驳回/草稿商品不凭空进索引
+            if (!ProductStatusVO.ON_SALE.name().equals(candidate.getState())) {
+                // 草稿/已删商品不凭空进索引
                 continue;
             }
-            candidate.setFeedTime(approveTimes.getOrDefault(candidate.getProductId(), candidate.getCreateTime()));
+            candidate.setFeedTime(candidate.getCreateTime());
             feedIndexRowList.add(candidate);
         }
         if (!feedIndexRowList.isEmpty()) {
@@ -785,21 +715,8 @@ public class TradeRepository implements ITradeRepository {
                 // 0 行即抛，在事务内回滚（异常点与改造前一致，不在域内抛）
                 throw new BusinessException(ResponseCode.BUSINESS_ERROR, "商品状态已变化，请刷新后重试");
             }
-            // 改内容回待审：期间他人不可见，同事务落搜索同步消息，消费方按状态删文档
+            // 改内容立即生效，同事务落搜索同步消息（消费方按状态 upsert）
             saveSearchSyncMessage(productEntity.getProductId());
-            return null;
-        });
-    }
-
-    @Override
-    public void reviewApproveWithSearchSync(String productId) {
-        transactionTemplate.execute(status -> {
-            if (!reviewApproveById(productId)) {
-                // 0 行即抛，在事务内回滚（异常点与改造前一致，不在域内抛）
-                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "商品状态已变化，请刷新后重试");
-            }
-            // 先审后售：审核通过转 ON_SALE 时落搜索同步消息（进入对外可见态，消费方按状态 upsert）
-            saveSearchSyncMessage(productId);
             return null;
         });
     }
@@ -812,8 +729,6 @@ public class TradeRepository implements ITradeRepository {
             if (publiclyVisible) {
                 saveSearchSyncMessage(productId);
             }
-            // 待审商品可被卖家删除：退出待审同事务出池（其余状态无在途工单，幂等 0 行无害）
-            reviewTaskPoolStore.close(ReviewTargetTypeVO.PRODUCT, productId);
             return null;
         });
     }
@@ -895,18 +810,6 @@ public class TradeRepository implements ITradeRepository {
 
     // ---------- PO / Entity 转换 ----------
 
-    /**
-     * 商品入池开单（须处于状态迁移的同事务内）：读回刚翻转为 PENDING_REVIEW 的行的
-     * 轮次 / 作者，交 ReviewTaskPoolStore 幂等开单（uk_target_round 吸收重复；
-     * entered_at 由开单 SQL NOW() 落库，时刻一律数据库时钟）
-     */
-    private void enterPoolForPendingReview(String productId) {
-        Product pending = productDao.selectById(productId);
-        reviewTaskPoolStore.enter(ReviewTargetTypeVO.PRODUCT, productId,
-                pending.getReviewRound() == null ? 1 : pending.getReviewRound(),
-                pending.getUserId());
-    }
-
     private Product toPO(ProductEntity productEntity) {
         Product product = new Product();
         product.setProductId(productEntity.getProductId());
@@ -919,7 +822,6 @@ public class TradeRepository implements ITradeRepository {
         product.setTradeLocation(productEntity.getTradeLocation());
         product.setCategory(productEntity.getCategory() == null ? null : productEntity.getCategory().name());
         product.setState(productEntity.getStatus().name());
-        product.setReviewRound(productEntity.getReviewRound());
         product.setViewCount((int) productEntity.getViewCount());
         return product;
     }
@@ -938,8 +840,6 @@ public class TradeRepository implements ITradeRepository {
         productEntity.setTradeLocation(product.getTradeLocation());
         productEntity.setCategory(product.getCategory() == null ? null : ProductCategoryVO.valueOf(product.getCategory()));
         productEntity.setStatus(ProductStatusVO.valueOf(product.getState()));
-        productEntity.setReviewRound(product.getReviewRound() == null ? 0 : product.getReviewRound());
-        productEntity.setReviewEnteredAt(product.getReviewEnteredAt());
         productEntity.setViewCount(product.getViewCount());
         productEntity.setCreatedAt(product.getCreateTime());
         productEntity.setExpireAt(product.getExpireAt());

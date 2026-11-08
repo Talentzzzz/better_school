@@ -9,7 +9,7 @@ import java.util.List;
 
 /**
  * 商品上架后编辑请求：全字段可选，null = 不改该项；
- * 编辑语义由服务端判定——仅 price 非空为改价（立即生效），title/description/images 任一非空为改内容（回待审）
+ * 编辑语义由服务端判定——全部变更立即生效（状态保持 ON_SALE 不变）
  */
 @Data
 public class ProductEditRequestDTO {

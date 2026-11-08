@@ -15,22 +15,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 评论区基线（票 01）：发布 / 列表 / 删除的外部行为，v2 重构期间随票替换实现同步改写。
  *
- * <p>04 票改写：total 真实总数、作者可见自己审核中的评论。
- * 05 票改写：发布异步审核（落库即待审），需要"可见/计数"断言的用例先驱动审核消费者。
+ * <p>04 票改写：total 真实总数。
  * 07 票改写：删除统一软删（行保留 DELETED），详细语义见 CommentDeleteSemanticsIntegrationTest。
+ * 审核语义移除后：评论发布即 NORMAL 可见、计数 +1。
  */
 @DisplayName("评论区现状基线：发布 / 列表 / 删除（平铺版现状）")
 class PostCommentBaselineIntegrationTest extends CommunityApiTestBase {
 
     @Test
-    @DisplayName("发布评论经异步审核通过后：NORMAL 可见，帖子评论数 +1")
+    @DisplayName("发布评论后：NORMAL 可见，帖子评论数 +1")
     void publish_normalComment_visibleToList() {
         Session author = registerAndLogin("13800000001", "评论作者");
         String postId = publishPost(author, "正常帖子内容，欢迎评论");
         Session commenter = registerAndLogin("13800000002", "路人甲");
 
-        String commentId = publishCommentAndGetId(postId, commenter, "我来围观一下");
-        driveCommentReview(commentId);
+        publishCommentAndGetId(postId, commenter, "我来围观一下");
 
         // 访客视角可见：内容、昵称、实名作者
         JsonNode listData = listCommentsAsGuest(postId, 1, 10);
@@ -42,38 +41,8 @@ class PostCommentBaselineIntegrationTest extends CommunityApiTestBase {
         // 匿名概念已整体移除（v2 票 02）：响应不再携带 anonymous 字段
         assertThat(comment.path("anonymous").isMissingNode()).isTrue();
 
-        // 评论数口径：审核通过时 +1（帖子详情可观察）
+        // 评论数口径：发布时 +1（帖子详情可观察）
         assertThat(postCommentCountOf(postId)).isEqualTo(1);
-    }
-
-    @Test
-    @DisplayName("发布待审评论：先审后发，PENDING_REVIEW 时作者可见、他人与访客不可见")
-    void publish_pendingComment_visibleOnlyToAuthor() {
-        Session author = registerAndLogin("13800000001", "评论作者");
-        String postId = publishPost(author, "正常帖子内容，欢迎评论");
-        Session commenter = registerAndLogin("13800000002", "路人甲");
-
-        JsonNode response = publishComment(postId, commenter, "一条待审的评论");
-        assertSuccess(response, "发布评论");
-
-        // 待审评论不公开：访客看不到
-        JsonNode listData = listCommentsAsGuest(postId, 1, 10);
-        assertThat(listData.path("list")).as("待审评论不应出现在访客列表").isEmpty();
-
-        // v2 票 04：列表带作者视角——作者可见自己审核中的评论（无标识），他人与访客不可见。
-        // 走默认档（sort=new，id 序）：最热档只收已过审根评论、不自见（票 01）
-        JsonNode authorListData = getJson("/api/community/posts/" + postId + "/comments?page=1&pageSize=10&sort=new", commenter);
-        assertSuccess(authorListData, "作者视角评论列表");
-        assertThat(authorListData.path("data").path("list")).as("作者可见自己审核中的评论").hasSize(1);
-        assertThat(authorListData.path("data").path("list").get(0).path("content").asText())
-                .contains("待审的评论");
-
-        // 数据库可观察状态：行已落库，状态 PENDING_REVIEW
-        assertThat(commentRowCountOf(postId)).isEqualTo(1);
-        assertThat(commentStatusOfLatestComment(postId)).isEqualTo("PENDING_REVIEW");
-
-        // 待审不计数（计数仅在人工通过时 +1）
-        assertThat(postCommentCountOf(postId)).isEqualTo(0);
     }
 
     @Test
@@ -89,9 +58,6 @@ class PostCommentBaselineIntegrationTest extends CommunityApiTestBase {
         // uuid-biz-id 票 03：默认档序 = create_time, comment_id。同秒发布的 UUID 退化为字典序（与发布先后
         // 无关），错开 create_time 固化「按发布先后切片」的期望口径；id 本身不再有序，isSorted 断言随之退役
         staggerCommentCreateTimes(publishedIds.toArray(new String[0]));
-        for (String id : publishedIds) {
-            driveCommentReview(id);
-        }
         // 默认档（不传 sort）= 最热档，第一级扫描读索引表 create_time 快照：同样错开
         staggerCommentIndexCreateTimes(publishedIds.toArray(new String[0]));
 
@@ -120,7 +86,8 @@ class PostCommentBaselineIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800000001", "帖子作者");
         String postId = publishPost(author, "待删除评论的帖子");
         Session commenter = registerAndLogin("13800000002", "评论作者");
-        driveAllCommentReviewsAfterPublishing(postId, commenter, "第一条评论", "第二条评论");
+        publishCommentAndGetId(postId, commenter, "第一条评论");
+        publishCommentAndGetId(postId, commenter, "第二条评论");
 
         // UUID 化后同秒评论的默认档序收敛键 = create_time, comment_id（同秒退化为字典序，与发布先后无关）：
         // 按内容定位目标评论，不假设列表首位是先发的那条
@@ -147,7 +114,7 @@ class PostCommentBaselineIntegrationTest extends CommunityApiTestBase {
         Session postOwner = registerAndLogin("13800000001", "帖主");
         String postId = publishPost(postOwner, "帖主维护评论区的帖子");
         Session commenter = registerAndLogin("13800000002", "评论者");
-        driveAllCommentReviewsAfterPublishing(postId, commenter, "会被帖主删掉的评论");
+        publishCommentAndGetId(postId, commenter, "会被帖主删掉的评论");
 
         String targetCommentId = firstCommentId(postId);
         assertSuccess(deleteJson("/api/community/comments/" + targetCommentId, postOwner), "帖主删除他人评论");
@@ -165,7 +132,6 @@ class PostCommentBaselineIntegrationTest extends CommunityApiTestBase {
         Session commenter = registerAndLogin("13800000002", "评论作者");
         String targetCommentId = publishComment(postId, commenter, "不该被别人删的评论")
                 .path("data").path("commentId").asText();
-        driveCommentReview(targetCommentId);
 
         Session stranger = registerAndLogin("13800000003", "无关路人");
         JsonNode response = deleteJson("/api/community/comments/" + targetCommentId, stranger);
@@ -194,19 +160,6 @@ class PostCommentBaselineIntegrationTest extends CommunityApiTestBase {
     }
 
     // ---------- 本类局部辅助 ----------
-
-    /** 发布若干评论并全部驱动审核通过（发布响应含完整 DTO，异步审核后评论才可见/计数） */
-    private void driveAllCommentReviewsAfterPublishing(String postId, Session author, String... contents) {
-        for (String content : contents) {
-            driveCommentReview(publishCommentAndGetId(postId, author, content));
-        }
-    }
-
-    private String commentStatusOfLatestComment(String postId) {
-        List<String> statuses = jdbcTemplate.queryForList(
-                "SELECT state FROM post_comment WHERE post_id = ? ORDER BY comment_id DESC LIMIT 1", String.class, postId);
-        return statuses.isEmpty() ? null : statuses.get(0);
-    }
 
     private String firstCommentId(String postId) {
         JsonNode listData = listCommentsAsGuest(postId, 1, 10);

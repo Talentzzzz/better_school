@@ -30,7 +30,7 @@ types →（无内部依赖）
 - **一域一仓储**：每个业务域**恰有一个** `I<域>Repository` 接口与一个实现（读写同一接口）。实现内可注入多个 DAO（`I<域>Dao` 等）；PO、mapper XML、DAO 不因合并而变。
 - **事务落位在仓储内**：需要事务时，域服务构造参数/实体后**只调一次**仓储方法；由**仓储方法自身**在实现里用编程式事务（`TransactionTemplate`，传播恒 `REQUIRED`）把一次操作的多次读改写收成一个原子用例，并在调用方既有事务中合流。**域服务不注入 `TransactionTemplate`**，也不自持事务边界。仓储方法的事务必须是 REQUIRED——取号序/原子性/与域服务事务合流都依赖它。
 - **跨域一致性 = 幂等 + 重试，禁止 case 层包多域事务**：每个域方法自己域内事务原子；重试安全靠"状态机条件 UPDATE / 流水唯一键（wallet_detail uk_order_type、user_credit_detail uk_user_reason_ref）/ 幂等位（errand_order.taker_canceled）"；资金/信用分操作一律**流水先行插入**（INSERT IGNORE，冲突 = 已处理过幂等跳过），流水表是事实源。失败恢复：MQ 路径靠 broker 自动重试，HTTP 路径返回失败让客户端重试。
-- **超时注册的显式例外（超时内嵌化票 03）**：trade / errand / review 三个业务仓储可在**自己已经开着事务的仓储方法**里注入并调用 `ITimeoutRepository.register(...)`，把超时行与业务行收进同一个本地事务。除此之外仍遵守「域不注入他域仓储」；域服务不注入超时仓储，也不自持事务边界。理由与迁移边界见 [`docs/architecture/timeout.md`](docs/architecture/timeout.md) §1/§3。
+- **超时注册的显式例外（超时内嵌化票 03）**：trade / errand 两个业务仓储可在**自己已经开着事务的仓储方法**里注入并调用 `ITimeoutRepository.register(...)`，把超时行与业务行收进同一个本地事务。除此之外仍遵守「域不注入他域仓储」；域服务不注入超时仓储，也不自持事务边界。理由与迁移边界见 [`docs/architecture/timeout.md`](docs/architecture/timeout.md) §1/§3。
 
 ## 2. domain 层包结构（核心）
 
@@ -168,4 +168,4 @@ public class Constants {
 5. 变量命名见名知意，如UserAccount userAccount，不要省略user；各种类的创建要符合DDD规范
 6. **业务 ID 口径（uuid-biz-id 起）**：所有业务对象的对外唯一标识一律是 **UUID 字符串**（36 位连字符规范形，DB 列 `VARCHAR(36)`，Java 实体/PO/DTO/mapper 全链路 `String`）；由统一 `IIdGenerator`（types 模块，默认实现 `UuidIdGenerator` = `UUID.randomUUID()`）在 **insert 前生成、随行一次写入**。物理主键 `id BIGINT AUTO_INCREMENT` 保留为纯内部键：永不对外、永不再与业务键同值、禁止「业务列插 0 同事务回写物理 id」的旧形态（`bindBizId`/`useGeneratedKeys` 回写已全仓退役）。新增表/接口禁止用 `Long`/`bigint` 承载业务 ID；排序同值收敛用「时间 + 业务 ID」复合键，不要拿 UUID 当时间代理；分片/合并路由的哈希输入是业务 ID 字符串本身（`String.hashCode` 折叠），不做数值化假设。
 
-7. **SQL 层零 JOIN**：mapper XML 全部语句只做单表读/写；跨表展示数据（昵称头像、计数窄表、关系列表的业务行、审核素材、台账面额等）由仓储层「主查 + 按 id 集批量回查 + Java 拼装」多查收口，可见性谓词与聚合排序也一并挪到仓储 Java 侧。禁止再加 JOIN/UPDATE 多表关联语句（feed 索引重建等一步投影 SQL 同样拆成多查拼装）。
+7. **SQL 层零 JOIN**：mapper XML 全部语句只做单表读/写；跨表展示数据（昵称头像、计数窄表、关系列表的业务行、台账面额等）由仓储层「主查 + 按 id 集批量回查 + Java 拼装」多查收口，可见性谓词与聚合排序也一并挪到仓储 Java 侧。禁止再加 JOIN/UPDATE 多表关联语句（feed 索引重建等一步投影 SQL 同样拆成多查拼装）。

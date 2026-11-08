@@ -3,9 +3,6 @@ package com.betterschool.config;
 import com.betterschool.trigger.ws.ChatWsHandler;
 import com.betterschool.trigger.ws.ChatWsHandshakeInterceptor;
 import com.betterschool.trigger.ws.ChatWsProtocol;
-import com.betterschool.trigger.ws.ReviewWsHandler;
-import com.betterschool.trigger.ws.ReviewWsHandshakeInterceptor;
-import com.betterschool.trigger.ws.ReviewWsProtocol;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
@@ -16,8 +13,8 @@ import org.springframework.context.annotation.Bean;
 
 /**
  * WS 端点注册：Spring 原生裸 WebSocket，握手鉴权走一次性票据拦截器。
- * chat（票 04）与 review（票 10）两个独立端点——骨架共享（连接层 support），
- * 端点常量与帧类型各归各的协议类，互不复用
+ * chat 端点——连接层骨架在 ws/support，
+ * 端点常量与帧类型归 ChatWsProtocol。
  */
 @Configuration
 @EnableWebSocket
@@ -26,15 +23,11 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     private final ChatWsHandler chatWsHandler;
     private final ChatWsHandshakeInterceptor chatWsHandshakeInterceptor;
-    private final ReviewWsHandler reviewWsHandler;
-    private final ReviewWsHandshakeInterceptor reviewWsHandshakeInterceptor;
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(chatWsHandler, ChatWsProtocol.ENDPOINT)
                 .addInterceptors(chatWsHandshakeInterceptor);
-        registry.addHandler(reviewWsHandler, ReviewWsProtocol.ENDPOINT)
-                .addInterceptors(reviewWsHandshakeInterceptor);
     }
 
     /**

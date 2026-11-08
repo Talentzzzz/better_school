@@ -34,7 +34,7 @@ public class ErrandPaidConsumer implements RocketMQListener<String> {
             return;
         }
         // 解析成功后异常上抛，由 broker 自动重试；通知落库 dedup_key 幂等，重试不重复
-        errandOrderCase.notifyPaidReview(message.getOrderId());
-        log.info("[ErrandPaidConsumer] 支付进入待审通知处理完成 orderId={}", message.getOrderId());
+        errandOrderCase.notifyPaid(message.getOrderId());
+        log.info("[ErrandPaidConsumer] 支付成功通知处理完成 orderId={}", message.getOrderId());
     }
 }

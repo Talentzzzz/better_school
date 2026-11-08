@@ -119,12 +119,7 @@ public class ErrandController implements IErrandService {
     public Response<ErrandOrderResponseDTO> orderDetail(@PathVariable String orderId) {
         String currentUserId = SecurityUtils.currentUserId();
         ErrandOrderEntity orderEntity = errandOrderCase.orderDetail(orderId, currentUserId);
-        ErrandOrderResponseDTO dto = toOrderResponseDTO(orderEntity);
-        // 拒绝理由只对作者可见（他人/其他状态不带）
-        if (orderEntity.getStatus() == ErrandStatusVO.REJECTED && orderEntity.isOwner(currentUserId)) {
-            dto.setRejectReason(errandOrderCase.errandRejectReason(orderId));
-        }
-        return Response.ok(dto);
+        return Response.ok(toOrderResponseDTO(orderEntity));
     }
 
     @Override

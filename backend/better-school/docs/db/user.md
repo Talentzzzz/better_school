@@ -26,7 +26,7 @@
 |gender|varchar(10)|NULL|性别：`MALE`/`FEMALE`，`NULL`＝不展示；「设置 → 编辑资料」可改|
 |show_liked|tinyint(1)|NOT NULL, DEFAULT 1|隐私开关：公开我的「赞过」——1 公开 / 0 仅自己；**仅他视生效**|
 |show_comments|tinyint(1)|NOT NULL, DEFAULT 1|隐私开关：公开我的「评论」——1 公开 / 0 仅自己；**仅他视生效**|
-|role|varchar(20)|NOT NULL, DEFAULT 'USER'|角色 USER/AUDITOR/ADMIN|
+|role|varchar(20)|NOT NULL, DEFAULT 'USER'|角色 USER/ADMIN|
 |state|varchar(20)|NOT NULL, DEFAULT 'NORMAL'|状态 NORMAL/BANNED（原 `status` 列改名；信用分跌破 30 由 credit 域条件 UPDATE 置 BANNED）|
 |credit_score|int|NOT NULL, DEFAULT 100|信用分，区间 0–100（credit 域写：`GREATEST(0, LEAST(100, credit_score + delta))`），勿在 user 域写|
 |last_login_at|datetime|NULL|最近登录时间|
@@ -40,7 +40,7 @@
 ## 关联
 - 1:1 → virtual_wallet（user_id）
 - 1:N → wallet_detail / user_credit_detail（user_id）
-- 被 post.user_id / post_comment.user_id / product.user_id / errand_order.publisher_id|taker_id / product_order.buyer_id|seller_id / content_report.author_id|reporter_id / notification|timeline.user_id 引用（一律存 `user_id`）
+- 被 post.user_id / post_comment.user_id / product.user_id / errand_order.publisher_id|taker_id / product_order.buyer_id|seller_id / notification|timeline.user_id 引用（一律存 `user_id`）
 
 ## 谁在写 / 注意
 - 资料编辑只写 `signature`/`gender`（`UserMapper.updateProfile`），隐私设置只写 `show_liked`/`show_comments`（`updatePrivacy`），登录只写 `nickname`/`avatar`/`last_login_at`（`updateById`）——**三条语句各管一摊，不要合并成通用 updateById**：`role`/`state`/`credit_score` 归其他域写，防止登录写覆盖并发封禁/调分
@@ -96,8 +96,8 @@
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
 |user_id|varchar(36)|NOT NULL, INDEX(idx_user)|变动用户|
 |change|int|NOT NULL|信用分变化量（可为负；列名是 SQL 关键字 `change`，SQL 里必须反引号）|
-|reason_type|varchar(30)|NOT NULL|原因类型，取 `CreditReasonTypeVO` 枚举名：ERRAND_TAKER_CANCEL(-20) / ERRAND_TIMEOUT(-20) / REPORT_CONFIRMED(-10，预留未接入) / TRADE_COMPLAINT(-20，预留未接入) / ADMIN_ADJUST / ADMIN_BAN / ADMIN_UNBAN(0)|
-|ref_id|varchar(36)|NULL|关联业务 ID（跑腿类=`errand_order_id` UUID；举报核实=`content_report.report_id` UUID，uuid-biz-id 票 06；ADMIN 类为 NULL）|
+|reason_type|varchar(30)|NOT NULL|原因类型，取 `CreditReasonTypeVO` 枚举名：ERRAND_TAKER_CANCEL(-20) / ERRAND_TIMEOUT(-20) / TRADE_COMPLAINT(-20，预留未接入) / ADMIN_ADJUST / ADMIN_BAN / ADMIN_UNBAN(0)|
+|ref_id|varchar(36)|NULL|关联业务 ID（跑腿类=`errand_order_id` UUID；ADMIN 类为 NULL）|
 |create_time|datetime|NOT NULL|创建时间（也是「每日上限」统计的时间窗依据）|
 |update_time|datetime|NOT NULL|更新时间|
 

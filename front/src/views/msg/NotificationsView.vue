@@ -26,9 +26,6 @@ const loading = ref(false)
 
 const TYPE_TEXT: Record<string, string> = {
   ANNOUNCEMENT: '公告',
-  AUDIT_RESULT: '审核',
-  AUDIT_PENDING: '待审',
-  REPORT_RESULT: '举报',
   ORDER_EVENT: '订单',
   CREDIT_CHANGE: '信用',
   POST_LIKED: '赞',

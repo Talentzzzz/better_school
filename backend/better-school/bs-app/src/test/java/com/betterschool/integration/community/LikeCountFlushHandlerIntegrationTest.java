@@ -77,7 +77,7 @@ class LikeCountFlushHandlerIntegrationTest extends CommunityApiTestBase {
                                           reply_count, create_time, update_time)
                 VALUES (?, '9900001', 1, '落库方法用例的评论', 'NORMAL', '0', '0', 0, NOW(), NOW())
                 """, COMMENT_ID);
-        // 计数行诞生于审核通过（票 02）：直造 NORMAL 评论行时必须同造窄表行，
+        // 计数行诞生于评论发布：直造 NORMAL 评论行时必须同造窄表行，
         // 否则 UPDATE 命中 0 行、计数永远不动（那不是本用例要验的东西）
         jdbcTemplate.update("""
                 INSERT INTO post_comment_like_count (comment_id, like_count, create_time, update_time)

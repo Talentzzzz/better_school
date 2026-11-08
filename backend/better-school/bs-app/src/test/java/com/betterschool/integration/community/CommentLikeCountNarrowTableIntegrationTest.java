@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 评论点赞计数真源窄表 {@code post_comment_like_count}（comment-count-narrow-table 票 02）：
- * <b>行诞生</b>（根评论与子回复过审即建行、待审/驳回不建）、<b>落窄表</b>（点赞合并与取消赞同事务 ±N、
+ * <b>行诞生</b>（根评论与子回复发布即建行）、<b>落窄表</b>（点赞合并与取消赞同事务 ±N、
  * 主行 update_time 不再被刷）、<b>回查填充</b>（根列表两档 / 楼内平铺 / 作者主页 tab 同一通路，读的是窄表值
  * 而不是关系行条数）、<b>缺行语义</b>（写路径 warn 不补行、读路径显示 0）。
  *
@@ -26,29 +26,20 @@ class CommentLikeCountNarrowTableIntegrationTest extends CommunityApiTestBase {
     private static final String LEGACY_UPDATE_TIME = "2020-01-01 00:00:00";
 
     @Test
-    @DisplayName("根评论与子回复过审后窄表行诞生且为 0；待审与驳回不产行")
-    void narrowRowBornOnApprove_forRootsAndReplies() {
+    @DisplayName("根评论与子回复发布后窄表行诞生且为 0")
+    void narrowRowBornOnPublish_forRootsAndReplies() {
         Session postAuthor = registerAndLogin("13800000001", "帖主");
         Session commenter = registerAndLogin("13800000002", "评论人");
         String postId = publishPost(postAuthor, "评论计数窄表的行诞生");
 
         String rootId = publishCommentAndGetId(postId, commenter, "根评论");
         String replyId = postReplyAndGetId(rootId, commenter, "楼内子回复");
-        String pendingId = publishCommentAndGetId(postId, commenter, "留在待审的评论");
-        String rejectedId = publishCommentAndGetId(postId, commenter, "会被驳回的评论");
-
-        driveCommentReview(rootId);
-        driveCommentReview(replyId);
-        driveCommentReject(rejectedId, "OTHER", "内容不合规");
 
         // 根评论与子回复都入表（子回复只展示赞数、不入热评索引，但计数一样要有真源）
-        assertThat(narrowLikeCountOf(rootId)).as("根评论过审后应有计数行").isZero();
-        assertThat(narrowLikeCountOf(replyId)).as("子回复过审后应有计数行").isZero();
-        // 待审 / 驳回从未进入可见轮，行诞生于审核通过，所以没有行
-        assertThat(narrowRowOf(pendingId)).as("待审评论不产计数行").isNull();
-        assertThat(narrowRowOf(rejectedId)).as("驳回评论不产计数行").isNull();
-        assertThat(narrowRowCountOf(List.of(rootId, replyId, pendingId, rejectedId)))
-                .as("四条评论里只有过审的两条有计数行").isEqualTo(2);
+        assertThat(narrowLikeCountOf(rootId)).as("根评论发布后应有计数行").isZero();
+        assertThat(narrowLikeCountOf(replyId)).as("子回复发布后应有计数行").isZero();
+        assertThat(narrowRowCountOf(List.of(rootId, replyId)))
+                .as("两条评论都有计数行").isEqualTo(2);
     }
 
     @Test
@@ -60,7 +51,6 @@ class CommentLikeCountNarrowTableIntegrationTest extends CommunityApiTestBase {
         String postId = publishPost(postAuthor, "评论点赞落窄表的帖子");
         String rootId = publishCommentAndGetId(postId, commenter, "根评论");
         String replyId = postReplyAndGetId(rootId, commenter, "楼内子回复");
-        driveAllCommentReviews();
 
         // 主行 update_time 先钉成过去值：计数写若还刷主行，这里会立刻显形
         jdbcTemplate.update("UPDATE post_comment SET update_time = ? WHERE comment_id = ?", LEGACY_UPDATE_TIME, rootId);
@@ -87,7 +77,6 @@ class CommentLikeCountNarrowTableIntegrationTest extends CommunityApiTestBase {
         Session commenter = registerAndLogin("13800000002", "评论人");
         String postId = publishPost(postAuthor, "窄表行缺失的帖子");
         String rootId = publishCommentAndGetId(postId, commenter, "根评论");
-        driveCommentReview(rootId);
         // 人为造漂移：计数行被删（手工对账前的那种状态）
         jdbcTemplate.update("DELETE FROM post_comment_like_count WHERE comment_id = ?", rootId);
 
@@ -116,7 +105,6 @@ class CommentLikeCountNarrowTableIntegrationTest extends CommunityApiTestBase {
         String postId = publishPost(postAuthor, "四条读路径取窄表的帖子");
         String rootId = publishCommentAndGetId(postId, commenter, "根评论");
         String replyId = postReplyAndGetId(rootId, commenter, "楼内子回复");
-        driveAllCommentReviews();
 
         likeComment(rootId, postAuthor);
         likeComment(rootId, third);
@@ -133,14 +121,13 @@ class CommentLikeCountNarrowTableIntegrationTest extends CommunityApiTestBase {
     }
 
     @Test
-    @DisplayName("窄表缺行时四条读路径均显示 0（存量语义：票 02 之前过审的评论没有计数行）")
+    @DisplayName("窄表缺行时四条读路径均显示 0（存量语义：没有计数行的评论显示 0）")
     void missingNarrowRow_readsAsZero() {
         Session postAuthor = registerAndLogin("13800000001", "帖主");
         Session commenter = registerAndLogin("13800000002", "评论人");
         String postId = publishPost(postAuthor, "窄表缺行显示 0 的帖子");
         String rootId = publishCommentAndGetId(postId, commenter, "根评论");
         String replyId = postReplyAndGetId(rootId, commenter, "楼内子回复");
-        driveAllCommentReviews();
         likeComment(rootId, postAuthor);
         likeComment(replyId, postAuthor);
         assertThat(narrowLikeCountOf(rootId)).isEqualTo(1);

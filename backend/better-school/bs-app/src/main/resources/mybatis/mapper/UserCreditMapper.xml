@@ -41,17 +41,4 @@
         WHERE user_id = #{userId}
     </select>
 
-    <!-- 一内容一罚判定：同 target 举报单是否已有 REPORT_CONFIRMED 流水（直查 user_credit_detail；
-         ref_id 引用 content_report.report_id 业务键，uuid-biz-id 票 06） -->
-    <select id="existsProcessedCreditLog" resultType="int">
-        SELECT COUNT(1)
-        FROM user_credit_detail
-        WHERE user_id = #{authorId}
-          AND reason_type = 'REPORT_CONFIRMED'
-          AND ref_id IN (SELECT report_id
-                         FROM content_report
-                         WHERE target_type = #{targetType}
-                           AND target_id = #{targetId})
-    </select>
-
 </mapper>

@@ -92,15 +92,6 @@ public interface IErrandDao {
     /** 订单超时 id 列表（PUBLISHED/LOCKED/CONFIRMED/PICKED_UP 且 deadline 已过） */
     List<String> selectTimeoutOrderIds(@Param("limit") int limit);
 
-    /** 待审超时 id 列表（PENDING_REVIEW 且进入待审早于 before，24h 提醒扫描用） */
-    List<String> selectPendingReviewTimeoutOrderIds(@Param("before") LocalDateTime before, @Param("limit") int limit);
-
-    /** 审核通过：PENDING_REVIEW → PENDING_PAYMENT，返回影响行数（1=本次刚通过） */
-    int reviewApproveById(@Param("orderId") String orderId);
-
-    /** 审核驳回：PENDING_REVIEW → CANCELLED，返回影响行数 */
-    int reviewRejectById(@Param("orderId") String orderId);
-
     /** 送达超时订单 id 列表（DELIVERED 且送达早于 before，24h 自动完成扫描用） */
     List<String> selectAutoCompleteOrderIds(@Param("before") LocalDateTime before, @Param("limit") int limit);
 
@@ -125,6 +116,6 @@ public interface IErrandDao {
 
     // ── feed 索引全量重建（market-feed-uv 票 06）：重灌取数①（清空/写回在 IErrandFeedIndexDao）──
 
-    /** 重灌取数①：errand_order 全量 (errand_order_id, state, create_time, reward)——行集 = PUBLISHED ∪ 有过审批通过，仓储拼装 */
+    /** 重灌取数①：errand_order 全量 (errand_order_id, state, create_time, reward)——行集 = PUBLISHED，仓储拼装 */
     List<ErrandFeedIndexRow> selectRebuildRows();
 }

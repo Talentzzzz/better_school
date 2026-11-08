@@ -22,10 +22,8 @@ public class PostSummaryResponseDTO {
     private LocalDateTime createdAt;
     /** 仅"我的"接口（作者视角）填充，访客列表为 null */
     private Long viewCount;
-    /** 仅"我的"接口填充（NORMAL/PENDING_REVIEW/DRAFT/REJECTED），访客列表为 null */
+    /** 仅"我的"接口填充（NORMAL/DRAFT），访客列表为 null */
     private String status;
-    /** 拒绝理由：仅"我的"接口且 REJECTED 行填充（草稿箱列表直接展示），其余为 null */
-    private String rejectReason;
     /** 登录用户是否已点赞（未登录 null）；"我的"接口恒 true */
     private Boolean liked;
     /** 登录用户是否浏览过（feed-index-uv 票 05 已读灰显标记）：仅主页 feed 接口填充，其余列表 null（未登录 false） */

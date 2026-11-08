@@ -25,19 +25,17 @@
 
 订单详情
 
-- Auth: 免登录可看；**草稿（DRAFT）与待审（PENDING_REVIEW）仅作者可见（其他人 404），软删（DELETED）对所有人 404**——domain `orderDetail` 判定
+- Auth: 免登录可看；**草稿（DRAFT）仅作者可见（其他人 404），软删（DELETED）对所有人 404**——domain `orderDetail` 判定
 - 成功: `ErrandOrderResponseDTO`（订单全量字段 + images 列表 + `viewCount` 浏览 UV——market-feed-uv 票 02：按用户去重，一人一单只计一次，匿名不计入；异步合并写入允许丢；详情走计数窄表精确值；`viewed` 恒 null——仅大厅列表填充）
 - **人数字段**：`reward` 为悬赏；`currentTakers` 当前接单人数（由 taker_id 判定，0/1）；草稿未填项为 null（前端自渲染占位）
-- **rejectReason 语义**：仅当 请求者为作者 且 订单 `REJECTED` 时返回（读 `content_review.reason`，action=REJECT 行）；他人/其他状态响应中**缺该字段**（DTO `@JsonInclude(NON_NULL)`，非 null）。历史占位被拒单（无审核记录）理由为空，前端理由卡不展示
-- 流程: ErrandController → ErrandOrderCase.orderDetail（可见性）→ 组 DTO；REJECTED 且 isOwner 时追加 ErrandOrderCase.errandRejectReason → moderation 域读 content_review
+- 流程: ErrandController → ErrandOrderCase.orderDetail（可见性）→ 组 DTO
 
 ## POST /api/errand/orders
 
-创建订单（先付后审链路入口，创建即 PENDING_PAYMENT）
+创建订单（创建即 PENDING_PAYMENT）
 
 - Auth: 需要登录；信用分 <60 被 case 层拒
 - Body: type/description/pickupLocation/deliveryLocation/reward(≥10)/timeLimit（HOURS_2/HOURS_4/HOURS_12/HOURS_24/DAYS_7/DAYS_30/DAYS_365，存 time_limit_hours 小时数）/images(≤6 张 URL，来自 /api/files/upload)
-- 同步初筛: description 命中敏感词 → code 500 "内容包含违规词汇，请修改后重试"，**订单不落库**
 - 成功: `{ orderId }`，状态 PENDING_PAYMENT
 - 与「草稿入口」并存：本入口是直接发布（可选路径），草稿不是必经
 
@@ -47,7 +45,7 @@
 
 - Auth: 需要登录；**不做信用分门槛**（提交时才校验）
 - Body: type/description/pickupLocation/deliveryLocation/reward(≥10，可缺省)/timeLimit/images(≤6) **全部可缺省**（未填完就存）
-- 不做同步初筛（草稿为私有内容，保存与提交分开）；可缺省字段留空
+- 可缺省字段留空
 - 落 DRAFT：不付款、不对外、**不注册支付超时**（支付钟只在提交后起算）
 - 成功: `{ orderId }`，状态 DRAFT
 
@@ -65,8 +63,8 @@
 提交草稿：DRAFT → PENDING_PAYMENT（一次状态迁移）
 
 - Auth: 需要登录；仅作者
-- 校验: **必填完整性**（type/description/pickupLocation/deliveryLocation/reward≥10/timeLimit）+ 信用分门槛 + 复用同步初筛 `screen(description)`
-- 缺项或初筛命中 → code 500 并**停留草稿**（可修改后重提）
+- 校验: **必填完整性**（type/description/pickupLocation/deliveryLocation/reward≥10/timeLimit）+ 信用分门槛
+- 缺项 → code 500 并**停留草稿**（可修改后重提）
 - 通过 → 转 PENDING_PAYMENT，且 **15 分钟支付超时任务与状态迁移同事务注册**（草稿态不起支付钟）
 - 幂等：非 DRAFT（已提交等）→ 500
 
@@ -80,7 +78,7 @@
 
 ## POST /api/errand/orders/{orderId}/pay
 
-支付（冻结悬赏），成功事务内转 PENDING_REVIEW + outbox（bs-errand-paid → 作者"进入人工审核"通知）
+支付（冻结悬赏），成功事务内转 PUBLISHED（发布即对外可见）+ outbox（bs-errand-paid → 作者「您的跑腿订单已支付成功，现已对外可见」通知）
 
 ## POST /api/errand/orders/{orderId}/grab
 
@@ -117,7 +115,7 @@
 
 ## POST /api/errand/orders/{orderId}/cancel
 
-取消（**取货前**）：PENDING_PAYMENT（无冻结）/ PENDING_REVIEW（解冻全额退款）/ PUBLISHED / **LOCKED** / CONFIRMED 可取消
+取消（**取货前**）：PENDING_PAYMENT（无冻结）/ PUBLISHED（解冻全额退款）/ **LOCKED** / CONFIRMED 可取消
 
 - 发布方取消：LOCKED 期**可取消**且解冻退款，**不扣接单方信用分**（锁单期还没开工，不是他的错）
 - 接单方取消：仅 CONFIRMED 可退（回 PUBLISHED，扣 20 信用分 + `taker_canceled=1`）；锁单中的接单方走 `POST /abandon`
@@ -177,7 +175,7 @@
 
 - Auth: 免登录
 - Query: page/pageSize(≤50)，按 create_time 倒序
-- 过滤: `publisher_id={userId}` 且 `state IN ('PUBLISHED','LOCKED','CONFIRMED')`（待支付/待审/终态/争议一律不外露）
+- 过滤: `publisher_id={userId}` 且 `state IN ('PUBLISHED','LOCKED','CONFIRMED')`（待支付/终态/争议一律不外露）
 - 口径: **只列该用户发布的单**（不含其接单）——作者主页是「这个人发布的跑腿」
 - 成功: 分页 `ErrandOrderResponseDTO`
 - 无隐私开关：进行中跑腿本就在 `/api/errand/orders` 公开可搜，主页不另设隐藏

@@ -92,19 +92,9 @@ public class PostController implements ICommunityService {
         String currentUserId = SecurityUtils.currentUserId();
         long total = postService.countMyPosts(currentUserId);
         List<PostEntity> postList = postService.listMyPosts(currentUserId, page, pageSize);
-        // 草稿箱列表直接展示拒绝理由（仅作者视角 REJECTED 行，批量查最新一轮，免 N+1）
-        List<String> rejectedIds = postList.stream()
-                .filter(post -> post.getStatus() == PostStatusVO.REJECTED)
-                .map(PostEntity::getPostId).toList();
-        Map<String, String> rejectReasons = postPublishCase.postRejectReasons(rejectedIds);
         List<PostSummaryResponseDTO> dtoList = postList.stream()
-                .map(post -> {
-                    PostSummaryResponseDTO dto = toSummaryDTO(post, true, false, ContentMode.FULL);
-                    if (post.getStatus() == PostStatusVO.REJECTED) {
-                        dto.setRejectReason(rejectReasons.get(post.getPostId()));
-                    }
-                    return dto;
-                }).toList();
+                .map(post -> toSummaryDTO(post, true, false, ContentMode.FULL))
+                .toList();
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
 
@@ -239,31 +229,11 @@ public class PostController implements ICommunityService {
     }
 
     @Override
-    @PostMapping("/posts/{postId}/withdraw")
-    public Response<Void> withdrawPost(@PathVariable String postId) {
-        postService.withdrawPost(SecurityUtils.currentUserId(), postId);
-        return Response.ok(null);
-    }
-
-    @Override
-    @PostMapping("/posts/{postId}/to-draft")
-    public Response<Void> moveRejectedPostToDraft(@PathVariable String postId) {
-        postService.moveRejectedPostToDraft(SecurityUtils.currentUserId(), postId);
-        return Response.ok(null);
-    }
-
-    @Override
     @GetMapping("/posts/{postId}")
     public Response<PostResponseDTO> postDetail(@PathVariable String postId) {
         String currentUserId = SecurityUtils.currentUserId();
         PostEntity postEntity = postService.postDetail(postId, currentUserId);
-        PostResponseDTO dto = toPostResponseDTO(postEntity, currentUserId);
-        // 拒绝理由只对作者可见（他人不带）；转草稿箱自救时保留回看（票 02：被拒帖转草稿后可见拒绝理由）
-        if (postEntity.isOwner(currentUserId)
-                && (postEntity.getStatus() == PostStatusVO.REJECTED || postEntity.getStatus() == PostStatusVO.DRAFT)) {
-            dto.setRejectReason(postPublishCase.postRejectReason(postId));
-        }
-        return Response.ok(dto);
+        return Response.ok(toPostResponseDTO(postEntity, currentUserId));
     }
 
     @Override
@@ -457,7 +427,6 @@ public class PostController implements ICommunityService {
         dto.setLikeCount(commentEntity.getLikeCount());
         dto.setReplyCount(commentEntity.getReplyCount());
         dto.setLiked(liked);
-        dto.setRejectReason(commentEntity.getStatus() == PostStatusVO.REJECTED ? commentEntity.getRejectReason() : null);
         dto.setCreatedAt(commentEntity.getCreatedAt());
         return dto;
     }
@@ -491,7 +460,6 @@ public class PostController implements ICommunityService {
         dto.setCreatedAt(replyEntity.getCreatedAt());
         dto.setReplyToUserId(replyEntity.getReplyToUserId());
         dto.setReplyToNickname(replyEntity.getReplyToNickname());
-        dto.setRejectReason(replyEntity.getStatus() == PostStatusVO.REJECTED ? replyEntity.getRejectReason() : null);
         return dto;
     }
 

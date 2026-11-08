@@ -17,11 +17,6 @@ import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
 import com.betterschool.domain.errand.model.valobj.ErrandPayResult;
 import com.betterschool.domain.errand.model.valobj.ErrandTimeoutResult;
 import com.betterschool.domain.errand.service.IErrandOrderService;
-import com.betterschool.domain.moderation.model.valobj.ReviewTargetTypeVO;
-import com.betterschool.domain.moderation.service.IReviewService;
-import com.betterschool.domain.moderation.service.IModerationScreenService;
-import com.betterschool.domain.user.adapter.repository.IUserRepository;
-import com.betterschool.domain.user.model.valobj.UserRoleVO;
 import com.betterschool.domain.wallet.service.IWalletAccountService;
 import com.betterschool.types.common.Constants;
 import com.betterschool.types.concurrent.VirtualThreadFanout;
@@ -49,10 +44,7 @@ public class ErrandOrderCase {
     private final IErrandOrderService errandOrderService;
     private final ICreditAccountService creditAccountService;
     private final IWalletAccountService walletAccountService;
-    private final IModerationScreenService moderationScreenService;
-    private final IReviewService reviewService;
     private final INotificationService notificationService;
-    private final IUserRepository userRepository;
     private final VirtualThreadFanout fanout;
 
     public String createOrder(String userId, String type, String description, String pickupLocation,
@@ -60,10 +52,6 @@ public class ErrandOrderCase {
                             List<String> images, String timeLimit) {
         creditAccountService.ensureOperable(userId);
         checkImages(images);
-        // 同步初筛（先付后审）：命中即创建失败、不落库，误伤由用户改文案重发
-        if (moderationScreenService.screen(description)) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "内容包含违规词汇，请修改后重试");
-        }
         return errandOrderService.createOrder(userId, type, description, pickupLocation, deliveryLocation,
                 reward, images, timeLimit);
     }
@@ -91,16 +79,13 @@ public class ErrandOrderCase {
     }
 
     /**
-     * 提交草稿：与直接发布同门槛（必填完整性 + 信用分准入门槛），同步初筛命中即失败并停留草稿；
+     * 提交草稿：与直接发布同门槛（必填完整性 + 信用分准入门槛）；
      * 通过后转 PENDING_PAYMENT 且支付超时随状态迁移同事务注册
      */
     public void submitDraft(String orderId, String userId) {
         ErrandOrderEntity draftEntity = errandOrderService.getOwnedDraft(orderId, userId);
         creditAccountService.ensureOperable(userId);
         validateDraftComplete(draftEntity);
-        if (moderationScreenService.screen(draftEntity.getDescription())) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "内容包含违规词汇，请修改后重试");
-        }
         errandOrderService.submitDraft(orderId, userId);
     }
 
@@ -134,11 +119,6 @@ public class ErrandOrderCase {
 
     public ErrandOrderEntity orderDetail(String orderId, String currentUserId) {
         return errandOrderService.orderDetail(orderId, currentUserId);
-    }
-
-    /** 被拒订单的拒绝理由（content_review.reason），供详情接口对作者带出 */
-    public String errandRejectReason(String orderId) {
-        return reviewService.rejectReason(ReviewTargetTypeVO.ERRAND, orderId);
     }
 
     public void grabOrder(String orderId, String userId) {
@@ -231,7 +211,7 @@ public class ErrandOrderCase {
 
     /**
      * 超时兜底扫描（XXL-Job 每分钟）：待支付超 15min 取消 + 订单超时取消/退款/扣分
-     * + 送达超 24h 自动完成结算 + 待审超 24h 提醒管理员（每订单每收件人只提醒一次，dedup_key 幂等）。
+     * + 送达超 24h 自动完成结算。
      * 幂等：各 handle 条件 UPDATE 0 行返回 null 跳过，重复扫描无害
      */
     public void scanTimeouts() {
@@ -240,48 +220,21 @@ public class ErrandOrderCase {
         fanout.forEach("errand-timeout-", errandOrderService.listTimeoutOrderIds(), this::handleOrderTimeout);
         fanout.forEach("errand-auto-complete-", errandOrderService.listAutoCompleteOrderIds(),
                 this::handleAutoComplete);
-        remindReviewTimeouts();
     }
 
     /**
-     * 支付成功消费方（bs-errand-paid）编排：给作者发"进入人工审核"通知。
+     * 支付成功消费方（bs-errand-paid）编排：给作者发"支付成功、订单已可见"通知。
      * 通知失败向上抛由 broker 重试（dedup_key 幂等，重试不重复落），
      * 主流程（订单状态/资金）不在本方法内，不受影响
      */
-    public void notifyPaidReview(String orderId) {
+    public void notifyPaid(String orderId) {
         ErrandOrderEntity orderEntity = errandOrderService.loadOrder(orderId);
         if (orderEntity == null) {
             return;
         }
         notificationService.sendSystem(orderEntity.getPublisherId(), NotificationScopeVO.MARKET_ERRAND, NotificationTypeVO.ORDER_EVENT, "订单动态",
-                "您的跑腿订单已支付成功，进入人工审核，审核通过后将对外可见", "ERRAND", orderId,
+                "您的跑腿订单已支付成功，现已对外可见", "ERRAND", orderId,
                 NotificationTypeVO.ORDER_EVENT.name() + ":ERRAND_PAID:" + orderId);
-    }
-
-    /**
-     * 待审超 24h 提醒（扫描路径，无 broker 重试兜底）：逐收件人吞异常不影响扫描主流程，
-     * 下轮扫描自动补发（dedup_key 幂等）；不改订单状态，绝不自动裁决
-     */
-    private void remindReviewTimeouts() {
-        List<String> reviewerIds = List.of(
-                userRepository.listUserIdsByRole(UserRoleVO.ADMIN),
-                userRepository.listUserIdsByRole(UserRoleVO.AUDITOR))
-                .stream().flatMap(List::stream).distinct().toList();
-        fanout.forEach("errand-remind-", errandOrderService.listPendingReviewTimeoutOrderIds(),
-                orderId -> remindReviewers(reviewerIds, orderId));
-    }
-
-    /** 扇出项 = 一条待审订单（其下逐收件人仍是串行循环，项内自行吞异常） */
-    private void remindReviewers(List<String> reviewerIds, String orderId) {
-        for (String reviewerId : reviewerIds) {
-            try {
-                notificationService.sendSystem(reviewerId, NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.ORDER_EVENT, "审核提醒",
-                        "跑腿订单 " + orderId + " 已待审超过 24 小时，请及时处理", "ERRAND", orderId,
-                        NotificationTypeVO.ORDER_EVENT.name() + ":REVIEW_TIMEOUT:" + orderId + ":" + reviewerId);
-            } catch (Exception e) {
-                log.warn("[ErrandOrderCase] 待审超时提醒发送失败（下轮扫描补发） orderId={} reviewerId={}", orderId, reviewerId, e);
-            }
-        }
     }
 
     public void handleOrderTimeout(String orderId) {

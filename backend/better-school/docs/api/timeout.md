@@ -6,7 +6,7 @@
 
 ## 鉴权
 
-- 需要登录（JWT 过滤链，未登录 401）；角色收口 **ADMIN**（USER/AUDITOR 均 403，与 `/api/admin/reviews` 同款）。
+- 需要登录（JWT 过滤链，未登录 401）；角色收口 **ADMIN**（USER 403）。
 
 ## 分页口径
 

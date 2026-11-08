@@ -47,9 +47,9 @@ class UnboundedQueryCursorIntegrationTest extends CommunityApiTestBase {
     @DisplayName("帖子：搜索索引全量重建的游标页")
     void postIdsPageByCursor() {
         Session author = registerAndLogin("13900001201", "游标作者");
-        publishPendingPost(author, "游标帖一");
-        publishPendingPost(author, "游标帖二");
-        publishPendingPost(author, "游标帖三");
+        publishPost(author, "游标帖一");
+        publishPost(author, "游标帖二");
+        publishPost(author, "游标帖三");
 
         assertPagedToEmpty(cursor -> communityRepository.listIdsAfter(cursor, PAGE), 3, "");
     }
@@ -117,16 +117,8 @@ class UnboundedQueryCursorIntegrationTest extends CommunityApiTestBase {
     private String insertErrandFixture(String userId) {
         String errandId = UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
-                + "pickup_location, delivery_location, reward, time_limit_hours, state, create_time, update_time) "
-                + "VALUES (?, ?, 'BUY', '游标单', '宿舍楼', '食堂', 5.00, 2, 'PUBLISHED', NOW(), NOW())", errandId, userId);
+                        + "pickup_location, delivery_location, reward, time_limit_hours, state, create_time, update_time) "
+                        + "VALUES (?, ?, 'BUY', '游标单', '宿舍楼', '食堂', 5.00, 2, 'PUBLISHED', NOW(), NOW())", errandId, userId);
         return errandId;
-    }
-
-    /** 直接发帖（先审后发：落库即待审），返回 postId */
-    private String publishPendingPost(Session author, String title) {
-        JsonNode response = postJson("/api/community/posts",
-                Map.of("title", title, "content", "正文内容，游标用例"), author);
-        assertSuccess(response, "发帖");
-        return response.path("data").asText();
     }
 }

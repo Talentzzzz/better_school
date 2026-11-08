@@ -31,20 +31,14 @@ public interface ITradeService {
     /** 编辑商品草稿（仅 DRAFT；待审中不可编辑，需先撤回） */
     Response<Void> updateProductDraft(String productId, ProductDraftSaveRequestDTO request);
 
-    /** 提交商品草稿：完整性校验 + 同步初筛（命中停留草稿）→ 待审 */
+    /** 提交商品草稿：完整性校验，通过即上架可见 */
     Response<Void> submitProductDraft(String productId);
 
-    /** 撤回待审商品进草稿箱 */
-    Response<Void> withdrawProduct(String productId);
-
-    /** 上架后主动下架商品进草稿箱（可编辑后重新提交回待审） */
+    /** 上架后主动下架商品进草稿箱（可编辑后重新提交上架） */
     Response<Void> takeDownProduct(String productId);
 
-    /** 上架后编辑商品（编辑语义）：仅改价立即生效；改标题/描述/图片回待审（期间他人不可见、卖家本人可见） */
+    /** 上架后编辑商品（编辑语义）：变更立即生效 */
     Response<Void> editProduct(String productId, ProductEditRequestDTO request);
-
-    /** 被拒商品转入草稿箱（自救路径）：修改后重新提交产生第二次审核 */
-    Response<Void> moveRejectedProductToDraft(String productId);
 
     Response<ProductResponseDTO> productDetail(String productId);
 

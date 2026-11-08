@@ -8,9 +8,7 @@ import lombok.Getter;
 public enum PostStatusVO {
 
     NORMAL("正常"),
-    PENDING_REVIEW("待审核"),
     DRAFT("草稿"),
-    REJECTED("已驳回"),
     DELETED("已删除");
 
     private final String desc;

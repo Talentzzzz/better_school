@@ -2,38 +2,30 @@
 
 ## POST /api/trade/products
 
-发布商品（先审后售链路入口，提交即 PENDING_REVIEW）
+发布商品（发布即对外可见）
 
 - Auth: 需要登录；信用分 <60 被 case 层拒
 - Body: title(≤30)/description(≤500)/images/price(≥0.01)/tradeLocation/category
-- 同步初筛: 标题或描述命中敏感词 → code 500 "内容包含违规词汇，请修改后重试"，**商品不落库**
-- 成功: `{ productId }`，状态 PENDING_REVIEW（仅卖家可见，审核通过才转 ON_SALE 对外可见）
-- 流程: ProductController → TradePublishCase（信用分 → 同步初筛）→ ProductServiceImpl → product 入库
+- 成功: `{ productId }`，状态 ON_SALE（发布即对外可见并同步搜索）
+- 流程: ProductController → TradePublishCase（信用分门槛）→ ProductServiceImpl → product 入库
 
 ## POST /api/trade/products/draft · PUT /api/trade/products/{productId}/draft
 
-保存 / 编辑商品草稿（草稿箱停靠态，不做初筛、不做信用分门槛）
+保存 / 编辑商品草稿（草稿箱停靠态，不做信用分门槛）
 
 - Auth: 需要登录
 - Body: 同发布但**全部字段可缺省**（未填完就存），仍校验长度/下限（title≤30、images≤9、price≥0.01 等）
-- 编辑仅 DRAFT 可用：PENDING_REVIEW → code 500 "仅草稿可编辑，待审中的商品可先撤回再修改"；他人草稿 → 403
+- 编辑仅 DRAFT 可用；他人草稿 → 403
 - 成功: 保存返回 `{ productId }`（status=DRAFT），编辑返回空 data
 - 流程: ProductController → TradePublishCase（直通）→ ProductServiceImpl → product 入库/条件 UPDATE（WHERE status='DRAFT'）
 
 ## POST /api/trade/products/{productId}/submit
 
-提交草稿（与直接发布同门槛，回到先审后售流程）
+提交草稿（与直接发布同门槛，发布即对外可见）
 
 - Auth: 需要登录（本人）
-- 流程: 取本人 DRAFT 草稿 → 信用分门槛 → 完整性校验（title/price/tradeLocation/category 必填，缺 → code 500 "草稿内容不完整…"）→ 同步初筛（命中 → code 500，**草稿原样保留**）→ 条件 UPDATE DRAFT→PENDING_REVIEW
-- 成功: 空 data，状态 PENDING_REVIEW
-
-## POST /api/trade/products/{productId}/withdraw
-
-撤回待审商品进草稿箱（PENDING_REVIEW → DRAFT）
-
-- Auth: 需要登录（本人）；非待审态 → code 500 "仅待审中的商品可撤回"
-- 成功: 空 data，状态 DRAFT，可编辑后重新提交
+- 流程: 取本人 DRAFT 草稿 → 信用分门槛 → 完整性校验（title/price/tradeLocation/category 必填，缺 → code 500 "草稿内容不完整…"）→ 条件 UPDATE DRAFT→ON_SALE
+- 成功: 空 data，状态 ON_SALE
 
 ## POST /api/trade/products/{productId}/takedown
 
@@ -41,23 +33,16 @@
 
 - Auth: 需要登录（本人）；非 ON_SALE → code 500 "仅在售商品可下架"
 - 流程: trade 域事务内条件 UPDATE + 同事务落搜索同步消息（消费方删 ES 文档，退出对外可见）
-- 成功: 空 data，状态 DRAFT，可编辑后重新提交回待审（review_round +1，expire_at 刷新重新获得 30 天窗口）
+- 成功: 空 data，状态 DRAFT，可编辑后重新提交（expire_at 刷新重新获得 30 天窗口）
 
 ## PUT /api/trade/products/{productId}
 
-上架后编辑商品（编辑语义：仅改价立即生效，改内容回待审）
+上架后编辑商品（编辑语义：提交即时生效）
 
-- Auth: 需要登录（本人）；非 ON_SALE → code 500（PENDING_REVIEW "待审中不可编辑，可先撤回转草稿后修改" / REJECTED "商品已被拒绝，可转入草稿箱修改后重新提交"）
+- Auth: 需要登录（本人）；非 ON_SALE → code 500
 - Body（全字段可选，null = 不改）: title(≤30)/description(≤500)/images(≤9)/price(≥0.01)
-- 编辑语义: 仅 price 非空 → 立即生效（状态不变、不进审核、无通知）；title/description/images 任一非空 → 新文字过同步初筛（命中 code 500 原样保留）→ 条件 UPDATE ON_SALE→PENDING_REVIEW（review_round +1，期间他人不可见、卖家本人可见，同事务落搜索同步），重审走统一裁决；混合提交时价格随行更新（价格非审核对象，重审被拒不回滚新价）；两者都空 → code 400 "无变更内容"
+- 编辑语义: 全字段提交即时生效（状态不变、无通知，同事务落搜索同步）；两者都空 → code 400 "无变更内容"
 - 成功: 空 data
-
-## POST /api/trade/products/{productId}/to-draft
-
-被拒商品转入草稿箱（REJECTED → DRAFT，自救路径）
-
-- Auth: 需要登录（本人）；非 REJECTED → code 500 "仅被拒绝的商品可转入草稿箱"
-- 成功: 空 data，状态 DRAFT；编辑重提后产生第二次审核（review_round +1，content_review 两轮记录并存，拒绝理由取最新）
 
 ## GET /api/trade/products
 
@@ -82,15 +67,15 @@
 
 商品详情
 
-- Auth: 免登录可看（DRAFT/PENDING_REVIEW/REJECTED 仅卖家本人可见，他人 404——domain `productDetail` 判定；ON_SALE/LOCKED/SOLD 对外可见）
-- 成功: `ProductResponseDTO`（登录时带 favorited/favoriteCount；REJECTED 且本人带 `rejectReason`）；`viewCount` 是浏览 UV（market-feed-uv 票 02：按用户去重，一人一商品只计一次，重复进详情只刷 `viewed_at` 不加数，**匿名访问不计入**——语义变更，旧口径匿名也累加 PV；落库走异步合并，允许丢，读 `product_view_count` 加速列）；`viewed` 恒 null（仅推荐列表填充）
+- Auth: 免登录可看（DRAFT 仅卖家本人可见，他人 404——domain `productDetail` 判定；ON_SALE/LOCKED/SOLD 对外可见）
+- 成功: `ProductResponseDTO`（登录时带 favorited/favoriteCount）；`viewCount` 是浏览 UV（market-feed-uv 票 02：按用户去重，一人一商品只计一次，重复进详情只刷 `viewed_at` 不加数，**匿名访问不计入**——语义变更，旧口径匿名也累加 PV；落库走异步合并，允许丢，读 `product_view_count` 加速列）；`viewed` 恒 null（仅推荐列表填充）
 
 ## GET /api/trade/products/mine
 
 我的发布（卖家视角）
 
 - Auth: 需要登录
-- 成功: 分页 `ProductResponseDTO`，含自己的待审/草稿/被拒商品（排除软删）；REJECTED 条目带 `rejectReason`
+- 成功: 分页 `ProductResponseDTO`，含自己的草稿商品（排除软删）
 
 ## GET /api/trade/users/{userId}/products
 
@@ -98,13 +83,13 @@
 
 - Auth: 免登录
 - Query: page/pageSize(≤50)，按 create_time 倒序
-- 过滤: `state='ON_SALE'`（草稿/待审/被拒/锁定/已售一律不外露）
+- 过滤: `state='ON_SALE'`（草稿/锁定/已售一律不外露）
 - 成功: 分页 `ProductResponseDTO`
 - 无隐私开关：在售商品本就在 `/api/trade/products` 公开可搜，主页不另设隐藏
 
 ## DELETE /api/trade/products/{productId} · POST .../sold · POST .../relist · POST .../favorite · DELETE .../favorite
 
-删除（软删，放行 ON_SALE 与 DRAFT；在售删除同步搜索文档、草稿删除不同步）/ 标记已出 / 重新上架（仅 SOLD，先审后售：转回 PENDING_REVIEW）/ 收藏 / 取消收藏；后四者要求商品处于 ON_SALE（具体状态机见 `ProductServiceImpl`）
+删除（软删，放行 ON_SALE 与 DRAFT；在售删除同步搜索文档、草稿删除不同步）/ 标记已出 / 重新上架（仅 SOLD，转回 ON_SALE）/ 收藏 / 取消收藏；后四者要求商品处于 ON_SALE（具体状态机见 `ProductServiceImpl`）
 
 ## GET /api/trade/favorites
 

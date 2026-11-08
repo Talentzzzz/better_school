@@ -20,13 +20,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 跑腿 feed 索引的同事务直写触发点（market-feed-uv 票 03）：驻留口径 = 行常驻 + state 快照——
- * 行在审核通过事务诞生（唯一诞生点），此后 13 态流转点旁带快照同步，行永不删除，
+ * 行在支付事务诞生（唯一诞生点），此后状态流转点旁带快照同步，行永不删除，
  * 大厅可见 = PUBLISHED（读路径按快照挑状态）；浏览合并事务的 view_count ±N 旁路。
  *
  * <p>断言只看外部可观察状态：errand_feed_index 行的 state / feed_time / price / view_count。
- * 流转走真实仓储链路（真实事务、真实 SQL）；审核通过前的流转点（行不存在）0 行静默一并钉死。
+ * 流转走真实仓储链路（真实事务、真实 SQL）；支付前的流转点（行不存在）0 行静默一并钉死。
  */
-@DisplayName("跑腿 feed 索引同步：通过诞生 / 行常驻状态快照逐点 / 浏览旁路 ±N")
+@DisplayName("跑腿 feed 索引同步：支付诞生 / 行常驻状态快照逐点 / 浏览旁路 ±N")
 class ErrandFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
 
     private static final String PUBLISHER_ID = "publisher-999";
@@ -39,26 +39,26 @@ class ErrandFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     private ICountFlushHandler flushHandler;
 
     @Test
-    @DisplayName("审核通过行诞生（reward 快照随行）；驳回不诞生（REJECTED 只可从待审可达）")
-    void 审核通过诞生索引行_驳回不诞生() {
-        String approvedId = insertOrder("PENDING_REVIEW", "8.50");
+    @DisplayName("支付行诞生（reward 快照随行）；支付前取消不诞生（PENDING_PAYMENT → CANCELLED 不进大厅）")
+    void 支付诞生索引行_支付前不诞生() {
+        String paidId = insertOrder("PENDING_PAYMENT", "8.50");
 
-        LocalDateTime approveStartedAt = LocalDateTime.now();
-        assertThat(errandRepository.reviewApproveById(approvedId, "auditor-1")).as("待审订单通过").isTrue();
+        LocalDateTime payStartedAt = LocalDateTime.now();
+        assertThat(errandRepository.payById(paidId, PUBLISHER_ID, 4)).as("待支付订单支付").isTrue();
 
-        Map<String, Object> row = feedRow(approvedId);
-        assertThat(row).as("通过后索引行诞生（唯一诞生点）").isNotNull();
+        Map<String, Object> row = feedRow(paidId);
+        assertThat(row).as("支付后索引行诞生（唯一诞生点）").isNotNull();
         assertThat(row.get("state")).isEqualTo("PUBLISHED");
-        assertThat(((BigDecimal) row.get("price"))).as("price 快照 = 悬赏（彼时已支付冻结，非空成立）")
+        assertThat(((BigDecimal) row.get("price"))).as("price 快照 = 悬赏（支付冻结，非空成立）")
                 .isEqualByComparingTo("8.50");
         assertThat(((Number) row.get("view_count")).intValue()).as("诞生时热度键为 0").isZero();
         assertThat(((LocalDateTime) row.get("feed_time")))
                 .as("feed_time = 进入大厅时刻（行诞生落第一次，跑腿无重提再过审）")
-                .isBetween(approveStartedAt.minusSeconds(5), LocalDateTime.now().plusSeconds(5));
+                .isBetween(payStartedAt.minusSeconds(5), LocalDateTime.now().plusSeconds(5));
 
-        String rejectedId = insertOrder("PENDING_REVIEW", "8.50");
-        assertThat(errandRepository.reviewRejectById(rejectedId, "auditor-1", "配图模糊")).isTrue();
-        assertThat(feedRow(rejectedId)).as("驳回不产索引行").isNull();
+        String unpaidId = insertOrder("PENDING_PAYMENT", "8.50");
+        assertThat(errandRepository.cancelByPublisher(unpaidId, PUBLISHER_ID)).isTrue();
+        assertThat(feedRow(unpaidId)).as("支付前取消不产索引行").isNull();
     }
 
     @Test
@@ -127,14 +127,14 @@ class ErrandFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
         assertThat(errandRepository.autoCompleteById(autoId)).isTrue();
         assertThat(feedState(autoId)).as("送达超时自动完成 → COMPLETED").isEqualTo("COMPLETED");
 
-        // 审核通过前的取消（行不存在）：0 行静默，不凭空产行
-        String pendingCancelId = insertOrder("PENDING_REVIEW", "5.00");
+        // 支付前的取消（行不存在）：0 行静默，不凭空产行
+        String pendingCancelId = insertOrder("PENDING_PAYMENT", "5.00");
         assertThat(errandRepository.cancelByPublisher(pendingCancelId, PUBLISHER_ID)).isTrue();
-        assertThat(feedRow(pendingCancelId)).as("过审前取消不产索引行").isNull();
+        assertThat(feedRow(pendingCancelId)).as("支付前取消不产索引行").isNull();
     }
 
     @Test
-    @DisplayName("浏览合并事务旁路 ±N 推进热度键；0 行不补行（未过审订单的浏览只落明细）")
+    @DisplayName("浏览合并事务旁路 ±N 推进热度键；0 行不补行（未支付订单的浏览只落明细）")
     void 浏览旁路推进热度键_未过审不补行() {
         String publishedId = insertOrder("PUBLISHED", "5.00");
 
@@ -148,8 +148,8 @@ class ErrandFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
         flushHandler.flushGroup(CountAction.ERRAND_VIEW, publishedId, List.of(viewEvent(publishedId, "u201")));
         assertThat(indexViewCount(publishedId)).as("重复浏览不计入").isEqualTo(2);
 
-        // 未过审订单（行不存在）：浏览旁路 0 行不补行，窄表照常推进（交重建 job 兜底）
-        String pendingId = insertOrder("PENDING_REVIEW", "5.00");
+        // 未支付订单（行不存在）：浏览旁路 0 行不补行，窄表照常推进（交重建 job 兜底）
+        String pendingId = insertOrder("PENDING_PAYMENT", "5.00");
         flushHandler.flushGroup(CountAction.ERRAND_VIEW, pendingId, List.of(viewEvent(pendingId, "u203")));
         assertThat(feedRow(pendingId)).as("索引行缺失不被凭空补行").isNull();
         assertThat(acceleratedCountOf(pendingId)).as("窄表真源不受索引缺失影响").isEqualTo(1);
@@ -162,7 +162,7 @@ class ErrandFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 直插一行指定态订单（deadline 落未来，抢单时限校验可过），返回业务 ID。
-     *  PUBLISHED 视作「此前已通过审核」的存量形态，同步直插索引行（行常驻口径下的行集起点） */
+     *  PUBLISHED 视作「此前已支付」的存量形态，同步直插索引行（行常驻口径下的行集起点） */
     private String insertOrder(String state, String reward) {
         String orderId = UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "

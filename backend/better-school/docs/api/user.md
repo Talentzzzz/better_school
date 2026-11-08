@@ -16,7 +16,7 @@
 - 成功: `PublicUserProfileResponseDTO`
   - `userId`、`nickname`、`avatar`
   - `signature`（可空）、`gender`（`MALE`/`FEMALE`，可空＝不展示）
-  - `receivedLikeCount`：**获赞**口径＝该用户 `status='NORMAL'` 帖子的 `like_count` 之和（**不含**评论获赞、**不含**待审/驳回/草稿帖）
+  - `receivedLikeCount`：**获赞**口径＝该用户 `status='NORMAL'` 帖子的 `like_count` 之和（**不含**评论获赞、**不含**草稿帖）
   - `showLiked` / `showComments`：两个隐私开关当前值，**始终返回**（前端据此渲染「该用户已隐藏此内容」空态）
 - **不返回 `phone`**（PII）：访客资料行只显示 昵称 + 性别 + 签名，无「账号」行
 - 用户不存在 → 404

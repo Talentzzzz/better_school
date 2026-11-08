@@ -63,7 +63,7 @@ const genderGlyph = computed(() => {
   return g === 'FEMALE' ? '♀' : g === 'MALE' ? '♂' : ''
 })
 
-/** 草稿箱在存帖子数：草稿 + 待审 + 被拒（与草稿箱页同一口径） */
+/** 草稿箱在存帖子数：草稿（与草稿箱页同一口径） */
 const draftBoxCount = computed(() => posts.value.filter((p) => DRAFT_BOX_STATUSES.includes((p.status ?? '') as never)).length)
 
 /** 同一次停留内已加载过的 tab：按 store 恢复的 tab 首次进入也要拉一次 */
@@ -264,7 +264,7 @@ watch(() => auth.isLoggedIn, (v) => v && load())
             <div class="post-info">
               <div class="post-t ellipsis-2">{{ p.title || '（无标题）' }}</div>
               <div class="post-m">
-                <span class="status" :class="{ rejected: p.status === 'REJECTED' }">{{ STATUS_TEXT[p.status || ''] || '' }}</span>
+                <span class="status">{{ STATUS_TEXT[p.status || ''] || '' }}</span>
                 <span>❤ {{ formatCount(p.likeCount) }}</span>
                 <span v-if="p.viewCount !== null">浏览 {{ p.viewCount }}</span>
                 <span>{{ formatTime(p.createdAt) }}</span>
@@ -689,11 +689,6 @@ watch(() => auth.isLoggedIn, (v) => v && load())
   border-radius: $radius-sm;
   background: #e8f6e9;
   color: #2e9e44;
-
-  &.rejected {
-    background: #ffecec;
-    color: #c0392b;
-  }
 }
 
 .errand-rows {
@@ -752,11 +747,6 @@ watch(() => auth.isLoggedIn, (v) => v && load())
   background: $bg-secondary;
   color: $text-2;
   font-size: 10px;
-
-  &.rejected {
-    background: #ffecec;
-    color: #c0392b;
-  }
 }
 
 .logout-btn {

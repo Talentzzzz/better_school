@@ -172,9 +172,8 @@ public class ChatSendServiceImpl implements IChatSendService {
                 if (status == null) {
                     throw new BusinessException(ResponseCode.NOT_FOUND, "卡片对象不存在");
                 }
-                // 非 DELETED/REJECTED/DRAFT（spec §1）：待审帖子也可发卡
-                if (status == PostStatusVO.DELETED || status == PostStatusVO.REJECTED
-                        || status == PostStatusVO.DRAFT) {
+                // 非 DELETED/DRAFT（spec §1）
+                if (status == PostStatusVO.DELETED || status == PostStatusVO.DRAFT) {
                     throw new BusinessException(ResponseCode.BUSINESS_ERROR, "内容已失效");
                 }
             }
@@ -184,7 +183,7 @@ public class ChatSendServiceImpl implements IChatSendService {
                 if (status == null) {
                     throw new BusinessException(ResponseCode.NOT_FOUND, "卡片对象不存在");
                 }
-                if (status == ProductStatusVO.DELETED || status == ProductStatusVO.REJECTED) {
+                if (status == ProductStatusVO.DELETED) {
                     throw new BusinessException(ResponseCode.BUSINESS_ERROR, "内容已失效");
                 }
             }
@@ -193,7 +192,7 @@ public class ChatSendServiceImpl implements IChatSendService {
                 if (status == null) {
                     throw new BusinessException(ResponseCode.NOT_FOUND, "卡片对象不存在");
                 }
-                if (status == ErrandStatusVO.REJECTED || status == ErrandStatusVO.CANCELLED) {
+                if (status == ErrandStatusVO.CANCELLED) {
                     throw new BusinessException(ResponseCode.BUSINESS_ERROR, "内容已失效");
                 }
             }

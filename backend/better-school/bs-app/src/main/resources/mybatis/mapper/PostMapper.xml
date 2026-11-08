@@ -10,19 +10,16 @@
          点赞关系 / 浏览历史 / feed 索引语句分别在 PostLikeMapper / UserViewHistoryMapper / PostFeedIndexMapper -->
     <sql id="postColumns">
         p.id, p.post_id, p.user_id, p.title, p.content, p.images, p.cover, p.state,
-        p.review_round, p.review_entered_at,
         p.create_time, p.update_time, p.expire_at
     </sql>
 
-    <!-- 时刻一律数据库时钟：create_time/update_time=NOW()；发布行 review_entered_at=NOW()、
-         expire_at=NOW()+30d（与 submitDraft 同口径）；草稿行两列保持 NULL（提交时才锚定） -->
+    <!-- 时刻一律数据库时钟：create_time/update_time=NOW()；发布行 expire_at=NOW()+30d（与 submitDraft
+         同口径）；草稿行 expire_at 保持 NULL（提交时才锚定） -->
     <insert id="insert" parameterType="com.betterschool.infrastructure.dao.post.po.Post"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO post (post_id, user_id, title, content, images, cover, state,
-                          review_round, review_entered_at,
                           create_time, update_time, expire_at)
         VALUES (#{postId}, #{userId}, #{title}, #{content}, #{images}, #{cover}, #{state},
-                #{reviewRound}, IF(#{state} = 'DRAFT', NULL, NOW()),
                 NOW(), NOW(), IF(#{state} = 'DRAFT', NULL, DATE_ADD(NOW(), INTERVAL 30 DAY)))
     </insert>
 
@@ -60,35 +57,14 @@
           AND state = 'DRAFT'
     </update>
 
-    <!-- 提交草稿：DRAFT → PENDING_REVIEW，轮次 +1 保证重提审核记录不与上一轮冲突（uk_target_action_round）；
-         同步锚定进入待审时间（24h 提醒扫描口径）并刷新过期时间 -->
+    <!-- 提交草稿：DRAFT → NORMAL（直接发布对外可见）；同步刷新过期时间 -->
     <update id="submitDraft">
         UPDATE post
-        SET state             = 'PENDING_REVIEW',
-            review_round      = review_round + 1,
-            review_entered_at = NOW(),
+        SET state             = 'NORMAL',
             expire_at         = DATE_ADD(NOW(), INTERVAL 30 DAY),
             update_time       = NOW()
         WHERE post_id = #{postId}
           AND state = 'DRAFT'
-    </update>
-
-    <!-- 撤回待审：PENDING_REVIEW → DRAFT（条件 UPDATE，0 行时 service 层终态判定） -->
-    <update id="withdraw">
-        UPDATE post
-        SET state = 'DRAFT',
-            update_time = NOW()
-        WHERE post_id = #{postId}
-          AND state = 'PENDING_REVIEW'
-    </update>
-
-    <!-- 被拒转草稿箱（自救路径）：REJECTED → DRAFT，修改后重新提交走 submitDraft（重提产生第二轮审核） -->
-    <update id="rejectToDraft">
-        UPDATE post
-        SET state = 'DRAFT',
-            update_time = NOW()
-        WHERE post_id = #{postId}
-          AND state = 'REJECTED'
     </update>
 
     <!-- 按 id 列表查询：不分状态（搜索同步按 state 判定 upsert/删除，搜索命中组装按 NORMAL 过滤）。
@@ -107,35 +83,6 @@
         WHERE post_id = #{postId}
           AND state != 'DELETED'
     </update>
-
-    <!-- 审核通过：PENDING_REVIEW → NORMAL（条件 UPDATE，0 行时 service 层终态判定幂等） -->
-    <update id="approveById">
-        UPDATE post
-        SET state = 'NORMAL',
-            update_time = NOW()
-        WHERE post_id = #{postId}
-          AND state = 'PENDING_REVIEW'
-    </update>
-
-    <!-- 审核驳回：PENDING_REVIEW → REJECTED（终态） -->
-    <update id="rejectById">
-        UPDATE post
-        SET state = 'REJECTED',
-            update_time = NOW()
-        WHERE post_id = #{postId}
-          AND state = 'PENDING_REVIEW'
-    </update>
-
-    <!-- 24h 待审超时提醒扫描：进入待审（review_entered_at）早于 before 的待审帖子；
-         只取业务 ID + 轮次（轮次是 dedup_key 区分重提轮的锚点，直接读业务列，不再推导），不走全列映射 -->
-    <select id="selectReviewTimeoutPosts" resultType="com.betterschool.domain.community.model.valobj.PostReviewTimeoutVO">
-        SELECT p.post_id AS post_id, p.review_round AS review_round
-        FROM post p
-        WHERE p.state = 'PENDING_REVIEW'
-          AND p.review_entered_at IS NOT NULL
-          AND p.review_entered_at &lt;= #{before}
-        LIMIT #{limit}
-    </select>
 
     <!-- 旧直查路径（feed-index-uv 票 04 起仅作降级，票 06 分类退役后索引路径为主路径）：
          time 档纯 post 单表 SQL 分页；hot 档排序键 like_count 在窄表里（不能 JOIN 进来），
@@ -161,12 +108,12 @@
         WHERE state = 'NORMAL'
     </select>
 
-    <!-- 我的帖子分页（作者视角）：含待审/草稿/被驳回，作者需感知审核结果与草稿，排除已删除 -->
+    <!-- 我的帖子分页（作者视角）：NORMAL + 草稿，排除已删除 -->
     <select id="selectPageByUser" resultType="com.betterschool.infrastructure.dao.post.po.Post">
         SELECT <include refid="postColumns"/>
         FROM post p
         WHERE p.user_id = #{userId}
-          AND p.state IN ('NORMAL', 'PENDING_REVIEW', 'DRAFT', 'REJECTED')
+          AND p.state IN ('NORMAL', 'DRAFT')
         ORDER BY p.create_time DESC, p.post_id DESC
         LIMIT #{offset}, #{limit}
     </select>
@@ -175,10 +122,10 @@
         SELECT COUNT(1)
         FROM post
         WHERE user_id = #{userId}
-          AND state IN ('NORMAL', 'PENDING_REVIEW', 'DRAFT', 'REJECTED')
+          AND state IN ('NORMAL', 'DRAFT')
     </select>
 
-    <!-- 某用户的公开帖子（作者主页「笔记」tab）：仅 NORMAL；本人看自己也走此口径（草稿/待审/驳回只在「我的」页） -->
+    <!-- 某用户的公开帖子（作者主页「笔记」tab）：仅 NORMAL；本人看自己也走此口径（草稿只在「我的」页） -->
     <select id="selectNormalPageByUser" resultType="com.betterschool.infrastructure.dao.post.po.Post">
         SELECT <include refid="postColumns"/>
         FROM post p
@@ -204,11 +151,10 @@
           AND state = 'NORMAL'
     </select>
 
-    <!-- feed 索引全量重建的取数①（feed-index-uv 票 07）：主表 post。重灌行集 = NORMAL 帖 ∪ 有过审批通过的帖
-         （运行期语义：通过事务才诞生行，之后 state 跟随流转、行不消失；从未通过审的待审/驳回/草稿帖不凭空进索引）。
-         原 INSERT..SELECT 一步投影改为仓储三段查拼装：① selectRebuildRows 取 post 全量 (post_id, state, create_time)；
-         ② content_review 的 APPROVE 流水经 IContentReviewDao.selectApproveRowsByTargetType 查（feed_time 真源）；
-         ③ like_count 从窄表批量抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径），
+    <!-- feed 索引全量重建的取数①（feed-index-uv 票 07）：主表 post。重灌行集 = NORMAL 帖
+         （运行期语义：发布事务才诞生行，之后 state 跟随流转、行不消失；草稿帖不凭空进索引）。
+         原 INSERT..SELECT 一步投影改为仓储多查拼装：① selectRebuildRows 取 post 全量 (post_id, state, create_time)，
+         feed_time = create_time；② like_count 从窄表批量抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径），
          组装成行集后走 IPostFeedIndexDao.insertFeedIndexRows 批量写入 -->
     <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.post.po.PostFeedIndexRow">
         SELECT p.post_id AS postId, p.state AS state, p.create_time AS createTime

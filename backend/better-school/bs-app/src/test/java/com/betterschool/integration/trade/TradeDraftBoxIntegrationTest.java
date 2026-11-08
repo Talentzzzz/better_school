@@ -11,19 +11,19 @@ import java.util.stream.StreamSupport;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 草稿箱（票 02）集成测试：保存（不做初筛、部分字段、仅本人可见）、编辑、删除、
- * 提交（初筛命中停留草稿；商品进待审）、商品待审撤回进草稿箱、重新提交回到发布流程。
+ * 草稿箱（票 02）集成测试：保存（部分字段、仅本人可见）、编辑、删除、
+ * 提交即上架（DRAFT→ON_SALE，敏感词初筛已删——含「作弊」等词的内容照常提交成功）。
  */
 class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
 
-    // ---------- 保存草稿：部分字段可存、不做初筛、仅本人可见 ----------
+    // ---------- 保存草稿：部分字段可存、仅本人可见 ----------
 
     @Test
-    void 商品草稿部分字段保存成功_不做初筛_仅本人可见() {
+    void 商品草稿部分字段保存成功_仅本人可见() {
         Session seller = registerAndLogin("13800004001", "卖家1");
         Session other = registerAndLogin("13800004002", "路人1");
 
-        // 未填完：只有标题；且含敏感词——草稿保存不做初筛，直接发布则会被拦
+        // 未填完：只有标题；标题含「作弊」等词也不拦——初筛已删，草稿照常保存
         JsonNode save = postJson("/api/trade/products/draft",
                 Map.of("title", "出售作弊神器"), seller);
         assertSuccess(save, "保存商品草稿");
@@ -105,32 +105,21 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
         assertThat(productStatus(onSaleId)).isEqualTo("DELETED");
     }
 
-    // ---------- 提交：初筛命中停留草稿；商品进待审 ----------
+    // ---------- 提交：提交即上架（敏感词初筛已删） ----------
 
     @Test
-    void 商品草稿提交命中初筛停留草稿_改后提交进入待审() {
+    void 商品草稿编辑后提交即上架_含敏感词正常通过() {
         Session seller = registerAndLogin("13800004005", "卖家4");
         String productId = saveProductDraft(seller, "九成新吉他");
 
-        // 编辑带入违禁词后提交：初筛命中应失败，且草稿原样保留可继续改
+        // 编辑带入「作弊」等敏感词后提交：初筛已删，直接提交成功上架
         updateProductDraft(seller, productId, "九成新吉他", "可代考复习资料");
-        JsonNode hit = postJson("/api/trade/products/" + productId + "/submit", null, seller);
-        assertThat(hit.path("code").asText()).as("初筛命中应业务失败：%s", hit).isEqualTo("500");
-        assertThat(hit.path("info").asText()).contains("违规词汇");
-        assertThat(productStatus(productId)).as("命中后停留草稿").isEqualTo("DRAFT");
-        assertThat(countRows("product")).as("命中不新增行").isEqualTo(1);
-
-        JsonNode detail = getJson("/api/trade/products/" + productId, seller);
-        assertThat(detail.path("data").path("status").asText()).isEqualTo("DRAFT");
-
-        // 改掉违禁词再提交：进待审
-        updateProductDraft(seller, productId, "九成新吉他", "去年考证用过的资料");
-        JsonNode retry = postJson("/api/trade/products/" + productId + "/submit", null, seller);
-        assertSuccess(retry, "改后重新提交");
-        assertThat(productStatus(productId)).as("先审后售：提交即待审").isEqualTo("PENDING_REVIEW");
+        JsonNode submit = postJson("/api/trade/products/" + productId + "/submit", null, seller);
+        assertSuccess(submit, "草稿提交");
+        assertThat(productStatus(productId)).as("提交即上架：DRAFT→ON_SALE").isEqualTo("ON_SALE");
 
         JsonNode publicList = getJson("/api/trade/products", seller);
-        assertThat(productIdsOf(publicList)).as("待审对外仍不可见").doesNotContain(productId);
+        assertThat(productIdsOf(publicList)).as("提交即对外可见").contains(productId);
     }
 
     @Test
@@ -144,35 +133,7 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
         assertThat(productStatus(productId)).as("校验失败停留草稿").isEqualTo("DRAFT");
     }
 
-    // ---------- 商品待审撤回 → 草稿箱 → 重新提交回发布流程 ----------
-
-    @Test
-    void 商品待审不可编辑_可撤回进草稿箱_重新提交回到待审() {
-        Session seller = registerAndLogin("13800004007", "卖家6");
-        String productId = createProduct(seller, "九成新滑板");
-        assertThat(productStatus(productId)).isEqualTo("PENDING_REVIEW");
-
-        JsonNode editPending = putJson("/api/trade/products/" + productId + "/draft",
-                Map.of("title", "改标题"), seller);
-        assertThat(editPending.path("code").asText())
-                .as("待审中不可编辑：%s", editPending).isEqualTo("500");
-        assertThat(editPending.path("info").asText()).contains("撤回");
-
-        JsonNode withdraw = postJson("/api/trade/products/" + productId + "/withdraw", null, seller);
-        assertSuccess(withdraw, "待审撤回");
-        assertThat(productStatus(productId)).as("撤回进草稿箱").isEqualTo("DRAFT");
-
-        // 撤回后可编辑，重新提交回到发布流程（再次待审）
-        updateProductDraft(seller, productId, "全新滑板", "拆封未用");
-        JsonNode resubmit = postJson("/api/trade/products/" + productId + "/submit", null, seller);
-        assertSuccess(resubmit, "草稿重新提交");
-        assertThat(productStatus(productId)).as("重新提交回到待审").isEqualTo("PENDING_REVIEW");
-    }
-
     // ---------- 工具 ----------
-
-    /** 直插夹具的商品业务 ID（uuid-biz-id 票 05 起 UUID 形态，应用侧发号）*/
-    
 
     private String saveProductDraft(Session seller, String title) {
         JsonNode save = postJson("/api/trade/products/draft", Map.of("title", title), seller);
@@ -190,30 +151,8 @@ class TradeDraftBoxIntegrationTest extends CommunityApiTestBase {
         assertSuccess(update, "编辑商品草稿");
     }
 
-    private String createProduct(Session seller, String title) {
-        JsonNode response = postJson("/api/trade/products", productBody(title, "九成新"), seller);
-        assertSuccess(response, "发布商品");
-        return response.path("data").asText();
-    }
-
-    private Map<String, Object> productBody(String title, String description) {
-        return Map.ofEntries(
-                Map.entry("title", title),
-                Map.entry("description", description),
-                Map.entry("images", List.of()),
-                Map.entry("price", 19.9),
-                Map.entry("tradeLocation", "图书馆门口"),
-                Map.entry("category", "BOOKS"));
-    }
-
     private String productStatus(String productId) {
         return jdbcTemplate.queryForObject("SELECT state FROM product WHERE product_id = ?", String.class, productId);
-    }
-
-
-    private int countRows(String table) {
-        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class);
-        return count == null ? 0 : count;
     }
 
     private List<String> productIdsOf(JsonNode response) {

@@ -170,7 +170,7 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
         assertThat(stateOf(draftId)).isEqualTo("PENDING_PAYMENT");
 
         assertSuccess(postJson("/api/errand/orders/" + draftId + "/pay", null, author), "支付");
-        assertThat(stateOf(draftId)).as("先付后审：支付成功进待审").isEqualTo("PENDING_REVIEW");
+        assertThat(stateOf(draftId)).as("支付成功即发布").isEqualTo("PUBLISHED");
 
         Integer frozenRows = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM wallet_detail WHERE order_id = ? AND type = 'FROZEN'",

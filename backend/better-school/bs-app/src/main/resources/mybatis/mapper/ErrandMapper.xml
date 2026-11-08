@@ -105,12 +105,12 @@
         </where>
     </select>
 
-    <!-- 支付确认（先付后审）：PENDING_PAYMENT → PENDING_REVIEW（已付款待审），审核通过转 PUBLISHED；
+    <!-- 支付确认：PENDING_PAYMENT → PUBLISHED（支付完成即对外可见）；
          deadline = NOW() + timeLimitHours（时刻一律数据库时钟，Java 只传时长；TIMESTAMPADD 的占位符
          在普通参数位，避开 ShardingSphere 丢 INTERVAL 占位符的形态） -->
     <update id="payById">
         UPDATE errand_order
-        SET state      = 'PENDING_REVIEW',
+        SET state      = 'PUBLISHED',
             deadline   = TIMESTAMPADD(HOUR, #{timeLimitHours}, NOW()),
             update_time = NOW()
         WHERE errand_order_id = #{orderId}
@@ -198,14 +198,14 @@
           AND state = 'DELIVERED'
     </update>
 
-    <!-- 发布方取消（限取货前，锁单期可取消）：PENDING_PAYMENT/PENDING_REVIEW/PUBLISHED/LOCKED/CONFIRMED → CANCELLED -->
+    <!-- 发布方取消（限取货前，锁单期可取消）：PENDING_PAYMENT/PUBLISHED/LOCKED/CONFIRMED → CANCELLED -->
     <update id="cancelByPublisher">
         UPDATE errand_order
         SET state      = 'CANCELLED',
             update_time = NOW()
         WHERE errand_order_id = #{orderId}
           AND publisher_id = #{publisherId}
-          AND state IN ('PENDING_PAYMENT', 'PENDING_REVIEW', 'PUBLISHED', 'LOCKED', 'CONFIRMED')
+          AND state IN ('PENDING_PAYMENT', 'PUBLISHED', 'LOCKED', 'CONFIRMED')
     </update>
 
     <!-- 接单方取消：taker_canceled 幂等位防重试重复取消（置 1 后重试影响 0 行） -->
@@ -317,15 +317,6 @@
         LIMIT #{limit}
     </select>
 
-    <!-- 待审超时提醒扫描：PENDING_REVIEW 由支付条件 UPDATE 翻转而来，update_time 即进入待审时间 -->
-    <select id="selectPendingReviewTimeoutOrderIds" resultType="string">
-        SELECT errand_order_id
-        FROM errand_order
-        WHERE state = 'PENDING_REVIEW'
-          AND update_time &lt;= #{before}
-        LIMIT #{limit}
-    </select>
-
     <!-- 送达超时自动完成扫描：DELIVERED 由送达条件 UPDATE 翻转而来，update_time 即送达时间 -->
     <select id="selectAutoCompleteOrderIds" resultType="string">
         SELECT errand_order_id
@@ -334,24 +325,6 @@
           AND update_time &lt;= #{before}
         LIMIT #{limit}
     </select>
-
-    <!-- 审核通过：PENDING_REVIEW → PUBLISHED（条件 UPDATE，0 行时 service 层终态判定幂等） -->
-    <update id="reviewApproveById">
-        UPDATE errand_order
-        SET state      = 'PUBLISHED',
-            update_time = NOW()
-        WHERE errand_order_id = #{orderId}
-          AND state = 'PENDING_REVIEW'
-    </update>
-
-    <!-- 审核驳回：PENDING_REVIEW → REJECTED（终态，打回不可见；冻结金额由 case 层解冻退款，流水 uk 幂等） -->
-    <update id="reviewRejectById">
-        UPDATE errand_order
-        SET state      = 'REJECTED',
-            update_time = NOW()
-        WHERE errand_order_id = #{orderId}
-          AND state = 'PENDING_REVIEW'
-    </update>
 
     <update id="autoCompleteById">
         UPDATE errand_order
@@ -384,7 +357,7 @@
     </select>
 
     <!-- 某用户发布的进行中跑腿单（作者主页「跑腿」tab，访客口径）：只列发布、不含接单；
-         待支付/待审/终态/争议一律不外露（锁单中可见，展示「锁单中」） -->
+         待支付/终态/争议一律不外露（锁单中可见，展示「锁单中」） -->
     <select id="selectPublicPageByPublisher" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
         FROM errand_order e
@@ -425,12 +398,10 @@
     </select>
 
     <!-- 重灌取数①：errand_order 全量 (errand_order_id, state, create_time, reward)——行集 = PUBLISHED 订单
-         ∪ 有过审批通过的订单（行常驻口径：通过事务才诞生行、之后 13 态流转只翻快照、行永不删除；
-         审核通过前的草稿/待支付/待审/驳回订单不凭空进索引）。原 INSERT..SELECT 一步投影改为仓储三段查
-         拼装：① selectRebuildRows 取 errand_order 全量 (errand_order_id, state, create_time, reward)；
-         ② feed_time 取审核记录最近一次 APPROVE 时刻（经 IContentReviewDao.selectApproveRowsByTargetType，
-         与票 01 回填脚本同口径），查不到审批流水的存量老单取 create_time 兜底；③ view_count 从计数窄表
-         抄入（无行 = 0）——窄表是 UV 真值，这一步同时把「过审前被浏览、旁路命中 0 行」漏计的那部分追平。
+         （行常驻口径：支付事务才诞生行、之后状态流转只翻快照、行永不删除；
+         草稿/待支付/软删订单不凭空进索引）。原 INSERT..SELECT 一步投影改为仓储多查拼装：
+         ① selectRebuildRows 取 errand_order 全量 (errand_order_id, state, create_time, reward)，
+         feed_time = create_time；② view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值。
          组装后走 IErrandFeedIndexDao.insertFeedIndexRows 批量写回 -->
     <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandFeedIndexRow">
         SELECT e.errand_order_id AS errandOrderId, e.state AS state, e.create_time AS createTime, e.reward AS price

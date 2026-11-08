@@ -11,7 +11,7 @@ public interface ICommunityCommentService {
 
     /**
      * 根评论列表（root_id='0'）：sort=hot（like_count 降序，同数按 create_time 升序 + 业务 ID 升序收敛成确定序）
-     * 或 new（create_time 升序 + 业务 ID 升序），缺省 hot。viewerId 非空时附带其本人 PENDING_REVIEW 评论（无标识展示）。
+     * 或 new（create_time 升序 + 业务 ID 升序），缺省 hot。
      */
     List<PostCommentEntity> listComments(String postId, String viewerId, String sort, int page, int pageSize);
 
@@ -19,7 +19,7 @@ public interface ICommunityCommentService {
     long countVisibleRootComments(String postId);
 
     /**
-     * 发布根评论（ADR-0002 零同步审核）：落库即 PENDING_REVIEW，同事务写 outbox 审核消息；
+     * 发布根评论：落库即可见，计数与索引同事务推进；
      * 不计数，审核通过时（消费者/人工）再 +1。返回完整实体（含 commentId、作者昵称）供响应 DTO。
      */
     PostCommentEntity addComment(String postId, String userId, String content);
@@ -60,11 +60,6 @@ public interface ICommunityCommentService {
     /** 当前用户在给定评论集合中已点赞的评论 id（未登录返回空集） */
     List<String> listLikedCommentIds(String userId, List<String> commentIds);
 
-    /** 审核通过：PENDING_REVIEW → NORMAL + 评论数 +1（同事务）；返回是否本次刚通过（已通过返回 false，供互动通知只在首次触发） */
-    boolean approveComment(String commentId);
-
-    /** 审核驳回：PENDING_REVIEW → REJECTED（终态，待审从未计数） */
-    void rejectComment(String commentId);
 
     /** 举报下架软删：→ DELETED，NORMAL 评论同步评论数 -1（同事务；幂等：已下架静默成功） */
     void markDeleted(String commentId);

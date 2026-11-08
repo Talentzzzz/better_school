@@ -33,9 +33,6 @@ public class PostCommentEntity {
     private String replyToUserId;
     private String replyToNickname;
 
-    /** 查询冗余字段：审核未通过理由（列表 JOIN content_review REJECT 行填充，仅作者本人场景回显） */
-    private String rejectReason;
-
     /** 查询冗余字段：来源帖标题/封面（按用户列评论场景 JOIN post 填充） */
     private String postTitle;
     private String postCover;

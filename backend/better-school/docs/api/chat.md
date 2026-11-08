@@ -44,7 +44,7 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
 - 类型语义（载荷按类型分）：
   - TEXT：裸文本 ≤500 字，超长报参数错误
   - IMAGE：`content` = JSON `{"url","width","height"}`；url 须本站上传域前缀（minio public-url），宽高可缺省；复用 `/api/files/upload`
-  - CARD：`content` 恒空；`refType`（PRODUCT/POST/ERRAND）+ `refId` 必填；目标须存在且未删/未拒（post 非 DELETED/REJECTED/DRAFT、product 非 DELETED/REJECTED、errand 非 REJECTED/CANCELLED），失效报「内容已失效」
+  - CARD：`content` 恒空；`refType`（PRODUCT/POST/ERRAND）+ `refId` 必填；目标须存在且未删（post/product 非 DELETED/DRAFT、errand 非 DELETED/CANCELLED），失效报「内容已失效」
 - 非成员 403
 - **发送幂等**：同 `clientMsgId` 重复提交（双击/超时重发）撞 `uk_client_msg` 回查返回原消息，收敛同一条（已落库快路径 + 并发未落库回滚后回查两个时序）；幂等收敛优先于载荷校验，重发不受卡片目标失效影响
 - 事务内：room 取 seq（UPDATE+1 读回，失败回滚无空洞）→ message INSERT → user_seq 取号 → timeline 扇出（恒两行，同时清空 hidden_at 弹回列表）→ user_room×2 只刷 `last_msg_time` 排序键（预览不落副本，读时按 message 真相现算）→ outbox MSG 推送事件（WS 推送归票 04）
@@ -58,14 +58,6 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
 - 占 seq 不回退、不动已读水位线（计入未读）；content 库内保留取证，读路径与补拉一律脱敏空壳
 - 已撤回消息重复撤回幂等静默成功，不重复投递事件
 - 事务内：message 三件套（state=RECALLED + recalled_at + recalled_by=USER）——**零 user_room 写**（列表「[已撤回]」由读时现算呈现，无预览维护写）→ outbox RECALL 轻事件（outbox `destination` = `bs-chat-recall`，载荷 `{roomId, seq}`，WS 推送归票 04）
-
-## 系统侧内部撤回（无 HTTP）
-
-领域层 `IChatRecallService.forceRecallByAuditor(messageId)`：举报核实处理调用（归票 05），`recalled_by=AUDITOR`、无窗口限制；消息已自行撤回则幂等跳过只落处理结论（不覆盖撤回者、不重复推送）。
-
-## 零审核（spec §6）
-
-chat 全路径零审核：无敏感词初筛、图片不过审；兜底 = 举报（`content_report.target_type=MESSAGE`，归票 05）。
 
 ## WS 长连接（票 04，spec §3）
 

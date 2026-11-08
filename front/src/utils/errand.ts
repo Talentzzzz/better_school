@@ -2,9 +2,7 @@
 export const ERRAND_STATUS_TEXT: Record<string, string> = {
   DRAFT: '草稿',
   PENDING_PAYMENT: '待支付',
-  PENDING_REVIEW: '人工审核中',
   PUBLISHED: '待接单',
-  REJECTED: '审核未通过',
   LOCKED: '锁单中',
   CONFIRMED: '已确认',
   PICKED_UP: '已取货',

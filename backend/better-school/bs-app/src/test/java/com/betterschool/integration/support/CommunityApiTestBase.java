@@ -4,8 +4,6 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import com.betterschool.trigger.listener.CommentReviewConsumer;
-import com.betterschool.usecase.moderation.ReviewCase;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -133,10 +131,6 @@ public abstract class CommunityApiTestBase {
     protected JdbcTemplate jdbcTemplate;
     @Autowired
     protected RedissonClient redissonClient;
-    @Autowired
-    protected CommentReviewConsumer commentReviewConsumer;
-    @Autowired
-    protected ReviewCase reviewCase;
 
     /** 清超时分表用的裸 MySQL 连接（物理分表经 SS 连接查不到，同 TimeoutShardingRouteIntegrationTest） */
     @Value("${timeout-it.raw-mysql-url}")
@@ -150,10 +144,7 @@ public abstract class CommunityApiTestBase {
     public record Session(String token, String userId) {
     }
 
-    /**
-     * 表隔离：清业务表。sensitive_word 例外——词表在应用启动时加载进内存（KeywordScreenServiceImpl），
-     * 不做 TRUNCATE，测试直接使用 schema.sql 的种子词（如「作弊」）
-     */
+    /** 表隔离：清业务表 */
     @BeforeEach
     void truncateTables() {
         List.of("bs_user", "post", "post_comment", "post_like", "post_like_count", "post_comment_count",
@@ -163,7 +154,6 @@ public abstract class CommunityApiTestBase {
                         "product_view_history", "errand_view_history",
                         "product_view_count", "errand_view_count",
                         "notification", "virtual_wallet", "wallet_detail", "user_credit_detail",
-                        "content_review", "content_report", "review_task",
                         "errand_order", "errand_order_event",
                         "product", "product_favorite", "product_order", "product_order_event",
                         "room", "user_pair_room", "user_room", "room_member", "message", "timeline", "user_seq",
@@ -272,18 +262,14 @@ public abstract class CommunityApiTestBase {
 
     // ---------- 社区用例构造 ----------
 
-    /**
-     * 发帖（先审后发：发布落库即待审），并经统一裁决通过——供需要"对外可见帖子"前置态的用例当 fixture；
-     * 需要待审/被拒前置态的用例直接走 HTTP 发布后自行裁决。返回 postId
-     */
+    /** 发帖（发布即可见）——供需要"对外可见帖子"前置态的用例当 fixture。返回 postId */
     protected String publishPost(Session author, String content) {
         JsonNode response = postJson("/api/community/posts",
                 Map.of("title", "测试帖子", "content", content), author);
         assertSuccess(response, "发帖");
         String postId = response.path("data").asText();
-        // uuid-biz-id 票 03：发帖响应 id 必须是可解析的 UUID 字符串（ID 形态断言），且裁决以同一 id 引用成功
+        // uuid-biz-id 票 03：发帖响应 id 必须是可解析的 UUID 字符串（ID 形态断言）
         org.assertj.core.api.Assertions.assertThat(java.util.UUID.fromString(postId)).isNotNull();
-        reviewCase.decide("POST", postId, true, null, null, author.userId());
         return postId;
     }
 
@@ -300,42 +286,6 @@ public abstract class CommunityApiTestBase {
         // uuid-biz-id 票 03：评论响应 id 必须是可解析的 UUID 字符串（ID 形态断言）
         org.assertj.core.api.Assertions.assertThat(java.util.UUID.fromString(commentId)).isNotNull();
         return commentId;
-    }
-
-    /**
-     * 按类型领单并断言领到的正是目标内容的在途工单（票 08/09 审核流程夹具：裁决前必须先领单——
-     * 遗留入口已收口为反查持有人在途工单），返回工单业务键 taskId（UUID 字符串，uuid-biz-id 票 06）
-     */
-    protected String claimTaskOf(Session auditor, String targetType, String targetId) {
-        JsonNode claimed = postJson("/api/moderation/tasks/claim", Map.of("targetType", targetType), auditor);
-        assertSuccess(claimed, "领单");
-        assertThat(claimed.path("data").path("targetType").asText()).isEqualTo(targetType);
-        assertThat(claimed.path("data").path("targetId").asText()).isEqualTo(targetId);
-        assertThat(claimed.path("data").path("claimState").asText()).isEqualTo("CLAIMED");
-        return claimed.path("data").path("taskId").asText();
-    }
-
-    /** 统一裁决 operatorId 哨兵（评论由人工裁决，测试放一把通过/拒绝不校验具体审核员） */
-    private static final String SYSTEM_OPERATOR_ID = "system-operator-1";
-
-    /**
-     * 直接把一条评论经统一裁决通过（测试快捷：待审→NORMAL）。ADR-0004 后评论无自动审核，
-     * 消费方只通知审核员，状态流转一律走统一裁决（ReviewCase）
-     */
-    protected void driveCommentReview(String commentId) {
-        reviewCase.decide("COMMENT", commentId, true, null, null, SYSTEM_OPERATOR_ID);
-    }
-
-    /** 直接把一条待审评论经统一裁决拒绝（待审→REJECTED，拒绝理由走全站枚举，落库"枚举文案：补充说明"） */
-    protected void driveCommentReject(String commentId, String reasonCode, String supplement) {
-        reviewCase.decide("COMMENT", commentId, false, reasonCode, supplement, SYSTEM_OPERATOR_ID);
-    }
-
-    /** 全量把当前待审评论经统一裁决通过（用例需要"全部评论已通过"的前置态时用） */
-    protected void driveAllCommentReviews() {
-        List<String> pendingIds = jdbcTemplate.queryForList(
-                "SELECT comment_id FROM post_comment WHERE state = 'PENDING_REVIEW'", String.class);
-        pendingIds.forEach(id -> reviewCase.decide("COMMENT", id, true, null, null, SYSTEM_OPERATOR_ID));
     }
 
     /** 访客视角评论列表：data 节点 = {page, pageSize, total, list} */
@@ -363,7 +313,7 @@ public abstract class CommunityApiTestBase {
 
     protected long postCommentCountOf(String postId) {
         // 评论计数已迁到窄表 post_comment_count（sql.md 计数决策），post 行不再存该列；
-        // 窄表行是「审核通过 +1」时才 upsert 出来的，尚无行 = 计数 0（与 postLikeCountOf 同口径）
+        // 窄表行在评论发布时 upsert 出来（发布即 +1），尚无行 = 计数 0（与 postLikeCountOf 同口径）
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COALESCE(MAX(comment_count), 0) FROM post_comment_count WHERE post_id = ?",
                 Long.class, postId);

@@ -34,14 +34,11 @@ public interface IUserDao {
     /** 搜索索引全量重建的游标页：id > lastId 按 id 升序取 limit 条 */
     List<String> selectIdsAfter(@Param("lastUserId") String lastUserId, @Param("limit") int limit);
 
-    /** 指定角色全部用户 ID（审核超时提醒收件人等） */
+    /** 指定角色全部用户 ID */
     List<String> selectIdsByRole(@Param("role") String role);
 
     /** 按 id 列表查询（搜索同步反查/搜索结果组装用） */
     List<User> selectByIds(@Param("ids") List<String> userIdList);
-
-    /** 指派/回收审核员：条件 UPDATE bs_user.role（已是目标角色不生效），返回影响行数 */
-    int updateUserRole(@Param("userId") String userId, @Param("role") String role);
 
     int existsUser(@Param("userId") String userId);
 

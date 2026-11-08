@@ -3,7 +3,6 @@ package com.betterschool.config;
 import com.betterschool.api.response.Response;
 import com.betterschool.infrastructure.security.JwtAuthenticationFilter;
 import com.betterschool.trigger.ws.ChatWsProtocol;
-import com.betterschool.trigger.ws.ReviewWsProtocol;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -47,9 +46,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/trade/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/errand/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/search/**").permitAll()
-                        // WS 握手鉴权不走 JWT：query 一次性票据由各端点握手拦截器原子取删校验（票 04/票 10）
+                        // WS 握手鉴权不走 JWT：query 一次性票据由端点握手拦截器原子取删校验（票 04）
                         .requestMatchers(ChatWsProtocol.ENDPOINT).permitAll()
-                        .requestMatchers(ReviewWsProtocol.ENDPOINT).permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint((request, response, authException) -> writeJson(

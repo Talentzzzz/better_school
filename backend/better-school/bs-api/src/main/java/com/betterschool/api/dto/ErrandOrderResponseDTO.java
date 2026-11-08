@@ -1,6 +1,5 @@
 package com.betterschool.api.dto;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -34,10 +33,6 @@ public class ErrandOrderResponseDTO {
 
     /** 配图 URL 列表（最多 6 张，无配图为空列表） */
     private List<String> images;
-
-    /** 拒绝理由：仅作者视角且订单 REJECTED 时返回（读 content_review.reason），他人/其他状态不带 */
-    @JsonInclude(JsonInclude.Include.NON_NULL)
-    private String rejectReason;
 
     /**
      * 当前用户是否浏览过（market-feed-uv 票 05 已读灰显标记）：仅大厅推荐列表接口填充，详情与其他列表 null

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { deletePost, listMyPosts, moveRejectedPostToDraft, withdrawPost } from '@/api/community'
+import { deletePost, listMyPosts } from '@/api/community'
 import type { PostSummary } from '@/types/api'
 import { toast } from '@/components/Toast'
 import { confirmDialog } from '@/components/ConfirmDialog'
@@ -48,24 +48,6 @@ async function withLock(postId: number, action: () => Promise<void>) {
   }
 }
 
-function toDraft(p: PostSummary) {
-  withLock(p.postId, async () => {
-    await moveRejectedPostToDraft(p.postId)
-    toast('已转入草稿箱，可编辑后重新提交')
-    await load()
-  })
-}
-
-function withdraw(p: PostSummary) {
-  withLock(p.postId, async () => {
-    const ok = await confirmDialog('撤回这条待审帖？', '撤回后回到草稿箱，可编辑后重新提交')
-    if (!ok) return
-    await withdrawPost(p.postId)
-    toast('已撤回草稿箱')
-    await load()
-  })
-}
-
 function remove(p: PostSummary) {
   withLock(p.postId, async () => {
     const ok = await confirmDialog('删除这条帖子？', '删除后不可恢复')
@@ -91,31 +73,15 @@ onMounted(load)
         <div class="row-main">
           <div class="row-top">
             <div class="row-title ellipsis-2">{{ rowTitle(p) }}</div>
-            <span class="row-status" :class="{ rejected: p.status === 'REJECTED' }">
+            <span class="row-status">
               {{ POST_STATUS_TEXT[p.status || ''] || '' }}
             </span>
           </div>
-          <div v-if="p.status === 'REJECTED' && p.rejectReason" class="row-reason">拒绝理由：{{ p.rejectReason }}</div>
           <div class="row-time">{{ formatTime(p.createdAt) }}</div>
 
           <div class="row-actions">
-            <template v-if="p.status === 'DRAFT'">
-              <button class="btn-outline action-btn" @click.stop="openRow(p)">编辑</button>
-              <button class="btn-text action-btn danger" @click.stop="remove(p)">删除</button>
-            </template>
-            <template v-else-if="p.status === 'REJECTED'">
-              <button class="btn-outline action-btn" :disabled="actingId === p.postId" @click.stop="toDraft(p)">转草稿</button>
-              <button class="btn-text action-btn danger" @click.stop="remove(p)">删除</button>
-            </template>
-            <template v-else>
-              <button
-                class="btn-outline action-btn"
-                :disabled="actingId === p.postId"
-                @click.stop="withdraw(p)"
-              >
-                撤回
-              </button>
-            </template>
+            <button class="btn-outline action-btn" @click.stop="openRow(p)">编辑</button>
+            <button class="btn-text action-btn danger" @click.stop="remove(p)">删除</button>
           </div>
         </div>
       </div>
@@ -192,20 +158,6 @@ onMounted(load)
   background: $bg-secondary;
   color: $text-2;
   font-size: 11px;
-
-  &.rejected {
-    background: #ffecec;
-    color: #c0392b;
-  }
-}
-
-.row-reason {
-  padding: 6px 8px;
-  border-radius: $radius-sm;
-  background: #fff7ed;
-  color: #b45309;
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 .row-time {

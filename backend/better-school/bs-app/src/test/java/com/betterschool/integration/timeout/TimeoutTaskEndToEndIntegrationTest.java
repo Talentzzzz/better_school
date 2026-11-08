@@ -18,24 +18,24 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 超时中心内嵌化票 09 的端到端验收：四个 taskType 各走一遍
+ * 超时中心内嵌化票 09 的端到端验收：三个 taskType 各走一遍
  * <b>注册（业务事务内直插）→ 到点 → 扫描认领 → 进程内回调 → 业务状态落定</b>，
- * 外加退避重试与死信两条异常路径。
+ * 外加退避重试与死信两条异常路径（REVIEW_LEASE_TIMEOUT 已随审核功能整体删除）。
  *
  * <p>与各域既有测试的分工：本类不再直接驱动分发器，而是驱动<b>真实的扫描 case</b>
  * （{@link TimeoutTaskScanCase}），回调探针保持默认的 DELEGATE，因此回调走的是生产同一条路
  * （{@code TimeoutTaskCallbackDispatcher}）。「到点」用裸 MySQL 把物理行的 {@code next_fire_time}
  * 改到过去来模拟——不 sleep 等真实 deadline（下单/领单的窗口是 15 分钟 / 5 分钟）。
  *
- * <p>四个 taskType 的成功路径全部走真业务动作；退避/死信两条异常路径则用回调探针强制失败——
+ * <p>三个 taskType 的成功路径全部走真业务动作；退避/死信两条异常路径则用回调探针强制失败——
  * 要让真实业务动作连续失败 16 次只能靠制造数据库故障，不稳定也不该进常驻套件。两条路径的行、扫描、
  * 结算与状态迁移仍是生产同一条路（只有「回调抛异常」这一步被探针替换）。
  *
- * <p>四个业务夹具是从各域既有测试里复制的最小版本（{@code TimeoutTaskCallbackIntegrationTest} /
- * {@code ErrandLockTimeoutIntegrationTest} / {@code ReviewTaskLeaseIntegrationTest}）：抽公共夹具要动
- * 三个已绿测试类，回归面大于收益，故在本类内复制并注明来源。
+ * <p>三个业务夹具是从各域既有测试里复制的最小版本（{@code TimeoutTaskCallbackIntegrationTest} /
+ * {@code ErrandLockTimeoutIntegrationTest}）：抽公共夹具要动
+ * 两个已绿测试类，回归面大于收益，故在本类内复制并注明来源。
  */
-@DisplayName("票 09：四个 taskType 的注册到落定端到端 + 退避/死信")
+@DisplayName("票 09：三个 taskType 的注册到落定端到端 + 退避/死信")
 class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
 
     @Autowired
@@ -93,25 +93,6 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
         assertThat(errandStatus(orderId)).isEqualTo("PUBLISHED");
         assertThat(takerIdOf(orderId)).as("释放清空接单人").isNull();
         assertTaskSuccess(Constants.ERRAND_LOCK_TIMEOUT, bizId);
-    }
-
-    @Test
-    void 审核租约超时_到点回调把工单放回池中() {
-        Session author = registerAndLogin("13800009006", "端到端作者");
-        Session auditor = auditorSession("13900009001");
-        createPaidOrder(author);
-        String taskId = claim(auditor, null).path("data").path("taskId").asText();
-        String bizId = taskId + ":1";
-
-        makeDue(Constants.REVIEW_LEASE_TIMEOUT, bizId);
-        scanAll();
-
-        Map<String, Object> row = jdbcTemplate.queryForMap(
-                "SELECT claim_state, claim_by, recycle_count FROM review_task WHERE task_id = ?", taskId);
-        assertThat(row.get("claim_state")).as("到点回收回池").isEqualTo("PENDING");
-        assertThat(row.get("claim_by")).isNull();
-        assertThat(((Number) row.get("recycle_count")).intValue()).isEqualTo(1);
-        assertTaskSuccess(Constants.REVIEW_LEASE_TIMEOUT, bizId);
     }
 
     // ---------- 两条异常路径：退避重试 / 死信 ----------
@@ -182,17 +163,7 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
 
     // ---------- 业务夹具（复制自各域既有测试的最小版本） ----------
 
-    private Session cachedAdminSession;
-
-    /** 管理员登录态：先注册（USER），改库提权后重新走验证码登录（同 TimeoutTaskCallbackIntegrationTest） */
-    private Session adminSession() {
-        if (cachedAdminSession == null) {
-            cachedAdminSession = roleSession("13900009002", "端到端管理员", "ADMIN");
-        }
-        return cachedAdminSession;
-    }
-
-    /** 发布商品并经管理员裁决通过（下单单前置态 = ON_SALE）；商品业务 id 是 UUID 字符串 */
+    /** 发布商品（发布即 ON_SALE，下单前置态）；商品业务 id 是 UUID 字符串 */
     private String createApprovedProduct(Session seller, String title) {
         JsonNode publish = postJson("/api/trade/products", Map.ofEntries(
                 Map.entry("title", title),
@@ -202,10 +173,7 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
                 Map.entry("tradeLocation", "图书馆门口"),
                 Map.entry("category", "BOOKS")), seller);
         assertSuccess(publish, "发布商品");
-        String productId = publish.path("data").asText();
-        assertSuccess(postJson("/api/admin/reviews/decide",
-                Map.of("targetType", "PRODUCT", "targetId", productId, "approve", true), adminSession()), "商品裁决通过");
-        return productId;
+        return publish.path("data").asText();
     }
 
     private String createProductOrder(Session buyer, String productId) {
@@ -226,45 +194,17 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
         return response.path("data").asText();
     }
 
-    /** 走到 PUBLISHED 的完整前置：发布 → 支付 → 人工裁决通过（同 ErrandLockTimeoutIntegrationTest） */
+    /** 走到 PUBLISHED 的完整前置：发布 → 支付（支付后直接进大厅，同 ErrandLockTimeoutIntegrationTest） */
     private String publishableOrder(Session author) {
         String orderId = createErrand(author, "端到端可抢跑腿");
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付跑腿");
-        reviewCase.decide("ERRAND", orderId, true, null, null, "auditor-1");
-        assertThat(errandStatus(orderId)).as("前置：跑腿应已发布").isEqualTo("PUBLISHED");
+        assertThat(errandStatus(orderId)).as("前置：支付后应已发布").isEqualTo("PUBLISHED");
         return orderId;
     }
 
     private void grab(String orderId, Session taker) {
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/grab", null, taker), "抢单");
         assertThat(errandStatus(orderId)).isEqualTo("LOCKED");
-    }
-
-    /** 已支付跑腿（审核工单入池前置；同 ReviewTaskLeaseIntegrationTest） */
-    private void createPaidOrder(Session author) {
-        String orderId = createErrand(author, "端到端待审跑腿");
-        assertSuccess(postJson("/api/errand/orders/" + orderId + "/pay", null, author), "支付跑腿");
-    }
-
-    /** 审核员登录态（JWT 里带新角色） */
-    private Session auditorSession(String phone) {
-        return roleSession(phone, "端到端审核员", "AUDITOR");
-    }
-
-    /** 注册 → 改库提权 → 重新走验证码登录：JWT 里才会带新角色 */
-    private Session roleSession(String phone, String nickname, String role) {
-        Session registered = registerAndLogin(phone, nickname);
-        jdbcTemplate.update("UPDATE bs_user SET role = ? WHERE user_id = ?", role, registered.userId());
-        postJson("/api/user/send-code", Map.of("phone", phone), null);
-        String code = redissonClient.<String>getBucket(Constants.VERIFY_CODE_KEY + phone).get();
-        JsonNode loginResponse = postJson("/api/user/login", Map.of("phone", phone, "code", code), null);
-        assertSuccess(loginResponse, "重新登录");
-        return new Session(loginResponse.path("data").path("token").asText(), registered.userId());
-    }
-
-    private JsonNode claim(Session auditor, String targetType) {
-        return postJson("/api/moderation/tasks/claim",
-                targetType == null ? Map.of() : Map.of("targetType", targetType), auditor);
     }
 
     // ---------- 可观察状态 ----------

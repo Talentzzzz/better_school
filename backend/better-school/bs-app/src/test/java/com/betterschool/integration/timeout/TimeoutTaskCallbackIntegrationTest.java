@@ -129,24 +129,7 @@ class TimeoutTaskCallbackIntegrationTest extends CommunityApiTestBase {
 
     // ---------- 用例夹具（照同目录既有用例的工具形状） ----------
 
-    private Session cachedAdminSession;
-
-    /** 管理员登录态（每用例缓存复用）：先注册（USER），改库提权后重新走验证码登录 */
-    private Session adminSession() {
-        if (cachedAdminSession != null) {
-            return cachedAdminSession;
-        }
-        Session registered = registerAndLogin("13900001101", "管理员");
-        jdbcTemplate.update("UPDATE bs_user SET role = 'ADMIN' WHERE user_id = ?", registered.userId());
-        postJson("/api/user/send-code", Map.of("phone", "13900001101"), null);
-        String code = redissonClient.<String>getBucket(Constants.VERIFY_CODE_KEY + "13900001101").get();
-        JsonNode loginResponse = postJson("/api/user/login", Map.of("phone", "13900001101", "code", code), null);
-        assertSuccess(loginResponse, "管理员重新登录");
-        cachedAdminSession = new Session(loginResponse.path("data").path("token").asText(), registered.userId());
-        return cachedAdminSession;
-    }
-
-    /** 发布商品并经管理员裁决通过（下单单前置态 = ON_SALE）；商品业务 id 是 UUID 字符串 */
+    /** 发布商品（发布即 ON_SALE）；商品业务 id 是 UUID 字符串 */
     private String createApprovedProduct(Session seller, String title) {
         JsonNode publish = postJson("/api/trade/products", Map.ofEntries(
                 Map.entry("title", title),
@@ -156,10 +139,7 @@ class TimeoutTaskCallbackIntegrationTest extends CommunityApiTestBase {
                 Map.entry("tradeLocation", "图书馆门口"),
                 Map.entry("category", "BOOKS")), seller);
         assertSuccess(publish, "发布商品");
-        String productId = publish.path("data").asText();
-        assertSuccess(postJson("/api/admin/reviews/decide",
-                Map.of("targetType", "PRODUCT", "targetId", productId, "approve", true), adminSession()), "商品裁决通过");
-        return productId;
+        return publish.path("data").asText();
     }
 
     private String createProductOrder(Session buyer, String productId) {

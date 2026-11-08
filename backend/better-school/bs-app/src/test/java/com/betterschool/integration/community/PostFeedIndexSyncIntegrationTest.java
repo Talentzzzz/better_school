@@ -13,36 +13,28 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * feed-index-uv 票 03：post_feed_index 的同事务直写触发点——状态流转（审核通过行诞生、驳回/撤回/
- * 被拒转草稿/软删不可见化）与赞合并事务的 like_count ±N 旁路。
+ * feed-index-uv 票 03：post_feed_index 的同事务直写触发点——状态流转（发布行诞生、软删不可见化）
+ * 与赞合并事务的 like_count ±N 旁路。
  *
  * <p>断言只看外部可观察状态：post_feed_index 行的 state / feed_time / like_count，以及
- * (like_count, post_id) 热榜序。 feed_time 只在 INSERT 侧落（行不存在才写），重提再通过走的是
- * INSERT（前一轮从未通过、无行）——feed_time 自然等于重提轮的通过时刻；ODKU 命中已有行是纯防御
- * 分支（双审并发），正常流不可达，不刷 feed_time 的口径由票 01 回填测试从脚本侧钉住。
+ * (like_count, post_id) 热榜序。 feed_time 只在 INSERT 侧落（行不存在才写）——feed_time 等于
+ * 发布时刻；ODKU 命中已有行是纯防御分支，正常流不可达，不刷 feed_time 的口径由票 01 回填测试从脚本侧钉住。
  */
-@DisplayName("feed 索引同步触发点：通过诞生 / 撤回重提 / 不可见化 / 点赞 ±N")
+@DisplayName("feed 索引同步触发点：发布诞生 / 不可见化 / 点赞 ±N")
 class PostFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
 
-    private static final String OPERATOR_ID = "auditor-1";
-
     @Test
-    void 审核通过诞生索引行待审不产行() {
+    void 发布诞生索引行() {
         Session author = registerAndLogin("13900002301", "索引作者");
-        String postId = publishPendingPost(author, "索引通过帖");
-
-        // 先审后发：待审对外不可见，也不进索引
-        assertThat(feedRow(postId)).as("待审帖不进索引").isNull();
-
-        LocalDateTime approveStartedAt = LocalDateTime.now();
-        reviewCase.decide("POST", postId, true, null, null, OPERATOR_ID);
+        LocalDateTime publishStartedAt = LocalDateTime.now();
+        String postId = publishPost(author, "索引诞生帖");
 
         Map<String, Object> row = feedRow(postId);
-        assertThat(row).as("通过后索引行诞生").isNotNull();
+        assertThat(row).as("发布后索引行诞生").isNotNull();
         assertThat(row.get("state")).as("行以 NORMAL 诞生").isEqualTo("NORMAL");
         assertThat(((LocalDateTime) row.get("feed_time")))
-                .as("feed_time = 通过时刻（行诞生时刻）")
-                .isBetween(approveStartedAt.minusSeconds(5), LocalDateTime.now().plusSeconds(5));
+                .as("feed_time = 发布时刻（行诞生时刻）")
+                .isBetween(publishStartedAt.minusSeconds(5), LocalDateTime.now().plusSeconds(5));
         assertThat(((Number) row.get("like_count")).intValue()).as("诞生时 like_count = 0").isZero();
 
         // 浏览（UV 口径）不触发索引：详情读后索引行不受影响（票面第 3 条）
@@ -51,36 +43,10 @@ class PostFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     }
 
     @Test
-    void 撤回重提再通过后feed_time为重提轮的通过时刻() {
-        Session author = registerAndLogin("13900002302", "撤回作者");
-        String postId = publishPendingPost(author, "撤回重提帖");
+    void 删除后行不可见化() {
+        Session author = registerAndLogin("13900002303", "删除作者");
 
-        // 撤回回草稿（从未通过、无索引行，不可见化 0 行静默）
-        postJson("/api/community/posts/" + postId + "/withdraw", Map.of(), author);
-        assertThat(feedRow(postId)).as("撤回后仍无索引行（从未通过审）").isNull();
-
-        LocalDateTime resubmitAt = LocalDateTime.now();
-        postJson("/api/community/posts/" + postId + "/submit", Map.of(), author);
-        reviewCase.decide("POST", postId, true, null, null, OPERATOR_ID);
-
-        assertThat(feedState(postId)).as("重提再通过后可见").isEqualTo("NORMAL");
-        assertThat(feedTimeOf(postId))
-                .as("feed_time = 重提轮的通过时刻（不早于重提时刻）")
-                .isAfterOrEqualTo(resubmitAt.minusSeconds(5));
-    }
-
-    @Test
-    void 驳回与转草稿不产索引行删除后行不可见化() {
-        Session author = registerAndLogin("13900002303", "驳回作者");
-
-        // 驳回（终态）与被拒转草稿都发生在通过之前：索引行不存在，也不该凭空产生
-        String rejectedPostId = publishPendingPost(author, "驳回帖");
-        reviewCase.decide("POST", rejectedPostId, false, "OTHER", "驳回夹具", OPERATOR_ID);
-        assertThat(feedRow(rejectedPostId)).as("驳回不产索引行").isNull();
-        postJson("/api/community/posts/" + rejectedPostId + "/to-draft", Map.of(), author);
-        assertThat(feedRow(rejectedPostId)).as("被拒转草稿不产索引行").isNull();
-
-        // 通过后删除：索引行同事务翻 DELETED（软删/强删共用 softDelete 口）
+        // 发布后删除：索引行同事务翻 DELETED（软删/强删共用 softDelete 口）
         String deletedPostId = publishPost(author, "删除帖");
         assertThat(feedState(deletedPostId)).as("删除前可见").isEqualTo("NORMAL");
         deleteJson("/api/community/posts/" + deletedPostId, author);
@@ -120,14 +86,6 @@ class PostFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     }
 
     // ---------- 夹具与可观察状态 ----------
-
-    /** 发帖不裁决（先审后发：落库即待审），返回 postId */
-    private String publishPendingPost(Session author, String content) {
-        JsonNode response = postJson("/api/community/posts",
-                Map.of("title", "测试帖子", "content", content), author);
-        assertSuccess(response, "发帖");
-        return response.path("data").asText();
-    }
 
     private void like(String postId, Session user) {
         assertSuccess(postJson("/api/community/posts/" + postId + "/like", Map.of(), user), "点赞");

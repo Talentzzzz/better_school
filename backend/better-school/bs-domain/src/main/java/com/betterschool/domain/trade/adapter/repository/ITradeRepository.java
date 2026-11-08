@@ -30,16 +30,10 @@ public interface ITradeRepository {
     /** 覆盖草稿内容（仅 DRAFT 行生效） */
     void updateDraft(ProductEntity productEntity);
 
-    /** 提交草稿：DRAFT -> PENDING_REVIEW，返回 false = 状态已变化 */
+    /** 提交草稿：DRAFT -> ON_SALE，返回 false = 状态已变化 */
     boolean submitDraft(String productId);
 
-    /** 撤回待审：PENDING_REVIEW -> DRAFT，返回 false = 状态已变化 */
-    boolean withdraw(String productId);
-
-    /** 被拒转草稿箱：REJECTED -> DRAFT，返回 false = 状态已变化 */
-    boolean rejectToDraft(String productId);
-
-    /** 上架后改内容：ON_SALE -> PENDING_REVIEW（轮次 +1，仅非 null 字段覆盖），返回 false = 状态已变化 */
+    /** 上架后改内容：仅非 null 字段覆盖、状态不变（立即生效），返回 false = 状态已变化 */
     boolean editOnSaleContent(ProductEntity productEntity);
 
     /** 上架后仅改价：价格立即生效，状态不变，返回 false = 状态已变化 */
@@ -51,22 +45,13 @@ public interface ITradeRepository {
     /** 到期扫描：ON_SALE 且 expire_at 早于 before 的商品 id 列表 */
     List<String> listExpiredOnSaleIds(LocalDateTime before, int limit);
 
-    /** 24h 提醒扫描：PENDING_REVIEW 且 review_entered_at 早于 before 的商品 id 列表 */
-    List<String> listReviewTimeoutIds(LocalDateTime before, int limit);
-
-    /** 审核通过：PENDING_REVIEW -> ON_SALE，返回 false = 状态已变化 */
-    boolean reviewApproveById(String productId);
-
-    /** 审核拒绝：PENDING_REVIEW -> REJECTED，返回 false = 状态已变化 */
-    boolean reviewRejectById(String productId);
-
     /** 软删：status -> DELETED */
     void deleteById(String productId);
 
     /** 标记已出：ON_SALE -> SOLD */
     void markSold(String productId);
 
-    /** 重新上架：SOLD -> ON_SALE */
+    /** 重新上架：SOLD -> ON_SALE（同事务索引行翻回 + 搜索同步消息） */
     void relist(String productId);
 
     /** 下单锁定：ON_SALE -> LOCKED（条件 UPDATE，0 行 = 已被交易） */
@@ -94,7 +79,7 @@ public interface ITradeRepository {
 
     /**
      * feed 索引全量重建（market-feed-uv 票 06）：清空重灌 product_feed_index（数据源 = product +
-     * content_review + product_view_count）并把 product_view_count 校准成 product_view_history 行数，
+     * product_view_count）并把 product_view_count 校准成 product_view_history 行数，
      * 四条语句一个事务——读者要么看到重建前、要么看到重建后的完整索引，不见空窗。
      * 兜底场景 = 状态流转/改价/浏览旁路的同事务直写留下漂移（索引行缺失、计数窄表被绕过直改）
      */
@@ -204,11 +189,8 @@ public interface ITradeRepository {
     /** 在售退出可见态：条件 UPDATE ON_SALE → DRAFT + 搜索同步消息，同一事务；返回 false = 0 行 */
     boolean takeDownWithSearchSync(String productId);
 
-    /** 上架后改内容回待审：条件 UPDATE（轮次 +1）+ 搜索同步消息，同一事务；0 行即抛 BUSINESS_ERROR（提交前回滚） */
+    /** 上架后改内容（立即生效，价格快照同事务跟索引）：+ 搜索同步消息，同一事务；0 行即抛 BUSINESS_ERROR（提交前回滚） */
     void editOnSaleContentWithSearchSync(ProductEntity productEntity);
-
-    /** 审核通过：条件 UPDATE PENDING_REVIEW → ON_SALE + 搜索同步消息，同一事务；0 行即抛 BUSINESS_ERROR（提交前回滚） */
-    void reviewApproveWithSearchSync(String productId);
 
     /** 软删 + 搜索同步消息（在售商品对外可见过才需同步），同一事务 */
     void deleteWithSearchSync(String productId, boolean publiclyVisible);

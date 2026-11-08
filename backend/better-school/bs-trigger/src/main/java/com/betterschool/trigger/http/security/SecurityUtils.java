@@ -27,7 +27,7 @@ public final class SecurityUtils {
         return null;
     }
 
-    /** 当前用户角色（USER/AUDITOR/ADMIN），未登录返回 null */
+    /** 当前用户角色（USER/ADMIN），未登录返回 null */
     public static String currentRole() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null) {

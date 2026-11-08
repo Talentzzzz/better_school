@@ -4,7 +4,7 @@
 
 |表名|说明|
 |----|----|
-|post|帖子主表（内容 + 状态机 + 审核轮次）|
+|post|帖子主表（内容 + 状态机）|
 |post_like|帖子点赞关系（明细，uk_post_user 幂等）|
 |post_like_count|帖子点赞计数窄表（点赞计数真源，进程内合并同步落库）|
 
@@ -12,7 +12,7 @@
 
 # post
 
-> 业务：校园墙帖子（内容 + 状态机 + 审核轮次）；归属模块：community
+> 业务：校园墙帖子（内容 + 状态机）；归属模块：community
 
 |字段|类型|约束|说明|
 |----|----|----|----|
@@ -23,14 +23,12 @@
 |content|text|NULL|正文；草稿可空，提交时校验必填|
 |images|varchar(1000)|NULL|图片 URL 列表（JSON 数组，MinIO）|
 |cover|varchar(500)|NULL|独立封面 URL：可传相册外的独立上传图；展示口径统一为「独立封面 ?? 相册第一张」（读时兜底，不落回退值），均空即无封面帖|
-|state|varchar(20)|NOT NULL, DEFAULT 'PENDING_REVIEW'|NORMAL/PENDING_REVIEW/REJECTED/DELETED/DRAFT；先审后发：发布落库即待审，人工通过转 NORMAL，拒绝 REJECTED 终态，撤回/被拒/未发布进 DRAFT（原 `status` 列改名）|
-|review_round|int|NOT NULL, DEFAULT 1|审核轮次：累计进入待审次数，直接发布=1，草稿创建=0、提交进待审时 +1；`content_review.review_round` 取此列，也是审核记录幂等键的维度|
-|review_entered_at|datetime|NULL|最近一次进入待审时间（24h 待审超时提醒扫描锚点；裁决/撤回不清空，下次进入待审由提交语句刷新）|
+|state|varchar(20)|NOT NULL, DEFAULT 'NORMAL'|NORMAL/DELETED/DRAFT；发布即对外可见：发布落库即 NORMAL，未发布进 DRAFT（原 `status` 列改名）|
 |expire_at|datetime|NULL|过期归档时间（满 30 天下架，XXL-Job 后置）|
 |create_time|datetime|NOT NULL|创建时间|
 |update_time|datetime|NOT NULL|更新时间|
 
-> 已删除的列：`category`（帖子分类，feed-index-uv 票 06 退役、票 07 删列——墙内容发现 = 时间线 + 搜索）与 `view_count`（浏览切 UV 口径后退役，同票删列——真相源 `user_view_history`、加速列 `post_view_count`）。存量库不迁移（uuid-biz-id：删库重建），历史删列脚本已退役。
+> 已删除的列：`category`（帖子分类，feed-index-uv 票 06 退役、票 07 删列——墙内容发现 = 时间线 + 搜索）、`view_count`（浏览切 UV 口径后退役，同票删列——真相源 `user_view_history`、加速列 `post_view_count`）与 `review_round` / `review_entered_at`（审核功能整体移除后删列——发布即对外可见，无审核轮次）。存量库不迁移（uuid-biz-id：删库重建），历史删列脚本已退役。
 
 ## 索引
 - `uk_post_id (post_id)`
@@ -47,9 +45,8 @@
 - 匿名字段已移除：所有内容实名展示
 - 删除是软删（`state='DELETED'`，条件 UPDATE），列表/详情查询均排除
 - 写状态一律条件 UPDATE（`WHERE post_id = ? AND state = ?`），不要无条件 UPDATE
-- 先审后发：同步初筛命中报错不落库，干净帖落库即 PENDING_REVIEW；待审/被拒仅作者可见
-- 草稿箱：DRAFT 仅作者可见（「我的发帖」含草稿态）；保存/编辑不做初筛；提交进待审 round+1 并锚定 `review_entered_at`、刷新 `expire_at`；撤回（PENDING_REVIEW→DRAFT）与被拒转草稿（REJECTED→DRAFT）均为条件 UPDATE；拒绝理由存 content_review（按最新一次展示）
-- 24h 待审超时提醒（XXL-Job postReviewTimeoutScan → PostPublishCase）：PENDING_REVIEW 且 `review_entered_at` 超 24h 提醒 ADMIN+AUDITOR；**dedup_key 含 review_round**（帖子撤回/被拒重提后新一轮可再次提醒，商品/跑腿的 key 不含轮次）；只提醒不自动裁决
+- 发布即对外可见：发布落库即 NORMAL 并同事务落搜索同步消息
+- 草稿箱：DRAFT 仅作者可见（「我的发帖」含草稿态）；提交条件 UPDATE（DRAFT→NORMAL）并刷新 `expire_at`
 - 封面 `cover` 独立列：发布/草稿可指定（不传存 NULL）；列表与详情展示走「独立封面 ?? 相册第一张」，编辑清空 cover 后自动跟随相册
 
 # post_like

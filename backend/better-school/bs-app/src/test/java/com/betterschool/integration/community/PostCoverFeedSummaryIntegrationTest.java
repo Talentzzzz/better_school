@@ -34,7 +34,6 @@ class PostCoverFeedSummaryIntegrationTest extends CommunityApiTestBase {
                 Map.entry("cover", STANDALONE_COVER)), author);
         assertSuccess(publish, "发布带独立封面帖");
         String postId = publish.path("data").asText();
-        reviewCase.decide("POST", postId, true, null, null, author.userId());
 
         // 封面列存独立封面本身（不落回退值），相册不受影响
         assertThat(coverOf(postId)).as("独立封面应落独立列").isEqualTo(STANDALONE_COVER);
@@ -84,7 +83,7 @@ class PostCoverFeedSummaryIntegrationTest extends CommunityApiTestBase {
     // ---------- 草稿封面：可指定、可编辑、编辑相册后封面自动跟随 ----------
 
     @Test
-    void 草稿封面全量编辑_提交通过后封面生效() {
+    void 草稿封面全量编辑_提交后封面生效() {
         Session author = registerAndLogin("13800002004", "封面作者4");
 
         JsonNode save = postJson("/api/community/posts/draft", Map.ofEntries(
@@ -104,7 +103,6 @@ class PostCoverFeedSummaryIntegrationTest extends CommunityApiTestBase {
         assertThat(coverOf(postId)).isEqualTo(ALBUM_SECOND);
 
         assertSuccess(postJson("/api/community/posts/" + postId + "/submit", null, author), "提交草稿");
-        reviewCase.decide("POST", postId, true, null, null, author.userId());
 
         assertThat(feedItemOf(postId).path("cover").asText())
                 .as("提交后 feed 封面取编辑后的独立封面").isEqualTo(ALBUM_SECOND);
@@ -114,16 +112,15 @@ class PostCoverFeedSummaryIntegrationTest extends CommunityApiTestBase {
     void 独立封面被编辑清空后_封面回退相册第一张() {
         Session author = registerAndLogin("13800002005", "封面作者5");
 
-        // 发布带独立封面帖 → 撤回回草稿箱 → 编辑清空封面（cover 不传即清空）→ 重提
-        JsonNode publish = postJson("/api/community/posts", Map.ofEntries(
+        // 草稿带独立封面 → 编辑清空封面（cover 不传即清空）→ 提交发布
+        JsonNode save = postJson("/api/community/posts/draft", Map.ofEntries(
                 Map.entry("title", "相册在封面在"),
                 Map.entry("content", "独立封面清空后回退相册"),
                 Map.entry("images", List.of(ALBUM_FIRST, ALBUM_SECOND)),
                 Map.entry("cover", STANDALONE_COVER)), author);
-        assertSuccess(publish, "发布带独立封面帖");
-        String postId = publish.path("data").asText();
-
-        assertSuccess(postJson("/api/community/posts/" + postId + "/withdraw", null, author), "撤回待审回草稿箱");
+        assertSuccess(save, "保存带独立封面草稿");
+        String postId = save.path("data").asText();
+        assertThat(coverOf(postId)).as("草稿封面落独立列").isEqualTo(STANDALONE_COVER);
 
         JsonNode clearCover = putJson("/api/community/posts/" + postId + "/draft", Map.ofEntries(
                 Map.entry("title", "相册在封面在"),
@@ -132,8 +129,7 @@ class PostCoverFeedSummaryIntegrationTest extends CommunityApiTestBase {
         assertSuccess(clearCover, "编辑清空封面");
         assertThat(coverOf(postId)).as("编辑不传 cover 应清空独立封面").isNull();
 
-        assertSuccess(postJson("/api/community/posts/" + postId + "/submit", null, author), "重提草稿");
-        reviewCase.decide("POST", postId, true, null, null, author.userId());
+        assertSuccess(postJson("/api/community/posts/" + postId + "/submit", null, author), "提交草稿");
 
         assertThat(feedItemOf(postId).path("cover").asText())
                 .as("清空独立封面后回退相册第一张（读时兜底跟随相册）").isEqualTo(ALBUM_FIRST);
@@ -170,7 +166,7 @@ class PostCoverFeedSummaryIntegrationTest extends CommunityApiTestBase {
 
     // ---------- fixtures & 取数 ----------
 
-    /** 发布（带可选相册，无封面）并裁决通过，返回 postId */
+    /** 发布（带可选相册，无封面），返回 postId */
     private String publishPostWithImages(Session author, String content, List<String> images) {
         Map<String, Object> body = new java.util.HashMap<>();
         body.put("title", "测试帖子");
@@ -180,9 +176,7 @@ class PostCoverFeedSummaryIntegrationTest extends CommunityApiTestBase {
         }
         JsonNode response = postJson("/api/community/posts", body, author);
         assertSuccess(response, "发帖");
-        String postId = response.path("data").asText();
-        reviewCase.decide("POST", postId, true, null, null, author.userId());
-        return postId;
+        return response.path("data").asText();
     }
 
     private String coverOf(String postId) {

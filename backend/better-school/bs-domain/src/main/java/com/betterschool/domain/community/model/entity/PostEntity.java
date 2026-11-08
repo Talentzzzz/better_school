@@ -17,10 +17,6 @@ public class PostEntity {
     /** 独立封面 URL（可空，可传相册外的独立上传图；展示口径见 displayCover） */
     private String cover;
     private PostStatusVO status;
-    /** 审核轮次：累计进入待审次数（直接发布=1，草稿创建=0，草稿提交/撤回重提再 +1） */
-    private int reviewRound;
-    /** 最近一次进入待审时间（24h 待审超时提醒扫描用；草稿行为 null，提交时由 SQL 刷新） */
-    private LocalDateTime reviewEnteredAt;
     private long likeCount;
     private long commentCount;
     private long viewCount;
@@ -34,7 +30,7 @@ public class PostEntity {
     /** 是否已点赞（当前用户，详情接口填充） */
     private boolean liked;
 
-    /** 先审后发：发布（同步初筛已由 case 层前置）落库即进待审，直接发布轮次 = 1 */
+    /** 发布（信用分门槛已由 case 层前置）落库即可见 */
     public static PostEntity create(String userId, String title, String content,
                                     List<String> images, String cover) {
         PostEntity postEntity = new PostEntity();
@@ -43,15 +39,14 @@ public class PostEntity {
         postEntity.content = content;
         postEntity.images = images == null ? List.of() : images;
         postEntity.cover = normalizedCover(cover);
-        postEntity.status = PostStatusVO.PENDING_REVIEW;
-        postEntity.reviewRound = 1;
+        postEntity.status = PostStatusVO.NORMAL;
         postEntity.likeCount = 0;
         postEntity.commentCount = 0;
         postEntity.viewCount = 0;
         return postEntity;
     }
 
-    /** 草稿（私有停靠：字段可缺省，正文提交时才校验必填；不做初筛、不做信用分门槛）轮次 = 0，进待审时 +1 */
+    /** 草稿（私有停靠：字段可缺省，正文提交时才校验必填；不做信用分门槛） */
     public static PostEntity createDraft(String userId, String title, String content,
                                          List<String> images, String cover) {
         PostEntity postEntity = new PostEntity();
@@ -61,7 +56,6 @@ public class PostEntity {
         postEntity.images = images == null ? List.of() : images;
         postEntity.cover = normalizedCover(cover);
         postEntity.status = PostStatusVO.DRAFT;
-        postEntity.reviewRound = 0;
         postEntity.likeCount = 0;
         postEntity.commentCount = 0;
         postEntity.viewCount = 0;

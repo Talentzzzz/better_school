@@ -6,7 +6,6 @@ package com.betterschool.domain.user.model.valobj;
 public enum UserRoleVO {
 
     USER("普通用户"),
-    AUDITOR("内容审核员"),
     ADMIN("超级管理员");
 
     private final String desc;

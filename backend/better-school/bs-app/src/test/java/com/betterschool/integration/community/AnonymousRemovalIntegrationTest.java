@@ -28,8 +28,6 @@ class AnonymousRemovalIntegrationTest extends CommunityApiTestBase {
                 Map.of("title", "旧客户端发的帖", "content", "内容不含敏感词", "category", "DAILY", "anonymous", true), author);
         assertSuccess(response, "旧客户端带 anonymous/category 字段发帖");
         String postId = response.path("data").asText();
-        // 先审后发：待审帖仅作者可见，访客读详情前先裁决通过
-        reviewCase.decide("POST", postId, true, null, null, author.userId());
 
         JsonNode detail = getJson("/api/community/posts/" + postId, null);
         assertSuccess(detail, "帖子详情");
@@ -49,8 +47,6 @@ class AnonymousRemovalIntegrationTest extends CommunityApiTestBase {
         JsonNode response = postJson("/api/community/posts/" + postId + "/comments",
                 Map.of("content", "老版本 App 的评论", "anonymous", true), commenter);
         assertSuccess(response, "旧客户端带 anonymous 字段评论");
-        // 05 票起发布为异步审核：列表可见性断言前先驱动审核消费者
-        driveCommentReview(response.path("data").path("commentId").asText());
 
         JsonNode listData = listCommentsAsGuest(postId, 1, 10);
         assertThat(listData.path("list")).hasSize(1);

@@ -5,7 +5,7 @@ import lombok.Getter;
 
 /**
  * 信用分变动原因（规则表）：delta 为本次变动量，dailyCap 非空表示该类型有每日加分上限
- * REPORT_CONFIRMED / TRADE_COMPLAINT 为预留（触发源在 content 域，本期未接入）
+ * TRADE_COMPLAINT 为预留（本期未接入）
  */
 @Getter
 @AllArgsConstructor
@@ -16,7 +16,6 @@ public enum CreditReasonTypeVO {
     ADMIN_ADJUST(0, "管理员调分", null),
     ADMIN_BAN(0, "管理员封禁", null),
     ADMIN_UNBAN(0, "管理员解封", null),
-    REPORT_CONFIRMED(-10, "发布内容被举报核实", null),
     TRADE_COMPLAINT(-20, "交易被投诉核实", null);
 
     private final int delta;

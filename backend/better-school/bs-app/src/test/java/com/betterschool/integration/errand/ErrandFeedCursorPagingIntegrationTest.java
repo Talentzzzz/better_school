@@ -193,7 +193,7 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
     // ---------- 夹具与可观察状态 ----------
 
     /**
-     * 直插 N 条已发布订单 + 对应索引行（读路径测试只关心投影，不重复走付费/审核链）。
+     * 直插 N 条已发布订单 + 对应索引行（读路径测试只关心投影，不重复走付费链）。
      * 夹具刻意造并列：悬赏四档循环、热度三档循环、feed_time 五分钟循环，tie-break 由业务 ID 收；
      * 业务 ID 是 UUID（uuid-biz-id 票 05，无序），create_time 逐条错开一分钟保证旧直查时间序确定
      */

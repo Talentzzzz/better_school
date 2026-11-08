@@ -23,10 +23,10 @@ scripts/test-env.sh up
 ## 约定
 
 - **位置**：测试统一放 `bs-app`（唯一依赖全部模块的组装层），包名 `com.betterschool.integration.<业务域>`
-- **单一 seam = trigger 层入口**：`@SpringBootTest(RANDOM_PORT)` 起完整上下文，用 `TestRestTemplate` 打真实 HTTP；spec 里的另一半 seam（审核消费者入口，测试直接驱动消费者）在异步审核票落地时补充，本票的同步审核链路用不到
+- **单一 seam = trigger 层入口**：`@SpringBootTest(RANDOM_PORT)` 起完整上下文，用 `TestRestTemplate` 打真实 HTTP
 - **只断言外部行为**：HTTP 响应 + MySQL/Redis 可观察状态（基类提供 `JdbcTemplate` / `RedissonClient` 直查）；不 mock 任何内部 Bean、不断言内部实现
 - **运行环境**：测试进程**不创建任何容器**——连 `scripts/test-env.sh up` 备好的常驻栈。MySQL / Redis / MinIO 与开发共用容器，靠多租户机制隔离（MySQL 库 `better_school_test`、Redis `database: 1`、MinIO 桶 `bs-files-it`）；Nacos（18848 / 19848）与 RocketMQ namesrv（19876）是测试专用容器。地址的唯一事实来源是 `application-test.yml`；建库走 `sql/init-dev.sql` / `init-test.sql` + `schema.sql`（test-env.sh 起栈时执行），不用 JPA 建表
-- **数据隔离**：基类 `@BeforeEach` TRUNCATE 业务表；`sensitive_word` 例外——词表在应用启动时加载进内存，测试直接用 init.sql 的种子词（如「作弊」）
+- **数据隔离**：基类 `@BeforeEach` TRUNCATE 业务表
 - **登录态走真实链路**：`send-code` → 从 Redis 读验证码 → `register` 换 JWT（基类 `registerAndLogin`），不伪造 token
 - **中间件缺席**：RocketMQ / xxl-job / ES 自动装配保持开启（`OutboxMessageSender` 硬依赖 `RocketMQTemplate`，排除会导致上下文起不来）；不可达的副作用 = 日志告警 + 发送失败被 catch，不影响被测行为。噪音日志在 `application-test.yml` 降噪
 - **现状断言（baseline）**：锁定既有缺陷时，断言旁标注 `TODO(v2-04)`，替换实现时同步改写断言

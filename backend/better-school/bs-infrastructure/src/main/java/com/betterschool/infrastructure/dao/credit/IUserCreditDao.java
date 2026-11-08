@@ -26,8 +26,4 @@ public interface IUserCreditDao {
     List<CreditDetail> selectPage(@Param("userId") String userId, @Param("offset") int offset, @Param("limit") int limit);
 
     long countDetails(@Param("userId") String userId);
-
-    /** 同 target 举报单是否已有 REPORT_CONFIRMED 流水（直查 user_credit_detail 子查询，一内容一罚判定） */
-    int existsProcessedCreditLog(@Param("authorId") String authorId, @Param("targetType") String targetType,
-                                 @Param("targetId") String targetId);
 }

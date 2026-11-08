@@ -1,6 +1,5 @@
 package com.betterschool.usecase.timeout;
 
-import com.betterschool.domain.moderation.service.IReviewService;
 import com.betterschool.domain.timeout.adapter.port.callback.ITimeoutTaskCallbackPort;
 import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
 import com.betterschool.types.common.Constants;
@@ -34,12 +33,11 @@ public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
 
     private final ProductOrderCase productOrderCase;
     private final ErrandOrderCase errandOrderCase;
-    private final IReviewService reviewService;
 
     /**
      * {@code taskType → 到期动作}。{@code bizId} 的形状**按 taskType 各自解析**：
      * 支付超时是 UUID 字符串订单业务 id（直传，uuid-biz-id 票 05），
-     * 锁单/租约超时是复合键 {@code {uuid}:{seq}}（锁单）与 {@code {taskId}:{claimSeq}}（租约，taskId 亦 UUID 字符串，uuid-biz-id 票 06）。
+     * 锁单超时是复合键 {@code {uuid}:{seq}}（锁单）。
      */
     @Override
     public void callback(TimeoutTaskEntity taskEntity) {
@@ -49,11 +47,6 @@ public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
             case Constants.ERRAND_LOCK_TIMEOUT -> {
                 CompositeBizId lockBizId = parseCompositeBizId(taskEntity, "{orderId}:{lockSeq}");
                 errandOrderCase.handleLockTimeout(lockBizId.id(), lockBizId.seq());
-            }
-            case Constants.REVIEW_LEASE_TIMEOUT -> {
-                // 审核租约回收：轮次守卫条件 UPDATE，未命中（已裁决/已放回/已按新轮次重领）＝幂等成功零副作用
-                CompositeBizId leaseBizId = parseCompositeBizId(taskEntity, "{taskId}:{claimSeq}");
-                reviewService.handleLeaseTimeout(leaseBizId.id(), leaseBizId.seq());
             }
             // 业务侧不认识这个 taskType = 注册与消费的代码不一致（如改了 Constants 取值），
             // 按失败重投直到进死信，在管理面显式暴露，不静默吞掉

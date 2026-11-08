@@ -83,15 +83,6 @@
         WHERE user_id = #{userId}
     </update>
 
-    <!-- 指派/回收审核员：条件 UPDATE bs_user.role（已是目标角色不生效，幂等） -->
-    <update id="updateUserRole">
-        UPDATE bs_user
-        SET role = #{role},
-            update_time = NOW()
-        WHERE user_id = #{userId}
-          AND role &lt;&gt; #{role}
-    </update>
-
     <select id="existsUser" resultType="int">
         SELECT COUNT(1)
         FROM bs_user

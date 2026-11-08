@@ -108,13 +108,6 @@ public class ProductController implements ITradeService {
     }
 
     @Override
-    @PostMapping("/products/{productId}/withdraw")
-    public Response<Void> withdrawProduct(@PathVariable String productId) {
-        productService.withdrawProduct(SecurityUtils.currentUserId(), productId);
-        return Response.ok(null);
-    }
-
-    @Override
     @PostMapping("/products/{productId}/takedown")
     public Response<Void> takeDownProduct(@PathVariable String productId) {
         tradePublishCase.takeDownProduct(SecurityUtils.currentUserId(), productId);
@@ -131,23 +124,11 @@ public class ProductController implements ITradeService {
     }
 
     @Override
-    @PostMapping("/products/{productId}/to-draft")
-    public Response<Void> moveRejectedProductToDraft(@PathVariable String productId) {
-        productService.moveRejectedProductToDraft(SecurityUtils.currentUserId(), productId);
-        return Response.ok(null);
-    }
-
-    @Override
     @GetMapping("/products/{productId}")
     public Response<ProductResponseDTO> productDetail(@PathVariable String productId) {
         String currentUserId = SecurityUtils.currentUserId();
         ProductEntity productEntity = productService.productDetail(productId, currentUserId);
-        ProductResponseDTO dto = toProductResponseDTO(productEntity, productEntity.isFavorited());
-        // 拒绝理由只对作者可见（他人/其他状态不带）
-        if (productEntity.getStatus() == ProductStatusVO.REJECTED && productEntity.isOwner(currentUserId)) {
-            dto.setRejectReason(tradePublishCase.productRejectReason(productId));
-        }
-        return Response.ok(dto);
+        return Response.ok(toProductResponseDTO(productEntity, productEntity.isFavorited()));
     }
 
     @Override
@@ -197,7 +178,7 @@ public class ProductController implements ITradeService {
         List<ProductEntity> productList = productService.listMyProducts(userId, page, pageSize);
         List<ProductResponseDTO> dtoList = productList.stream()
                 .map(product -> toProductResponseDTO(product, false))
-                .peek(dto -> fillProductRejectReason(dto, userId)).toList();
+                .toList();
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
 
@@ -288,13 +269,6 @@ public class ProductController implements ITradeService {
     private Set<String> viewedProductIdsOf(List<ProductEntity> productList, String currentUserId) {
         List<String> productIds = productList.stream().map(ProductEntity::getProductId).toList();
         return new HashSet<>(productService.listViewedProductIds(currentUserId, productIds));
-    }
-
-    /** 我的发布中被拒商品补拒绝理由（拒绝理由只对卖家本人可见，仅 REJECTED 行多一次查询） */
-    private void fillProductRejectReason(ProductResponseDTO dto, String currentUserId) {
-        if (ProductStatusVO.REJECTED.name().equals(dto.getStatus()) && currentUserId.equals(dto.getUserId())) {
-            dto.setRejectReason(tradePublishCase.productRejectReason(dto.getProductId()));
-        }
     }
 
     private ProductResponseDTO toProductResponseDTO(ProductEntity productEntity, boolean favorited) {

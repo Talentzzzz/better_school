@@ -25,7 +25,6 @@ class CommentLikeIntegrationTest extends CommunityApiTestBase {
         Session commentAuthor = registerAndLogin("13800000002", "评论人");
         String postId = publishPost(postAuthor, "有评论区的帖子");
         String commentId = publishCommentAndGetId(postId, commentAuthor, "第一楼");
-        driveCommentReview(commentId);
 
         // 点赞 → 计数 1；重复点赞 → 业务错误且计数不变
         assertSuccess(postJson("/api/community/comments/" + commentId + "/like", Map.of(), postAuthor), "点赞");
@@ -53,7 +52,6 @@ class CommentLikeIntegrationTest extends CommunityApiTestBase {
         Session carl = registerAndLogin("13800000003", "小南");
         String postId = publishPost(postAuthor, "有评论区的帖子");
         String commentId = publishCommentAndGetId(postId, bob, "第一楼");
-        driveCommentReview(commentId);
 
         // 小北赞 → 小北的评论作者收到一条通知；取消不撤回；再赞去重仍一条
         assertSuccess(postJson("/api/community/comments/" + commentId + "/like", Map.of(), carl), "小南点赞");
@@ -101,26 +99,14 @@ class CommentLikeIntegrationTest extends CommunityApiTestBase {
     }
 
     @Test
-    @DisplayName("对 PENDING_REVIEW/REJECTED/DELETED 状态的评论点赞被拒绝")
+    @DisplayName("对 DELETED 状态的评论点赞被拒绝")
     void likeOnInvisibleCommentRejected() {
         Session postAuthor = registerAndLogin("13800000001", "帖主");
         Session bob = registerAndLogin("13800000002", "小北");
         String postId = publishPost(postAuthor, "有评论区的帖子");
 
-        // 待审：落库即 PENDING_REVIEW，不驱动审核
-        String pendingId = publishCommentAndGetId(postId, bob, "待审评论");
-        JsonNode pendingLike = postJson("/api/community/comments/" + pendingId + "/like", Map.of(), postAuthor);
-        assertThat(pendingLike.path("code").asText()).as("待审评论不可赞").isNotEqualTo("200");
-
-        // 驳回：人工裁决拒绝后 REJECTED（初筛拦截明显违规，这里用干净的评论走人工拒绝编造态）
-        String rejectedId = publishCommentAndGetId(postId, bob, "会被驳回的评论");
-        driveCommentReject(rejectedId, "OTHER", "内容不合规");
-        JsonNode rejectedLike = postJson("/api/community/comments/" + rejectedId + "/like", Map.of(), postAuthor);
-        assertThat(rejectedLike.path("code").asText()).as("驳回评论不可赞").isNotEqualTo("200");
-
-        // 下架：举报下架软删 state=DELETED（v2-07 统一删除语义前，测试直改状态模拟该终态）
+        // 软删：state=DELETED（测试直改状态模拟该终态）
         String deletedId = publishCommentAndGetId(postId, bob, "会被下架的评论");
-        driveCommentReview(deletedId);
         jdbcTemplate.update("UPDATE post_comment SET state = 'DELETED', update_time = NOW() WHERE comment_id = ?", deletedId);
         JsonNode deletedLike = postJson("/api/community/comments/" + deletedId + "/like", Map.of(), postAuthor);
         assertThat(deletedLike.path("code").asText()).as("已下架评论不可赞").isNotEqualTo("200");
@@ -133,7 +119,6 @@ class CommentLikeIntegrationTest extends CommunityApiTestBase {
         Session commentAuthor = registerAndLogin("13800000002", "评论人");
         String postId = publishPost(postAuthor, "重复点赞不重复计的帖子");
         String commentId = publishCommentAndGetId(postId, commentAuthor, "只应被计一次的评论");
-        driveCommentReview(commentId);
 
         assertSuccess(postJson("/api/community/comments/" + commentId + "/like", Map.of(), postAuthor), "首次点赞");
         assertThat(commentLikeRowCountOf(commentId)).as("关系行 1 条").isEqualTo(1);
@@ -158,7 +143,6 @@ class CommentLikeIntegrationTest extends CommunityApiTestBase {
         String c3 = publishCommentAndGetId(postId, bob, "评论三");
         // UUID 化后默认档序 = create_time, comment_id：错开 create_time 固化发布先后
         staggerCommentCreateTimes(c1, c2, c3);
-        driveAllCommentReviews();
 
         // c2 两赞（帖主+小南），c3 一赞（小南）
         assertSuccess(postJson("/api/community/comments/" + c2 + "/like", Map.of(), postAuthor), "帖主赞 c2");
@@ -189,10 +173,8 @@ class CommentLikeIntegrationTest extends CommunityApiTestBase {
         Session bob = registerAndLogin("13800000002", "小北");
         String postId = publishPost(postAuthor, "有楼中楼的帖子");
         String rootId = publishCommentAndGetId(postId, bob, "第一楼");
-        driveCommentReview(rootId);
         String replyId = postJson("/api/community/comments/" + rootId + "/replies", Map.of("content", "赞同"), bob)
                 .path("data").path("commentId").asText();
-        driveCommentReview(replyId);
 
         assertSuccess(postJson("/api/community/comments/" + replyId + "/like", Map.of(), postAuthor), "帖主赞子回复");
         assertThat(commentLikeCountOf(replyId)).isEqualTo(1);

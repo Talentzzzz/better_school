@@ -94,7 +94,7 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
         JsonNode page3 = getJson("/api/chat/rooms/" + roomId + "/messages?beforeSeq=2&limit=2", userB);
         assertThat(seqList(page3)).as("不足一页即到头").containsExactly(1L);
 
-        // 撤回脱敏「已撤回」空壳：content/ref 不出服务端（content_report 库内取证归票 05）
+        // 撤回脱敏「已撤回」空壳：content/ref 不出服务端（库内保留取证）
         jdbcTemplate.update("UPDATE message SET state = 'RECALLED', recalled_at = NOW(), recalled_by = 'USER', " +
                 "update_time = NOW() WHERE room_id = '" + roomId + "' AND seq = 3");
         JsonNode afterRecall = getJson("/api/chat/rooms/" + roomId + "/messages", userB);

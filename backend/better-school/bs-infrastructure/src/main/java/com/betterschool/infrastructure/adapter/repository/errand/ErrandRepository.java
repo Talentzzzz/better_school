@@ -7,12 +7,10 @@ import com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO;
 import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
 import com.betterschool.domain.errand.model.valobj.ErrandTypeVO;
 import com.betterschool.domain.errand.model.valobj.ErrandPaidMessage;
-import com.betterschool.domain.moderation.model.valobj.ReviewTargetTypeVO;
 import com.betterschool.domain.search.model.valobj.SearchEntityType;
 import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
 import com.betterschool.domain.timeout.adapter.repository.ITimeoutRepository;
 import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
-import com.betterschool.infrastructure.adapter.repository.moderation.ReviewTaskPoolStore;
 import com.betterschool.infrastructure.adapter.merge.CountAction;
 import com.betterschool.infrastructure.adapter.merge.CountEvent;
 import com.betterschool.infrastructure.adapter.merge.LikeState;
@@ -25,8 +23,6 @@ import com.betterschool.infrastructure.dao.errand.IErrandViewHistoryDao;
 import com.betterschool.infrastructure.dao.errand.po.ErrandFeedIndexRow;
 import com.betterschool.infrastructure.dao.errand.po.ErrandOrderEvent;
 import com.betterschool.infrastructure.dao.errand.po.ErrandOrder;
-import com.betterschool.infrastructure.dao.moderation.IContentReviewDao;
-import com.betterschool.infrastructure.dao.moderation.po.ContentReview;
 import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.infrastructure.dao.user.po.User;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
@@ -69,13 +65,10 @@ public class ErrandRepository implements IErrandRepository {
     private final ViewMergeWriter viewMergeWriter;
     private final OutboxMessageStore outboxMessageStore;
     private final ITimeoutRepository timeoutRepository;
-    private final ReviewTaskPoolStore reviewTaskPoolStore;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
     /** 发布方/接单方昵称头像批量回查（SQL 层零 JOIN：订单列表/详情的 bs_user 信息在这里多查一次拼装） */
     private final IUserDao userDao;
-    /** feed 索引重建取 APPROVE 审批流水（content_review 单表，IContentReviewDao 内该语句零 JOIN） */
-    private final IContentReviewDao contentReviewDao;
 
     @Override
     public void save(ErrandOrderEntity orderEntity) {
@@ -148,25 +141,19 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     /**
-     * 重灌行集拼装（原 INSERT..SELECT 一步投影的多查形态）：行集 = PUBLISHED 订单 ∪ 有过审批通过的订单
-     * （行常驻口径：通过事务才诞生行、之后 13 态流转只翻快照、行永不删除）。三段取数——
-     * ① errand_order 全量 (errand_order_id, state, create_time, reward)；② content_review 的 APPROVE 流水
-     * （feed_time 真源，经 IContentReviewDao 单表 GROUP BY，查不到审批流水取 create_time 兜底）；
-     * ③ view_count 从计数窄表抄入（无行 = 0）——组装后批量写回
+     * 重灌行集拼装（原 INSERT..SELECT 一步投影的多查形态）：行集 = PUBLISHED 订单
+     * （行常驻口径：支付事务诞生行、之后状态流转只翻快照、行永不删除）。两段取数——
+     * ① errand_order 全量 (errand_order_id, state, create_time, reward)，feed_time = create_time；
+     * ② view_count 从计数窄表抄入（无行 = 0）——组装后批量写回
      */
     private int rebuildFeedIndexRows() {
-        Map<String, LocalDateTime> approveTimes = new HashMap<>();
-        for (ContentReview approveRow : contentReviewDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.ERRAND.name())) {
-            approveTimes.put(approveRow.getTargetId(), approveRow.getCreateTime());
-        }
         List<ErrandFeedIndexRow> feedIndexRowList = new ArrayList<>();
         for (ErrandFeedIndexRow candidate : errandDao.selectRebuildRows()) {
-            boolean approved = approveTimes.containsKey(candidate.getErrandOrderId());
-            if (!ErrandStatusVO.PUBLISHED.name().equals(candidate.getState()) && !approved) {
-                // 审核通过前的草稿/待支付/待审/驳回订单不凭空进索引
+            if (!ErrandStatusVO.PUBLISHED.name().equals(candidate.getState())) {
+                // 草稿/待支付/已删订单不凭空进索引
                 continue;
             }
-            candidate.setFeedTime(approveTimes.getOrDefault(candidate.getErrandOrderId(), candidate.getCreateTime()));
+            candidate.setFeedTime(candidate.getCreateTime());
             feedIndexRowList.add(candidate);
         }
         if (!feedIndexRowList.isEmpty()) {
@@ -184,10 +171,10 @@ public class ErrandRepository implements IErrandRepository {
 
     @Override
     public boolean payById(String orderId, String actorId, int timeLimitHours) {
-        // 先付后审：支付进入待审（处于支付事务内，轮次恒为 1）
+        // 支付即发布进入大厅（处于支付事务内）
         boolean updated = errandDao.payById(orderId, timeLimitHours) > 0;
         if (updated) {
-            saveEvent(orderId, "PAID", "PENDING_PAYMENT", "PENDING_REVIEW", actorId, "PUBLISHER", null);
+            saveEvent(orderId, "PAID", "PENDING_PAYMENT", "PUBLISHED", actorId, "PUBLISHER", null);
         }
         return updated;
     }
@@ -199,7 +186,7 @@ public class ErrandRepository implements IErrandRepository {
             if (updated) {
                 // 事件类型 = LOCKED（抢单，抢 ≠ 开工）；勿与「确认接单」的 CONFIRMED 撞名
                 saveEvent(orderId, "LOCKED", "PUBLISHED", "LOCKED", takerId, "TAKER", null);
-                // 索引行同事务翻 LOCKED（行必存在：LOCKED 只可从 PUBLISHED 可达，行诞生于审核通过）
+                // 索引行同事务翻 LOCKED（行必存在：LOCKED 只可从 PUBLISHED 可达，行诞生于支付）
                 syncFeedIndexState(orderId, ErrandStatusVO.LOCKED);
             }
             return updated;
@@ -303,13 +290,13 @@ public class ErrandRepository implements IErrandRepository {
     @Override
     public boolean cancelByPublisher(String orderId, String publisherId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            // 取消允许 PENDING_PAYMENT/PENDING_REVIEW/PUBLISHED/CONFIRMED 四个前态，前态要落事件必须先读
+            // 取消允许 PENDING_PAYMENT/PUBLISHED/CONFIRMED 三个前态，前态要落事件必须先读
             String fromState = priorStateOf(orderId);
             boolean updated = errandDao.cancelByPublisher(orderId, publisherId) > 0;
             if (updated) {
                 saveEvent(orderId, "CANCELLED", fromState, "CANCELLED",
                         publisherId, "PUBLISHER", "PUBLISHER_CANCEL");
-                // 索引行同事务不可见化：从待审取消的行不存在（行诞生于审核通过），0 行静默
+                // 索引行同事务不可见化：从待支付取消的行不存在（行诞生于支付），0 行静默
                 syncFeedIndexState(orderId, ErrandStatusVO.CANCELLED);
             }
             return updated;
@@ -398,37 +385,6 @@ public class ErrandRepository implements IErrandRepository {
     @Override
     public List<String> listTimeoutOrderIds(int limit) {
         return errandDao.selectTimeoutOrderIds(limit);
-    }
-
-    @Override
-    public List<String> listPendingReviewOrderIds(LocalDateTime before, int limit) {
-        return errandDao.selectPendingReviewTimeoutOrderIds(before, limit);
-    }
-
-    @Override
-    public boolean reviewApproveById(String orderId, String operatorId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            boolean updated = errandDao.reviewApproveById(orderId) > 0;
-            if (updated) {
-                saveEvent(orderId, "REVIEW_APPROVED", "PENDING_REVIEW", "PUBLISHED", operatorId, "ADMIN", null);
-                // feed 索引行诞生（同事务，唯一诞生点）：feed_time = 进入大厅时刻，price = 悬赏快照
-                errandFeedIndexDao.upsertFeedIndexOnApprove(orderId);
-            }
-            return updated;
-        }));
-    }
-
-    @Override
-    public boolean reviewRejectById(String orderId, String operatorId, String reason) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            // 审核驳回：REJECTED 终态只可从待审可达，索引行尚未诞生（行诞生于审核通过），无需带写
-            boolean updated = errandDao.reviewRejectById(orderId) > 0;
-            if (updated) {
-                saveEvent(orderId, "REVIEW_REJECTED", "PENDING_REVIEW", "REJECTED", operatorId, "ADMIN",
-                        "REVIEW_REJECT", reason);
-            }
-            return updated;
-        }));
     }
 
     @Override
@@ -608,9 +564,8 @@ public class ErrandRepository implements IErrandRepository {
                 throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
             }
             saveErrandPaidMessage(orderId);
-            // 入池点（spec §5.1）：支付成功进待审，工单开单与状态迁移同事务；
-            // entered_at 由开单 SQL NOW() 落库（≈支付成功时刻，同事务同秒），轮次恒 1
-            reviewTaskPoolStore.enter(ReviewTargetTypeVO.ERRAND, orderId, 1, userId);
+            // 支付即进入大厅：feed 索引行诞生（同事务唯一诞生点），feed_time = 进入大厅时刻，price = 悬赏快照
+            errandFeedIndexDao.upsertFeedIndexOnApprove(orderId);
             return null;
         });
     }
@@ -645,8 +600,6 @@ public class ErrandRepository implements IErrandRepository {
             }
             // 取消后订单退出公开列表（PENDING_PAYMENT 取消无文档，消息无害）
             saveSearchSyncMessage(orderId);
-            // 待审单可被发布方取消：退出待审同事务出池（其余状态无在途工单，幂等 0 行无害）
-            reviewTaskPoolStore.close(ReviewTargetTypeVO.ERRAND, orderId);
             return null;
         });
     }

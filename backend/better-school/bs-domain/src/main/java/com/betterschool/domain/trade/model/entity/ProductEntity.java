@@ -21,10 +21,6 @@ public class ProductEntity {
     private String tradeLocation;
     private ProductCategoryVO category;
     private ProductStatusVO status;
-    /** 审核轮次：累计进入待审次数（直接发布=1，草稿创建=0，草稿提交/重新上架/在售改内容回审再 +1） */
-    private int reviewRound;
-    /** 最近一次进入待审时间（24h 待审超时提醒扫描用；草稿行为 null，提交时由 SQL 刷新） */
-    private LocalDateTime reviewEnteredAt;
     private long viewCount;
     private LocalDateTime createdAt;
     private LocalDateTime expireAt;
@@ -50,9 +46,8 @@ public class ProductEntity {
         productEntity.price = price;
         productEntity.tradeLocation = tradeLocation;
         productEntity.category = category;
-        // 先审后售：提交即待审，审核通过才转 ON_SALE（对外可见）
-        productEntity.status = ProductStatusVO.PENDING_REVIEW;
-        productEntity.reviewRound = 1;
+        // 发布即可见
+        productEntity.status = ProductStatusVO.ON_SALE;
         productEntity.viewCount = 0;
         return productEntity;
     }
@@ -70,7 +65,6 @@ public class ProductEntity {
         productEntity.tradeLocation = tradeLocation;
         productEntity.category = category;
         productEntity.status = ProductStatusVO.DRAFT;
-        productEntity.reviewRound = 0;
         productEntity.viewCount = 0;
         return productEntity;
     }

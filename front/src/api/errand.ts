@@ -47,7 +47,7 @@ export interface ErrandDraftBody {
   images?: string[]
 }
 
-/** 保存跑腿草稿（可全空、不做同步初筛），返回 orderId；草稿不付款不对外、不起支付计时 */
+/** 保存跑腿草稿（可全空），返回 orderId；草稿不付款不对外、不起支付计时 */
 export function saveErrandDraft(body: ErrandDraftBody) {
   return httpPost<number>('/errand/orders/draft', body)
 }
@@ -57,7 +57,7 @@ export function updateErrandDraft(orderId: number, body: ErrandDraftBody) {
   return httpPut<null>(`/errand/orders/${orderId}/draft`, body)
 }
 
-/** 提交草稿：必填 + 同步初筛，命中/缺项则停留草稿 */
+/** 提交草稿：必填校验，缺项则停留草稿 */
 export function submitErrandDraft(orderId: number) {
   return httpPost<null>(`/errand/orders/${orderId}/submit`)
 }

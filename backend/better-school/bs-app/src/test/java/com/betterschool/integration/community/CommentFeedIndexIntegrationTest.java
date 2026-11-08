@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 根评论热评索引 {@code post_comment_feed_index}（comment-count-narrow-table 票 01）：
  * 照帖子 feed 形态只做「单帖内按赞数取页」一件事，行集 = 当前可见根评论。
  *
- * <p>四条链路各一组用例：<b>行诞生</b>（根评论过审 INSERT、子回复不入索引、待审/驳回不产行）、
+ * <p>四条链路各一组用例：<b>行诞生</b>（根评论发布 INSERT、子回复不入索引）、
  * <b>旁带同步</b>（赞/取消赞同事务刷索引快照，子回复只动计数窄表）、<b>软删退场</b>（根评论软删物理删行、
  * 子回复零动作）、<b>最热档读路径</b>（索引序 + 同数 comment_id 升序、offset 跨页不重不漏、不自见、
  * 排序真的读索引快照而不是计数窄表）。
@@ -25,32 +25,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CommentFeedIndexIntegrationTest extends CommunityApiTestBase {
 
     @Test
-    @DisplayName("根评论过审后索引行诞生且赞数 0；子回复过审不产行；待审与驳回不产行")
-    void indexRowBornOnRootApprove_onlyForApprovedRoots() {
+    @DisplayName("根评论发布后索引行诞生且赞数 0；子回复发布不产行")
+    void indexRowBornOnRootPublish_onlyForRoots() {
         Session postAuthor = registerAndLogin("13800000001", "帖主");
         Session commenter = registerAndLogin("13800000002", "评论人");
         String postId = publishPost(postAuthor, "热评索引行诞生的帖子");
 
         String rootId = publishCommentAndGetId(postId, commenter, "根评论");
         String replyId = postReplyAndGetId(rootId, commenter, "楼内子回复");
-        String pendingId = publishCommentAndGetId(postId, commenter, "留在待审的根评论");
-        String rejectedId = publishCommentAndGetId(postId, commenter, "会被驳回的根评论");
 
-        driveCommentReview(rootId);
-        driveCommentReview(replyId);
-        driveCommentReject(rejectedId, "OTHER", "内容不合规");
-
-        // 根评论：过审即诞生，赞数必为 0（待审态不可被赞，行诞生时还没机会被赞）
-        assertThat(feedIndexRowOf(rootId)).as("根评论过审后应有索引行：%s", rootId).isNotNull();
+        // 根评论：发布即诞生，赞数必为 0（行诞生时还没机会被赞）
+        assertThat(feedIndexRowOf(rootId)).as("根评论发布后应有索引行：%s", rootId).isNotNull();
         assertThat(feedIndexLikeCountOf(rootId)).as("行诞生时赞数 0").isZero();
         assertThat(feedIndexPostIdOf(rootId)).as("索引行带所属帖子").isEqualTo(postId);
 
         // 子回复不入索引（楼内不按赞排，只展示赞数）
-        assertThat(feedIndexRowOf(replyId)).as("子回复过审不产索引行").isNull();
-        // 待审 / 驳回从未进入可见轮
-        assertThat(feedIndexRowOf(pendingId)).as("待审根评论不产行").isNull();
-        assertThat(feedIndexRowOf(rejectedId)).as("驳回根评论不产行").isNull();
-        assertThat(feedIndexRowCountOf(postId)).as("本帖索引行只有已经过审的那一条根评论").isEqualTo(1);
+        assertThat(feedIndexRowOf(replyId)).as("子回复不产索引行").isNull();
+        assertThat(feedIndexRowCountOf(postId)).as("本帖索引行只有那一条根评论").isEqualTo(1);
     }
 
     @Test
@@ -62,7 +53,6 @@ class CommentFeedIndexIntegrationTest extends CommunityApiTestBase {
         String postId = publishPost(postAuthor, "热评索引赞数同步的帖子");
         String rootId = publishCommentAndGetId(postId, commenter, "根评论");
         String replyId = postReplyAndGetId(rootId, commenter, "楼内子回复");
-        driveAllCommentReviews();
 
         // 两人赞根评论：窄表与索引快照同步推进到 2
         likeComment(rootId, postAuthor);
@@ -92,9 +82,8 @@ class CommentFeedIndexIntegrationTest extends CommunityApiTestBase {
         String rootId = publishCommentAndGetId(postId, postAuthor, "根评论");
         postReplyAndGetId(rootId, replier, "回复一");
         postReplyAndGetId(rootId, replier, "回复二");
-        driveAllCommentReviews();
         assertThat(postCommentCountOf(postId)).isEqualTo(3);
-        assertThat(feedIndexRowOf(rootId)).as("过审后有索引行").isNotNull();
+        assertThat(feedIndexRowOf(rootId)).as("发布后有索引行").isNotNull();
 
         assertSuccess(deleteJson("/api/community/comments/" + rootId, postAuthor), "作者删根评论");
 
@@ -119,7 +108,6 @@ class CommentFeedIndexIntegrationTest extends CommunityApiTestBase {
         String postId = publishPost(postAuthor, "子回复软删的帖子");
         String rootId = publishCommentAndGetId(postId, postAuthor, "根评论");
         String replyId = postReplyAndGetId(rootId, replier, "会被删的回复");
-        driveAllCommentReviews();
         likeComment(rootId, replier);
         assertThat(feedIndexLikeCountOf(rootId)).isEqualTo(1);
 
@@ -144,9 +132,8 @@ class CommentFeedIndexIntegrationTest extends CommunityApiTestBase {
         for (int i = 1; i <= 6; i++) {
             ids.add(publishCommentAndGetId(postId, commenter, "评论 " + i));
         }
-        driveAllCommentReviews();
         // 最热档收敛键 = 索引表 (like_count DESC, create_time ASC, comment_id ASC)，索引行 create_time
-        // 是审核通过时刻快照。UUID 同秒退化为字典序，错开索引表 create_time 固化「同赞数按发布先后」
+        // 是发布时刻快照。UUID 同秒退化为字典序，错开索引表 create_time 固化「同赞数按发布先后」
         staggerCommentIndexCreateTimes(ids.toArray(new String[0]));
         String c1 = ids.get(0);
         String c2 = ids.get(1);
@@ -175,32 +162,6 @@ class CommentFeedIndexIntegrationTest extends CommunityApiTestBase {
     }
 
     @Test
-    @DisplayName("最热档不出现作者自见的待审/驳回评论；默认档（id 序）自见照旧")
-    void hotExcludesAuthorSelfVisibleRows_defaultKeepsThem() {
-        Session author = registerAndLogin("13800000001", "评论作者");
-        String postId = publishPost(author, "热评档不自见的帖子");
-        String approvedId = publishCommentAndGetId(postId, author, "已过审评论");
-        driveCommentReview(approvedId);
-        String pendingId = publishCommentAndGetId(postId, author, "待审评论");
-        String rejectedId = publishCommentAndGetId(postId, author, "会被驳回的评论");
-        driveCommentReject(rejectedId, "OTHER", "内容不合规");
-        // 默认档序 = create_time, comment_id：UUID 同秒退化为字典序，错开 create_time 固化发布先后
-        staggerCommentCreateTimes(approvedId, pendingId, rejectedId);
-
-        // 最热档：索引只收已过审根评论 → 作者也看不到自己的待审 / 驳回行
-        JsonNode hot = listComments(postId, 1, 10, "hot", author);
-        assertThat(commentIdsOf(hot)).as("最热档只返回已过审根评论").containsExactly(approvedId);
-        assertThat(commentIdsOf(hot)).doesNotContain(pendingId, rejectedId);
-        assertThat(hot.path("total").asLong()).as("total 口径不变（他人可见 = 仅 NORMAL）").isEqualTo(1);
-
-        // 默认档：自见照旧（待审 + 驳回都返回，total 仍是他人可见口径）
-        JsonNode def = listComments(postId, 1, 10, "new", author);
-        assertThat(commentIdsOf(def)).as("默认档作者可见自己的待审/驳回评论")
-                .containsExactly(approvedId, pendingId, rejectedId);
-        assertThat(def.path("total").asLong()).as("total 口径两档一致").isEqualTo(1);
-    }
-
-    @Test
     @DisplayName("索引 like_count 被人工刷偏后最热序跟随索引值（排序读索引快照，不读计数窄表）")
     void hotSortFollowsIndexSnapshot_notMainColumn() {
         Session postAuthor = registerAndLogin("13800000001", "帖主");
@@ -209,7 +170,6 @@ class CommentFeedIndexIntegrationTest extends CommunityApiTestBase {
         String c1 = publishCommentAndGetId(postId, commenter, "评论一");
         String c2 = publishCommentAndGetId(postId, commenter, "评论二");
         String c3 = publishCommentAndGetId(postId, commenter, "评论三");
-        driveAllCommentReviews();
         // c1/c2 同为 0 赞：错开索引表 create_time，让同赞数收敛键落在发布先后上
         staggerCommentIndexCreateTimes(c1, c2, c3);
 
@@ -229,7 +189,6 @@ class CommentFeedIndexIntegrationTest extends CommunityApiTestBase {
         Session commenter = registerAndLogin("13800000002", "评论人");
         String postId = publishPost(postAuthor, "索引行缺失的帖子");
         String rootId = publishCommentAndGetId(postId, commenter, "根评论");
-        driveCommentReview(rootId);
         // 人为造漂移：索引行被删（软删漏删 / 人工直改都长这样）
         jdbcTemplate.update("DELETE FROM post_comment_feed_index WHERE comment_id = ?", rootId);
 
@@ -254,7 +213,6 @@ class CommentFeedIndexIntegrationTest extends CommunityApiTestBase {
         String postId = publishPost(postAuthor, "子回复点赞的帖子");
         String rootId = publishCommentAndGetId(postId, commenter, "根评论");
         String replyId = postReplyAndGetId(rootId, commenter, "楼内子回复");
-        driveAllCommentReviews();
 
         List<String> warns;
         try (LogCapture logs = captureWarnLogs(CommunityRepository.class)) {
@@ -287,7 +245,7 @@ class CommentFeedIndexIntegrationTest extends CommunityApiTestBase {
         return response.path("data");
     }
 
-    /** 索引行；不存在返回 null（先过审才有行，断言 isNull / isNotNull 时用） */
+    /** 索引行；不存在返回 null（断言 isNull / isNotNull 时用） */
     private Map<String, Object> feedIndexRowOf(String commentId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT comment_id, post_id, like_count FROM post_comment_feed_index WHERE comment_id = ?", commentId);
@@ -329,20 +287,11 @@ class CommentFeedIndexIntegrationTest extends CommunityApiTestBase {
     }
 
     /**
-     * 按传入顺序把评论 create_time 依次错开（第 n 条早 n 秒）——作用于 post_comment 主表，
-     * 影响默认档/楼内平铺/按用户列（读主表 create_time 的档位）。
+     * 按传入顺序把索引行 create_time 依次错开（第 n 条早 n 秒）——作用于 post_comment_feed_index
+     * 索引表（最热档第一级扫描读的是这张表的 create_time 快照）。
      * UUID 化后业务 id 无时间趋势，DATETIME 秒精度下同秒多条的收敛键退化为 comment_id 字典序；
      * 错开 create_time 让「同值段按发布先后」的断言在 UUID 下保持成立。
      */
-    private void staggerCommentCreateTimes(String... commentIds) {
-        for (int i = 0; i < commentIds.length; i++) {
-            jdbcTemplate.update(
-                    "UPDATE post_comment SET create_time = DATE_SUB(NOW(), INTERVAL ? SECOND) WHERE comment_id = ?",
-                    commentIds.length - i, commentIds[i]);
-        }
-    }
-
-    /** 同上，但作用于 post_comment_feed_index 索引表（最热档第一级扫描读的是这张表的 create_time 快照） */
     private void staggerCommentIndexCreateTimes(String... commentIds) {
         for (int i = 0; i < commentIds.length; i++) {
             jdbcTemplate.update(

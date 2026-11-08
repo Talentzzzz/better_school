@@ -37,11 +37,8 @@ public interface IProductDao {
     /** 覆盖草稿内容：仅 DRAFT 行生效 */
     int updateDraft(Product product);
 
-    /** 提交草稿：DRAFT → PENDING_REVIEW */
+    /** 提交草稿：DRAFT → ON_SALE */
     int submitDraft(@Param("productId") String productId);
-
-    /** 撤回待审：PENDING_REVIEW → DRAFT */
-    int withdraw(@Param("productId") String productId);
 
     /** 下架/到期汇入草稿箱：ON_SALE → DRAFT */
     int takeDown(@Param("productId") String productId);
@@ -49,19 +46,7 @@ public interface IProductDao {
     /** 到期扫描：ON_SALE 且 expire_at 早于 before 的商品 id 列表 */
     List<String> selectExpiredOnSaleIds(@Param("before") LocalDateTime before, @Param("limit") int limit);
 
-    /** 24h 提醒扫描：PENDING_REVIEW 且 review_entered_at 早于 before 的商品 id 列表 */
-    List<String> selectReviewTimeoutIds(@Param("before") LocalDateTime before, @Param("limit") int limit);
-
-    /** 审核通过：PENDING_REVIEW → ON_SALE */
-    int reviewApproveById(@Param("productId") String productId);
-
-    /** 审核拒绝：PENDING_REVIEW → REJECTED */
-    int reviewRejectById(@Param("productId") String productId);
-
-    /** 被拒转草稿箱：REJECTED → DRAFT */
-    int rejectToDraft(@Param("productId") String productId);
-
-    /** 上架后改内容：ON_SALE → PENDING_REVIEW（轮次 +1，动态覆盖非 null 字段） */
+    /** 上架后改内容：状态保持 ON_SALE 不变，动态覆盖非 null 字段 */
     int editOnSaleContent(Product product);
 
     /** 上架后仅改价：价格立即生效，状态不变 */
@@ -106,6 +91,6 @@ public interface IProductDao {
 
     // ── feed 索引全量重建（market-feed-uv 票 06）：重灌取数①（清空/写回在 IProductFeedIndexDao）──
 
-    /** 重灌取数①：product 全量 (product_id, state, create_time, price)——行集 = ON_SALE ∪ 有过审批通过，仓储拼装 */
+    /** 重灌取数①：product 全量 (product_id, state, create_time, price)——行集 = ON_SALE，仓储拼装 */
     List<ProductFeedIndexRow> selectRebuildRows();
 }

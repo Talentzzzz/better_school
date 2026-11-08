@@ -22,8 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * market-feed-uv 票 06：跑腿 feed 索引全量重建 job——兜底恢复手段。
  * 经 trigger 层 handler（xxl-job 入口）调真实链路，断言只看外部可观察状态：重建后 errand_feed_index 与
- * errand_order / content_review / errand_view_count 严格一致、errand_view_count 恒等于
- * errand_view_history 行数；行常驻口径下「通过前流转点 0 行」「浏览旁路命中 0 行」的缺行与跨表直改的
+ * errand_order / errand_view_count 严格一致、errand_view_count 恒等于
+ * errand_view_history 行数；行常驻口径下「支付前流转点 0 行」「浏览旁路命中 0 行」的缺行与跨表直改的
  * 漂移人工制造后由重建修复；重跑是幂等不动点（照帖子 {@code FeedIndexRebuildIntegrationTest} 先例）。
  */
 @DisplayName("跑腿 feed 索引全量重建：严格一致 / 缺行与漂移修复 / 计数校准 / 幂等")
@@ -43,32 +43,32 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     @Test
     @DisplayName("重建后索引行与订单状态/悬赏/feed_time/热度严格一致，并修复缺行与跨表直改的漂移")
     void 重建后索引与源表严格一致且修复缺行漂移() {
-        // 真实链路四态：通过（有审批流水）、通过后取消（有行的不可见态）、从未通过审（不该有行）、
-        // 存量在厅单（直插 PUBLISHED、无审批流水，feed_time 取 create_time 兜底）
-        String approvedId = insertOrder("PENDING_REVIEW", "8.50");
-        approve(approvedId);
-        String cancelledId = insertOrder("PENDING_REVIEW", "5.00");
-        approve(cancelledId);
+        // 真实链路四态：已支付（有索引行）、支付后取消（有行的不可见态）、未支付（不该有行）、
+        // 存量在厅单（直插 PUBLISHED、行由夹具补，feed_time 取 create_time）
+        String paidId = insertOrder("PENDING_PAYMENT", "8.50");
+        pay(paidId);
+        String cancelledId = insertOrder("PENDING_PAYMENT", "5.00");
+        pay(cancelledId);
         assertThat(errandRepository.cancelByPublisher(cancelledId, PUBLISHER_ID)).as("发布方取消").isTrue();
         String draftId = insertOrder("PENDING_PAYMENT", "3.00");
         String legacyId = insertLegacyPublishedOrder("6.00");
 
         // 缺行边角：索引行被删后浏览——旁路 UPDATE 命中 0 行、窄表照涨；再把窄表直改成 99 制造漂移
-        String missingRowId = insertOrder("PENDING_REVIEW", "9.00");
-        approve(missingRowId);
+        String missingRowId = insertOrder("PENDING_PAYMENT", "9.00");
+        pay(missingRowId);
         jdbcTemplate.update("DELETE FROM errand_feed_index WHERE errand_order_id = ?", missingRowId);
         flushViews(missingRowId, "u501");
         jdbcTemplate.update("UPDATE errand_view_count SET view_count = 99 WHERE errand_order_id = ?", missingRowId);
 
-        // 过审前被发布方浏览：明细与窄表已记、索引行彼时不存在（0 行 warn 交重建）——重建把这段漏计追平
-        String preViewId = insertOrder("PENDING_REVIEW", "7.00");
+        // 支付前被发布方浏览：明细与窄表已记、索引行彼时不存在（0 行 warn 交重建）——重建把这段漏计追平
+        String preViewId = insertOrder("PENDING_PAYMENT", "7.00");
         flushViews(preViewId, "u502");
-        approve(preViewId);
-        assertThat(indexViewCountOf(preViewId)).as("过审前浏览旁路命中 0 行，索引热度键未计").isZero();
+        pay(preViewId);
+        assertThat(indexViewCountOf(preViewId)).as("支付前浏览旁路命中 0 行，索引热度键未计").isZero();
 
         // 孤儿计数行：无浏览明细却建了行（懒建行口径下不该存在）
-        String orphanId = insertOrder("PENDING_REVIEW", "4.00");
-        approve(orphanId);
+        String orphanId = insertOrder("PENDING_PAYMENT", "4.00");
+        pay(orphanId);
         jdbcTemplate.update("INSERT INTO errand_view_count (errand_order_id, view_count, create_time, update_time) "
                 + "VALUES (?, 7, NOW(), NOW())", orphanId);
 
@@ -82,22 +82,22 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
                 .as("窄表直改的漂移校准回明细行数（1 条明细）").isEqualTo(1);
         assertThat(acceleratedCountOf(missingRowId)).as("计数窄表同步校准").isEqualTo(1);
 
-        // 不可见态行保留（行常驻口径）：通过过再取消的订单有行，state 快照 = errand_order.state
-        assertThat(feedState(cancelledId)).as("取消订单的索引行保留且不可见化").isEqualTo("CANCELLED");
+        // 重灌行集 = 仅 PUBLISHED：取消单的索引行被清空重灌动作移除（不凭空复活）
+        assertThat(feedRow(cancelledId)).as("取消订单的索引行不进重灌行集").isNull();
 
-        // 从未通过审的订单不凭空进索引
-        assertThat(feedRow(draftId)).as("从未通过审的订单不进索引").isNull();
+        // 未支付的订单不凭空进索引
+        assertThat(feedRow(draftId)).as("未支付的订单不进索引").isNull();
 
-        // 存量在厅单：无审批流水，feed_time 兜底 = create_time
-        assertThat(queryFeedTime(legacyId)).as("无审批流水时 feed_time 兜底 create_time")
+        // 存量在厅单：feed_time = create_time
+        assertThat(queryFeedTime(legacyId)).as("feed_time 即 create_time")
                 .isEqualTo(queryCreateTime(legacyId));
 
-        // 过审前浏览的漏计追平；孤儿计数行清掉
-        assertThat(indexViewCountOf(preViewId)).as("过审前浏览的漏计追平到明细真值").isEqualTo(1);
+        // 支付前浏览的漏计追平；孤儿计数行清掉
+        assertThat(indexViewCountOf(preViewId)).as("支付前浏览的漏计追平到明细真值").isEqualTo(1);
         assertThat(countRowExists(orphanId)).as("孤儿计数行清掉（无浏览不建行）").isFalse();
 
         // 全表扫严格一致：state / price / view_count / feed_time 四列逐行对齐
-        assertThat(inconsistentIndexOrderIds()).as("索引行与 errand_order/content_review/窄表逐行一致").isEmpty();
+        assertThat(inconsistentIndexOrderIds()).as("索引行与 errand_order/窄表逐行一致").isEmpty();
         assertThat(ordersWithoutIndexRow()).as("每行该有的订单都有索引行").isEmpty();
         assertThat(viewCountRowsMismatchingHistory()).as("加速列与明细行数严格一致").isEmpty();
         assertThat(historyOrdersWithoutCountRow()).as("有明细的订单都有计数行").isEmpty();
@@ -114,14 +114,14 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     @Test
     @DisplayName("浏览加速列校准为明细行数：漂移刷回、缺行补建、孤儿清掉，索引热度键同步追平")
     void 浏览加速列校准为明细行数并清孤儿补缺行() {
-        String viewedId = insertOrder("PENDING_REVIEW", "8.00");
-        approve(viewedId);
+        String viewedId = insertOrder("PENDING_PAYMENT", "8.00");
+        pay(viewedId);
         flushViews(viewedId, "u601", "u602", "u601"); // 重复浏览：明细只刷 viewed_at，UV 不加数
-        String lostRowId = insertOrder("PENDING_REVIEW", "6.00");
-        approve(lostRowId);
+        String lostRowId = insertOrder("PENDING_PAYMENT", "6.00");
+        pay(lostRowId);
         flushViews(lostRowId, "u601");
-        String orphanId = insertOrder("PENDING_REVIEW", "5.00");
-        approve(orphanId); // 无浏览，人为插计数行
+        String orphanId = insertOrder("PENDING_PAYMENT", "5.00");
+        pay(orphanId); // 无浏览，人为插计数行
 
         // 漂移：直接改加速列（明细行数的真值是 2）
         jdbcTemplate.update("UPDATE errand_view_count SET view_count = 999 WHERE errand_order_id = ?", viewedId);
@@ -158,7 +158,7 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         return orderId;
     }
 
-    /** 直插一行存量 PUBLISHED 订单（无审批流水），create_time 拨回两天前供 feed_time 兜底断言 */
+    /** 直插一行存量 PUBLISHED 订单，create_time 拨回两天前供 feed_time 断言 */
     private String insertLegacyPublishedOrder(String reward) {
         String orderId = UUID.randomUUID().toString();
         Timestamp twoDaysAgo = Timestamp.valueOf(LocalDateTime.now().minusDays(2));
@@ -171,18 +171,9 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         return orderId;
     }
 
-    /**
-     * 审核通过（真实仓储链路：状态流转 + 索引行诞生）并补一条 APPROVE 审核流水。
-     * 真实链路里「审核记录」与「索引 feed_time」出自同一事件（秒级精度下可能跨秒），夹具按索引落下的
-     * 时刻补记录，让「feed_time = MAX(APPROVE) 兜底 create_time」这条投影口径在数据上严格成立
-     */
-    private void approve(String orderId) {
-        assertThat(errandRepository.reviewApproveById(orderId, "auditor-1")).as("待审订单通过").isTrue();
-        LocalDateTime feedTime = queryFeedTime(orderId);
-        jdbcTemplate.update("INSERT INTO content_review (review_id, target_type, target_id, author_id, review_round, "
-                        + "action, operator_id, create_time, update_time) "
-                        + "VALUES (?, 'ERRAND', ?, ?, 1, 'APPROVE', 1, ?, ?)",
-                java.util.UUID.randomUUID().toString(), orderId, PUBLISHER_ID, Timestamp.valueOf(feedTime), Timestamp.valueOf(feedTime));
+    /** 支付（真实仓储链路：状态流转 + 索引行诞生） */
+    private void pay(String orderId) {
+        assertThat(errandRepository.payById(orderId, PUBLISHER_ID, 4)).as("待支付订单支付").isTrue();
     }
 
     /** 一组浏览落库（同步合并，等价于合并窗口过后的三步 + 索引旁路） */
@@ -232,7 +223,7 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     }
 
     /** 逐行扫一致性破坏者：state ≠ errand_order.state、price ≠ reward、view_count ≠ 窄表（无行 = 0），
-     *  或 feed_time ≠ 最近通过（兜底 create_time）的索引行 */
+     *  或 feed_time ≠ create_time 的索引行 */
     private List<String> inconsistentIndexOrderIds() {
         return jdbcTemplate.queryForList(
                 "SELECT fi.errand_order_id FROM errand_feed_index fi "
@@ -240,19 +231,15 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
                         + "LEFT JOIN errand_view_count evc ON evc.errand_order_id = fi.errand_order_id "
                         + "WHERE fi.state <> e.state OR fi.price <> e.reward "
                         + "OR fi.view_count <> COALESCE(evc.view_count, 0) "
-                        + "OR fi.feed_time <> COALESCE((SELECT MAX(cr.create_time) FROM content_review cr "
-                        + "  WHERE cr.target_type = 'ERRAND' AND cr.target_id = fi.errand_order_id "
-                        + "    AND cr.action = 'APPROVE'), e.create_time)", String.class);
+                        + "OR fi.feed_time <> e.create_time", String.class);
     }
 
-    /** 覆盖破坏者：该有行而没有行的订单（在厅 ∪ 通过过审） */
+    /** 覆盖破坏者：该有行而没有行的订单（在厅单） */
     private List<String> ordersWithoutIndexRow() {
         return jdbcTemplate.queryForList(
                 "SELECT e.errand_order_id FROM errand_order e "
                         + "LEFT JOIN errand_feed_index fi ON fi.errand_order_id = e.errand_order_id "
-                        + "WHERE fi.errand_order_id IS NULL AND (e.state = 'PUBLISHED' "
-                        + "  OR EXISTS (SELECT 1 FROM content_review cr WHERE cr.target_type = 'ERRAND' "
-                        + "       AND cr.target_id = e.errand_order_id AND cr.action = 'APPROVE'))", String.class);
+                        + "WHERE fi.errand_order_id IS NULL AND e.state = 'PUBLISHED'", String.class);
     }
 
     /** 投影破坏者：view_count ≠ 明细行数的加速列行 */

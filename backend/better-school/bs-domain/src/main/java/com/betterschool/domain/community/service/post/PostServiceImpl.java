@@ -8,7 +8,6 @@ import com.betterschool.domain.community.model.valobj.FeedCursorVO;
 import com.betterschool.domain.community.model.valobj.FeedIndexItemVO;
 import com.betterschool.domain.community.model.valobj.FeedPageVO;
 import com.betterschool.domain.community.model.valobj.LikeStateVO;
-import com.betterschool.domain.community.model.valobj.PostReviewTimeoutVO;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
@@ -16,7 +15,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,8 +27,6 @@ import java.util.stream.Collectors;
 public class PostServiceImpl implements ICommunityPostService {
 
     private static final int MAX_PAGE_SIZE = 50;
-    private static final int SCAN_BATCH_SIZE = 100;
-    private static final int REVIEW_REMINDER_HOURS = 24;
 
     private final ICommunityRepository communityRepository;
     private final IUserQueryPort userQueryPort;
@@ -38,7 +34,7 @@ public class PostServiceImpl implements ICommunityPostService {
     @Override
     public String publishPost(String userId, String title, String content, List<String> images,
                               String cover) {
-        // 信用分门槛与同步初筛由 case 层前置校验；先审后发：落库即待审，审核通过时才落搜索同步消息
+        // 信用分门槛由 case 层前置校验；落库即可见，搜索同步消息同事务落 outbox
         PostEntity postEntity = PostEntity.create(userId, title, content, images, cover);
         communityRepository.save(postEntity);
         return postEntity.getPostId();
@@ -47,7 +43,7 @@ public class PostServiceImpl implements ICommunityPostService {
     @Override
     public String savePostDraft(String userId, String title, String content, List<String> images,
                                 String cover) {
-        // 草稿为私有停靠内容：不做初筛、不做信用分门槛（提交时才校验），字段可缺省
+        // 草稿为私有停靠内容：不做信用分门槛（提交时才校验），字段可缺省
         PostEntity postEntity = PostEntity.createDraft(userId, title, content, images, cover);
         communityRepository.save(postEntity);
         return postEntity.getPostId();
@@ -71,51 +67,17 @@ public class PostServiceImpl implements ICommunityPostService {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只能操作自己发布的帖子");
         }
         if (postEntity.getStatus() != PostStatusVO.DRAFT) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅草稿可编辑，待审中的帖子可先撤回再修改");
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅草稿可编辑");
         }
         return postEntity;
     }
 
     @Override
     public void submitPostDraft(String userId, String postId) {
-        // 完整性校验与同步初筛由 case 层前置
+        // 完整性校验由 case 层前置
         getOwnedPostDraft(userId, postId);
-        if (!communityRepository.submitDraft(postId)) {
+        if (!communityRepository.submitDraftWithSearchSync(postId)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "草稿状态已变化，请刷新后重试");
-        }
-    }
-
-    @Override
-    public void withdrawPost(String userId, String postId) {
-        PostEntity postEntity = communityRepository.findPostById(postId);
-        if (postEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
-        }
-        if (!postEntity.isOwner(userId)) {
-            throw new BusinessException(ResponseCode.FORBIDDEN, "只能操作自己发布的帖子");
-        }
-        if (postEntity.getStatus() != PostStatusVO.PENDING_REVIEW) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅待审中的帖子可撤回");
-        }
-        if (!communityRepository.withdraw(postId)) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "帖子状态已变化，请刷新后重试");
-        }
-    }
-
-    @Override
-    public void moveRejectedPostToDraft(String userId, String postId) {
-        PostEntity postEntity = communityRepository.findPostById(postId);
-        if (postEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
-        }
-        if (!postEntity.isOwner(userId)) {
-            throw new BusinessException(ResponseCode.FORBIDDEN, "只能操作自己发布的帖子");
-        }
-        if (postEntity.getStatus() != PostStatusVO.REJECTED) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅被拒绝的帖子可转入草稿箱");
-        }
-        if (!communityRepository.rejectToDraft(postId)) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "帖子状态已变化，请刷新后重试");
         }
     }
 
@@ -256,50 +218,6 @@ public class PostServiceImpl implements ICommunityPostService {
     }
 
     @Override
-    public void approvePost(String postId) {
-        // 条件 UPDATE 先行，0 行时终态判定（并发双审/重试）
-        if (!communityRepository.approveWithSearchSync(postId)) {
-            PostEntity currentEntity = communityRepository.findPostById(postId);
-            if (currentEntity == null || currentEntity.getStatus() == PostStatusVO.DELETED) {
-                throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
-            }
-            if (currentEntity.getStatus() == PostStatusVO.NORMAL) {
-                return; // 幂等：已通过
-            }
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "帖子已被驳回或审核状态已变化");
-        }
-    }
-
-    @Override
-    public void rejectPost(String postId) {
-        if (!communityRepository.rejectWithSearchSync(postId)) {
-            PostEntity currentEntity = communityRepository.findPostById(postId);
-            if (currentEntity == null || currentEntity.getStatus() == PostStatusVO.DELETED) {
-                throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
-            }
-            if (currentEntity.getStatus() == PostStatusVO.REJECTED) {
-                return; // 幂等：已驳回
-            }
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "帖子已通过或审核状态已变化，无法驳回");
-        }
-    }
-
-    @Override
-    public void forceDeletePost(String postId) {
-        PostEntity postEntity = communityRepository.findPostById(postId);
-        if (postEntity == null) {
-            return; // 幂等：已下架或不存在
-        }
-        communityRepository.forceDeleteWithSearchSync(postId);
-    }
-
-    @Override
-    public List<PostReviewTimeoutVO> listReviewTimeoutPosts() {
-        LocalDateTime cutoff = LocalDateTime.now().minusHours(REVIEW_REMINDER_HOURS);
-        return communityRepository.listReviewTimeoutPosts(cutoff, SCAN_BATCH_SIZE);
-    }
-
-    @Override
     public void rebuildFeedIndex() {
         communityRepository.rebuildFeedIndex();
     }
@@ -351,7 +269,7 @@ public class PostServiceImpl implements ICommunityPostService {
         return postEntity;
     }
 
-    /** 可见性：NORMAL 全员可见；PENDING_REVIEW/REJECTED 仅作者本人可见（待审/驳回帖不公开） */
+    /** 可见性：NORMAL 全员可见；草稿帖仅作者本人可见（不公开） */
     private PostEntity getVisiblePost(String postId, String currentUserId) {
         PostEntity postEntity = communityRepository.findPostById(postId);
         if (postEntity == null) {

@@ -19,10 +19,6 @@ public class Product {
     private String tradeLocation;
     private String category;
     private String state;
-    /** 审核轮次：累计进入待审次数（直接发布=1，草稿提交/重新上架/在售改内容回审再 +1） */
-    private Integer reviewRound;
-    /** 最近一次进入待审时间（24h 待审超时提醒扫描用） */
-    private LocalDateTime reviewEnteredAt;
     /** 查询投影列：浏览 UV 加速列（product_view_count 仓储批量回查填充，非 product 行列） */
     private Integer viewCount;
     private LocalDateTime createTime;

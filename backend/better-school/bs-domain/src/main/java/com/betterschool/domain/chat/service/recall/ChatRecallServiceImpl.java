@@ -44,19 +44,6 @@ public class ChatRecallServiceImpl implements IChatRecallService {
         doRecall(messageEntity, RecallByVO.USER);
     }
 
-    @Override
-    public void forceRecallByAuditor(String messageId) {
-        MessageEntity messageEntity = chatRepository.findMessageById(messageId);
-        if (messageEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "消息不存在");
-        }
-        if (messageEntity.isRecalled()) {
-            // 已自行撤回：只落举报处理结论，不覆盖撤回者、不重复推送
-            return;
-        }
-        doRecall(messageEntity, RecallByVO.AUDITOR);
-    }
-
     private void doRecall(MessageEntity messageEntity, RecallByVO recalledBy) {
         // 条件 UPDATE（status=NORMAL 才生效）：并发撤回先到先得，落空即已被撤回，幂等静默；
         // recalled_at 由 SQL NOW() 落库（时刻一律数据库时钟）

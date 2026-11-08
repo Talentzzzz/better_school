@@ -51,8 +51,7 @@
 
     <!-- 重灌取数：① 的根评论行集（comment_id + post_id + create_time）在 IPostCommentDao.selectRebuildRows
          （主表 post_comment）；② like_count 从计数窄表抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径）；
-         ③ create_time 取审核记录最近一次 APPROVE 时刻 = 行诞生时的口径（通过时刻，经
-         IContentReviewDao.selectApproveRowsByTargetType），查不到审批流水的存量行取评论 create_time 兜底；
+         ③ create_time = 评论 create_time（行诞生时的口径）；
          仓储组装后走本 mapper 的 insertFeedIndexRows 批量写回 -->
 
     <!-- 重灌写回：仓储拼装好的行集批量 INSERT（见 IPostCommentDao.selectRebuildRows 注释） -->

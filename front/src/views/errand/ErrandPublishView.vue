@@ -50,7 +50,7 @@ onMounted(async () => {
   }
 })
 
-/** 存草稿：草稿为服务端私有态（不做同步初筛、可缺省字段、不付款不对外），稍后可在「我的-跑腿」继续处理 */
+/** 存草稿：草稿为服务端私有态（可缺省字段、不付款不对外），稍后可在「我的-跑腿」继续处理 */
 async function onSaveDraft() {
   if (submitting.value) return
   submitting.value = true

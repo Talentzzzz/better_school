@@ -12,9 +12,8 @@ import java.util.Map;
 
 /**
  * 票据握手拦截骨架（票 10 从 chat 抽出）：query 票据交子类校验（原子取删的一次性短时凭证，
- * 60s 有效），通过后把登录用户 id 写入握手 attributes；校验失败（含角色不合规）401 拒绝握手。
+ * 60s 有效），通过后把登录用户 id 写入握手 attributes；校验失败 401 拒绝握手。
  * 浏览器 WS 不能带自定义 header，JWT 不进 URL，故以短时票据换身份。
- * 角色过滤（审核端点只收 AUDITOR/ADMIN）是子类校验逻辑的一部分，骨架不感知
  */
 @Slf4j
 public abstract class AbstractWsTicketHandshakeInterceptor implements HandshakeInterceptor {

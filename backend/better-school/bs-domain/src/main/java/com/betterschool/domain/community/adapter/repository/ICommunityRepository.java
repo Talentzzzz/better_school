@@ -2,14 +2,11 @@ package com.betterschool.domain.community.adapter.repository;
 
 import com.betterschool.domain.community.model.entity.PostCommentEntity;
 import com.betterschool.domain.community.model.entity.PostEntity;
-import com.betterschool.domain.community.model.valobj.CommentReviewMessage;
 import com.betterschool.domain.community.model.valobj.FeedCursorVO;
 import com.betterschool.domain.community.model.valobj.FeedIndexItemVO;
 import com.betterschool.domain.community.model.valobj.LikeStateVO;
-import com.betterschool.domain.community.model.valobj.PostReviewTimeoutVO;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -31,26 +28,11 @@ public interface ICommunityRepository {
     /** 覆盖草稿内容（仅 DRAFT 行生效） */
     void updateDraft(PostEntity postEntity);
 
-    /** 提交草稿：DRAFT -> PENDING_REVIEW（轮次 +1、锚定进入待审时间），返回 false = 状态已变化 */
-    boolean submitDraft(String postId);
-
-    /** 撤回待审：PENDING_REVIEW -> DRAFT，返回 false = 状态已变化 */
-    boolean withdraw(String postId);
-
-    /** 被拒转草稿箱：REJECTED -> DRAFT，返回 false = 状态已变化 */
-    boolean rejectToDraft(String postId);
+    /** 提交草稿：DRAFT -> NORMAL（返回 false = 状态已变化） */
+    boolean submitDraftWithSearchSync(String postId);
 
     /** 软删：status -> DELETED */
     void deletePostById(String postId);
-
-    /** 帖子审核通过：PENDING_REVIEW → NORMAL（条件 UPDATE，返回是否本次生效） */
-    boolean approvePostById(String postId);
-
-    /** 帖子审核驳回：PENDING_REVIEW → REJECTED（条件 UPDATE，返回是否本次生效） */
-    boolean rejectPostById(String postId);
-
-    /** 待审超时帖子扫描（部分字段：postId + reviewRound，供 dedup_key 区分重提轮） */
-    List<PostReviewTimeoutVO> listReviewTimeoutPosts(LocalDateTime before, int limit);
 
     List<PostEntity> pageList(String sort, int offset, int limit);
 
@@ -71,12 +53,12 @@ public interface ICommunityRepository {
      */
     void rebuildFeedIndex();
 
-    /** 我的帖子分页（作者视角）：NORMAL/PENDING_REVIEW/DRAFT/REJECTED，排除已删除 */
+    /** 我的帖子分页（作者视角）：NORMAL/DRAFT，排除已删除 */
     List<PostEntity> pagePostsByUser(String userId, int offset, int limit);
 
     long countPostsByUser(String userId);
 
-    /** 我点赞过的帖子分页（按点赞时间倒序；点赞后帖子被驳回/待审仍向点赞者展示） */
+    /** 我点赞过的帖子分页（按点赞时间倒序） */
     List<PostEntity> pageLikedByUser(String userId, int offset, int limit);
 
     long countLikedByUser(String userId);
@@ -98,7 +80,7 @@ public interface ICommunityRepository {
 
     /**
      * 我的浏览历史分页（feed-index-uv 票 05）：user_view_history 明细按最近浏览时刻倒序，
-     * 只含仍可见的帖子——NORMAL 公开；本人浏览过的待审/驳回/草稿帖照常展示（详情对作者可见）；
+     * 只含仍可见的帖子——NORMAL 公开；本人浏览过的草稿帖照常展示（详情对作者可见）；
      * 已删除一律过滤（点卡片要能进详情，非可见态进详情是 404）
      */
     List<PostEntity> pageViewHistoryByUser(String userId, int offset, int limit);
@@ -141,15 +123,6 @@ public interface ICommunityRepository {
     /** 软删帖子 + 落搜索同步消息（消费方删除 ES 文档），同一事务原子 */
     void deleteWithSearchSync(String postId);
 
-    /** 审核通过（条件 UPDATE）+ 落搜索同步消息，同一事务；返回 false = 0 行（并发双审/重试） */
-    boolean approveWithSearchSync(String postId);
-
-    /** 审核驳回（条件 UPDATE）+ 落搜索同步消息，同一事务；返回 false = 0 行（并发双审/重试） */
-    boolean rejectWithSearchSync(String postId);
-
-    /** 强制下架（软删 + 搜索同步），同一事务；与 {@link #deleteWithSearchSync} 同体，保留语义独立的入口 */
-    void forceDeleteWithSearchSync(String postId);
-
     /**
      * 点赞（合并写）：窗口合并成一组一事务落库，<b>返回时计数已精确</b>（与关系行条数相等，无需等待）。
      *
@@ -165,35 +138,31 @@ public interface ICommunityRepository {
 
     void saveComment(PostCommentEntity commentEntity);
 
-    /** 落一条"评论审核"待发送消息（ADR-0002：必须与评论写入同事务调用，实现层写 outbox 表） */
-    void saveReviewMessage(CommentReviewMessage message);
-
-    /** 评论发布（落库 + 取回业务 id）+ 落审核消息，同一事务（零同步审核，ADR-0002） */
-    void saveCommentWithReviewMessage(PostCommentEntity commentEntity);
+    /** 评论发布即可见（落库 + 取回业务 id）+ 评论数/楼根回复数/热评索引同事务推进 */
+    void saveVisibleCommentWithCount(PostCommentEntity commentEntity);
 
     /**
      * 根评论列表分页（root_id='0'）：
      * <ul>
      *   <li>{@code sort=hot}——单帖内按赞数降序，同数按 {@code create_time} 升序（发布时间先后）+ 业务 ID 升序，
      *       顺序来自根评论热评索引 {@code post_comment_feed_index}；索引只收已过审根评论，因此
-     *       <b>本档不含作者自见的待审/驳回行</b>。</li>
-     *   <li>其余（new）——按 {@code create_time} 升序 + 业务 ID 升序；NORMAL 公开，viewerId 非空时附带其本人
-     *       PENDING_REVIEW/REJECTED。</li>
+     *       <b>本档只含 NORMAL 根评论</b>。</li>
+     *   <li>其余（new）——按 {@code create_time} 升序 + 业务 ID 升序；NORMAL 公开。</li>
      * </ul>
      * total 与 offset 分页契约两档一致（total 恒为他人可见口径）。
      */
     List<PostCommentEntity> pageRootByPostId(String postId, String viewerId, String sort, int offset, int limit);
 
-    /** 根评论真实总数：他人可见口径（仅 NORMAL，不含待审/未通过） */
+    /** 根评论真实总数：他人可见口径（仅 NORMAL） */
     long countVisibleRootsByPostId(String postId);
 
     /**
-     * 楼内子回复平铺（root_id 归组、id 升序；NORMAL 公开 + viewerId 本人待审/未通过；
+     * 楼内子回复平铺（root_id 归组、id 升序；NORMAL 公开；
      * 指向昵称 JOIN parent 行取、忽略其状态）
      */
     List<PostCommentEntity> pageRepliesByRootId(String rootId, String viewerId, int offset, int limit);
 
-    /** 楼内可见子回复总数（viewerId 非空时含其本人待审/未通过，与分页口径一致） */
+    /** 楼内可见子回复总数（与分页口径一致） */
     long countRepliesForThread(String rootId, String viewerId);
 
     /** 楼内 NORMAL 子回复总数（仅 NORMAL，供软删楼根/repry-count 维护） */
@@ -226,34 +195,20 @@ public interface ICommunityRepository {
     /** 帖子评论数变更（与评论写入同事务调用） */
     void updatePostCommentCount(String postId, int delta);
 
-    /** 评论审核通过：PENDING_REVIEW → NORMAL（条件 UPDATE，返回是否本次生效） */
-    boolean approveCommentById(String commentId);
-
-    /** 评论审核驳回：PENDING_REVIEW → REJECTED（条件 UPDATE，返回是否本次生效） */
-    boolean rejectCommentById(String commentId);
-
     /**
-     * 统一软删：仅指定前置状态可翻转为 DELETED（用户删除与举报下架同轨）。
-     * 白名单条件 UPDATE：扣减计数与否由实际翻转的前置状态决定，防审核并发下读旧态漂移；返回是否本次生效
+     * 统一软删：仅 NORMAL 可翻转为 DELETED（用户删除与举报下架同轨）。
+     * 白名单条件 UPDATE：扣减计数与否由实际翻转的前置状态决定，防并发下读旧态漂移；返回是否本次生效
      */
     boolean markDeletedFromStatus(String commentId, PostStatusVO fromStatus);
 
     // ---------- 评论：多写原子用例（实现内编程式事务，REQUIRED） ----------
 
     /**
-     * 审核通过（条件 UPDATE，0 行即抛 BUSINESS_ERROR 并回滚）+ 帖子评论数 +1 + 楼根 reply_count +1，
-     * 同一事务（影响行数 = 1 才是本次刚通过，幂等）；<b>根评论与子回复都在计数窄表
-     * {@code post_comment_like_count} 里诞生一行</b>（赞数 0，INSERT IGNORE，行已存在落 warn），
-     * <b>根评论另在热评索引里诞生一行</b>（子回复不入索引），全部与状态翻转同事务
-     */
-    void approveCommentWithCount(String commentId, String postId, String rootId);
-
-    /**
      * 统一软删（用户删除与举报下架同轨，物理 DELETE 废弃）：状态转 DELETED、行保留，计数增减与状态变更同一事务。
-     * 扣减与否由条件 UPDATE 实际命中的前置状态决定（读到的旧态仅用于定位，防审核并发漂移）：
+     * 扣减与否由条件 UPDATE 实际命中的前置状态决定（读到的旧态仅用于定位，防并发漂移）：
      * NORMAL 命中才扣——子回复：总数 -1 + 楼根 reply_count -1；根评论：整楼消失，总数扣 1 + 楼内可见子回复数，
      * 且同事务删掉它的热评索引行（行集 = 当前可见根评论；评论软删是终态，不学帖子留 state 镜像）；
-     * PENDING_REVIEW 命中：从未计数不动；均未命中 = 已终态（DELETED/REJECTED），幂等跳过
+     * 未命中 = 已终态（DELETED），幂等跳过
      */
     void softDeleteCommentWithCount(String commentId, String postId, String rootId);
 

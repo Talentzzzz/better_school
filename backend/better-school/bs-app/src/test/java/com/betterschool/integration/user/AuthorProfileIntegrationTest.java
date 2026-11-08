@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 五个按用户查询 tab 的访客口径过滤、隐私开关仅他视生效、资料编辑与隐私写入。
  *
  * <p>seam = trigger 层 HTTP 入口；前置态尽量用 SQL 直插（过滤口径才是被测行为），
- * 帖子走发布 + 裁决链路以覆盖真实 NORMAL 语义。
+ * 帖子走发布链路以覆盖真实 NORMAL 语义（审核语义移除后：发布即 NORMAL）。
  */
 class AuthorProfileIntegrationTest extends CommunityApiTestBase {
 
@@ -33,8 +33,6 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
         jdbcTemplate.update("INSERT INTO post_like_count (post_id, like_count, create_time, update_time) VALUES (?, ?, NOW(), NOW()) "
                 + "ON DUPLICATE KEY UPDATE like_count = VALUES(like_count)", normalPost, 7);
         insertPost(author.userId(), "DRAFT", 100, "草稿帖子");
-        insertPost(author.userId(), "REJECTED", 50, "被拒帖子");
-        insertPost(author.userId(), "PENDING_REVIEW", 30, "待审帖子");
 
         JsonNode response = getJson("/api/user/" + author.userId() + "/profile", null);
         assertSuccess(response, "访客读公开资料");
@@ -137,12 +135,10 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
     // ---------- 五个 tab 的访客口径过滤 ----------
 
     @Test
-    void 笔记tab只出NORMAL帖_本人看自己也不出草稿与待审() {
+    void 笔记tab只出NORMAL帖_本人看自己也不出草稿() {
         Session author = registerAndLogin("13800009007", "笔记作者");
         String normalPost = publishPost(author, "公开笔记");
         insertPost(author.userId(), "DRAFT", 0, "草稿笔记");
-        insertPost(author.userId(), "PENDING_REVIEW", 0, "待审笔记");
-        insertPost(author.userId(), "REJECTED", 0, "被拒笔记");
 
         JsonNode guest = getJson("/api/community/users/" + author.userId() + "/posts", null);
         assertSuccess(guest, "访客读笔记 tab");
@@ -158,7 +154,7 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800009008", "赞过作者");
         String first = publishPost(author, "先赞的帖");
         String second = publishPost(author, "后赞的帖");
-        String hiddenSource = insertPost(author.userId(), "PENDING_REVIEW", 0, "待审源帖");
+        String hiddenSource = insertPost(author.userId(), "DRAFT", 0, "草稿源帖");
         jdbcTemplate.update("INSERT INTO post_like (post_id, user_id, create_time, update_time) VALUES (?, ?, ?, ?)",
                 first, author.userId(), LocalDateTime.now().minusHours(2), LocalDateTime.now().minusHours(2));
         jdbcTemplate.update("INSERT INTO post_like (post_id, user_id, create_time, update_time) VALUES (?, ?, ?, ?)",
@@ -168,7 +164,7 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
 
         JsonNode response = getJson("/api/community/users/" + author.userId() + "/liked", null);
         assertSuccess(response, "访客读赞过 tab");
-        assertThat(postIdsOf(response.path("data"))).as("待审源帖不外露且按点赞时间倒序")
+        assertThat(postIdsOf(response.path("data"))).as("非 NORMAL 源帖不外露且按点赞时间倒序")
                 .containsExactly(second, first);
         assertThat(response.path("data").path("total").asLong()).isEqualTo(2);
     }
@@ -177,10 +173,10 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
     void 评论tab只出评论与源帖均NORMAL_带来源帖标题与封面() {
         Session author = registerAndLogin("13800009009", "评论作者");
         String visiblePost = insertPost(author.userId(), "NORMAL", 0, "可见来源帖");
-        String pendingPost = insertPost(author.userId(), "PENDING_REVIEW", 0, "待审来源帖");
+        String draftPost = insertPost(author.userId(), "DRAFT", 0, "草稿来源帖");
         insertComment(visiblePost, author.userId(), "NORMAL", "正常评论", LocalDateTime.now());
-        insertComment(visiblePost, author.userId(), "PENDING_REVIEW", "待审评论", LocalDateTime.now());
-        insertComment(pendingPost, author.userId(), "NORMAL", "源帖待审的评论", LocalDateTime.now());
+        insertComment(visiblePost, author.userId(), "DELETED", "已删评论", LocalDateTime.now());
+        insertComment(draftPost, author.userId(), "NORMAL", "源帖草稿的评论", LocalDateTime.now());
 
         JsonNode response = getJson("/api/community/users/" + author.userId() + "/comments", null);
         assertSuccess(response, "访客读评论 tab");
@@ -192,11 +188,10 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
     }
 
     @Test
-    void 闲置tab只在售_草稿与待审不外露() {
+    void 闲置tab只在售_草稿与已售不外露() {
         Session author = registerAndLogin("13800009010", "闲置作者");
         String onSale = insertProduct(author.userId(), "ON_SALE", "在售商品");
         insertProduct(author.userId(), "DRAFT", "草稿商品");
-        insertProduct(author.userId(), "PENDING_REVIEW", "待审商品");
         insertProduct(author.userId(), "SOLD", "已售商品");
 
         JsonNode response = getJson("/api/trade/users/" + author.userId() + "/products", null);

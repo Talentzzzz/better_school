@@ -8,7 +8,6 @@ import com.betterschool.domain.errand.model.valobj.ErrandConfirmResult;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedPageVO;
 import com.betterschool.domain.errand.model.valobj.ErrandLockTimeoutResult;
 import com.betterschool.domain.errand.model.valobj.ErrandPayResult;
-import com.betterschool.domain.errand.model.valobj.ErrandReviewResult;
 import com.betterschool.domain.errand.model.valobj.ErrandTimeoutResult;
 
 import java.math.BigDecimal;
@@ -50,16 +49,7 @@ public interface IErrandOrderService {
     /** 删除草稿：软删 DRAFT → DELETED（仅作者、仅 DRAFT；本期 DELETED 仅从 DRAFT 可达） */
     void deleteDraft(String orderId, String userId);
 
-    /** 审核通过（裁决用例 decide 编排）：PENDING_REVIEW → PUBLISHED，对外可见；已 PUBLISHED 幂等跳过；事件落 ADMIN 裁决 */
-    void reviewApproveOrder(String orderId, String operatorId);
-
-    /**
-     * 审核拒绝（裁决用例 decide 编排，无事务）：PENDING_REVIEW → REJECTED 终态（打回不可见），
-     * 返回解冻退款需求（冻结金额全额退回，流水幂等）；已 REJECTED 幂等重放结果
-     */
-    ErrandReviewResult reviewRejectOrder(String orderId, String operatorId, String reason);
-
-    /** 确认支付（无事务）：payById 转 PENDING_REVIEW + bs-errand-paid outbox，返回冻结需求 */
+    /** 确认支付（无事务）：payById 转 PUBLISHED + bs-errand-paid outbox，返回冻结需求 */
     ErrandPayResult payOrder(String orderId, String userId);
 
     /**
@@ -84,7 +74,7 @@ public interface IErrandOrderService {
      */
     List<String> listViewedOrderIds(String userId, List<String> orderIds);
 
-    /** 订单详情（待审核订单仅作者本人可见，审核员走 moderation 审核队列详情） */
+    /** 订单详情（草稿单仅作者本人可见） */
     ErrandOrderEntity orderDetail(String orderId, String currentUserId);
 
     /** 抢单：条件 UPDATE 先到先得（状态 + 无人持有 + 时限三重校验，并发下仅一人成功）→ LOCKED 并 lock_seq+1 */
@@ -139,8 +129,6 @@ public interface IErrandOrderService {
     /** 订单超时 id 列表（PUBLISHED/LOCKED/CONFIRMED/PICKED_UP 且 deadline 已过，每批 100，XXL-Job 兜底扫描用） */
     List<String> listTimeoutOrderIds();
 
-    /** 待审超时订单 id 列表（PENDING_REVIEW 且支付转待审后超 24h 未裁决，每批 100，超时提醒扫描用） */
-    List<String> listPendingReviewTimeoutOrderIds();
 
     /** 送达超时订单 id 列表（DELIVERED 且送达后超 24h 未确认，每批 100，自动完成扫描用） */
     List<String> listAutoCompleteOrderIds();

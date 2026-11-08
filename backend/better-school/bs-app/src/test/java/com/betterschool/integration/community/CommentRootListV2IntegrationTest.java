@@ -15,12 +15,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>排序：sort=hot（赞数降序、同数 comment_id 升序，顺序来自根评论热评索引）与 sort=new（id 升序），
  * 请求不带 sort 时按最热。票 06 起点赞上线、hot 按真实点赞数生效（见 CommentLikeIntegrationTest）；
  * 本类保留无赞场景：赞数全 0 时 hot 退化为 comment_id 升序。
- * 作者视角：默认档额外包含作者自己的 PENDING_REVIEW 根评论（与正常评论展示无差别、无任何标识），
- * 他人与访客不可见；total 为他人可见口径（不含待审），故默认档作者行数可能多于 total（已知怪癖，测试固化）。
- * <b>最热档不自见</b>（票 01）：索引只收已过审根评论，作者待审/驳回行不出现在 hot 档。
- * 05 票起发布为异步审核：用例按需驱动审核消费者构造"正常评论已通过、待审评论保留"的前置态。
+ * 作者视角与访客视角一致：所有 NORMAL 根评论全员可见，total 为全员可见口径。
  */
-@DisplayName("根评论列表 v2：最热/最新排序 / 作者视角待审可见 / 真实总数")
+@DisplayName("根评论列表 v2：最热/最新排序 / 真实总数")
 class CommentRootListV2IntegrationTest extends CommunityApiTestBase {
 
     @Test
@@ -39,7 +36,6 @@ class CommentRootListV2IntegrationTest extends CommunityApiTestBase {
         // create_time, comment_id。同秒 UUID 都退化为字典序（与发布先后无关），两表各错开 create_time
         // 固化「发布先后」口径，退化一致性断言才可比
         staggerCommentCreateTimes(publishedIds.toArray(new String[0]));
-        driveAllCommentReviews();
         staggerCommentIndexCreateTimes(publishedIds.toArray(new String[0]));
 
         // 不传 sort → 默认最热；全 0 赞退化为发布先后序
@@ -52,61 +48,6 @@ class CommentRootListV2IntegrationTest extends CommunityApiTestBase {
         JsonNode newData = listComments(postId, 1, 10, "new", null);
         assertThat(commentIdsOf(newData)).as("new = 发布先后序").containsExactlyElementsOf(publishedIds);
         assertThat(commentIdsOf(newData)).as("退化期 hot 与 new 序列一致").isEqualTo(commentIdsOf(defaultData));
-    }
-
-    @Test
-    @DisplayName("作者刷新后可见自己审核中的评论且无标识；其他用户与访客不可见")
-    void authorSeesOwnPendingComments_othersDoNot() {
-        Session author = registerAndLogin("13800000001", "评论作者");
-        String postId = publishPost(author, "正常帖子内容，欢迎评论");
-        driveCommentReview(publishCommentAndGetId(postId, author, "正常评论一"));
-        publishCommentAndGetId(postId, author, "待审的评论"); // 待审：不驱动
-        driveCommentReview(publishCommentAndGetId(postId, author, "正常评论二"));
-
-        // 作者视角：3 条都在（含待审，无任何标识字段，与正常评论展示无差别）
-        JsonNode authorData = listComments(postId, 1, 10, "new", author);
-        assertThat(commentIdsOf(authorData)).as("作者应看到自己的待审评论").hasSize(3);
-        List<String> contents = contentsOf(authorData);
-        assertThat(contents).contains("待审的评论");
-        for (JsonNode node : authorData.path("list")) {
-            assertThat(node.path("status").isMissingNode()).as("响应不应携带审核状态标识").isTrue();
-            assertThat(node.path("pending").isMissingNode()).isTrue();
-        }
-
-        // 其他登录用户：看不到待审
-        Session stranger = registerAndLogin("13800000003", "无关路人");
-        JsonNode strangerData = listComments(postId, 1, 10, "new", stranger);
-        assertThat(commentIdsOf(strangerData)).as("他人不应看到待审评论").hasSize(2);
-        assertThat(contentsOf(strangerData)).doesNotContain("待审的评论");
-
-        // 访客：看不到待审
-        JsonNode guestData = listComments(postId, 1, 10, "new", null);
-        assertThat(commentIdsOf(guestData)).hasSize(2);
-    }
-
-    @Test
-    @DisplayName("total 为他人可见口径（不含待审）；默认档（id 序）作者行数可多于 total，最热档不自见（票 01）")
-    void total_excludesPending_authorRowsMayExceedTotal() {
-        Session author = registerAndLogin("13800000001", "评论作者");
-        String postId = publishPost(author, "正常帖子内容，欢迎评论");
-        driveCommentReview(publishCommentAndGetId(postId, author, "正常评论一"));
-        publishCommentAndGetId(postId, author, "待审的评论一"); // 待审：不驱动
-        publishCommentAndGetId(postId, author, "待审的评论二"); // 待审：不驱动
-        driveCommentReview(publishCommentAndGetId(postId, author, "正常评论二"));
-
-        JsonNode guestHot = listComments(postId, 1, 10, "hot", null);
-        assertThat(guestHot.path("total").asLong()).as("总数不含审核中评论").isEqualTo(2);
-        assertThat(commentIdsOf(guestHot)).hasSize(2);
-
-        // 最热档：索引只收已过审根评论，作者也看不到自己的待审行（行数 = total）
-        JsonNode authorHot = listComments(postId, 1, 10, "hot", author);
-        assertThat(authorHot.path("total").asLong()).as("total 口径与他人视角一致，不含待审").isEqualTo(2);
-        assertThat(commentIdsOf(authorHot)).as("最热档不自见：待审行不进索引").hasSize(2);
-
-        // 默认档（id 序）：自见照旧，作者行数多于 total（多出自己的待审）
-        JsonNode authorNew = listComments(postId, 1, 10, "new", author);
-        assertThat(authorNew.path("total").asLong()).as("total 口径两档一致").isEqualTo(2);
-        assertThat(commentIdsOf(authorNew)).as("默认档作者行数多于 total（多出自己的待审）").hasSize(4);
     }
 
     @Test
@@ -123,7 +64,6 @@ class CommentRootListV2IntegrationTest extends CommunityApiTestBase {
         }
         // 默认档（不传 sort）= 最热档，第一级扫描读索引表 create_time 快照：两表各错开
         staggerCommentCreateTimes(publishedIds.toArray(new String[0]));
-        driveAllCommentReviews();
         staggerCommentIndexCreateTimes(publishedIds.toArray(new String[0]));
 
         JsonNode page1 = listCommentsAsGuest(postId, 1, 10);

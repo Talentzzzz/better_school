@@ -173,7 +173,7 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
     // ---------- 夹具与可观察状态 ----------
 
     /**
-     * 直插 N 条在售商品 + 对应索引行（读路径测试只关心投影，不重复走发布/审核链）。
+     * 直插 N 条在售商品 + 对应索引行（读路径测试只关心投影，不重复走发布链）。
      * 夹具刻意造并列：价格四档循环、热度三档循环、feed_time 五分钟循环，tie-break 由 product_id 收；
      * uuid-biz-id 票 05 起业务 id 直插 UUID 形态（应用侧发号），并逐条错开 create_time——
      * 热度档同值收敛键（view_count DESC, create_time DESC, product_id DESC）与降级直查都吃它
@@ -189,8 +189,8 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
             // 第 i 条 = (count - i) 秒前，后插的更新，与原自增 id 升序同向
             java.sql.Timestamp created = java.sql.Timestamp.valueOf(LocalDateTime.now().minusSeconds(count - i));
             jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, "
-                            + "trade_location, category, state, review_round, create_time, update_time, "
-                            + "expire_at) VALUES (?, ?, ?, '夹具描述', ?, '驿站', ?, 'ON_SALE', 1, ?, ?, "
+                            + "trade_location, category, state, create_time, update_time, "
+                            + "expire_at) VALUES (?, ?, ?, '夹具描述', ?, '驿站', ?, 'ON_SALE', ?, ?, "
                             + "DATE_ADD(NOW(), INTERVAL 30 DAY))",
                     productId, seller.userId(), "闲置游标夹具" + i, price, category, created, created);
             jdbcTemplate.update("INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, "

@@ -8,21 +8,21 @@
          view_count 与卖家昵称头像由仓储拼装 -->
     <sql id="baseColumns">
         p.id, p.product_id, p.user_id, p.title, p.description, p.images, p.price, p.trade_location,
-        p.category, p.state, p.review_round, p.review_entered_at,
+        p.category, p.state,
         p.create_time, p.update_time, p.expire_at
     </sql>
 
     <!-- 主表不再有浏览列（market-feed-uv 票 06 删列）：浏览 UV 只落 product_view_history + product_view_count -->
     <!-- uuid-biz-id 票 05：业务 ID 发号在 repository 落库前生成（UUID.randomUUID()），随行一次写入，
          删除 bindBizId 自增同值回写 -->
-    <!-- 时刻一律数据库时钟：create_time/update_time=NOW()；发布行 review_entered_at=NOW()、
-         expire_at=NOW()+30d（与 submitDraft 同口径）；草稿行两列保持 NULL（提交时才锚定） -->
+    <!-- 时刻一律数据库时钟：create_time/update_time=NOW()；在售行 expire_at=NOW()+30d（与 submitDraft
+         同口径）；草稿行 expire_at 保持 NULL（提交时才锚定） -->
     <insert id="insert" parameterType="com.betterschool.infrastructure.dao.product.po.Product">
         INSERT INTO product (product_id, user_id, title, description, images, price, trade_location,
-                             category, state, review_round, review_entered_at,
+                             category, state,
                              create_time, update_time, expire_at)
         VALUES (#{productId}, #{userId}, #{title}, #{description}, #{images}, #{price}, #{tradeLocation},
-                #{category}, #{state}, #{reviewRound}, IF(#{state} = 'DRAFT', NULL, NOW()),
+                #{category}, #{state},
                 NOW(), NOW(), IF(#{state} = 'DRAFT', NULL, DATE_ADD(NOW(), INTERVAL 30 DAY)))
     </insert>
 
@@ -67,16 +67,14 @@
 
     <update id="relist">
         UPDATE product
-        SET state = 'PENDING_REVIEW',
-            review_round = review_round + 1,
-            review_entered_at = NOW(),
+        SET state = 'ON_SALE',
             expire_at = DATE_ADD(NOW(), INTERVAL 30 DAY),
             update_time = NOW()
         WHERE product_id = #{productId}
           AND state = 'SOLD'
     </update>
 
-    <!-- 草稿全量编辑：仅 DRAFT 行生效（待审/在售等状态不可通过此语句改内容） -->
+    <!-- 草稿全量编辑：仅 DRAFT 行生效（在售等状态不可通过此语句改内容） -->
     <update id="updateDraft" parameterType="com.betterschool.infrastructure.dao.product.po.Product">
         UPDATE product
         SET title          = #{title},
@@ -90,23 +88,14 @@
           AND state = 'DRAFT'
     </update>
 
+    <!-- 提交草稿：DRAFT → ON_SALE（直接上架对外可见）；同步锚定过期时间 -->
     <update id="submitDraft">
         UPDATE product
-        SET state                = 'PENDING_REVIEW',
-            review_round         = review_round + 1,
-            review_entered_at    = NOW(),
+        SET state                = 'ON_SALE',
             expire_at            = DATE_ADD(NOW(), INTERVAL 30 DAY),
             update_time          = NOW()
         WHERE product_id = #{productId}
           AND state = 'DRAFT'
-    </update>
-
-    <update id="withdraw">
-        UPDATE product
-        SET state = 'DRAFT',
-            update_time = NOW()
-        WHERE product_id = #{productId}
-          AND state = 'PENDING_REVIEW'
     </update>
 
     <!-- 下架/到期汇入草稿箱：ON_SALE → DRAFT（对外可见期结束，搜索同步消息由调用方同事务落） -->
@@ -128,53 +117,11 @@
         LIMIT #{limit}
     </select>
 
-    <!-- 24h 待审超时提醒扫描：进入待审（review_entered_at）早于 before 的待审商品 -->
-    <select id="selectReviewTimeoutIds" resultType="string">
-        SELECT product_id
-        FROM product
-        WHERE state = 'PENDING_REVIEW'
-          AND review_entered_at IS NOT NULL
-          AND review_entered_at &lt;= #{before}
-        LIMIT #{limit}
-    </select>
-
-    <!-- 审核通过：PENDING_REVIEW → ON_SALE（对外可见，条件 UPDATE 幂等闸门） -->
-    <update id="reviewApproveById">
-        UPDATE product
-        SET state = 'ON_SALE',
-            update_time = NOW()
-        WHERE product_id = #{productId}
-          AND state = 'PENDING_REVIEW'
-    </update>
-
-    <!-- 审核拒绝：PENDING_REVIEW → REJECTED（无资金环节） -->
-    <update id="reviewRejectById">
-        UPDATE product
-        SET state = 'REJECTED',
-            update_time = NOW()
-        WHERE product_id = #{productId}
-          AND state = 'PENDING_REVIEW'
-    </update>
-
-    <!-- 被拒转草稿箱（自救路径）：REJECTED → DRAFT，修改后重新提交走 submitDraft（重提产生第二轮审核） -->
-    <update id="rejectToDraft">
-        UPDATE product
-        SET state = 'DRAFT',
-            update_time = NOW()
-        WHERE product_id = #{productId}
-          AND state = 'REJECTED'
-    </update>
-
-    <!-- 上架后改内容：ON_SALE → PENDING_REVIEW（期间他人不可见、卖家本人可见），重提产生第二轮审核；
-         动态覆盖非 null 字段（title/description/images 任一即视为改内容）。price 非审核对象、不属重审范围，
-         混合提交时随行更新（重审期间商品不可见，恢复可见后即生效；重审被拒不回滚新价） -->
+    <!-- 上架后改内容：状态保持 ON_SALE 不变，只动态覆盖非 null 内容字段
+         （title/description/images 任一即视为改内容；price 混合提交时随行更新、立即生效） -->
     <update id="editOnSaleContent" parameterType="com.betterschool.infrastructure.dao.product.po.Product">
         UPDATE product
         <set>
-            state = 'PENDING_REVIEW',
-            review_round = review_round + 1,
-            review_entered_at = NOW(),
-            expire_at = DATE_ADD(NOW(), INTERVAL 30 DAY),
             update_time = NOW(),
             <if test="title != null">title = #{title},</if>
             <if test="description != null">description = #{description},</if>
@@ -279,7 +226,7 @@
         </if>
     </select>
 
-    <!-- 我发布的商品（卖家视角）：含待审/草稿/被拒等自己的全部状态，排除软删，按发布时间倒序 -->
+    <!-- 我发布的商品（卖家视角）：含草稿/在售/锁定/已售等自己的全部状态，排除软删，按发布时间倒序 -->
     <select id="selectPageBySeller" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
         FROM product p
@@ -296,7 +243,7 @@
           AND state != 'DELETED'
     </select>
 
-    <!-- 某用户在售商品（作者主页「闲置」tab，访客口径）：仅 ON_SALE，草稿/待审/被拒/锁定/已售一律不外露 -->
+    <!-- 某用户在售商品（作者主页「闲置」tab，访客口径）：仅 ON_SALE，草稿/锁定/已售一律不外露 -->
     <select id="selectOnSalePageByUser" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
         FROM product p
@@ -313,14 +260,12 @@
           AND state = 'ON_SALE'
     </select>
 
-    <!-- 重灌取数①：product 全量 (product_id, state, create_time, price)——行集 = ON_SALE 商品 ∪ 有过审批
-         通过的商品（运行期语义：通过事务才诞生行、之后 state 跟随流转、行不消失；从未通过审的待审/驳回/
-         草稿商品不凭空进索引）。原 INSERT..SELECT 一步投影改为仓储三段查拼装：① selectRebuildRows 取
-         product 全量 (product_id, state, create_time, price)；② feed_time 取审核记录最近一次 APPROVE 时刻
-         （经 IContentReviewDao.selectApproveRowsByTargetType，与票 01 回填脚本同口径），查不到审批流水的
-         存量老商品取 create_time 兜底；③ view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步
-         同时把「过审前被浏览、旁路命中 0 行」漏计的那部分追平（运行期旁路只在本行存在后累加），也与热度
-         排序键的读口径一致。组装后走 IProductFeedIndexDao.insertFeedIndexRows 批量写回 -->
+    <!-- 重灌取数①：product 全量 (product_id, state, create_time, price)——行集 = ON_SALE 商品
+         （运行期语义：发布事务才诞生行、之后 state 跟随流转、行不消失；草稿商品不凭空进索引）。
+         原 INSERT..SELECT 一步投影改为仓储多查拼装：① selectRebuildRows 取 product 全量
+         (product_id, state, create_time, price)，feed_time = create_time；② view_count 从计数窄表抄入
+         （无行 = 0）——窄表是 UV 真值，也与热度排序键的读口径一致。组装后走
+         IProductFeedIndexDao.insertFeedIndexRows 批量写回 -->
     <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.product.po.ProductFeedIndexRow">
         SELECT p.product_id AS productId, p.state AS state, p.create_time AS createTime, p.price AS price
         FROM product p

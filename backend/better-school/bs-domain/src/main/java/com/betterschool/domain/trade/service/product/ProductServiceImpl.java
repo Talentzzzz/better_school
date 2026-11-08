@@ -27,7 +27,6 @@ import java.util.stream.Collectors;
 public class ProductServiceImpl implements IProductService {
 
     private static final int SCAN_BATCH_SIZE = 100;
-    private static final int REVIEW_REMINDER_HOURS = 24;
 
     private final ITradeRepository tradeRepository;
 
@@ -37,7 +36,7 @@ public class ProductServiceImpl implements IProductService {
         // 信用分门槛与同步初筛由 case 层前置校验
         ProductEntity productEntity = ProductEntity.create(userId, title, description, images, price,
                 tradeLocation, ProductCategoryVO.from(category));
-        // 先审后售：进入待审，审核通过转 ON_SALE 时才落搜索同步消息
+        // 发布即可见：落库 + feed 索引行诞生 + 搜索同步消息同事务（实现内）
         tradeRepository.save(productEntity);
         return productEntity.getProductId();
     }
@@ -45,7 +44,7 @@ public class ProductServiceImpl implements IProductService {
     @Override
     public String saveProductDraft(String userId, String title, String description, List<String> images, BigDecimal price,
                                  String tradeLocation, String category) {
-        // 草稿为私有停靠内容：不做初筛、不做信用分门槛（提交时才校验），字段可缺省
+        // 草稿为私有停靠内容：不做信用分门槛（提交时才校验），字段可缺省
         ProductCategoryVO categoryVO = category == null ? null : ProductCategoryVO.from(category);
         ProductEntity productEntity = ProductEntity.createDraft(userId, title, description, images, price,
                 tradeLocation, categoryVO);
@@ -72,34 +71,17 @@ public class ProductServiceImpl implements IProductService {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只能操作自己发布的商品");
         }
         if (productEntity.getStatus() != ProductStatusVO.DRAFT) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅草稿可编辑，待审中的商品可先撤回再修改");
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅草稿可编辑");
         }
         return productEntity;
     }
 
     @Override
     public void submitProductDraft(String userId, String productId) {
-        // 完整性校验与同步初筛由 case 层前置
+        // 完整性校验由 case 层前置
         getOwnedProductDraft(userId, productId);
         if (!tradeRepository.submitDraft(productId)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "草稿状态已变化，请刷新后重试");
-        }
-    }
-
-    @Override
-    public void withdrawProduct(String userId, String productId) {
-        ProductEntity productEntity = tradeRepository.findById(productId);
-        if (productEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在");
-        }
-        if (!productEntity.isOwner(userId)) {
-            throw new BusinessException(ResponseCode.FORBIDDEN, "只能操作自己发布的商品");
-        }
-        if (productEntity.getStatus() != ProductStatusVO.PENDING_REVIEW) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅待审中的商品可撤回");
-        }
-        if (!tradeRepository.withdraw(productId)) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "商品状态已变化，请刷新后重试");
         }
     }
 
@@ -135,13 +117,6 @@ public class ProductServiceImpl implements IProductService {
     }
 
     @Override
-    public List<String> listReviewTimeoutProductIds() {
-        // PENDING_REVIEW 由提交/编辑条件 UPDATE 翻转而来，update_time 即进入待审时间
-        LocalDateTime cutoff = LocalDateTime.now().minusHours(REVIEW_REMINDER_HOURS);
-        return tradeRepository.listReviewTimeoutIds(cutoff, SCAN_BATCH_SIZE);
-    }
-
-    @Override
     public ProductEntity getOwnedOnSaleProduct(String userId, String productId) {
         ProductEntity productEntity = tradeRepository.findById(productId);
         if (productEntity == null) {
@@ -150,13 +125,7 @@ public class ProductServiceImpl implements IProductService {
         if (!productEntity.isOwner(userId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只能操作自己发布的商品");
         }
-        // 编辑语义守卫：待审中只能撤回转草稿；被拒走草稿箱自救路径；其余非在售状态不可编辑
-        if (productEntity.getStatus() == ProductStatusVO.PENDING_REVIEW) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "待审中不可编辑，可先撤回转草稿后修改");
-        }
-        if (productEntity.getStatus() == ProductStatusVO.REJECTED) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "商品已被拒绝，可转入草稿箱修改后重新提交");
-        }
+        // 编辑语义守卫：仅 ON_SALE 可编辑
         if (productEntity.getStatus() != ProductStatusVO.ON_SALE) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "商品不在售，不可编辑");
         }
@@ -176,65 +145,13 @@ public class ProductServiceImpl implements IProductService {
             editEntity.setDescription(description);
             editEntity.setImages(images);
             editEntity.setPrice(price);
-            // 改内容回待审：期间他人不可见（列表 SQL 锁 ON_SALE）、卖家本人可见；同事务落搜索同步消息，消费方按状态删文档
+            // 改内容立即生效（状态不变），同事务落搜索同步消息（消费方按状态 upsert）
             tradeRepository.editOnSaleContentWithSearchSync(editEntity);
             return;
         }
-        // 仅改价：立即生效，状态不变、不进审核、无通知（价格不进搜索文档，无需索引同步）
+        // 仅改价：立即生效（价格不进搜索文档内容，但价格快照列同事务跟索引）
         if (!tradeRepository.updateOnSalePrice(productId, price)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "商品状态已变化，请刷新后重试");
-        }
-    }
-
-    @Override
-    public void moveRejectedProductToDraft(String userId, String productId) {
-        ProductEntity productEntity = tradeRepository.findById(productId);
-        if (productEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在");
-        }
-        if (!productEntity.isOwner(userId)) {
-            throw new BusinessException(ResponseCode.FORBIDDEN, "只能操作自己发布的商品");
-        }
-        if (productEntity.getStatus() != ProductStatusVO.REJECTED) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅被拒绝的商品可转入草稿箱");
-        }
-        if (!tradeRepository.rejectToDraft(productId)) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "商品状态已变化，请刷新后重试");
-        }
-    }
-
-    @Override
-    public void reviewApproveProduct(String productId) {
-        ProductEntity productEntity = tradeRepository.findById(productId);
-        if (productEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在");
-        }
-        // 幂等：已通过在售（重试场景）
-        if (productEntity.getStatus() == ProductStatusVO.ON_SALE) {
-            return;
-        }
-        if (productEntity.getStatus() != ProductStatusVO.PENDING_REVIEW) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "商品已被处理，无法通过审核");
-        }
-        // 先审后售：审核通过转 ON_SALE 时落搜索同步消息（进入对外可见态，消费方按状态 upsert）
-        tradeRepository.reviewApproveWithSearchSync(productId);
-    }
-
-    @Override
-    public void reviewRejectProduct(String productId) {
-        ProductEntity productEntity = tradeRepository.findById(productId);
-        if (productEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "商品不存在");
-        }
-        // 幂等：已拒绝（重试场景）
-        if (productEntity.getStatus() == ProductStatusVO.REJECTED) {
-            return;
-        }
-        if (productEntity.getStatus() != ProductStatusVO.PENDING_REVIEW) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "商品已被处理，无法拒绝");
-        }
-        if (!tradeRepository.reviewRejectById(productId)) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "商品状态已变化，请刷新重试");
         }
     }
 
@@ -422,7 +339,7 @@ public class ProductServiceImpl implements IProductService {
 
     /**
      * 详情/浏览可见性：ON_SALE/LOCKED/SOLD 对外可见（交易中与已售对双方可回看）；
-     * DRAFT/PENDING_REVIEW/REJECTED 仅卖家本人可见（待审/草稿/被拒不外露）；软删对所有人不可见
+     * DRAFT 仅卖家本人可见（草稿不外露）；软删对所有人不可见
      */
     private ProductEntity getVisibleProduct(String productId, String currentUserId) {
         ProductEntity productEntity = tradeRepository.findById(productId);

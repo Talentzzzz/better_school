@@ -50,12 +50,10 @@
         LIMIT #{limit}
     </select>
 
-    <!-- 审核通过：行诞生 / 翻回 ON_SALE。INSERT...SELECT 从 product 行取 price 快照（approve 彼时的价格）
+    <!-- 上架（insert/submitDraft/relist）：行诞生 / 翻回 ON_SALE。INSERT...SELECT 从 product 行取 price 快照
          与 create_time 快照（热度档同值收敛键，uuid-biz-id 票 05）；
-         feed_time = 本次通过时刻——行诞生落第一次，重提再通过（relist / 在售改内容回审 / 下架后重提）
-         经 ODKU 刷新为「进入当前对外可见轮」的时刻（schema 注释口径，与票 01 回填、票 06 重建的
-         MAX(APPROVE) 一致；帖子先例不刷新是因其 ODKU 不可达，商品的重提是正常路径）。
-         ODKU 不碰 view_count（浏览合并事务旁路独占维护） -->
+         feed_time = 本次上架时刻——行诞生落第一次，重提上架（relist）经 ODKU 刷新为
+         「进入当前对外可见轮」的时刻。ODKU 不碰 view_count（浏览合并事务旁路独占维护） -->
     <update id="upsertFeedIndexOnApprove">
         INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, view_count, update_time)
         SELECT p.product_id, 'ON_SALE', NOW(), p.create_time, p.price, 0, NOW()
@@ -68,8 +66,8 @@
             update_time = NOW()
     </update>
 
-    <!-- 状态快照同步：镜像 product 的新状态（LOCKED / SOLD / PENDING_REVIEW / DRAFT / REJECTED / DELETED，
-         feed 只查 ON_SALE）。行不存在（从未通过审）= 0 行静默，不 upsert——未通过过的商品不该凭空进索引 -->
+    <!-- 状态快照同步：镜像 product 的新状态（LOCKED / SOLD / DRAFT / DELETED，
+         feed 只查 ON_SALE）。行不存在（草稿商品常态）= 0 行静默，不 upsert——未上架过的商品不该凭空进索引 -->
     <update id="updateFeedIndexState">
         UPDATE product_feed_index
         SET state       = #{state},
@@ -77,9 +75,9 @@
         WHERE product_id = #{productId}
     </update>
 
-    <!-- 在售改价旁路同步（立即生效不进审核）：纯 UPDATE（ON_SALE 行必存在——行诞生于通过事务）。
-         非在售态的价格变更（草稿编辑、改内容回审混提新价）不在此同步：期间行不可见，
-         恢复可见由 approve 语句的 price 快照兜住，不产生漂移窗口 -->
+    <!-- 在售改价旁路同步（立即生效）：纯 UPDATE（ON_SALE 行必存在——行诞生于发布事务）。
+         非在售态的价格变更（草稿编辑）不在此同步：期间行不可见，
+         恢复可见由上架语句的 price 快照兜住，不产生漂移窗口 -->
     <update id="updateFeedIndexPrice">
         UPDATE product_feed_index
         SET price       = #{price},
@@ -87,8 +85,8 @@
         WHERE product_id = #{productId}
     </update>
 
-    <!-- 浏览合并事务旁路 ±N：纯 UPDATE 不 upsert；命中 0 行 = 索引行缺失（未过审商品被本人浏览、
-         或存量异常），调用方落 warn 交重建 job（票 06），不在写路径凭空补行 -->
+    <!-- 浏览合并事务旁路 ±N：纯 UPDATE 不 upsert；命中 0 行 = 索引行缺失（存量异常），
+         调用方落 warn 交重建 job（票 06），不在写路径凭空补行 -->
     <update id="updateFeedIndexViewCount">
         UPDATE product_feed_index
         SET view_count  = view_count + #{delta},
@@ -101,7 +99,7 @@
         DELETE FROM product_feed_index
     </delete>
 
-    <!-- 重灌写回：仓储拼装好的行集批量 INSERT（feed_time = MAX(APPROVE) 兜底 create_time；view_count 抄计数窄表） -->
+    <!-- 重灌写回：仓储拼装好的行集批量 INSERT（feed_time = create_time；view_count 抄计数窄表） -->
     <insert id="insertFeedIndexRows">
         INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, view_count, update_time)
         VALUES

@@ -13,7 +13,6 @@ import com.betterschool.domain.errand.model.valobj.ErrandFeedPageVO;
 import com.betterschool.domain.errand.model.valobj.ErrandIncomeVO;
 import com.betterschool.domain.errand.model.valobj.ErrandLockTimeoutResult;
 import com.betterschool.domain.errand.model.valobj.ErrandPayResult;
-import com.betterschool.domain.errand.model.valobj.ErrandReviewResult;
 import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
 import com.betterschool.domain.errand.model.valobj.ErrandTimeLimitVO;
 import com.betterschool.domain.errand.model.valobj.ErrandTimeoutResult;
@@ -49,7 +48,6 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     /** 锁单确认窗口：从**锁单时刻**起算（与 {@link #PAY_TIMEOUT_MINUTES} 的「从创建时刻起算」口径不同） */
     private static final int LOCK_TIMEOUT_MINUTES = 5;
     private static final int AUTO_COMPLETE_HOURS = 24;
-    private static final int REVIEW_REMINDER_HOURS = 24;
     private static final int SCAN_BATCH_SIZE = 100;
 
     /** 防占单：滑动窗口时长（小时）——非自然日，避免「23:59 放弃 3 次 + 00:01 放弃 3 次」跨零点刷新逃逸 */
@@ -138,52 +136,21 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public void reviewApproveOrder(String orderId, String operatorId) {
-        ErrandOrderEntity orderEntity = getOrder(orderId);
-        if (orderEntity.getStatus() == ErrandStatusVO.PUBLISHED) {
-            return; // 幂等：已通过发布
-        }
-        if (orderEntity.getStatus() != ErrandStatusVO.PENDING_REVIEW) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单已被处理，无法通过审核");
-        }
-        if (!errandRepository.reviewApproveById(orderId, operatorId)) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "审核状态已变化，请刷新重试");
-        }
-    }
-
-    @Override
-    public ErrandReviewResult reviewRejectOrder(String orderId, String operatorId, String reason) {
-        ErrandOrderEntity orderEntity = getOrder(orderId);
-        ErrandReviewResult refundDemand = new ErrandReviewResult(orderEntity.getPublisherId(), orderEntity.getTotalReward());
-        if (orderEntity.getStatus() == ErrandStatusVO.REJECTED) {
-            return refundDemand; // 幂等：已拒绝，重放退款需求（流水 uk 保证解冻不重复）
-        }
-        if (orderEntity.getStatus() != ErrandStatusVO.PENDING_REVIEW) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单已被处理，无法拒绝");
-        }
-        if (!errandRepository.reviewRejectById(orderId, operatorId, reason)) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "审核状态已变化，请刷新重试");
-        }
-        return refundDemand;
-    }
-
-    @Override
     public ErrandPayResult payOrder(String orderId, String userId) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
         if (!orderEntity.isOwner(userId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只能支付自己发布的订单");
         }
-        // 幂等判定：已支付（PENDING_REVIEW 待审）视为上次支付已提交成功（重试场景），跳过直接返回
-        if (orderEntity.getStatus() == ErrandStatusVO.PENDING_REVIEW) {
+        // 幂等判定：已支付（PUBLISHED 待接单）视为上次支付已提交成功（重试场景），跳过直接返回
+        if (orderEntity.getStatus() == ErrandStatusVO.PUBLISHED) {
             return new ErrandPayResult(orderEntity.getTotalReward());
         }
         if (orderEntity.getStatus() != ErrandStatusVO.PENDING_PAYMENT) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "订单不存在或不可支付");
         }
         ErrandTimeLimitVO timeLimitVO = ErrandTimeLimitVO.fromHours(orderEntity.getTimeLimitHours());
-        // 先付后审（ADR-0003）：状态迁移跟着钱走——支付事务内转 PENDING_REVIEW（已付款待审），
-        // bs-errand-paid outbox 消息只承担"进入人工审核"通知，不承载状态迁移；
-        // 超时扫描按 deadline 判定（待审期先到点会被 handleOrderTimeout 按状态幂等忽略）
+        // 状态迁移跟着钱走：支付事务内转 PUBLISHED（冻结悬赏、即对外可见进入大厅），
+        // bs-errand-paid outbox 消息只承担"支付成功"通知，不承载状态迁移
         errandRepository.payWithPaidMessage(orderId, userId, timeLimitVO.getHours());
         return new ErrandPayResult(orderEntity.getTotalReward());
     }
@@ -274,10 +241,9 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     @Override
     public ErrandOrderEntity orderDetail(String orderId, String currentUserId) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
-        // 软删单对外与作者均不可见；草稿与待审单仅作者本人可见（审核员走 moderation 审核队列详情，其他人 404）
+        // 软删单对外与作者均不可见；草稿单仅作者本人可见
         if (orderEntity.getStatus() == ErrandStatusVO.DELETED
-                || ((orderEntity.getStatus() == ErrandStatusVO.DRAFT
-                || orderEntity.getStatus() == ErrandStatusVO.PENDING_REVIEW)
+                || (orderEntity.getStatus() == ErrandStatusVO.DRAFT
                 && !orderEntity.isOwner(currentUserId))) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "订单不存在");
         }
@@ -434,13 +400,12 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
 
     private ErrandCancelResult cancelByPublisher(ErrandOrderEntity orderEntity) {
         if (orderEntity.getStatus() != ErrandStatusVO.PENDING_PAYMENT
-                && orderEntity.getStatus() != ErrandStatusVO.PENDING_REVIEW
                 && orderEntity.getStatus() != ErrandStatusVO.PUBLISHED
                 && orderEntity.getStatus() != ErrandStatusVO.LOCKED
                 && orderEntity.getStatus() != ErrandStatusVO.CONFIRMED) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "已取货后不可取消，如有纠纷请发起仲裁");
         }
-        // 待支付未冻结无需退款；待审/已发布/锁单中/已确认需解冻退回
+        // 待支付未冻结无需退款；已发布/锁单中/已确认需解冻退回
         boolean needRefund = orderEntity.getStatus() != ErrandStatusVO.PENDING_PAYMENT;
         errandRepository.cancelByPublisherWithSearchSync(orderEntity.getOrderId(), orderEntity.getPublisherId());
         return new ErrandCancelResult(needRefund, orderEntity.getPublisherId(), orderEntity.getTotalReward(),
@@ -581,13 +546,6 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     @Override
     public List<String> listTimeoutOrderIds() {
         return errandRepository.listTimeoutOrderIds(SCAN_BATCH_SIZE);
-    }
-
-    @Override
-    public List<String> listPendingReviewTimeoutOrderIds() {
-        // PENDING_REVIEW 由支付条件 UPDATE 翻转而来，updated_at 即进入待审时间
-        LocalDateTime cutoff = LocalDateTime.now().minusHours(REVIEW_REMINDER_HOURS);
-        return errandRepository.listPendingReviewOrderIds(cutoff, SCAN_BATCH_SIZE);
     }
 
     @Override

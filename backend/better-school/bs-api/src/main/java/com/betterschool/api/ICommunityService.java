@@ -52,14 +52,8 @@ public interface ICommunityService {
     /** 编辑帖子草稿（仅 DRAFT 可编辑，全量覆盖；待审中需先撤回） */
     Response<Void> updatePostDraft(String postId, PostDraftSaveRequestDTO request);
 
-    /** 提交草稿进待审：正文必填校验 + 同步初筛，命中/缺项停留草稿 */
+    /** 提交草稿：正文必填校验，通过即发布可见 */
     Response<Void> submitPostDraft(String postId);
-
-    /** 撤回待审回草稿箱（仅作者、仅 PENDING_REVIEW） */
-    Response<Void> withdrawPost(String postId);
-
-    /** 被拒帖转草稿箱（仅作者、仅 REJECTED） */
-    Response<Void> moveRejectedPostToDraft(String postId);
 
     Response<PostResponseDTO> postDetail(String postId);
 

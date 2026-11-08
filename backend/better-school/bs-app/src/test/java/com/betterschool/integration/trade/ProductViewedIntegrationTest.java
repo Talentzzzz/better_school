@@ -101,8 +101,8 @@ class ProductViewedIntegrationTest extends CommunityApiTestBase {
         String productId = java.util.UUID.randomUUID().toString();
         BigDecimal price = BigDecimal.valueOf(12).setScale(2);
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, description, price, trade_location, "
-                        + "category, state, review_round, create_time, update_time, expire_at) "
-                        + "VALUES (?, ?, ?, '灰显夹具描述', ?, '驿站', 'BOOKS', 'ON_SALE', 1, NOW(), NOW(), "
+                        + "category, state, create_time, update_time, expire_at) "
+                        + "VALUES (?, ?, ?, '灰显夹具描述', ?, '驿站', 'BOOKS', 'ON_SALE', NOW(), NOW(), "
                         + "DATE_ADD(NOW(), INTERVAL 30 DAY))",
                 productId, seller.userId(), title, price);
         jdbcTemplate.update("INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, "

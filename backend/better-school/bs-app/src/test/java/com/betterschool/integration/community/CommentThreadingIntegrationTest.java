@@ -1,7 +1,6 @@
 package com.betterschool.integration.community;
 
 import com.betterschool.integration.support.CommunityApiTestBase;
-import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,7 +18,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>语义见 docs/adr/0001-comment-tree-model.md：回复根评论 root=parent=根评论 id；
  * 回复楼内子回复 root=楼根 id、parent=被回复子回复 id；展示平铺，指向昵称 JOIN parent 行取、忽略其状态。
  * 楼内分页：默认首页 3 条、之后每页 10 条，id 升序；reply_count 仅统计 NORMAL 子回复，同事务维护。
- * 05 票起发布为异步审核：需要"可见"断言的评论先驱动审核消费者（人工审核入口单独保留用例）。
  */
 @DisplayName("评论楼中楼：回复写读 / 树模型 / 楼内分页")
 class CommentThreadingIntegrationTest extends CommunityApiTestBase {
@@ -32,13 +30,11 @@ class CommentThreadingIntegrationTest extends CommunityApiTestBase {
         Session replier = registerAndLogin("13800000002", "回复者");
         String postId = publishPost(rootAuthor, "正常帖子内容，欢迎讨论");
         String rootId = publishCommentAndGetId(postId, rootAuthor, "根评论：今天食堂吃什么？");
-        driveCommentReview(rootId);
 
         JsonNode response = postJson("/api/community/comments/" + rootId + "/replies",
                 Map.of("content", "回复根评论的内容"), replier);
         assertSuccess(response, "回复根评论");
         String replyId = response.path("data").path("commentId").asText();
-        driveCommentReview(replyId);
 
         // 数据库可观察状态：树模型字段由后端计算
         Map<String, Object> row = commentRowOf(replyId);
@@ -77,7 +73,6 @@ class CommentThreadingIntegrationTest extends CommunityApiTestBase {
         // UUID 化后业务 id 无时间趋势：同秒发布的楼内平铺序收敛键 = create_time, comment_id。
         // DATETIME 是秒精度，把三条 create_time 错开，固化「create_time 升序（= 发布先后）」的期望口径
         staggerCommentCreateTimes(r1, r2, r3);
-        driveAllCommentReviews();
 
         // 数据可嵌套任意深度，root 恒为楼根、parent 为被回复的那条
         assertThat(commentRowOf(r2).get("root_id")).isEqualTo(rootId);
@@ -127,7 +122,6 @@ class CommentThreadingIntegrationTest extends CommunityApiTestBase {
         // 同秒 13 条的平铺序收敛键退化为 comment_id 字典序（与发布先后无关）：
         // 把 create_time 按发布顺序错开，分页断言维持「按发布先后」的语义
         staggerCommentCreateTimes(replyIds.toArray(new String[0]));
-        driveAllCommentReviews();
 
         JsonNode page1 = listRepliesAsGuest(rootId, 1, null);
         assertThat(page1.path("total").asLong()).isEqualTo(13);
@@ -147,59 +141,6 @@ class CommentThreadingIntegrationTest extends CommunityApiTestBase {
     }
 
     @Test
-    @DisplayName("待审子回复：不可见不计数；审核通过后可见且 reply_count +1")
-    void pendingReply_invisibleThenApproved_visibleAndCounted() {
-        Session rootAuthor = registerAndLogin("13800000001", "楼主");
-        Session replier = registerAndLogin("13800000002", "回复者");
-        String postId = publishPost(rootAuthor, "正常帖子内容，欢迎讨论");
-        String rootId = publishCommentAndGetId(postId, rootAuthor, "根评论");
-        driveCommentReview(rootId);
-
-        JsonNode response = postJson("/api/community/comments/" + rootId + "/replies",
-                Map.of("content", "待审的回复内容"), replier);
-        assertSuccess(response, "回复（已过初筛，落库待审）");
-        String replyId = response.path("data").path("commentId").asText();
-        // 待审子回复不驱动裁决，走人工审核通过入口
-
-        // 待审：楼内不可见、不计数
-        JsonNode replies = listRepliesAsGuest(rootId, 1, null);
-        assertThat(replies.path("list")).isEmpty();
-        assertThat(replies.path("total").asLong()).isEqualTo(0);
-        assertThat(replyCountOnRootList(postId, rootId)).isEqualTo(0);
-
-        // 审核员通过（走真实人工审核入口）
-        approveCommentAsAuditor(replyId);
-
-        JsonNode after = listRepliesAsGuest(rootId, 1, null);
-        assertThat(commentIdsOf(after)).containsExactly(replyId);
-        assertThat(replyCountOnRootList(postId, rootId)).isEqualTo(1);
-        // 通过后计入帖子评论总数：根 1 + 子回复 1
-        assertThat(postCommentCountOf(postId)).isEqualTo(2);
-    }
-
-    @Test
-    @DisplayName("指向昵称忽略 parent 状态：parent 处于待审时指向昵称仍返回")
-    void replyToNickname_returnedRegardlessOfParentStatus() {
-        Session rootAuthor = registerAndLogin("13800000001", "楼主");
-        Session b = registerAndLogin("13800000002", "用户B");
-        String postId = publishPost(rootAuthor, "正常帖子内容，欢迎讨论");
-        String rootId = publishCommentAndGetId(postId, rootAuthor, "根评论");
-
-        // B 的回复已过初筛 → PENDING_REVIEW（不驱动裁决，保持待审）
-        String r1 = postReplyAndGetId(rootId, b, "一条待审的回复");
-        // 楼主回复 B 这条待审子回复，正常内容 → 裁决通过后可见
-        String r2 = postReplyAndGetId(r1, rootAuthor, "回复 B 的内容");
-        driveCommentReview(r2);
-
-        JsonNode replies = listRepliesAsGuest(rootId, 1, null);
-        // r1 待审不可见；r2 可见且指向昵称取自待审的 r1 行（忽略其状态）
-        assertThat(commentIdsOf(replies)).containsExactly(r2);
-        JsonNode r2Node = replies.path("list").get(0);
-        assertThat(r2Node.path("replyToUserId").asText()).isEqualTo(b.userId());
-        assertThat(r2Node.path("replyToNickname").asText()).isEqualTo("用户B");
-    }
-
-    @Test
     @DisplayName("删除楼内子回复：reply_count -1，楼内列表同步减少（软删行保留）")
     void deleteReply_decrementsReplyCount() {
         Session rootAuthor = registerAndLogin("13800000001", "楼主");
@@ -209,7 +150,6 @@ class CommentThreadingIntegrationTest extends CommunityApiTestBase {
 
         postReplyAndGetId(rootId, replier, "回复一");
         String r2 = postReplyAndGetId(rootId, replier, "回复二");
-        driveAllCommentReviews();
 
         JsonNode response = deleteJson("/api/community/comments/" + r2, replier);
         assertSuccess(response, "删除子回复");
@@ -243,24 +183,6 @@ class CommentThreadingIntegrationTest extends CommunityApiTestBase {
                 Map.of("content", content), author);
         assertSuccess(response, "回复评论 " + targetCommentId);
         return response.path("data").path("commentId").asText();
-    }
-
-    private void approveCommentAsAuditor(String commentId) {
-        Session auditor = registerAndLogin("13900000001", "审核员");
-        // 角色在登录时写入 JWT：先改库再重新走验证码登录，拿含 AUDITOR 角色的 token
-        jdbcTemplate.update("UPDATE bs_user SET role = 'AUDITOR' WHERE user_id = ?", auditor.userId());
-        postJson("/api/user/send-code", Map.of("phone", "13900000001"), null);
-        String code = redissonClient.<String>getBucket(Constants.VERIFY_CODE_KEY + "13900000001").get();
-        JsonNode loginResponse = postJson("/api/user/login", Map.of("phone", "13900000001", "code", code), null);
-        assertSuccess(loginResponse, "审核员重新登录");
-        String auditorToken = loginResponse.path("data").path("token").asText();
-        Session auditorSession = new Session(auditorToken, auditor.userId());
-
-        // 遗留审核入口已收口（票 09）：裁决前先领单
-        claimTaskOf(auditorSession, "COMMENT", commentId);
-        JsonNode response = postJson("/api/moderation/review",
-                Map.of("targetType", "COMMENT", "targetId", commentId, "action", "APPROVE"), auditorSession);
-        assertSuccess(response, "人工审核通过评论");
     }
 
     /** 楼内子回复列表（guest）：data 节点 = {page, pageSize, total, list}；pageSize 传 null 用默认 3/10 */

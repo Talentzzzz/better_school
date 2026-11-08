@@ -32,7 +32,7 @@ class SearchIndexRebuildJobIntegrationTest extends CommunityApiTestBase {
         Session other = registerAndLogin("13900001302", "重建路人");
         // 每类都摆「该进索引」与「不该进索引」各一行，过滤是否正确才有断言力
         String visiblePostId = publishPost(author, "重建可见帖");
-        publishPendingPost(author, "重建待审帖");
+        saveDraftPost(author, "重建草稿帖");
         String onSaleProductId = insertProduct(author.userId(), "ON_SALE");
         insertProduct(author.userId(), "SOLD");
         String publishedErrandId = insertErrand(other.userId(), "PUBLISHED");
@@ -44,7 +44,7 @@ class SearchIndexRebuildJobIntegrationTest extends CommunityApiTestBase {
         assertThat(FakeSearchRepository.clearedIndexes())
                 .as("四类索引各清一次，顺序固定").containsExactly("post", "product", "errand", "user");
         assertThat(FakeSearchRepository.postIds())
-                .as("只有 NORMAL 帖子进索引，待审帖不进").containsExactly(visiblePostId);
+                .as("只有 NORMAL 帖子进索引，草稿帖不进").containsExactly(visiblePostId);
         assertThat(FakeSearchRepository.productIds())
                 .as("只有 ON_SALE 商品进索引，已售不进").containsExactly(onSaleProductId);
         assertThat(FakeSearchRepository.errandIds())
@@ -76,11 +76,11 @@ class SearchIndexRebuildJobIntegrationTest extends CommunityApiTestBase {
         return errandId;
     }
 
-    /** 直接发帖（先审后发：落库即待审），返回 postId */
-    private String publishPendingPost(Session author, String title) {
-        JsonNode response = postJson("/api/community/posts",
+    /** 保存草稿帖（DRAFT 不进索引），返回 postId */
+    private String saveDraftPost(Session author, String title) {
+        JsonNode response = postJson("/api/community/posts/draft",
                 Map.of("title", title, "content", "正文内容，重建用例"), author);
-        assertSuccess(response, "发帖");
+        assertSuccess(response, "保存草稿帖");
         return response.path("data").asText();
     }
 }

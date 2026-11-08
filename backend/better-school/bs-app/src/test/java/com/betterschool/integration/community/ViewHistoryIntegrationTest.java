@@ -86,20 +86,20 @@ class ViewHistoryIntegrationTest extends CommunityApiTestBase {
     }
 
     @Test
-    void 已删的他人帖过滤本人待审帖照常展示() {
+    void 已删的他人帖过滤本人帖照常展示() {
         Session author = registerAndLogin("13700005004", "过滤作者");
         Session viewer = registerAndLogin("13700005005", "过滤浏览者");
         String kept = publishPost(author, "保留的帖子");
         String removed = publishPost(author, "将被删除的帖子");
-        // 本人帖发布即待审（先审后发）：作者视角详情可见，浏览要能落明细
+        // 本人帖发布即可见：作者视角详情可见，浏览要能落明细
         JsonNode ownPublish = postJson("/api/community/posts",
-                Map.of("title", "我的待审帖", "content", "自己的帖子"), viewer);
-        assertSuccess(ownPublish, "发本人待审帖");
-        String ownPending = ownPublish.path("data").asText();
+                Map.of("title", "我自己的帖", "content", "自己的帖子"), viewer);
+        assertSuccess(ownPublish, "发本人帖");
+        String ownPost = ownPublish.path("data").asText();
 
         assertSuccess(getJson("/api/community/posts/" + kept, viewer), "浏览保留帖");
         assertSuccess(getJson("/api/community/posts/" + removed, viewer), "浏览将删帖");
-        assertSuccess(getJson("/api/community/posts/" + ownPending, viewer), "浏览本人待审帖");
+        assertSuccess(getJson("/api/community/posts/" + ownPost, viewer), "浏览本人帖");
         assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
 
         assertSuccess(deleteJson("/api/community/posts/" + removed, author), "作者删帖");
@@ -108,7 +108,7 @@ class ViewHistoryIntegrationTest extends CommunityApiTestBase {
         List<String> ids = new ArrayList<>();
         data.path("list").forEach(node -> ids.add(node.path("postId").asText()));
         assertThat(ids).as("已删的他人帖过滤（失效卡片的收敛口径：过滤不展示）").doesNotContain(removed);
-        assertThat(ids).as("仍可见帖与本人待审帖照常展示").containsExactlyInAnyOrder(kept, ownPending);
+        assertThat(ids).as("仍可见帖与本人帖照常展示").containsExactlyInAnyOrder(kept, ownPost);
         assertThat(data.path("total").asLong()).as("total 与过滤口径一致").isEqualTo(2);
     }
 
