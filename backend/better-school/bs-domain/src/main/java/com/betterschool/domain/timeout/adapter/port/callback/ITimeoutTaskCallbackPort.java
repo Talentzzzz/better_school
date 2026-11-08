@@ -29,5 +29,5 @@ public interface ITimeoutTaskCallbackPort {
      *
      * @throws RuntimeException 动作失败（含无法识别的 taskType / 坏 bizId）——调用方按失败重投入重试或死信
      */
-    void callback(TimeoutTaskEntity task);
+    void callback(TimeoutTaskEntity taskEntity);
 }

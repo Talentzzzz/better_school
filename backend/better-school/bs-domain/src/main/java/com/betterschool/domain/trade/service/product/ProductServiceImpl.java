@@ -170,14 +170,14 @@ public class ProductServiceImpl implements IProductService {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "无变更内容");
         }
         if (contentChanged) {
-            ProductEntity edit = new ProductEntity();
-            edit.setProductId(productId);
-            edit.setTitle(title);
-            edit.setDescription(description);
-            edit.setImages(images);
-            edit.setPrice(price);
+            ProductEntity editEntity = new ProductEntity();
+            editEntity.setProductId(productId);
+            editEntity.setTitle(title);
+            editEntity.setDescription(description);
+            editEntity.setImages(images);
+            editEntity.setPrice(price);
             // 改内容回待审：期间他人不可见（列表 SQL 锁 ON_SALE）、卖家本人可见；同事务落搜索同步消息，消费方按状态删文档
-            tradeRepository.editOnSaleContentWithSearchSync(edit);
+            tradeRepository.editOnSaleContentWithSearchSync(editEntity);
             return;
         }
         // 仅改价：立即生效，状态不变、不进审核、无通知（价格不进搜索文档，无需索引同步）

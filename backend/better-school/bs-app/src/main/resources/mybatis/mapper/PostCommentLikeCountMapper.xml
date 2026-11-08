@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.comment.IPostCommentLikeCountDao">
+
+    <!-- ── 评论点赞计数窄表（post_comment_like_count，票 02 起的计数真源）── -->
+
+    <!-- 审核通过：计数行诞生，赞数恒 0（待审态不可被赞）。根评论与子回复都入表。
+         INSERT IGNORE 而不是裸 INSERT：漂移产生的重复键只该被吞掉，不该让整个审核事务失败
+         （裸 INSERT 撞 uk_comment 会抛异常回滚状态翻转 + 计数）。
+         不做 ODKU 补行：那会把不变式从「行诞生于审核通过」改成「行诞生于第一次点赞」。
+         影响行数 0 = 行已存在（漂移），调用方落 warn 留痕、不覆盖既有计数 -->
+    <insert id="insertLikeCountOnApprove">
+        INSERT IGNORE INTO post_comment_like_count (comment_id, like_count, create_time, update_time)
+        VALUES (#{commentId}, 0, NOW(), NOW())
+    </insert>
+
+    <!-- 点赞合并落库 / 同步取消赞：窄表 ±N（GREATEST 兜底不为负），主行 update_time 不再被计数写刷。
+         纯 UPDATE 不 upsert（能被赞的评论行必存在——NORMAL 才可赞，通过事务已建窄表行）；
+         命中 0 行 = 窄表行缺失的漂移，调用方落 warn（commentId + delta）交手工对账，不补行 -->
+    <update id="updateLikeCount">
+        UPDATE post_comment_like_count
+        SET like_count  = GREATEST(0, like_count + #{delta}),
+            update_time = NOW()
+        WHERE comment_id = #{commentId}
+    </update>
+
+    <!-- 展示取数：按页内评论 id 集一次回查窄表（不 JOIN：三条列表 + 单行同一通路，单行即单元素）。
+         缺行由调用方补 0（存量语义：窄表行诞生于审核通过，未过审的历史行没有计数行） -->
+    <select id="selectLikeCountsByIds" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentLikeCount">
+        SELECT comment_id, like_count
+        FROM post_comment_like_count
+        WHERE comment_id IN
+        <foreach collection="commentIds" item="commentId" open="(" separator="," close=")">#{commentId}</foreach>
+    </select>
+
+</mapper>

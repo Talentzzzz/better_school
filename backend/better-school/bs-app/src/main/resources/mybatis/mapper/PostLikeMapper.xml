@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.post.IPostLikeDao">
+
+    <!-- 我点赞过的帖子：关系行主查（post_like 单表，按点赞时间倒序）；帖子行与可见性过滤
+         （点赞后帖子可能被驳回/转入待审，仍向点赞者展示）由仓储两段查拼装 -->
+    <select id="selectRelationLikedRows" resultType="com.betterschool.infrastructure.dao.post.po.PostRelationRow">
+        SELECT pl.post_id AS postId, pl.create_time AS sortTime
+        FROM post_like pl
+        WHERE pl.user_id = #{userId}
+        ORDER BY pl.create_time DESC, pl.post_id DESC
+    </select>
+
+    <!-- 某用户赞过的帖子（作者主页「赞过」tab）：关系行主查与「我赞过的」共用 selectRelationLikedRows，
+         源帖仅 NORMAL（待审/驳回不外露）的过滤在仓储 Java 侧做 -->
+
+    <!-- 点赞关系行批量写（合并器一组一个事务）：同帖 N 个用户一条语句。
+         INSERT IGNORE 的根本目的不是「别报错」，而是把撞唯一键的裁决交给数据库：
+         返回的影响行数 = 本次真正插入的行数，计数只按这个数增量（重复赞不重复计）。
+         注意：影响行数只给总数，因此「哪几件撞了键」由调用方在本事务内回查（selectLikeUserIds）定位 -->
+    <insert id="insertLikes">
+        INSERT IGNORE INTO post_like (post_id, user_id, create_time, update_time)
+        VALUES
+        <foreach collection="userIds" item="userId" separator=",">
+            (#{postId}, #{userId}, NOW(), NOW())
+        </foreach>
+    </insert>
+
+    <!-- 取消赞批量删：影响行数 = 真正删掉的行数，计数按它回落；没删到的件是 NOT_FOUND -->
+    <delete id="deleteLikes">
+        DELETE FROM post_like
+        WHERE post_id = #{postId}
+          AND user_id IN
+        <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
+    </delete>
+
+    <!-- 批内撞键定位：只查这一批的 (post_id, user_id)，不在批内的一行都不查 -->
+    <select id="selectLikeUserIds" resultType="string">
+        SELECT user_id
+        FROM post_like
+        WHERE post_id = #{postId}
+          AND user_id IN
+        <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
+    </select>
+
+    <select id="existsLike" resultType="int">
+        SELECT COUNT(1)
+        FROM post_like
+        WHERE post_id = #{postId}
+          AND user_id = #{userId}
+    </select>
+
+    <select id="selectLikedPostIds" resultType="string">
+        SELECT post_id
+        FROM post_like
+        WHERE user_id = #{userId}
+          AND post_id IN
+        <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
+    </select>
+
+</mapper>

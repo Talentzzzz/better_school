@@ -74,7 +74,7 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
     void sendMessagePersistsFiveTablesAndOutbox() {
         String roomId = createDirectRoomViaApi();
 
-        JsonNode response = postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
+        JsonNode response = send(roomId, Map.of(
                 "clientMsgId", "cmid-1",
                 "msgType", "TEXT",
                 "content", "同学你好，帖子还在吗？"), sessionA);
@@ -109,13 +109,13 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
     void duplicateClientMsgIdConvergesToSameMessage() {
         String roomId = createDirectRoomViaApi();
 
-        JsonNode first = postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
+        JsonNode first = send(roomId, Map.of(
                 "clientMsgId", "cmid-dup", "msgType", "TEXT", "content", "第一条"), sessionA);
         assertSuccess(first, "首发");
         long firstSeq = first.path("data").path("seq").asLong();
 
         // 双击/超时重发复用同 clientMsgId：撞 uk_client_msg 回查收敛同一条
-        JsonNode second = postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
+        JsonNode second = send(roomId, Map.of(
                 "clientMsgId", "cmid-dup", "msgType", "TEXT", "content", "第一条"), sessionA);
         assertSuccess(second, "重复提交幂等收敛");
         assertThat(second.path("data").path("seq").asLong()).as("同 seq 无重复行").isEqualTo(firstSeq);
@@ -137,20 +137,20 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         AtomicReference<String> holderMsgId = new AtomicReference<>();
         Thread holder = new Thread(() -> transactionTemplate.executeWithoutResult(status -> {
             long seq = chatRepository.increaseLastSeq(roomId);
-            MessageEntity message = new MessageEntity();
-            message.setRoomId(roomId);
-            message.setSeq(seq);
-            message.setFromUserId(sessionA.userId());
-            message.setMsgType(MsgTypeVO.TEXT);
-            message.setContent("并发先行者");
-            message.setClientMsgId("cmid-race");
-            chatRepository.insertMessage(message);
-            holderMsgId.set(message.getMessageId());
+            MessageEntity messageEntity = new MessageEntity();
+            messageEntity.setRoomId(roomId);
+            messageEntity.setSeq(seq);
+            messageEntity.setFromUserId(sessionA.userId());
+            messageEntity.setMsgType(MsgTypeVO.TEXT);
+            messageEntity.setContent("并发先行者");
+            messageEntity.setClientMsgId("cmid-race");
+            chatRepository.insertMessage(messageEntity);
+            holderMsgId.set(messageEntity.getMessageId());
             long deliveryA = chatRepository.increaseUserSeq(sessionA.userId(), 1);
             long deliveryB = chatRepository.increaseUserSeq(sessionB.userId(), 1);
             chatRepository.insertTimelines(List.of(
-                    timeline(sessionA.userId(), roomId, seq, message.getMessageId(), deliveryA),
-                    timeline(sessionB.userId(), roomId, seq, message.getMessageId(), deliveryB)));
+                    timeline(sessionA.userId(), roomId, seq, messageEntity.getMessageId(), deliveryA),
+                    timeline(sessionB.userId(), roomId, seq, messageEntity.getMessageId(), deliveryB)));
             inserted.countDown();
             try {
                 // 行锁保持到提交：模拟另一发送事务尚未落库
@@ -167,7 +167,7 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
                 java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
         releaser.schedule(release::countDown, 1500, TimeUnit.MILLISECONDS);
 
-        JsonNode response = postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
+        JsonNode response = send(roomId, Map.of(
                 "clientMsgId", "cmid-race", "msgType", "TEXT", "content", "并发后来者"), sessionA);
         holder.join(10000);
         releaser.shutdownNow();
@@ -185,7 +185,7 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         String roomId = createDirectRoomViaApi();
         jdbcTemplate.update("UPDATE user_room SET hidden_at = NOW() WHERE room_id = '" + roomId + "' AND user_id = '" + sessionB.userId() + "'");
 
-        postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
+        send(roomId, Map.of(
                 "clientMsgId", "cmid-pop", "msgType", "TEXT", "content", "在吗"), sessionA);
 
         Object hiddenAt = query("SELECT hidden_at FROM user_room WHERE room_id = '" + roomId + "' AND user_id = '" + sessionB.userId() + "'");
@@ -198,7 +198,7 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         String roomId = createDirectRoomViaApi();
 
         String imageContent = "{\"url\":\"" + imagePublicUrl + "/chat/p1.jpg\",\"width\":800,\"height\":600}";
-        JsonNode imageResp = postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
+        JsonNode imageResp = send(roomId, Map.of(
                 "clientMsgId", "cmid-img", "msgType", "IMAGE", "content", imageContent), sessionA);
         assertSuccess(imageResp, "发送图片消息");
         // 预览不落副本（票 02）：读列表时按 message 真相现算渲染
@@ -207,7 +207,7 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         assertThat(listAfterImage.path("list").get(0).path("lastMsgType").asText()).isEqualTo("IMAGE");
 
         String postId = publishPost(sessionA, "出闲置书");
-        JsonNode cardResp = postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
+        JsonNode cardResp = send(roomId, Map.of(
                 "clientMsgId", "cmid-card", "msgType", "CARD", "refType", "POST", "refId", postId), sessionA);
         assertSuccess(cardResp, "发送卡片消息");
         assertThat(cardResp.path("data").path("content").isNull()).as("CARD content 恒空").isTrue();
@@ -221,7 +221,7 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         assertThat(queryLong("SELECT last_seq FROM room WHERE room_id = '" + roomId + "'")).isEqualTo(2);
 
         // 外站图片 url 拒绝
-        JsonNode evilImage = postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
+        JsonNode evilImage = send(roomId, Map.of(
                 "clientMsgId", "cmid-evil", "msgType", "IMAGE",
                 "content", "{\"url\":\"http://evil.com/a.jpg\"}"), sessionA);
         assertThat(evilImage.path("code").asText()).as("非本站上传域前缀应拒绝").isEqualTo("400");
@@ -229,7 +229,7 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         // 已删帖子卡片拒绝（走正规删除路径，findById 有详情缓存，直改 DB 不踢缓存会绕过校验）
         JsonNode delResp = deleteJson("/api/community/posts/" + postId, sessionA);
         assertSuccess(delResp, "删除帖子");
-        JsonNode deadCard = postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
+        JsonNode deadCard = send(roomId, Map.of(
                 "clientMsgId", "cmid-dead", "msgType", "CARD", "refType", "POST", "refId", postId), sessionA);
         assertThat(deadCard.path("code").asText()).as("已删对象卡片应拒绝（find 不出已删行）").isEqualTo("404");
         assertThat(queryLong("SELECT last_seq FROM room WHERE room_id = '" + roomId + "'")).as("失败消息不占 seq").isEqualTo(2);
@@ -241,12 +241,12 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         Session outsider = registerAndLogin("13800001003", "用户C");
 
         // 非成员拒绝
-        JsonNode outsiderSend = postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
+        JsonNode outsiderSend = send(roomId, Map.of(
                 "clientMsgId", "cmid-out", "msgType", "TEXT", "content", "我是路人"), outsider);
         assertThat(outsiderSend.path("code").asText()).as("非会话成员应 403").isEqualTo("403");
 
         // TEXT 超长拒绝（≤500 单一常量）
-        JsonNode tooLong = postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
+        JsonNode tooLong = send(roomId, Map.of(
                 "clientMsgId", "cmid-long", "msgType", "TEXT", "content", "长".repeat(501)), sessionA);
         assertThat(tooLong.path("code").asText()).as("超 500 字应拒绝").isEqualTo("400");
 
@@ -270,14 +270,21 @@ public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
         return roomId;
     }
 
+    /** 发送消息：roomId 收敛进请求体（POST /rooms/messages 契约） */
+    private JsonNode send(String roomId, Map<String, Object> payload, Session sender) {
+        java.util.Map<String, Object> body = new java.util.HashMap<>(payload);
+        body.put("roomId", roomId);
+        return postJson("/api/chat/rooms/messages", body, sender);
+    }
+
     private TimelineEntity timeline(String userId, String roomId, long seq, String msgId, long deliverySeq) {
-        TimelineEntity timeline = new TimelineEntity();
-        timeline.setUserId(userId);
-        timeline.setRoomId(roomId);
-        timeline.setSeq(seq);
-        timeline.setMsgId(msgId);
-        timeline.setDeliverySeq(deliverySeq);
-        return timeline;
+        TimelineEntity timelineEntity = new TimelineEntity();
+        timelineEntity.setUserId(userId);
+        timelineEntity.setRoomId(roomId);
+        timelineEntity.setSeq(seq);
+        timelineEntity.setMsgId(msgId);
+        timelineEntity.setDeliverySeq(deliverySeq);
+        return timelineEntity;
     }
 
     private JsonNode listRooms(Session session) {

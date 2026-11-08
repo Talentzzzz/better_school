@@ -280,9 +280,9 @@ public class CountMerger {
      * <p>一组一事务（不是一批一事务）：一组让锁集最小、失败只回滚一组、结果能精确回填到件；
      * 一批一事务会让几个不相干的行以不同顺序被锁，多出一片死锁面。
      */
-    private void flushBatch(List<Pending> batch) {
+    private void flushBatch(List<Pending> pendingList) {
         Map<GroupKey, List<Pending>> groups = new LinkedHashMap<>();
-        for (Pending item : batch) {
+        for (Pending item : pendingList) {
             groups.computeIfAbsent(new GroupKey(item.event().action(), item.shardKey()),
                     key -> new ArrayList<>()).add(item);
         }
@@ -292,7 +292,7 @@ public class CountMerger {
             }
         } finally {
             // 兜底：任何还没回填的件补 FAILED —— 绝不让等待者悬到超时（I1）
-            for (Pending item : batch) {
+            for (Pending item : pendingList) {
                 if (item.complete(MergeState.FAILED, null)) {
                     failed.incrementAndGet();
                 }
@@ -301,34 +301,34 @@ public class CountMerger {
     }
 
     /** 落库一组 + 回填 + 计数。落库方法的异常只吞掉本组，别的组照常跑 */
-    private void flushOneGroup(GroupKey group, List<Pending> items) {
-        List<CountEvent> events = new ArrayList<>(items.size());
-        for (Pending item : items) {
-            events.add(item.event());
+    private void flushOneGroup(GroupKey group, List<Pending> pendingList) {
+        List<CountEvent> countEventList = new ArrayList<>(pendingList.size());
+        for (Pending item : pendingList) {
+            countEventList.add(item.event());
         }
 
         long startNanos = System.nanoTime();
-        List<LikeState> results = null;
+        List<LikeState> resultList = null;
         try {
-            results = flushHandler.flushGroup(group.action(), group.shardKey(), events);
+            resultList = flushHandler.flushGroup(group.action(), group.shardKey(), countEventList);
         } catch (RuntimeException e) {
             log.error("计数落库失败（整组失败，{} 件）：action={}, shardKey={}",
-                    items.size(), group.action(), group.shardKey(), e);
+                    pendingList.size(), group.action(), group.shardKey(), e);
         } finally {
             batches.incrementAndGet();
             maxFlushNanos.accumulateAndGet(System.nanoTime() - startNanos, Math::max);
         }
 
-        int resultCount = results == null ? 0 : results.size();
-        if (resultCount > items.size()) {
+        int resultCount = resultList == null ? 0 : resultList.size();
+        if (resultCount > pendingList.size()) {
             log.warn("落库方法返回的结果比入参多（{} > {}）：action={}, shardKey={}，多出的忽略",
-                    resultCount, items.size(), group.action(), group.shardKey());
+                    resultCount, pendingList.size(), group.action(), group.shardKey());
         }
-        for (int i = 0; i < items.size(); i++) {
-            Pending item = items.get(i);
+        for (int i = 0; i < pendingList.size(); i++) {
+            Pending item = pendingList.get(i);
             // 长度不足 / 该位是 null 都算「漏回填」：宁可补 FAILED，也不给调用方一个「成功但没有结果」
-            boolean inbound = i < resultCount && results.get(i) != null;
-            if (inbound && item.complete(results.get(i))) {
+            boolean inbound = i < resultCount && resultList.get(i) != null;
+            if (inbound && item.complete(resultList.get(i))) {
                 flushed.incrementAndGet();
             } else if (item.complete(MergeState.FAILED, null)) {
                 // 落库方法漏回填（null / 长度不足 / 空元素）：合并器补 FAILED，件不悬着

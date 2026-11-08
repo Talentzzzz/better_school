@@ -87,7 +87,7 @@ public interface IModerationRepository {
     String findRejectReason(String targetType, String targetId);
 
     /** 批量拒绝理由：targetId → 最新一次 REJECT 的 reason（无记录的 target 不在 Map 中；列表页免 N+1） */
-    Map<String, String> findRejectReasons(String targetType, List<String> targetIds);
+    Map<String, String> findRejectReasons(String targetType, List<String> targetIdList);
 
     List<ContentReportEntity> pageReports(String status, int offset, int limit);
 

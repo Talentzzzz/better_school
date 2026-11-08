@@ -460,8 +460,8 @@ public class ChatWsIntegrationTest extends CommunityApiTestBase {
     }
 
     private JsonNode sendText(String roomId, String clientMsgId, String content, Session sender) {
-        return postJson("/api/chat/rooms/" + roomId + "/messages", Map.of(
-                "clientMsgId", clientMsgId, "msgType", "TEXT", "content", content), sender);
+        return postJson("/api/chat/rooms/messages", Map.of(
+                "roomId", roomId, "clientMsgId", clientMsgId, "msgType", "TEXT", "content", content), sender);
     }
 
     /** 按 destination 取 outbox 事件载荷（id 升序 = 落库顺序）；推送触发直调消费者，不经 MQ */

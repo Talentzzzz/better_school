@@ -68,8 +68,8 @@ public class TimeoutTaskCallbackProbe implements ITimeoutTaskCallbackPort {
     }
 
     @Override
-    public void callback(TimeoutTaskEntity task) {
-        TaskKeyVO key = TaskKeyVO.of(task.getTaskType(), task.getBizId());
+    public void callback(TimeoutTaskEntity taskEntity) {
+        TaskKeyVO key = TaskKeyVO.of(taskEntity.getTaskType(), taskEntity.getBizId());
         invocations.add(key);
         threadNames.add(Thread.currentThread().getName());
         int now = inFlight.incrementAndGet();
@@ -77,15 +77,15 @@ public class TimeoutTaskCallbackProbe implements ITimeoutTaskCallbackPort {
         try {
             awaitBarrier();
             if (outcome == Outcome.FAIL || failingKeys.contains(key)) {
-                throw new IllegalStateException("探针：这一项按失败回报 " + task.getTaskType() + ":" + task.getBizId());
+                throw new IllegalStateException("探针：这一项按失败回报 " + taskEntity.getTaskType() + ":" + taskEntity.getBizId());
             }
             if (cancelingKeys.remove(key)) {
                 // 竞态用例：在「捞批」与「结算」之间的窗口里取消这一行——
                 // 结算的三条 UPDATE 都带 status IN ('WAITING','RETRYING') 守卫，不该把它翻回来
-                timeoutRepository.cancelActive(task.getTaskType(), task.getBizId());
+                timeoutRepository.cancelActive(taskEntity.getTaskType(), taskEntity.getBizId());
             }
             if (outcome == Outcome.DELEGATE) {
-                dispatcher.callback(task);
+                dispatcher.callback(taskEntity);
             }
         } finally {
             inFlight.decrementAndGet();

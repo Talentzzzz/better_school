@@ -12,7 +12,8 @@ import java.util.List;
 
 /**
  * 交易仓储（闲置商品 + 商品托管订单合一，一域一仓储）：覆盖 trade 领域服务所需全部持久化能力，
- * 由 infrastructure 实现（实现内持 IProductDao + IProductOrderDao + 共享 outbox store）。
+ * 由 infrastructure 实现（实现内持 IProductDao / IProductOrderDao 及其拆分出的按表 DAO
+ * （收藏 / feed 索引 / 浏览明细 / 计数窄表 / 订单事件）+ 共享 outbox store）。
  * 商品锁原语（lock/release/lockToSold）与订单状态变更同属本接口，故跨两表的改写收成一个方法、
  * 事务在实现内（编程式，默认 REQUIRED）。
  * 商品与订单都有同名能力（save/findById），按域限定名区分：订单侧带 Order。
@@ -121,7 +122,7 @@ public interface ITradeRepository {
     long countOnSaleByUser(String userId);
 
     /** 按 id 列表查询（不分状态，搜索同步/搜索命中反查用；返回顺序与入参无关，调用方按 id 重排） */
-    List<ProductEntity> listByIds(List<String> productIds);
+    List<ProductEntity> listByIds(List<String> productIdList);
 
     /** 搜索索引全量重建的游标页：业务 ID 字典序，product_id > lastProductId 升序取 limit 条（无界结果集一律游标化；uuid-biz-id 票 05） */
     List<String> listIdsAfter(String lastProductId, int limit);
@@ -232,5 +233,5 @@ public interface ITradeRepository {
      * 走 {@code product_view_history} 主键 {@code (user_id, product_id)} 前缀，一页一次 IN 查询。
      * userId 为 null（未登录）或集合为空返回空集
      */
-    List<String> selectViewedProductIds(String userId, List<String> productIds);
+    List<String> selectViewedProductIds(String userId, List<String> productIdList);
 }

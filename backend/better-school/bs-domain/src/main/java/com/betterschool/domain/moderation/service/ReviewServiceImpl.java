@@ -120,29 +120,29 @@ public class ReviewServiceImpl implements IReviewService {
 
     @Override
     public ReviewQueueItemEntity reviewDetail(ReviewTargetTypeVO targetType, String targetId) {
-        ReviewQueueItemEntity detail = moderationRepository.findReviewDetail(targetType.name(), targetId);
-        if (detail == null) {
+        ReviewQueueItemEntity detailEntity = moderationRepository.findReviewDetail(targetType.name(), targetId);
+        if (detailEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "审核对象不存在");
         }
-        return detail;
+        return detailEntity;
     }
 
     @Override
     public ReviewTaskDetailEntity reviewTaskDetail(String taskId) {
-        ReviewTaskEntity task = moderationRepository.findTaskById(taskId);
-        if (task == null) {
+        ReviewTaskEntity taskEntity = moderationRepository.findTaskById(taskId);
+        if (taskEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "审核工单不存在");
         }
-        ReviewTargetDetailEntity target = moderationRepository.findTargetDetail(task.getTargetType().name(), task.getTargetId());
-        if (target == null) {
+        ReviewTargetDetailEntity targetEntity = moderationRepository.findTargetDetail(taskEntity.getTargetType().name(), taskEntity.getTargetId());
+        if (targetEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "审核对象不存在");
         }
         ReviewTaskDetailEntity detailEntity = new ReviewTaskDetailEntity();
-        detailEntity.setTask(task);
-        detailEntity.setTarget(target);
+        detailEntity.setTask(taskEntity);
+        detailEntity.setTarget(targetEntity);
         // 历史裁决两路都只读 content_review（author_id 冗余列使按作者聚合单表可查，spec §5.1）
-        detailEntity.setTargetReviews(moderationRepository.listReviewsByTarget(task.getTargetType().name(), task.getTargetId()));
-        detailEntity.setAuthorReviews(moderationRepository.listReviewsByAuthor(task.getAuthorId(), AUTHOR_HISTORY_LIMIT));
+        detailEntity.setTargetReviews(moderationRepository.listReviewsByTarget(taskEntity.getTargetType().name(), taskEntity.getTargetId()));
+        detailEntity.setAuthorReviews(moderationRepository.listReviewsByAuthor(taskEntity.getAuthorId(), AUTHOR_HISTORY_LIMIT));
         return detailEntity;
     }
 

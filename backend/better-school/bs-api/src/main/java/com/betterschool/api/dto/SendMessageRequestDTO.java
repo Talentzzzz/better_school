@@ -5,10 +5,13 @@ import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 /**
- * 发送消息请求：clientMsgId 客户端生成 UUID，乐观上屏重发复用同键实现幂等
+ * 发送消息请求：roomId 目标会话与消息载荷合一；clientMsgId 客户端生成 UUID，乐观上屏重发复用同键实现幂等
  */
 @Data
 public class SendMessageRequestDTO {
+
+    @NotBlank(message = "roomId 不能为空")
+    private String roomId;
 
     @NotBlank(message = "clientMsgId 不能为空")
     @Size(max = 36, message = "clientMsgId 最长 36 字符")

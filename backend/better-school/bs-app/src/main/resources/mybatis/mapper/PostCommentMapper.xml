@@ -10,7 +10,8 @@
     <!-- 各语句统一纯 post_comment 单表列清单：作者昵称（bs_user）、驳回理由（content_review 最新 REJECT 行）、
          楼内的指向评论（post_comment 父行自连）、主页 tab 的来源帖标题封面（post）均由仓储二次回查拼装
          （SQL 层零 JOIN）。like_count 不在列清单里（票 02）：真源在 post_comment_like_count，
-         由仓储按页内 id 集批量回查填充 -->
+         由仓储按页内 id 集批量回查填充。评论点赞关系 / 点赞计数窄表 / 热评索引 / 评论计数窄表语句分别在
+         PostCommentLikeMapper / PostCommentLikeCountMapper / PostCommentFeedIndexMapper / PostCommentCountMapper -->
 
     <insert id="insert" parameterType="com.betterschool.infrastructure.dao.comment.po.PostComment"
             useGeneratedKeys="true" keyProperty="id">
@@ -22,7 +23,7 @@
          （无标识、与正常评论同展示）。total 口径 = 他人可见（仅 NORMAL，不含待审），作者视角行数可能多于 total。
          排序 = create_time 升序 + 业务 ID 升序（uuid-biz-id 票 03：业务 ID 是 UUID、无序，发布时间先后由
          create_time 表达，业务 ID 只做同值收敛）；最热档不走这条——它在 post_comment_feed_index 上两级取数
-         （见 selectRootFeedCommentIds），顺序来自索引、且只有已过审根评论（热评档不自见） -->
+         （见 IPostCommentFeedIndexDao.selectRootFeedCommentIds），顺序来自索引、且只有已过审根评论（热评档不自见） -->
     <select id="selectRootPageByPostId" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
         FROM post_comment c
@@ -35,20 +36,6 @@
               </if>
           )
         ORDER BY c.create_time, c.comment_id
-        LIMIT #{offset}, #{limit}
-    </select>
-
-    <!-- 最热档第一步：在根评论索引上按 (like_count DESC, create_time ASC, comment_id ASC) 扫出本页 comment_id 序。
-         (post_id, like_count, create_time, comment_id) 前缀把扫描锁在单帖、覆盖索引不回表；赞数同值时的
-         「发布先后」由 create_time 表达，comment_id（UUID）只做同值最终收敛——UUID 无序，不能再拿它当时间代理
-         （uuid-biz-id 票 03）。混合方向（降序 + 升序）索引序给不出，所以排序落在「本帖那几十行」这个窄范围内
-         （EXPLAIN：covering index lookup + Sort）——单帖楼数量级可接受（spec §4.3），换来的仍是
-         「排序键与评论行分离」：索引被人为刷偏时顺序跟着索引走，与主列无关 -->
-    <select id="selectRootFeedCommentIds" resultType="string">
-        SELECT comment_id
-        FROM post_comment_feed_index
-        WHERE post_id = #{postId}
-        ORDER BY like_count DESC, create_time, comment_id
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -146,79 +133,16 @@
         <foreach collection="ids" item="commentId" open="(" separator="," close=")">#{commentId}</foreach>
     </select>
 
-    <!-- ── 评论点赞计数窄表（post_comment_like_count，票 02 起的计数真源）── -->
-
-    <!-- 审核通过：计数行诞生，赞数恒 0（待审态不可被赞）。根评论与子回复都入表。
-         INSERT IGNORE 而不是裸 INSERT：漂移产生的重复键只该被吞掉，不该让整个审核事务失败
-         （裸 INSERT 撞 uk_comment 会抛异常回滚状态翻转 + 计数）。
-         不做 ODKU 补行：那会把不变式从「行诞生于审核通过」改成「行诞生于第一次点赞」。
-         影响行数 0 = 行已存在（漂移），调用方落 warn 留痕、不覆盖既有计数 -->
-    <insert id="insertLikeCountOnApprove">
-        INSERT IGNORE INTO post_comment_like_count (comment_id, like_count, create_time, update_time)
-        VALUES (#{commentId}, 0, NOW(), NOW())
-    </insert>
-
-    <!-- 点赞合并落库 / 同步取消赞：窄表 ±N（GREATEST 兜底不为负），主行 update_time 不再被计数写刷。
-         纯 UPDATE 不 upsert（能被赞的评论行必存在——NORMAL 才可赞，通过事务已建窄表行）；
-         命中 0 行 = 窄表行缺失的漂移，调用方落 warn（commentId + delta）交手工对账，不补行 -->
-    <update id="updateLikeCount">
-        UPDATE post_comment_like_count
-        SET like_count  = GREATEST(0, like_count + #{delta}),
-            update_time = NOW()
-        WHERE comment_id = #{commentId}
-    </update>
-
-    <!-- 展示取数：按页内评论 id 集一次回查窄表（不 JOIN：三条列表 + 单行同一通路，单行即单元素）。
-         缺行由调用方补 0（存量语义：窄表行诞生于审核通过，未过审的历史行没有计数行） -->
-    <select id="selectLikeCountsByIds" resultType="com.betterschool.infrastructure.dao.comment.po.PostCommentLikeCount">
-        SELECT comment_id, like_count
-        FROM post_comment_like_count
-        WHERE comment_id IN
-        <foreach collection="commentIds" item="commentId" open="(" separator="," close=")">#{commentId}</foreach>
-    </select>
-
-    <!-- 评论点赞批量写（合并器一组一个事务，一评一条语句）：
-         INSERT IGNORE 让唯一键裁决重复赞；影响行数 = 本次真正插入的行数，窄表 like_count 只按它 +N。
-         「哪几件撞了键」由调用方在本事务内回查（selectCommentLikeUserIds）定位 -->
-    <insert id="insertCommentLikes">
-        INSERT IGNORE INTO post_comment_like (comment_id, user_id, create_time, update_time)
-        VALUES
-        <foreach collection="userIds" item="userId" separator=",">
-            (#{commentId}, #{userId}, NOW(), NOW())
-        </foreach>
-    </insert>
-
-    <!-- 批内撞键定位：只查这一批的 (comment_id, user_id) -->
-    <select id="selectCommentLikeUserIds" resultType="string">
-        SELECT user_id
-        FROM post_comment_like
-        WHERE comment_id = #{commentId}
-          AND user_id IN
-        <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
-    </select>
-
-    <delete id="deleteCommentLike">
-        DELETE FROM post_comment_like
-        WHERE comment_id = #{commentId}
-          AND user_id = #{userId}
-    </delete>
-
-    <select id="selectLikedCommentIds" resultType="string">
-        SELECT comment_id
-        FROM post_comment_like
+    <!-- 我评论过的帖子（PostMapper 迁入）：去重 + 最近评论时间倒序（单表 GROUP BY，ONLY_FULL_GROUP_BY 安全）；
+         帖子行与可见性过滤由仓储两段查拼装 -->
+    <select id="selectRelationCommentedRows" resultType="com.betterschool.infrastructure.dao.post.po.PostRelationRow">
+        SELECT post_id AS postId, MAX(create_time) AS sortTime
+        FROM post_comment
         WHERE user_id = #{userId}
-          AND comment_id IN
-        <foreach collection="commentIds" item="commentId" open="(" separator="," close=")">#{commentId}</foreach>
+          AND state = 'NORMAL'
+        GROUP BY post_id
+        ORDER BY sortTime DESC, post_id DESC
     </select>
-
-    <!-- 评论计数窄表 upsert（评论通过 +1 / 软删 -1，只计 NORMAL 态；同事务调用，不再锁 post 行） -->
-    <update id="upsertPostCommentCount">
-        INSERT INTO post_comment_count (post_id, comment_count, create_time, update_time)
-        VALUES (#{postId}, GREATEST(#{delta}, 0), NOW(), NOW())
-        ON DUPLICATE KEY UPDATE
-            comment_count = GREATEST(0, comment_count + #{delta}),
-            update_time   = NOW()
-    </update>
 
     <!-- 审核通过：PENDING_REVIEW → NORMAL（条件 UPDATE，1 行才评论数 +1，幂等） -->
     <update id="approveById">
@@ -248,31 +172,6 @@
           AND state = #{fromStatus}
     </update>
 
-    <!-- ── 根评论热评索引同事务直写（票 01：索引行与评论行同库，审核 / 赞合并 / 软删事务带写）── -->
-
-    <!-- 根评论审核通过：索引行诞生。赞数恒 0——待审态不可被赞（点赞前置检查锁 NORMAL），行诞生时必然还没被赞过；
-         子回复不入索引（楼内不按赞排），调用方按 root_id 分流。与状态翻转同事务：通过事务回滚则行不诞生 -->
-    <insert id="insertFeedIndexOnApprove">
-        INSERT INTO post_comment_feed_index (comment_id, post_id, like_count, create_time, update_time)
-        VALUES (#{commentId}, #{postId}, 0, NOW(), NOW())
-    </insert>
-
-    <!-- 赞合并 / 取消赞事务旁带 ±N：纯 UPDATE 不 upsert（能被赞的根评论行必存在——NORMAL 才可赞，通过事务已建行）。
-         GREATEST 兜底不为负，与主列 decrease 同口径；命中 0 行 = 索引行缺失的漂移，调用方落日志交重建 job -->
-    <update id="updateFeedIndexLikeCount">
-        UPDATE post_comment_feed_index
-        SET like_count  = GREATEST(0, like_count + #{delta}),
-            update_time = NOW()
-        WHERE comment_id = #{commentId}
-    </update>
-
-    <!-- 根评论软删：索引行物理退场（行集 = 当前可见根评论）。评论软删是终态、没有恢复路径，
-         不需要帖子的「行常驻 + state 镜像」；本就不在索引里的子回复，调用方不走到这里 -->
-    <delete id="deleteFeedIndex">
-        DELETE FROM post_comment_feed_index
-        WHERE comment_id = #{commentId}
-    </delete>
-
     <!-- 根/子判定：写路径只拿到 commentId，赞合并与软删要靠它决定要不要碰索引。
          子回复（root_id != '0'）的索引 UPDATE 必然 0 行，绝不能当漂移告警 -->
     <select id="selectRootId" resultType="string">
@@ -281,36 +180,20 @@
         WHERE comment_id = #{commentId}
     </select>
 
-    <!-- ── 热评索引全量重建（票 03：兜底恢复手段，照帖子 feedIndexRebuildJob / 市集票 06 样板手动触发）── -->
-
-    <!-- 重建第一步：清空索引表。用 DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉与重灌语句的原子性
-         （读者要么看到重建前、要么看到重建后的完整索引，不见空窗） -->
-    <delete id="clearFeedIndex">
-        DELETE FROM post_comment_feed_index
-    </delete>
-
-    <!-- 重灌：根评论一行 1:1 投影，行集 = root_id = '0' AND state = 'NORMAL'（与运行期口径一致：过审诞生、
+    <!-- ── 热评索引全量重建的取数①（票 03）：主表 post_comment。重灌：根评论一行 1:1 投影，
+         行集 = root_id = '0' AND state = 'NORMAL'（与运行期口径一致：过审诞生、
          软删物理退场，所以没有 state 列要投影）。这条 state 判据的前提是「评论软删是终态、没有恢复路径」——
          原文来自 spec §2.2 的建表理由；将来若给评论开恢复路径，这张表的行集语义与这条 SQL 要一起改。
          原 INSERT..SELECT 一步投影改为仓储三段查拼装：① selectRebuildRows 取根评论行；
          ② like_count 从计数窄表抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径）；
          ③ create_time 取审核记录最近一次 APPROVE 时刻 = 行诞生时的口径（通过时刻，经
-         IModerationDao.selectApproveRowsByTargetType），查不到审批流水的存量行取评论 create_time 兜底；
-         组装后走 insertFeedIndexRows 批量写回。update_time 每次重建刷 NOW()：技术时间戳、非排序键 -->
+         IContentReviewDao.selectApproveRowsByTargetType），查不到审批流水的存量行取评论 create_time 兜底；
+         组装后走 IPostCommentFeedIndexDao.insertFeedIndexRows 批量写回。update_time 每次重建刷 NOW()：技术时间戳、非排序键 -->
     <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.comment.po.CommentFeedIndexRow">
         SELECT c.comment_id AS commentId, c.post_id AS postId, c.create_time AS createTime
         FROM post_comment c
         WHERE c.root_id = '0'
           AND c.state = 'NORMAL'
     </select>
-
-    <!-- 重灌写回：仓储拼装好的行集批量 INSERT（见 selectRebuildRows 注释） -->
-    <insert id="insertFeedIndexRows">
-        INSERT INTO post_comment_feed_index (comment_id, post_id, like_count, create_time, update_time)
-        VALUES
-        <foreach collection="rows" item="row" separator=",">
-            (#{row.commentId}, #{row.postId}, #{row.likeCount}, #{row.feedTime}, NOW())
-        </foreach>
-    </insert>
 
 </mapper>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.chat.IUserPairRoomDao">
+
+    <!-- ===== user_pair_room（用户对 → 1v1 会话映射，room 不再承载配对） ===== -->
+
+    <select id="selectUserPairRoomId" resultType="string">
+        SELECT room_id
+        FROM user_pair_room
+        WHERE user_min = #{userMin} AND user_max = #{userMax}
+    </select>
+
+    <!-- 建会话事务的收尾闸门：撞 uk_pair（同一对人恒一行）即 DuplicateKeyException，
+         事务内已写的 room/room_member 全部回滚，服务层捕获后幂等回读既有 room_id -->
+    <insert id="insertUserPairRoom" parameterType="com.betterschool.infrastructure.dao.chat.po.UserPairRoom">
+        INSERT INTO user_pair_room (user_min, user_max, room_id, create_time, update_time)
+        VALUES (#{userMin}, #{userMax}, #{roomId}, NOW(), NOW())
+    </insert>
+
+</mapper>

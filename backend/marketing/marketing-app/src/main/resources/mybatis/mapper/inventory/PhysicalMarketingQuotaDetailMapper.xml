@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.marketing.infrastructure.inventory.dao.IPhysicalMarketingQuotaDetailDao">
+
+    <!-- ============ 预扣落库（一组一事务，票 06） ============ -->
+
+    <!-- 流水先行：批量 INSERT IGNORE 撞 uk_biz_type 时静默跳过，返回值 = 实际新增行数。
+         幂等裁决完全交给唯一键——这是跨实例、跨重启、跨重放都能成立的唯一做法。
+         新代码不写 state（列默认 0，D9 收口删列）与 bucket_id（桶层已删，列可空保留到 D9）；
+         create_time/update_time 由 DB NOW() 写 -->
+    <insert id="batchInsertIgnoreDeductDetails">
+        INSERT IGNORE INTO physical_marketing_quota_detail (inv_id, quantity, type, biz_type, biz_id,
+                                                            create_time, update_time)
+        VALUES
+        <foreach collection="details" item="d" separator=",">
+            (#{invId}, #{d.quantity}, 1, #{d.bizType}, #{d.bizId}, NOW(), NOW())
+        </foreach>
+    </insert>
+
+    <!-- 仅在批量 INSERT 后发现新增行数 &lt; 批大小时调用：捞回已存在的预扣行（它们的量已经扣过），
+         调用方据此从本次扣减量里剔除。不按 inv_id 过滤：唯一键是全局的 (type, biz_type, biz_id) -->
+    <select id="listExistingDeductDetails"
+            resultType="com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaDetailPO">
+        SELECT biz_type, biz_id, quantity
+        FROM physical_marketing_quota_detail
+        WHERE type = 1 AND biz_type = #{bizType}
+          AND biz_id IN
+        <foreach collection="bizIds" item="bizId" separator="," open="(" close=")">
+            #{bizId}
+        </foreach>
+    </select>
+
+    <!-- 业务幂等预检（台账非 open 时的重放窗口）：本 inv 上 type + biz_type + biz_id 命中 = 已落过 -->
+    <select id="existsDeductDetail" resultType="boolean">
+        SELECT EXISTS(SELECT 1
+                      FROM physical_marketing_quota_detail
+                      WHERE inv_id = #{invId} AND type = #{type}
+                        AND biz_type = #{bizType} AND biz_id = #{bizId})
+    </select>
+
+    <!-- ============ 兑换确认（同步合并，票 07：逐行 INSERT IGNORE + waiting→issued） ============ -->
+
+    <!-- 逐行 INSERT IGNORE 确认明细（type = 2）：撞 uk_biz_type 静默跳过，返回值 = 是否新增（1/0）。
+         确认批天然小（一份实物出库），逐行插不批插——「哪几行是新增」没有歧义，
+         转移量精确等于新增量（spec §4.5）。新代码不写 state（列默认 0，D9 收口删列）
+         与 bucket_id（桶层已删，列可空保留到 D9）；create_time/update_time 由 DB NOW() 写 -->
+    <insert id="insertIgnoreClaimDetail" parameterType="com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaDetailPO">
+        INSERT IGNORE INTO physical_marketing_quota_detail (inv_id, quantity, type, biz_type, biz_id,
+                                                            create_time, update_time)
+        VALUES (#{invId}, #{quantity}, 2, #{bizType}, #{bizId}, NOW(), NOW())
+    </insert>
+
+</mapper>

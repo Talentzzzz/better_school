@@ -76,12 +76,12 @@ public class ReviewCase {
      * 整体幂等成功、零副作用；若关单 0 行时工单已不是本人的（租约恰在本事务前被回收）→ 抛错整体回滚，业务行零改动
      */
     public void decideTask(String taskId, boolean approve, String reasonCode, String supplement, String operatorId) {
-        ReviewTaskEntity task = reviewService.findTask(taskId);
-        if (task == null) {
+        ReviewTaskEntity taskEntity = reviewService.findTask(taskId);
+        if (taskEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "审核工单不存在");
         }
         // ① 强绑定断言：非持有人（在池/他人持有/已被回收）直接 403，不触发任何业务写
-        if (task.getClaimBy() == null || !task.getClaimBy().equals(operatorId)) {
+        if (taskEntity.getClaimBy() == null || !taskEntity.getClaimBy().equals(operatorId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "请先领单 / 工单已被回收");
         }
         transactionTemplate.executeWithoutResult(status -> {
@@ -91,15 +91,15 @@ public class ReviewCase {
                 throw new BusinessException(ResponseCode.FORBIDDEN, "工单已被回收，请刷新后重新领单");
             }
             // ② 分发到既有裁决内核（唯一内核不复制、不旁路）
-            dispatch(task.getTargetType(), task.getTargetId(), approve, reasonCode, supplement, operatorId);
+            dispatch(taskEntity.getTargetType(), taskEntity.getTargetId(), approve, reasonCode, supplement, operatorId);
         });
     }
 
     /** 重放判定：工单已 DONE 且持有人快照仍是本人 = 本人已裁决后的重试（关单 0 行属幂等，不报错） */
     private boolean decidedBySelf(String taskId, String operatorId) {
-        ReviewTaskEntity current = reviewService.findTask(taskId);
-        return current != null && "DONE".equals(current.getClaimState())
-                && operatorId.equals(current.getClaimBy());
+        ReviewTaskEntity currentEntity = reviewService.findTask(taskId);
+        return currentEntity != null && "DONE".equals(currentEntity.getClaimState())
+                && operatorId.equals(currentEntity.getClaimBy());
     }
 
     /**
@@ -110,11 +110,11 @@ public class ReviewCase {
     public void review(String targetType, String targetId, ReviewActionVO action, String operatorId,
                        String reasonCode, String supplement) {
         ReviewTargetTypeVO targetTypeVO = parseReviewableType(targetType);
-        ReviewTaskEntity held = reviewService.findHeldTask(targetTypeVO, targetId, operatorId);
-        if (held == null) {
+        ReviewTaskEntity heldEntity = reviewService.findHeldTask(targetTypeVO, targetId, operatorId);
+        if (heldEntity == null) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "请先领单");
         }
-        decideTask(held.getTaskId(), action == ReviewActionVO.APPROVE, reasonCode, supplement, operatorId);
+        decideTask(heldEntity.getTaskId(), action == ReviewActionVO.APPROVE, reasonCode, supplement, operatorId);
     }
 
     /** 裁决分发：approve/reject 各按类型走既有分支（域状态流转 + 审核记录 + 跨域资金动作 + 通知），供两个入口共用 */
@@ -136,18 +136,18 @@ public class ReviewCase {
     }
 
     private void approve(ReviewTargetTypeVO targetType, String targetId, String operatorId) {
-        ReviewQueueItemEntity detail = reviewService.reviewDetail(targetType, targetId);
+        ReviewQueueItemEntity detailEntity = reviewService.reviewDetail(targetType, targetId);
         switch (targetType) {
             case POST -> {
                 communityPostService.approvePost(targetId);
-                reviewService.recordReview(targetType, targetId, detail.getAuthorId(), detail.getReviewRound(), ReviewActionVO.APPROVE,
+                reviewService.recordReview(targetType, targetId, detailEntity.getAuthorId(), detailEntity.getReviewRound(), ReviewActionVO.APPROVE,
                         ReviewSourceVO.MANUAL, operatorId, null, null);
-                notificationService.sendToUser(detail.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
-                        "您的帖子《" + summary(detail.getContent()) + "》已通过审核，现已公开", "POST", targetId);
+                notificationService.sendToUser(detailEntity.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
+                        "您的帖子《" + summary(detailEntity.getContent()) + "》已通过审核，现已公开", "POST", targetId);
             }
             case COMMENT -> {
                 boolean newlyApproved = communityCommentService.approveComment(targetId);
-                reviewService.recordReview(targetType, targetId, detail.getAuthorId(), detail.getReviewRound(), ReviewActionVO.APPROVE,
+                reviewService.recordReview(targetType, targetId, detailEntity.getAuthorId(), detailEntity.getReviewRound(), ReviewActionVO.APPROVE,
                         ReviewSourceVO.MANUAL, operatorId, null, null);
                 // 评论通过才发互动通知（帖被评/评被回）；仅首次通过触发，重复裁决不重复发（ADR-0004）
                 if (newlyApproved) {
@@ -157,18 +157,18 @@ public class ReviewCase {
             case ERRAND -> {
                 // 业务 id 是 UUID 字符串，targetId 直传（uuid-biz-id 票 05）
                 errandOrderService.reviewApproveOrder(targetId, operatorId);
-                reviewService.recordReview(targetType, targetId, detail.getAuthorId(), detail.getReviewRound(), ReviewActionVO.APPROVE,
+                reviewService.recordReview(targetType, targetId, detailEntity.getAuthorId(), detailEntity.getReviewRound(), ReviewActionVO.APPROVE,
                         ReviewSourceVO.MANUAL, operatorId, null, null);
-                notificationService.sendToUser(detail.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
+                notificationService.sendToUser(detailEntity.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
                         "您的跑腿订单已通过审核，现已对外可见", "ERRAND", targetId);
             }
             case PRODUCT -> {
                 // 商品先审后售无资金环节：通过转 ON_SALE 对外可见（转在售时落搜索同步消息）
                 productService.reviewApproveProduct(targetId);
-                reviewService.recordReview(targetType, targetId, detail.getAuthorId(), detail.getReviewRound(), ReviewActionVO.APPROVE,
+                reviewService.recordReview(targetType, targetId, detailEntity.getAuthorId(), detailEntity.getReviewRound(), ReviewActionVO.APPROVE,
                         ReviewSourceVO.MANUAL, operatorId, null, null);
-                notificationService.sendToUser(detail.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
-                        "您的商品《" + summary(detail.getContent()) + "》已通过审核，现已公开", "PRODUCT", targetId);
+                notificationService.sendToUser(detailEntity.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
+                        "您的商品《" + summary(detailEntity.getContent()) + "》已通过审核，现已公开", "PRODUCT", targetId);
             }
             default -> throw new BusinessException(ResponseCode.PARAM_ERROR, "审核对象类型不合法");
         }
@@ -176,20 +176,20 @@ public class ReviewCase {
 
     private void reject(ReviewTargetTypeVO targetType, String targetId, String operatorId,
                         String reasonCode, String reason) {
-        ReviewQueueItemEntity detail = reviewService.reviewDetail(targetType, targetId);
+        ReviewQueueItemEntity detailEntity = reviewService.reviewDetail(targetType, targetId);
         switch (targetType) {
             case POST -> {
                 communityPostService.rejectPost(targetId);
-                reviewService.recordReview(targetType, targetId, detail.getAuthorId(), detail.getReviewRound(), ReviewActionVO.REJECT,
+                reviewService.recordReview(targetType, targetId, detailEntity.getAuthorId(), detailEntity.getReviewRound(), ReviewActionVO.REJECT,
                         ReviewSourceVO.MANUAL, operatorId, reason, reasonCode);
-                notificationService.sendToUser(detail.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
-                        "您的帖子《" + summary(detail.getContent()) + "》未通过审核：" + reason, "POST", targetId);
+                notificationService.sendToUser(detailEntity.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
+                        "您的帖子《" + summary(detailEntity.getContent()) + "》未通过审核：" + reason, "POST", targetId);
             }
             case COMMENT -> {
                 communityCommentService.rejectComment(targetId);
-                reviewService.recordReview(targetType, targetId, detail.getAuthorId(), detail.getReviewRound(), ReviewActionVO.REJECT,
+                reviewService.recordReview(targetType, targetId, detailEntity.getAuthorId(), detailEntity.getReviewRound(), ReviewActionVO.REJECT,
                         ReviewSourceVO.MANUAL, operatorId, reason, reasonCode);
-                notificationService.sendToUser(detail.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
+                notificationService.sendToUser(detailEntity.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
                         "您的评论未通过审核：" + reason, "COMMENT", targetId);
             }
             case ERRAND -> {
@@ -197,17 +197,17 @@ public class ReviewCase {
                 String errandOrderId = targetId;
                 ErrandReviewResult refundDemand = errandOrderService.reviewRejectOrder(errandOrderId, operatorId, reason);
                 walletAccountService.unfreeze(refundDemand.getPublisherId(), refundDemand.getReward(), errandOrderId);
-                reviewService.recordReview(targetType, targetId, detail.getAuthorId(), detail.getReviewRound(), ReviewActionVO.REJECT,
+                reviewService.recordReview(targetType, targetId, detailEntity.getAuthorId(), detailEntity.getReviewRound(), ReviewActionVO.REJECT,
                         ReviewSourceVO.MANUAL, operatorId, reason, reasonCode);
-                notificationService.sendToUser(detail.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
+                notificationService.sendToUser(detailEntity.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
                         "您的跑腿订单未通过审核，冻结金额已全额退回：" + reason, "ERRAND", targetId);
             }
             case PRODUCT -> {
                 // 商品拒绝无资金环节，拒绝即 REJECTED（无退款）
                 productService.reviewRejectProduct(targetId);
-                reviewService.recordReview(targetType, targetId, detail.getAuthorId(), detail.getReviewRound(), ReviewActionVO.REJECT,
+                reviewService.recordReview(targetType, targetId, detailEntity.getAuthorId(), detailEntity.getReviewRound(), ReviewActionVO.REJECT,
                         ReviewSourceVO.MANUAL, operatorId, reason, reasonCode);
-                notificationService.sendToUser(detail.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
+                notificationService.sendToUser(detailEntity.getAuthorId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_RESULT, "审核结果",
                         "您的商品未通过审核：" + reason, "PRODUCT", targetId);
             }
             default -> throw new BusinessException(ResponseCode.PARAM_ERROR, "审核对象类型不合法");
@@ -239,21 +239,21 @@ public class ReviewCase {
     }
 
     /** 评论互动通知（审核通过后才发，ADR-0004）：帖被评通知帖主、评被回通知 parent 评论作者；自己评论/回复自己不发 */
-    private void notifyCommentInteractions(PostCommentEntity comment) {
-        if (comment == null) {
+    private void notifyCommentInteractions(PostCommentEntity commentEntity) {
+        if (commentEntity == null) {
             return;
         }
-        String commentAuthorId = comment.getUserId();
-        PostEntity post = communityPostService.getPost(comment.getPostId());
-        if (post != null && !post.getUserId().equals(commentAuthorId)) {
-            notificationService.sendToUser(post.getUserId(), NotificationScopeVO.INTERACTION_COMMENT, NotificationTypeVO.POST_COMMENTED, "互动通知",
-                    "你的帖子收到了新评论", "POST", comment.getPostId());
+        String commentAuthorId = commentEntity.getUserId();
+        PostEntity postEntity = communityPostService.getPost(commentEntity.getPostId());
+        if (postEntity != null && !postEntity.getUserId().equals(commentAuthorId)) {
+            notificationService.sendToUser(postEntity.getUserId(), NotificationScopeVO.INTERACTION_COMMENT, NotificationTypeVO.POST_COMMENTED, "互动通知",
+                    "你的帖子收到了新评论", "POST", commentEntity.getPostId());
         }
-        if (!PostCommentEntity.NO_REFERENCE.equals(comment.getParentId())) {
-            PostCommentEntity parent = communityCommentService.getComment(comment.getParentId());
-            if (parent != null && !parent.getUserId().equals(commentAuthorId)) {
-                notificationService.sendToUser(parent.getUserId(), NotificationScopeVO.INTERACTION_COMMENT, NotificationTypeVO.COMMENT_REPLIED, "互动通知",
-                        "你的评论收到了新回复", "COMMENT", comment.getParentId());
+        if (!PostCommentEntity.NO_REFERENCE.equals(commentEntity.getParentId())) {
+            PostCommentEntity parentEntity = communityCommentService.getComment(commentEntity.getParentId());
+            if (parentEntity != null && !parentEntity.getUserId().equals(commentAuthorId)) {
+                notificationService.sendToUser(parentEntity.getUserId(), NotificationScopeVO.INTERACTION_COMMENT, NotificationTypeVO.COMMENT_REPLIED, "互动通知",
+                        "你的评论收到了新回复", "COMMENT", commentEntity.getParentId());
             }
         }
     }

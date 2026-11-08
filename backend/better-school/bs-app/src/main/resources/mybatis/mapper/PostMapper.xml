@@ -4,9 +4,10 @@
 
     <!-- like_count/comment_count/view_count 不在本 mapper 的任何 SELECT 里：三个计数窄表
          post_like_count / post_comment_count / post_view_count 由仓储按页内 id 集批量回查
-         （selectLikeCountsByPostIds 等），作者昵称头像由仓储查 bs_user 回填——SQL 层零 JOIN。
+         （IPostLikeCountDao / IPostCommentCountDao / IPostViewCountDao），作者昵称头像由仓储查 bs_user 回填——SQL 层零 JOIN。
          post 行不再存计数列，也不刷新 view_count（feed-index-uv 票 02 起停写停读，
-         浏览 UV 的真相源是 user_view_history，加速列 post_view_count） -->
+         浏览 UV 的真相源是 user_view_history，加速列 post_view_count）。
+         点赞关系 / 浏览历史 / feed 索引语句分别在 PostLikeMapper / UserViewHistoryMapper / PostFeedIndexMapper -->
     <sql id="postColumns">
         p.id, p.post_id, p.user_id, p.title, p.content, p.images, p.cover, p.state,
         p.review_round, p.review_entered_at,
@@ -45,31 +46,6 @@
         FROM post p
         WHERE p.post_id = #{postId}
           AND p.state != 'DELETED'
-    </select>
-
-    <!-- 详情读的计数查询（票 05 拆两段之二）改为三张窄表按 id 集批量单表读，仓储拼回 PO/实体——
-         每次读都查、在仓储拼回——缓存命中路径的三个数也恒等于库值（acceptance C5）。
-         view 段换源（feed-index-uv 票 02）：post.view_count 停读，走 post_view_count（真相源 user_view_history）。
-         缺行 = 计数 0（COALESCE 在仓储做），与原 LEFT JOIN 合成口径一致 -->
-    <select id="selectLikeCountsByPostIds" resultType="com.betterschool.infrastructure.dao.post.po.Post">
-        SELECT c.post_id AS postId, c.like_count AS likeCount
-        FROM post_like_count c
-        WHERE c.post_id IN
-        <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
-    </select>
-
-    <select id="selectCommentCountsByPostIds" resultType="com.betterschool.infrastructure.dao.post.po.Post">
-        SELECT c.post_id AS postId, c.comment_count AS commentCount
-        FROM post_comment_count c
-        WHERE c.post_id IN
-        <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
-    </select>
-
-    <select id="selectViewCountsByPostIds" resultType="com.betterschool.infrastructure.dao.post.po.Post">
-        SELECT c.post_id AS postId, c.view_count AS viewCount
-        FROM post_view_count c
-        WHERE c.post_id IN
-        <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
     </select>
 
     <!-- 覆盖草稿内容（全量编辑：文字、图片、封面全部可改，仅 DRAFT 行生效） -->
@@ -202,26 +178,6 @@
           AND state IN ('NORMAL', 'PENDING_REVIEW', 'DRAFT', 'REJECTED')
     </select>
 
-    <!-- 我点赞过的帖子：关系行主查（post_like 单表，按点赞时间倒序）；帖子行与可见性过滤
-         （点赞后帖子可能被驳回/转入待审，仍向点赞者展示）由仓储两段查拼装 -->
-    <select id="selectRelationLikedRows" resultType="com.betterschool.infrastructure.dao.post.po.PostRelationRow">
-        SELECT pl.post_id AS postId, pl.create_time AS sortTime
-        FROM post_like pl
-        WHERE pl.user_id = #{userId}
-        ORDER BY pl.create_time DESC, pl.post_id DESC
-    </select>
-
-    <!-- 我评论过的帖子：去重 + 最近评论时间倒序（单表 GROUP BY，ONLY_FULL_GROUP_BY 安全）；
-         帖子行与可见性过滤由仓储两段查拼装 -->
-    <select id="selectRelationCommentedRows" resultType="com.betterschool.infrastructure.dao.post.po.PostRelationRow">
-        SELECT post_id AS postId, MAX(create_time) AS sortTime
-        FROM post_comment
-        WHERE user_id = #{userId}
-          AND state = 'NORMAL'
-        GROUP BY post_id
-        ORDER BY sortTime DESC, post_id DESC
-    </select>
-
     <!-- 某用户的公开帖子（作者主页「笔记」tab）：仅 NORMAL；本人看自己也走此口径（草稿/待审/驳回只在「我的」页） -->
     <select id="selectNormalPageByUser" resultType="com.betterschool.infrastructure.dao.post.po.Post">
         SELECT <include refid="postColumns"/>
@@ -248,233 +204,15 @@
           AND state = 'NORMAL'
     </select>
 
-    <!-- 某用户赞过的帖子（作者主页「赞过」tab）：关系行主查与「我赞过的」共用 selectRelationLikedRows，
-         源帖仅 NORMAL（待审/驳回不外露）的过滤在仓储 Java 侧做 -->
-
-    <!-- 点赞关系行批量写（合并器一组一个事务）：同帖 N 个用户一条语句。
-         INSERT IGNORE 的根本目的不是「别报错」，而是把撞唯一键的裁决交给数据库：
-         返回的影响行数 = 本次真正插入的行数，计数只按这个数增量（重复赞不重复计）。
-         注意：影响行数只给总数，因此「哪几件撞了键」由调用方在本事务内回查（selectLikeUserIds）定位 -->
-    <insert id="insertLikes">
-        INSERT IGNORE INTO post_like (post_id, user_id, create_time, update_time)
-        VALUES
-        <foreach collection="userIds" item="userId" separator=",">
-            (#{postId}, #{userId}, NOW(), NOW())
-        </foreach>
-    </insert>
-
-    <!-- 取消赞批量删：影响行数 = 真正删掉的行数，计数按它回落；没删到的件是 NOT_FOUND -->
-    <delete id="deleteLikes">
-        DELETE FROM post_like
-        WHERE post_id = #{postId}
-          AND user_id IN
-        <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
-    </delete>
-
-    <!-- 批内撞键定位：只查这一批的 (post_id, user_id)，不在批内的一行都不查 -->
-    <select id="selectLikeUserIds" resultType="string">
-        SELECT user_id
-        FROM post_like
-        WHERE post_id = #{postId}
-          AND user_id IN
-        <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
-    </select>
-
-    <select id="existsLike" resultType="int">
-        SELECT COUNT(1)
-        FROM post_like
-        WHERE post_id = #{postId}
-          AND user_id = #{userId}
-    </select>
-
-    <select id="selectLikedPostIds" resultType="string">
-        SELECT post_id
-        FROM post_like
-        WHERE user_id = #{userId}
-          AND post_id IN
-        <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
-    </select>
-
-    <!-- 计数窄表 upsert（合并器一组一条 UPDATE）：
-         首行落库用 max(delta,0) 兜负增量，命中行按本组增量累加并 clamp 0 -->
-    <update id="upsertLikeCount">
-        INSERT INTO post_like_count (post_id, like_count, create_time, update_time)
-        VALUES (#{postId}, GREATEST(#{delta}, 0), NOW(), NOW())
-        ON DUPLICATE KEY UPDATE
-            like_count  = GREATEST(0, like_count + #{delta}),
-            update_time = NOW()
-    </update>
-
-    <!-- 取消赞的计数回落：只 UPDATE、不 INSERT（从没有过赞的帖子不该凭空建计数行），
-         GREATEST(0, …) 兜底保证「不为负」；增量 = 本组真正删掉的行数 -->
-    <update id="decreaseLikeCount">
-        UPDATE post_like_count
-        SET like_count  = GREATEST(0, like_count - #{delta}),
-            update_time = NOW()
-        WHERE post_id = #{postId}
-    </update>
-
-    <!-- 浏览 UV 明细批量写（合并器一组一个事务的第一步）：同帖 N 个用户一条语句。
-         INSERT IGNORE 的裁决与点赞同理：(user_id, post_id) 主键撞了就不插，
-         影响行数 = 本组真正新增的 UV 数，加速列只按它增量（重复浏览不重复计） -->
-    <insert id="insertViewHistory">
-        INSERT IGNORE INTO user_view_history (user_id, post_id, viewed_at)
-        VALUES
-        <foreach collection="userIds" item="userId" separator=",">
-            (#{userId}, #{postId}, NOW())
-        </foreach>
-    </insert>
-
-    <!-- 第二步：刷新本组全部键的浏览时刻（含刚插入的行）——重复浏览的唯一可见效果就是 viewed_at 变新 -->
-    <update id="touchViewedAt">
-        UPDATE user_view_history
-        SET viewed_at = NOW()
-        WHERE post_id = #{postId}
-          AND user_id IN
-        <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
-    </update>
-
-    <!-- 第三步：加速列 upsert（行懒建，与 post_like_count 同款 ODKU）；增量 = insertViewHistory 的影响行数，
-         不是 ODKU 的 affected rows——同秒重复刷 viewed_at 会把 ODKU 的 affected rows 打乱，不能拿来当增量 -->
-    <update id="upsertViewCount">
-        INSERT INTO post_view_count (post_id, view_count, create_time, update_time)
-        VALUES (#{postId}, #{delta}, NOW(), NOW())
-        ON DUPLICATE KEY UPDATE
-            view_count  = view_count + #{delta},
-            update_time = NOW()
-    </update>
-
-    <!-- ── 浏览历史的两个读能力（feed-index-uv 票 05：user_view_history 明细即事实源）── -->
-
-    <!-- 我的浏览历史：明细行主查（idx_user_viewed (user_id, viewed_at) 倒序扫描）；帖子行与可见性过滤
-         由仓储两段查拼装——NORMAL 公开；本人看自己浏览过的待审/驳回/草稿帖照常展示（详情对作者可见），
-         已删除一律过滤（点卡片要能进详情，非可见态进详情是 404） -->
-    <select id="selectRelationViewedRows" resultType="com.betterschool.infrastructure.dao.post.po.PostRelationRow">
-        SELECT uvh.post_id AS postId, uvh.viewed_at AS sortTime
-        FROM user_view_history uvh
-        WHERE uvh.user_id = #{userId}
-        ORDER BY uvh.viewed_at DESC, uvh.post_id DESC
-    </select>
-
-    <!-- feed 已读灰显批量回显：页内 post_id 的浏览记录，走 (user_id, post_id) 主键前缀 -->
-    <select id="selectViewedPostIds" resultType="string">
-        SELECT post_id
-        FROM user_view_history
-        WHERE user_id = #{userId}
-          AND post_id IN
-        <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
-    </select>
-
-    <!-- ── feed 异构索引：读路径（feed-index-uv 票 04）── -->
-
-    <!-- 主页 feed 索引序扫描：只取 NORMAL，排序键与两个索引（idx_state_feed / idx_state_like）的列序一致，
-         续页谓词写成同构比较让优化器走 range scan 而不是全索引扫。
-         time 排序键 = feed_time、hot = like_count；<b>两档都以 (feed_time DESC, post_id DESC) 收敛并列</b>
-         ——业务 ID 是 UUID、无序，不能再拿它当「发布时间先后」的代理（uuid-biz-id 票 03）。
-         部分列直映域 VO（排序键随行带出，域服务拿最后一行编下一页游标） -->
-    <select id="selectFeedIndex" resultType="com.betterschool.domain.community.model.valobj.FeedIndexItemVO">
-        SELECT post_id, feed_time, like_count
-        FROM post_feed_index
-        WHERE state = 'NORMAL'
-        <if test="cursor != null and !cursor.isFirstPage()">
-            <choose>
-                <when test="sort == 'hot'">
-                    AND (like_count &lt; #{cursor.likeCount}
-                        OR (like_count = #{cursor.likeCount} AND feed_time &lt; #{cursor.feedTime})
-                        OR (like_count = #{cursor.likeCount} AND feed_time = #{cursor.feedTime}
-                            AND post_id &lt; #{cursor.postId}))
-                </when>
-                <otherwise>
-                    AND (feed_time &lt; #{cursor.feedTime}
-                        OR (feed_time = #{cursor.feedTime} AND post_id &lt; #{cursor.postId}))
-                </otherwise>
-            </choose>
-        </if>
-        ORDER BY
-        <choose>
-            <when test="sort == 'hot'">like_count DESC, feed_time DESC, post_id DESC</when>
-            <otherwise>feed_time DESC, post_id DESC</otherwise>
-        </choose>
-        LIMIT #{limit}
-    </select>
-
-    <!-- ── feed 异构索引同事务直写（feed-index-uv 票 03：索引行与 post 行同库，状态流转 / 赞合并事务带写）── -->
-
-    <!-- 审核通过：行诞生 / 翻回 NORMAL。feed_time 只在 INSERT 侧落（行诞生时刻 = 本次通过时刻，重提再通过
-         的可见轮从本次起算）；ODKU 命中已有行（防御分支：NORMAL 不可重回待审，正常流不会走到）只翻 state，
-         不刷 feed_time、不碰 like_count——like_count 由赞合并事务独占维护 -->
-    <update id="upsertFeedIndexOnApprove">
-        INSERT INTO post_feed_index (post_id, state, feed_time, like_count, update_time)
-        VALUES (#{postId}, 'NORMAL', NOW(), 0, NOW())
-        ON DUPLICATE KEY UPDATE
-            state       = 'NORMAL',
-            update_time = NOW()
-    </update>
-
-    <!-- 不可见化：state 快照同步成 post 的新状态（REJECTED / DRAFT / DELETED，feed 只查 NORMAL）。
-         行不存在（从未通过审，驳回/撤回/转草稿的常态）= 0 行静默，不 upsert——未通过过的帖子不该凭空进索引 -->
-    <update id="updateFeedIndexState">
-        UPDATE post_feed_index
-        SET state       = #{state},
-            update_time = NOW()
-        WHERE post_id = #{postId}
-    </update>
-
-    <!-- 赞合并事务旁路 ±N：纯 UPDATE 不 upsert（能被赞的帖子行必存在——NORMAL 才可赞，通过事务已建行）。
-         GREATEST 兜底不为负，与窄表 decreaseLikeCount 同口径；命中 0 行 = 索引行缺失的存量异常，
-         调用方落日志交重建 job（票 07），不在写路径凭空补行 -->
-    <update id="updateFeedIndexLikeCount">
-        UPDATE post_feed_index
-        SET like_count  = GREATEST(0, like_count + #{delta}),
-            update_time = NOW()
-        WHERE post_id = #{postId}
-    </update>
-
-    <!-- ── feed 索引全量重建（feed-index-uv 票 07：兜底恢复手段，照 SearchIndexRebuildJob 样板手动触发）── -->
-
-    <!-- 重建第一步：清空索引表。用 DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉与重灌语句的原子性 -->
-    <delete id="clearFeedIndex">
-        DELETE FROM post_feed_index
-    </delete>
-
-    <!-- 重灌：行集 = NORMAL 帖 ∪ 有过审批通过的帖（运行期语义：通过事务才诞生行，之后 state 跟随流转、
-         行不消失；从未通过审的待审/驳回/草稿帖不凭空进索引）。原 INSERT..SELECT 一步投影改为
-         仓储三段查拼装：① selectRebuildRows 取 post 全量 (post_id, state, create_time)；
-         ② content_review 的 APPROVE 流水经 IModerationDao.selectApproveRowsByTargetType 查（feed_time 真源）；
+    <!-- feed 索引全量重建的取数①（feed-index-uv 票 07）：主表 post。重灌行集 = NORMAL 帖 ∪ 有过审批通过的帖
+         （运行期语义：通过事务才诞生行，之后 state 跟随流转、行不消失；从未通过审的待审/驳回/草稿帖不凭空进索引）。
+         原 INSERT..SELECT 一步投影改为仓储三段查拼装：① selectRebuildRows 取 post 全量 (post_id, state, create_time)；
+         ② content_review 的 APPROVE 流水经 IContentReviewDao.selectApproveRowsByTargetType 查（feed_time 真源）；
          ③ like_count 从窄表批量抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径），
-         组装成行集后走 insertFeedIndexRows 批量写入 -->
+         组装成行集后走 IPostFeedIndexDao.insertFeedIndexRows 批量写入 -->
     <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.post.po.PostFeedIndexRow">
         SELECT p.post_id AS postId, p.state AS state, p.create_time AS createTime
         FROM post p
     </select>
-
-    <!-- 重灌写回：一帖一行 1:1 投影，行集由仓储组装（见 selectRebuildRows 注释） -->
-    <insert id="insertFeedIndexRows">
-        INSERT INTO post_feed_index (post_id, state, feed_time, like_count, update_time)
-        VALUES
-        <foreach collection="rows" item="row" separator=",">
-            (#{row.postId}, #{row.state}, #{row.feedTime}, #{row.likeCount}, NOW())
-        </foreach>
-    </insert>
-
-    <!-- 浏览 UV 加速列校准第一步：清掉没有明细行的孤儿计数行（懒建行口径：无浏览不建行） -->
-    <delete id="deleteViewCountsMissingHistory">
-        DELETE FROM post_view_count
-         WHERE NOT EXISTS (SELECT 1
-                             FROM user_view_history h
-                            WHERE h.post_id = post_view_count.post_id)
-    </delete>
-
-    <!-- 重灌：post_view_count 重投影 = user_view_history 行数（ODKU：缺行补建、漂移值刷新、
-         已对齐的行落回同值，幂等不动点） -->
-    <insert id="recalibrateViewCounts">
-        INSERT INTO post_view_count (post_id, view_count, create_time, update_time)
-        SELECT h.post_id, COUNT(*), NOW(), NOW()
-          FROM user_view_history h
-         GROUP BY h.post_id
-        ON DUPLICATE KEY UPDATE
-            view_count  = VALUES(view_count),
-            update_time = NOW()
-    </insert>
 
 </mapper>

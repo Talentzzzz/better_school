@@ -10,15 +10,6 @@
                 #{createTime}, #{updateTime})
     </insert>
 
-    <!-- 幂等预检（快路径）：idx_ref 上加锁读；真正的互斥靠 insertIgnoreDetail 撞 uk 后整事务回滚 -->
-    <select id="selectDetailIdForUpdate" resultType="java.lang.Long">
-        SELECT id
-        FROM draw_count_detail
-        WHERE ref_id = #{refId}
-        LIMIT 1
-        FOR UPDATE
-    </select>
-
     <!-- FIFO 可用桶：未过期且未扣完，按 (expire_at, id) 升序加行锁 -->
     <select id="selectAvailableBucketsForUpdate"
             resultType="com.betterschool.marketing.infrastructure.drawcount.dao.po.DrawCountBucketPO">
@@ -28,12 +19,6 @@
         ORDER BY expire_at ASC, id ASC
         FOR UPDATE
     </select>
-
-    <!-- 消费明细先行：撞 uk_bucket_ref 返回 0 = 该桶这一笔抽奖已扣过 -->
-    <insert id="insertIgnoreDetail" parameterType="com.betterschool.marketing.infrastructure.drawcount.dao.po.DrawCountDetailPO">
-        INSERT IGNORE INTO draw_count_detail (user_id, bucket_id, ref_id, create_time, update_time)
-        VALUES (#{userId}, #{bucketId}, #{refId}, #{createTime}, #{updateTime})
-    </insert>
 
     <!-- remain >= 1 守卫：正常路径（桶已加行锁）必中 1 行，0 行说明不变量被破坏 -->
     <update id="deductRemain">

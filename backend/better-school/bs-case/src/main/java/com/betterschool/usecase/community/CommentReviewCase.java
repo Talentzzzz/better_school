@@ -30,18 +30,18 @@ public class CommentReviewCase {
     private final INotificationService notificationService;
 
     public void review(String commentId) {
-        PostCommentEntity comment = communityCommentService.getComment(commentId);
+        PostCommentEntity commentEntity = communityCommentService.getComment(commentId);
         // 幂等：评论已被软删或已离开待审态（重复消费/人工先处理）不再提醒
-        if (comment == null || comment.getStatus() != PostStatusVO.PENDING_REVIEW) {
+        if (commentEntity == null || commentEntity.getStatus() != PostStatusVO.PENDING_REVIEW) {
             log.info("[CommentReviewCase] 评论不在待审态，跳过 commentId={} status={}",
-                    commentId, comment == null ? "null" : comment.getStatus());
+                    commentId, commentEntity == null ? "null" : commentEntity.getStatus());
             return;
         }
-        notifyReviewers(comment);
+        notifyReviewers(commentEntity);
     }
 
     /** 给 ADMIN+AUDITOR 各发一条"待审提醒"；逐收件人吞异常，通知失败不影响消费主流程（审核队列为准） */
-    private void notifyReviewers(PostCommentEntity comment) {
+    private void notifyReviewers(PostCommentEntity commentEntity) {
         List<String> reviewerIds = List.of(
                         userRepository.listUserIdsByRole(UserRoleVO.ADMIN),
                         userRepository.listUserIdsByRole(UserRoleVO.AUDITOR))
@@ -49,11 +49,11 @@ public class CommentReviewCase {
         for (String reviewerId : reviewerIds) {
             try {
                 notificationService.sendSystem(reviewerId, NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.AUDIT_PENDING, "审核提醒",
-                        "评论 " + comment.getCommentId() + " 待人工审核，请及时处理", "COMMENT", comment.getCommentId(),
-                        NotificationTypeVO.AUDIT_PENDING.name() + ":COMMENT:" + comment.getCommentId() + ":" + reviewerId);
+                        "评论 " + commentEntity.getCommentId() + " 待人工审核，请及时处理", "COMMENT", commentEntity.getCommentId(),
+                        NotificationTypeVO.AUDIT_PENDING.name() + ":COMMENT:" + commentEntity.getCommentId() + ":" + reviewerId);
             } catch (Exception e) {
                 log.warn("[CommentReviewCase] 待审提醒发送失败（MQ 重试不重复，下一条评论有提醒兜底） commentId={} reviewerId={}",
-                        comment.getCommentId(), reviewerId, e);
+                        commentEntity.getCommentId(), reviewerId, e);
             }
         }
     }

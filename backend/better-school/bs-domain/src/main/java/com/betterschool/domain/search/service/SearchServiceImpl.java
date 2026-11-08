@@ -65,36 +65,36 @@ public class SearchServiceImpl implements ISearchService {
     }
 
     private void syncPost(String postId) {
-        PostEntity post = searchQueryPort.findPost(postId);
-        if (post != null && post.getStatus() == PostStatusVO.NORMAL) {
-            searchRepository.bulkUpsertPostDocs(List.of(toPostSearchDocVO(post)));
+        PostEntity postEntity = searchQueryPort.findPost(postId);
+        if (postEntity != null && postEntity.getStatus() == PostStatusVO.NORMAL) {
+            searchRepository.bulkUpsertPostDocs(List.of(toPostSearchDocVO(postEntity)));
         } else {
             searchRepository.deletePostDoc(postId);
         }
     }
 
     private void syncProduct(String productId) {
-        ProductEntity product = searchQueryPort.findProduct(productId);
-        if (product != null && product.getStatus() == ProductStatusVO.ON_SALE) {
-            searchRepository.bulkUpsertProductDocs(List.of(toProductSearchDocVO(product)));
+        ProductEntity productEntity = searchQueryPort.findProduct(productId);
+        if (productEntity != null && productEntity.getStatus() == ProductStatusVO.ON_SALE) {
+            searchRepository.bulkUpsertProductDocs(List.of(toProductSearchDocVO(productEntity)));
         } else {
             searchRepository.deleteProductDoc(productId);
         }
     }
 
     private void syncErrand(String orderId) {
-        ErrandOrderEntity order = searchQueryPort.findErrand(orderId);
-        if (order != null && PUBLIC_ERRAND_STATUSES.contains(order.getStatus())) {
-            searchRepository.bulkUpsertErrandDocs(List.of(toErrandSearchDocVO(order)));
+        ErrandOrderEntity orderEntity = searchQueryPort.findErrand(orderId);
+        if (orderEntity != null && PUBLIC_ERRAND_STATUSES.contains(orderEntity.getStatus())) {
+            searchRepository.bulkUpsertErrandDocs(List.of(toErrandSearchDocVO(orderEntity)));
         } else {
             searchRepository.deleteErrandDoc(orderId);
         }
     }
 
     private void syncUser(String userId) {
-        UserEntity user = searchQueryPort.findUser(userId);
-        if (user != null && user.getStatus() == UserStatusVO.NORMAL) {
-            searchRepository.bulkUpsertUserDocs(List.of(toUserSearchDocVO(user)));
+        UserEntity userEntity = searchQueryPort.findUser(userId);
+        if (userEntity != null && userEntity.getStatus() == UserStatusVO.NORMAL) {
+            searchRepository.bulkUpsertUserDocs(List.of(toUserSearchDocVO(userEntity)));
         } else {
             searchRepository.deleteUserDoc(userId);
         }
@@ -244,45 +244,45 @@ public class SearchServiceImpl implements ISearchService {
                 .orElse(null);
     }
 
-    private PostSearchDocVO toPostSearchDocVO(PostEntity post) {
+    private PostSearchDocVO toPostSearchDocVO(PostEntity postEntity) {
         PostSearchDocVO doc = new PostSearchDocVO();
-        doc.setPostId(post.getPostId());
-        doc.setTitle(post.getTitle());
-        doc.setContent(post.getContent());
-        doc.setStatus(post.getStatus().name());
-        doc.setCreatedAt(post.getCreatedAt());
+        doc.setPostId(postEntity.getPostId());
+        doc.setTitle(postEntity.getTitle());
+        doc.setContent(postEntity.getContent());
+        doc.setStatus(postEntity.getStatus().name());
+        doc.setCreatedAt(postEntity.getCreatedAt());
         return doc;
     }
 
-    private ProductSearchDocVO toProductSearchDocVO(ProductEntity product) {
+    private ProductSearchDocVO toProductSearchDocVO(ProductEntity productEntity) {
         ProductSearchDocVO doc = new ProductSearchDocVO();
-        doc.setProductId(product.getProductId());
-        doc.setTitle(product.getTitle());
-        doc.setDescription(product.getDescription());
-        doc.setTradeLocation(product.getTradeLocation());
-        doc.setCategory(product.getCategory().name());
-        doc.setStatus(product.getStatus().name());
-        doc.setCreatedAt(product.getCreatedAt());
+        doc.setProductId(productEntity.getProductId());
+        doc.setTitle(productEntity.getTitle());
+        doc.setDescription(productEntity.getDescription());
+        doc.setTradeLocation(productEntity.getTradeLocation());
+        doc.setCategory(productEntity.getCategory().name());
+        doc.setStatus(productEntity.getStatus().name());
+        doc.setCreatedAt(productEntity.getCreatedAt());
         return doc;
     }
 
-    private ErrandSearchDocVO toErrandSearchDocVO(ErrandOrderEntity order) {
+    private ErrandSearchDocVO toErrandSearchDocVO(ErrandOrderEntity orderEntity) {
         ErrandSearchDocVO doc = new ErrandSearchDocVO();
-        doc.setOrderId(order.getOrderId());
-        doc.setDescription(order.getDescription());
-        doc.setPickupLocation(order.getPickupLocation());
-        doc.setDeliveryLocation(order.getDeliveryLocation());
-        doc.setType(order.getType().name());
-        doc.setStatus(order.getStatus().name());
-        doc.setCreatedAt(order.getCreatedAt());
+        doc.setOrderId(orderEntity.getOrderId());
+        doc.setDescription(orderEntity.getDescription());
+        doc.setPickupLocation(orderEntity.getPickupLocation());
+        doc.setDeliveryLocation(orderEntity.getDeliveryLocation());
+        doc.setType(orderEntity.getType().name());
+        doc.setStatus(orderEntity.getStatus().name());
+        doc.setCreatedAt(orderEntity.getCreatedAt());
         return doc;
     }
 
-    private UserSearchDocVO toUserSearchDocVO(UserEntity user) {
+    private UserSearchDocVO toUserSearchDocVO(UserEntity userEntity) {
         UserSearchDocVO doc = new UserSearchDocVO();
-        doc.setUserId(user.getUserId());
-        doc.setNickname(user.getNickname());
-        doc.setStatus(user.getStatus().name());
+        doc.setUserId(userEntity.getUserId());
+        doc.setNickname(userEntity.getNickname());
+        doc.setStatus(userEntity.getStatus().name());
         return doc;
     }
 }

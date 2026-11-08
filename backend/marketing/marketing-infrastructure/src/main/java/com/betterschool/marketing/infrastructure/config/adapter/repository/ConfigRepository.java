@@ -3,7 +3,9 @@ package com.betterschool.marketing.infrastructure.config.adapter.repository;
 import com.betterschool.marketing.domain.config.adapter.repository.IConfigRepository;
 import com.betterschool.marketing.domain.config.model.entity.RebateConfigEntity;
 import com.betterschool.marketing.domain.config.model.valobj.RebateTypeVO;
-import com.betterschool.marketing.infrastructure.config.dao.IConfigDao;
+import com.betterschool.marketing.infrastructure.config.dao.IActionRebateConfigDao;
+import com.betterschool.marketing.infrastructure.config.dao.IDrawCountConfigDao;
+import com.betterschool.marketing.infrastructure.config.dao.IPointsValidityConfigDao;
 import com.betterschool.marketing.infrastructure.config.dao.po.ActionRebateConfigPO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
@@ -18,11 +20,13 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ConfigRepository implements IConfigRepository {
 
-    private final IConfigDao configDao;
+    private final IPointsValidityConfigDao pointsValidityConfigDao;
+    private final IDrawCountConfigDao drawCountConfigDao;
+    private final IActionRebateConfigDao actionRebateConfigDao;
 
     @Override
     public int pointsValidDays() {
-        Integer validDays = configDao.selectPointsValidDays();
+        Integer validDays = pointsValidityConfigDao.selectPointsValidDays();
         if (validDays == null) {
             throw new IllegalStateException("points_validity_config 缺单行配置——种子或迁移没跑");
         }
@@ -31,14 +35,14 @@ public class ConfigRepository implements IConfigRepository {
 
     @Override
     public void updatePointsValidDays(int days) {
-        if (configDao.updatePointsValidDays(days) == 0) {
+        if (pointsValidityConfigDao.updatePointsValidDays(days) == 0) {
             throw new IllegalStateException("points_validity_config 缺单行配置，更新无效——种子或迁移没跑");
         }
     }
 
     @Override
     public int drawCountValidDays() {
-        Integer validDays = configDao.selectDrawCountValidDays();
+        Integer validDays = drawCountConfigDao.selectDrawCountValidDays();
         if (validDays == null) {
             throw new IllegalStateException("draw_count_config 缺单行配置——种子或迁移没跑");
         }
@@ -47,19 +51,19 @@ public class ConfigRepository implements IConfigRepository {
 
     @Override
     public void updateDrawCountValidDays(int days) {
-        if (configDao.updateDrawCountValidDays(days) == 0) {
+        if (drawCountConfigDao.updateDrawCountValidDays(days) == 0) {
             throw new IllegalStateException("draw_count_config 缺单行配置，更新无效——种子或迁移没跑");
         }
     }
 
     @Override
     public Integer findOpenRebateValue(String actionType, RebateTypeVO rebateType) {
-        return configDao.selectOpenRebateValue(actionType, rebateType.name());
+        return actionRebateConfigDao.selectOpenRebateValue(actionType, rebateType.name());
     }
 
     @Override
     public List<RebateConfigEntity> listRebates() {
-        return configDao.selectRebates().stream().map(this::toEntity).toList();
+        return actionRebateConfigDao.selectRebates().stream().map(this::toEntity).toList();
     }
 
     @Override
@@ -72,8 +76,8 @@ public class ConfigRepository implements IConfigRepository {
         rebatePO.setRebateValue(rebate.getRebateValue());
         rebatePO.setConfigId(rebate.getConfigId());
         rebatePO.setState(rebate.getState());
-        configDao.upsertRebate(rebatePO);
-        return toEntity(configDao.selectRebate(rebate.getActionType(), rebate.getRebateType().name()));
+        actionRebateConfigDao.upsertRebate(rebatePO);
+        return toEntity(actionRebateConfigDao.selectRebate(rebate.getActionType(), rebate.getRebateType().name()));
     }
 
     private RebateConfigEntity toEntity(ActionRebateConfigPO rebatePO) {

@@ -7,22 +7,11 @@ import org.apache.ibatis.annotations.Param;
 import java.util.List;
 
 /**
- * 站内通知 Mapper：SQL 定义在 app 模块 resources/mybatis/mapper/NotificationMapper.xml
+ * 站内通知 Mapper（notification 单表）：取号/水位语句见 INotificationSeqDao/INotificationReadDao，
+ * SQL 定义在 app 模块 resources/mybatis/mapper/NotificationMapper.xml
  */
 @Mapper
 public interface INotificationDao {
-
-    /** 写入事务内取号：行不存在按 seq=1 建行，存在则 +1（行锁到提交 ⇒ 取号序 = 提交序） */
-    int upsertIncreaseSeq(@Param("userId") String userId, @Param("scope") String scope);
-
-    /** 当前计数器值；该 (user, scope) 从未取过号为 null */
-    Long selectSeq(@Param("userId") String userId, @Param("scope") String scope);
-
-    Long selectLastReadSeq(@Param("userId") String userId, @Param("scope") String scope);
-
-    /** 推水位：GREATEST 只前进不回退 */
-    int upsertReadWatermark(@Param("userId") String userId, @Param("scope") String scope,
-                            @Param("lastReadSeq") long lastReadSeq);
 
     int insert(Notification notification);
 

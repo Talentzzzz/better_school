@@ -2,7 +2,7 @@ package com.betterschool.marketing.integration.inventory;
 
 import com.betterschool.marketing.domain.inventory.service.IInventoryQuotaService;
 import com.betterschool.marketing.integration.support.TestingEnvironment;
-import com.betterschool.marketing.infrastructure.inventory.dao.IPhysicalQuotaDao;
+import com.betterschool.marketing.infrastructure.inventory.dao.IPhysicalMarketingQuotaDetailDao;
 import com.betterschool.marketing.types.common.AppException;
 import com.betterschool.marketing.types.common.ResponseCode;
 import com.betterschool.marketing.types.inventory.InventoryBizTypes;
@@ -55,13 +55,13 @@ class InventoryFlushFailureIntegrationTest extends TestingEnvironment {
     private IInventoryQuotaService inventoryQuotaService;
     /** 落库失败从 DAO 层注入：批量明细 INSERT 抛异常 = 第一事务整体回滚 */
     @SpyBean
-    private IPhysicalQuotaDao physicalQuotaDao;
+    private IPhysicalMarketingQuotaDetailDao physicalMarketingQuotaDetailDao;
     @MockBean
     private XxlJobSpringExecutor xxlJobSpringExecutor;
 
     @BeforeEach
     void resetFixtures() {
-        Mockito.reset(physicalQuotaDao);
+        Mockito.reset(physicalMarketingQuotaDetailDao);
         List.of("physical_marketing_quota", "physical_marketing_quota_detail")
                 .forEach(table -> jdbcTemplate.execute("TRUNCATE TABLE " + table));
         jdbcTemplate.update("""
@@ -82,7 +82,7 @@ class InventoryFlushFailureIntegrationTest extends TestingEnvironment {
     void flushFailureReturnsFailedThenRetryDoesNotDoubleDeduct() {
         String recordId = "990001";
         doThrow(new IllegalStateException("探针：落库失败（模拟事务回滚）"))
-                .when(physicalQuotaDao).batchInsertIgnoreDeductDetails(eq(QUOTA_INV_ID), anyList());
+                .when(physicalMarketingQuotaDetailDao).batchInsertIgnoreDeductDetails(eq(QUOTA_INV_ID), anyList());
 
         assertThatThrownBy(() -> inventoryQuotaService.preDeduct(InventorySegmentVO.QUOTA, QUOTA_INV_ID, 1,
                 InventoryBizTypes.LOTTERY_DRAW, recordId))
@@ -97,7 +97,7 @@ class InventoryFlushFailureIntegrationTest extends TestingEnvironment {
         assertThat(waiting).as("台账未动").isZero();
 
         // 恢复：凭同一 bizId 重试（recordId 由「用户 + token」确定性映射），唯一键兜底不双扣
-        Mockito.reset(physicalQuotaDao);
+        Mockito.reset(physicalMarketingQuotaDetailDao);
         assertThat(inventoryQuotaService.preDeduct(InventorySegmentVO.QUOTA, QUOTA_INV_ID, 1,
                 InventoryBizTypes.LOTTERY_DRAW, recordId)).isTrue();
         assertThat(detailCount()).as("重试恰好落一行明细").isEqualTo(1);

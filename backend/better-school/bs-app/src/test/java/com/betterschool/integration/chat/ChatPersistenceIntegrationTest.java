@@ -39,21 +39,21 @@ public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
 
     @Test
     void userPairRoomUnique_duplicateCreationRejectedByPairGate() {
-        RoomEntity room = new RoomEntity();
-        room.setCreatorId(USER_A);
-        String roomId = chatRepository.createDirectRoom(room, USER_B).getRoomId();
+        RoomEntity roomEntity = new RoomEntity();
+        roomEntity.setCreatorId(USER_A);
+        String roomId = chatRepository.createDirectRoom(roomEntity, USER_B).getRoomId();
         assertUuidId(roomId); // uuid-biz-id 票 04：roomId 必须是可解析的 UUID 字符串
 
-        RoomEntity found = chatRepository.findDirectRoom(USER_A, USER_B);
-        assertThat(found.getRoomId()).as("1v1 查重应命中同人唯一会话").isEqualTo(roomId);
+        RoomEntity foundEntity = chatRepository.findDirectRoom(USER_A, USER_B);
+        assertThat(foundEntity.getRoomId()).as("1v1 查重应命中同人唯一会话").isEqualTo(roomId);
         assertThat(queryLong("SELECT COUNT(1) FROM user_pair_room WHERE user_min = '" + USER_A + "'"
                 + " AND user_max = '" + USER_B + "' AND room_id = '" + roomId + "'"))
                 .as("建会话应同事务落一行配对（规范序在前）").isEqualTo(1);
 
         // pair 表收尾闸门：同一对人再建撞 uk_pair，事务内已写的 room/名册/user_room 行全部回滚
-        RoomEntity again = new RoomEntity();
-        again.setCreatorId(USER_B);
-        assertThatThrownBy(() -> chatRepository.createDirectRoom(again, USER_A))
+        RoomEntity againEntity = new RoomEntity();
+        againEntity.setCreatorId(USER_B);
+        assertThatThrownBy(() -> chatRepository.createDirectRoom(againEntity, USER_A))
                 .as("user_pair_room.uk_pair 应拦截同一对人重复建会话")
                 .isInstanceOf(DuplicateKeyException.class);
         assertThat(queryLong("SELECT COUNT(1) FROM user_pair_room")).isEqualTo(1);
@@ -73,23 +73,24 @@ public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
             long seq = chatRepository.increaseLastSeq(newRoomId);
             assertThat(seq).as("首条消息序号应从 1 起").isEqualTo(1);
 
-            MessageEntity message = textMessage(newRoomId, USER_A, seq, "同学你好，帖子还在吗？");
-            chatRepository.insertMessage(message);
-            assertUuidId(message.getMessageId()); // uuid-biz-id 票 04：insertMessage 应回填 UUID 字符串业务键
+            MessageEntity messageEntity = textMessage(newRoomId, USER_A, seq, "同学你好，帖子还在吗？");
+            chatRepository.insertMessage(messageEntity);
+            assertUuidId(messageEntity.getMessageId()); // uuid-biz-id 票 04：insertMessage 应回填 UUID 字符串业务键
 
             // 发送幂等回查：同 (roomId, clientMsgId) 收敛同一条
-            assertThat(chatRepository.findMessageByClientMsgId(newRoomId, message.getClientMsgId()).getMessageId())
+            assertThat(chatRepository.findMessageByClientMsgId(newRoomId, messageEntity.getClientMsgId()).getMessageId())
                     .as("uk_client_msg 回查应取回原消息")
-                    .isEqualTo(message.getMessageId());
+                    .isEqualTo(messageEntity.getMessageId());
 
             // 扇出：双方各取一个 delivery_seq 后插时间线
             long deliveryA = chatRepository.increaseUserSeq(USER_A, 1);
             long deliveryB = chatRepository.increaseUserSeq(USER_B, 1);
             chatRepository.insertTimelines(List.of(
-                    timeline(USER_A, newRoomId, seq, message.getMessageId(), deliveryA),
-                    timeline(USER_B, newRoomId, seq, message.getMessageId(), deliveryB)));
+                    timeline(USER_A, newRoomId, seq, messageEntity.getMessageId(), deliveryA),
+                    timeline(USER_B, newRoomId, seq, messageEntity.getMessageId(), deliveryB)));
 
-            chatRepository.updateUserRoomLastMsgTime(newRoomId, message.getCreatedAt());
+            chatRepository.updateUserRoomLastMsgTime(newRoomId, List.of(USER_A, USER_B),
+                    messageEntity.getCreatedAt());
             return newRoomId;
         });
 
@@ -163,7 +164,7 @@ public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
 
             // 隐藏位清空（新消息弹回）只清该会话
             jdbcTemplate.update("UPDATE user_room SET hidden_at = NOW() WHERE room_id = '" + newRoomId + "'");
-            chatRepository.clearHidden(newRoomId);
+            chatRepository.clearHidden(newRoomId, List.of(USER_A, USER_B));
             assertThat(chatRepository.findUserRoom(newRoomId, USER_A).getHiddenAt()).isNull();
         });
     }
@@ -171,47 +172,47 @@ public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
     // ---------- 造数 helpers ----------
 
     private String createDirectRoom(String userA, String userB) {
-        RoomEntity room = new RoomEntity();
-        room.setCreatorId(userA);
-        chatRepository.insertRoom(room);
-        return room.getRoomId();
+        RoomEntity roomEntity = new RoomEntity();
+        roomEntity.setCreatorId(userA);
+        chatRepository.insertRoom(roomEntity);
+        return roomEntity.getRoomId();
     }
 
     /** 名册与用户状态成对造数（与建会话事务同构：1v1 恒两行名册 + 两行 user_room） */
     private void insertMembersAndUserRooms(String roomId, List<String> userIds) {
         chatRepository.insertRoomMembers(userIds.stream().map(userId -> {
-            RoomMemberEntity member = new RoomMemberEntity();
-            member.setRoomId(roomId);
-            member.setUserId(userId);
-            return member;
+            RoomMemberEntity memberEntity = new RoomMemberEntity();
+            memberEntity.setRoomId(roomId);
+            memberEntity.setUserId(userId);
+            return memberEntity;
         }).toList());
         chatRepository.insertUserRooms(userIds.stream().map(userId -> {
-            UserRoomEntity userRoom = new UserRoomEntity();
-            userRoom.setRoomId(roomId);
-            userRoom.setUserId(userId);
-            return userRoom;
+            UserRoomEntity userRoomEntity = new UserRoomEntity();
+            userRoomEntity.setRoomId(roomId);
+            userRoomEntity.setUserId(userId);
+            return userRoomEntity;
         }).toList());
     }
 
     private MessageEntity textMessage(String roomId, String fromUserId, long seq, String content) {
-        MessageEntity message = new MessageEntity();
-        message.setRoomId(roomId);
-        message.setSeq(seq);
-        message.setFromUserId(fromUserId);
-        message.setMsgType(MsgTypeVO.TEXT);
-        message.setContent(content);
-        message.setClientMsgId("client-msg-" + seq);
-        return message;
+        MessageEntity messageEntity = new MessageEntity();
+        messageEntity.setRoomId(roomId);
+        messageEntity.setSeq(seq);
+        messageEntity.setFromUserId(fromUserId);
+        messageEntity.setMsgType(MsgTypeVO.TEXT);
+        messageEntity.setContent(content);
+        messageEntity.setClientMsgId("client-msg-" + seq);
+        return messageEntity;
     }
 
     private TimelineEntity timeline(String userId, String roomId, long seq, String msgId, long deliverySeq) {
-        TimelineEntity timeline = new TimelineEntity();
-        timeline.setUserId(userId);
-        timeline.setRoomId(roomId);
-        timeline.setSeq(seq);
-        timeline.setMsgId(msgId);
-        timeline.setDeliverySeq(deliverySeq);
-        return timeline;
+        TimelineEntity timelineEntity = new TimelineEntity();
+        timelineEntity.setUserId(userId);
+        timelineEntity.setRoomId(roomId);
+        timelineEntity.setSeq(seq);
+        timelineEntity.setMsgId(msgId);
+        timelineEntity.setDeliverySeq(deliverySeq);
+        return timelineEntity;
     }
 
     private Object query(String sql) {

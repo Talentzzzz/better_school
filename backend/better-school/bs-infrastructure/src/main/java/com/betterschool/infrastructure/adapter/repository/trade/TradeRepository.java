@@ -23,7 +23,7 @@ import com.betterschool.infrastructure.dao.productorder.IProductOrderDao;
 import com.betterschool.infrastructure.dao.productorder.po.ProductOrderEvent;
 import com.betterschool.infrastructure.dao.productorder.po.ProductOrder;
 import com.betterschool.infrastructure.adapter.repository.moderation.ReviewTaskPoolStore;
-import com.betterschool.infrastructure.dao.moderation.IModerationDao;
+import com.betterschool.infrastructure.dao.moderation.IContentReviewDao;
 import com.betterschool.infrastructure.dao.moderation.po.ContentReview;
 import com.betterschool.infrastructure.dao.product.IProductDao;
 import com.betterschool.infrastructure.dao.product.po.ProductFeedIndexRow;
@@ -31,6 +31,11 @@ import com.betterschool.infrastructure.dao.product.po.Product;
 import com.betterschool.infrastructure.dao.productorder.IProductOrderDao;
 import com.betterschool.infrastructure.dao.productorder.po.ProductOrderEvent;
 import com.betterschool.infrastructure.dao.productorder.po.ProductOrder;
+import com.betterschool.infrastructure.dao.product.IProductFavoriteDao;
+import com.betterschool.infrastructure.dao.product.IProductFeedIndexDao;
+import com.betterschool.infrastructure.dao.product.IProductViewCountDao;
+import com.betterschool.infrastructure.dao.product.IProductViewHistoryDao;
+import com.betterschool.infrastructure.dao.productorder.IProductOrderEventDao;
 import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.infrastructure.dao.user.po.User;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
@@ -58,8 +63,10 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * 交易仓储（闲置商品 + 商品托管订单合一，一域一仓储）：持有 IProductDao + IProductOrderDao +
- * 共享 outbox（OutboxMessageStore）与超时任务仓储（ITimeoutRepository，注册边直插 timeout_task）。
+ * 交易仓储（闲置商品 + 商品托管订单合一，一域一仓储）：持有 IProductDao / IProductOrderDao
+ * 及其拆分出的按表 DAO（IProductFavoriteDao / IProductFeedIndexDao / IProductViewCountDao /
+ * IProductViewHistoryDao / IProductOrderEventDao）+ 共享 outbox（OutboxMessageStore）与
+ * 超时任务仓储（ITimeoutRepository，注册边直插 timeout_task）。
  * 跨两表的多写原子用例收成仓储方法，事务在实现内用编程式事务（默认 REQUIRED，与既有域服务事务同传播语义）。
  * PO / Mapper XML / DAO 位置不变。
  *
@@ -76,6 +83,16 @@ public class TradeRepository implements ITradeRepository {
 
     private final IProductDao productDao;
     private final IProductOrderDao productOrderDao;
+    /** 商品收藏表（product_favorite 单表，原 IProductDao 拆分） */
+    private final IProductFavoriteDao productFavoriteDao;
+    /** 闲置 feed 异构索引表（product_feed_index 单表，原 IProductDao 拆分） */
+    private final IProductFeedIndexDao productFeedIndexDao;
+    /** 浏览 UV 计数窄表（product_view_count 单表，原 IProductDao 拆分） */
+    private final IProductViewCountDao productViewCountDao;
+    /** 浏览 UV 明细表（product_view_history 单表，原 IProductDao 拆分） */
+    private final IProductViewHistoryDao productViewHistoryDao;
+    /** 订单状态流转事件表（product_order_event 单表，原 IProductOrderDao 拆分） */
+    private final IProductOrderEventDao productOrderEventDao;
     private final ObjectMapper objectMapper;
     private final OutboxMessageStore outboxMessageStore;
     private final ITimeoutRepository timeoutRepository;
@@ -85,8 +102,8 @@ public class TradeRepository implements ITradeRepository {
     private final ViewMergeWriter viewMergeWriter;
     /** 卖家昵称头像批量回查（SQL 层零 JOIN：商品列表/详情的 bs_user 信息在这里多查一次拼装） */
     private final IUserDao userDao;
-    /** feed 索引重建取 APPROVE 审批流水（content_review 单表，IModerationDao 内该语句零 JOIN） */
-    private final IModerationDao moderationDao;
+    /** feed 索引重建取 APPROVE 审批流水（content_review 单表，IContentReviewDao 内该语句零 JOIN） */
+    private final IContentReviewDao contentReviewDao;
 
     // ---------- 商品 ----------
 
@@ -247,7 +264,7 @@ public class TradeRepository implements ITradeRepository {
             boolean updated = productDao.updateOnSalePrice(productId, price) > 0;
             if (updated) {
                 // 在售改价立即生效不进审核（现状语义）：索引 price 列同事务跟上，否则价格排序漂移
-                if (productDao.updateFeedIndexPrice(productId, price) == 0) {
+                if (productFeedIndexDao.updateFeedIndexPrice(productId, price) == 0) {
                     log.warn("[TradeRepository] 在售改价的索引旁路落 0 行：索引行缺失（存量异常），交重建 job 兜底 productId={}", productId);
                 }
             }
@@ -262,7 +279,7 @@ public class TradeRepository implements ITradeRepository {
             if (approved) {
                 // feed 索引行诞生/翻回（同事务）：INSERT 侧落 price 快照与 feed_time（本次通过时刻），
                 // 重提再通过经 ODKU 刷新 feed_time 与 price（进入当前对外可见轮的口径）
-                productDao.upsertFeedIndexOnApprove(productId);
+                productFeedIndexDao.upsertFeedIndexOnApprove(productId);
             }
             return approved;
         }));
@@ -321,12 +338,12 @@ public class TradeRepository implements ITradeRepository {
         String categoryName = category == null ? null : category.name();
         // hot 档排序键 view_count 在窄表（SQL 不能 JOIN 进来）：ON_SALE 全集 + 窄表批量回查 + 内存排序切片。
         // 旧直查路径仅作降级（索引不可用时），数据集有界，可接受
-        List<Product> rows;
+        List<Product> productList;
         if ("hot".equals(sort)) {
-            List<Product> allOnSale = productDao.selectOnSaleRows(categoryName, minPrice, maxPrice);
-            Map<String, Product> viewRows = viewCountRowsById(productDao.selectViewCountsByProductIds(
-                    allOnSale.stream().map(Product::getProductId).toList()));
-            rows = allOnSale.stream()
+            List<Product> allOnSaleProductList = productDao.selectOnSaleRows(categoryName, minPrice, maxPrice);
+            Map<String, Product> viewRows = viewCountRowsById(productViewCountDao.selectViewCountsByProductIds(
+                    allOnSaleProductList.stream().map(Product::getProductId).toList()));
+            productList = allOnSaleProductList.stream()
                     .sorted(Comparator
                             .comparing((Product p) -> viewCountOf(viewRows, p.getProductId())).reversed()
                             .thenComparing(Product::getCreateTime, Comparator.reverseOrder())
@@ -335,10 +352,10 @@ public class TradeRepository implements ITradeRepository {
                     .limit(limit)
                     .toList();
         } else {
-            rows = productDao.selectPage(categoryName, minPrice, maxPrice, sort, offset, limit);
+            productList = productDao.selectPage(categoryName, minPrice, maxPrice, sort, offset, limit);
         }
-        fillProductExtras(rows);
-        return rows.stream().map(this::toProductEntity).toList();
+        fillProductExtras(productList);
+        return productList.stream().map(this::toProductEntity).toList();
     }
 
     @Override
@@ -349,7 +366,7 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public List<ProductFeedIndexItemVO> scanFeedIndex(String sortType, ProductFeedCursorVO cursor, int limit) {
-        return productDao.selectFeedIndex(sortType, cursor, limit);
+        return productFeedIndexDao.selectFeedIndex(sortType, cursor, limit);
     }
 
     /**
@@ -361,9 +378,9 @@ public class TradeRepository implements ITradeRepository {
     @Override
     public void rebuildFeedIndex() {
         transactionTemplate.executeWithoutResult(status -> {
-            int recalibrated = productDao.recalibrateViewCounts();
-            int orphans = productDao.deleteViewCountsMissingHistory();
-            productDao.clearFeedIndex();
+            int recalibrated = productViewCountDao.recalibrateViewCounts();
+            int orphans = productViewCountDao.deleteViewCountsMissingHistory();
+            productFeedIndexDao.clearFeedIndex();
             int rebuilt = rebuildFeedIndexRows();
             log.info("[MarketFeedIndexRebuild] product_feed_index 清空重灌 {} 行；product_view_count 校准 {} 行、清理孤儿 {} 行",
                     rebuilt, recalibrated, orphans);
@@ -373,15 +390,15 @@ public class TradeRepository implements ITradeRepository {
     /**
      * 重灌行集拼装（原 INSERT..SELECT 一步投影的多查形态）：行集 = ON_SALE 商品 ∪ 有过审批通过的商品。
      * 三段取数——① product 全量 (product_id, state, create_time, price)；② content_review 的 APPROVE 流水
-     * （feed_time 真源，经 IModerationDao 单表 GROUP BY，查不到审批流水取 create_time 兜底）；
+     * （feed_time 真源，经 IContentReviewDao 单表 GROUP BY，查不到审批流水取 create_time 兜底）；
      * ③ view_count 从计数窄表抄入（无行 = 0）——组装后批量写回
      */
     private int rebuildFeedIndexRows() {
         Map<String, LocalDateTime> approveTimes = new HashMap<>();
-        for (ContentReview approveRow : moderationDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.PRODUCT.name())) {
+        for (ContentReview approveRow : contentReviewDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.PRODUCT.name())) {
             approveTimes.put(approveRow.getTargetId(), approveRow.getCreateTime());
         }
-        List<ProductFeedIndexRow> rows = new ArrayList<>();
+        List<ProductFeedIndexRow> feedIndexRowList = new ArrayList<>();
         for (ProductFeedIndexRow candidate : productDao.selectRebuildRows()) {
             boolean approved = approveTimes.containsKey(candidate.getProductId());
             if (!ProductStatusVO.ON_SALE.name().equals(candidate.getState()) && !approved) {
@@ -389,67 +406,67 @@ public class TradeRepository implements ITradeRepository {
                 continue;
             }
             candidate.setFeedTime(approveTimes.getOrDefault(candidate.getProductId(), candidate.getCreateTime()));
-            rows.add(candidate);
+            feedIndexRowList.add(candidate);
         }
-        if (!rows.isEmpty()) {
-            Map<String, Product> viewRows = viewCountRowsById(productDao.selectViewCountsByProductIds(
-                    rows.stream().map(ProductFeedIndexRow::getProductId).toList()));
-            for (ProductFeedIndexRow row : rows) {
+        if (!feedIndexRowList.isEmpty()) {
+            Map<String, Product> viewRows = viewCountRowsById(productViewCountDao.selectViewCountsByProductIds(
+                    feedIndexRowList.stream().map(ProductFeedIndexRow::getProductId).toList()));
+            for (ProductFeedIndexRow row : feedIndexRowList) {
                 row.setViewCount(viewCountOf(viewRows, row.getProductId()));
             }
-            for (int from = 0; from < rows.size(); from += REBUILD_INSERT_BATCH) {
-                productDao.insertFeedIndexRows(rows.subList(from, Math.min(from + REBUILD_INSERT_BATCH, rows.size())));
+            for (int from = 0; from < feedIndexRowList.size(); from += REBUILD_INSERT_BATCH) {
+                productFeedIndexDao.insertFeedIndexRows(feedIndexRowList.subList(from, Math.min(from + REBUILD_INSERT_BATCH, feedIndexRowList.size())));
             }
         }
-        return rows.size();
+        return feedIndexRowList.size();
     }
 
     @Override
     public boolean addFavorite(String productId, String userId) {
-        return productDao.insertFavorite(productId, userId) > 0;
+        return productFavoriteDao.insertFavorite(productId, userId) > 0;
     }
 
     @Override
     public boolean removeFavorite(String productId, String userId) {
-        return productDao.deleteFavorite(productId, userId) > 0;
+        return productFavoriteDao.deleteFavorite(productId, userId) > 0;
     }
 
     @Override
     public boolean isFavorited(String productId, String userId) {
-        return productDao.existsFavorite(productId, userId) > 0;
+        return productFavoriteDao.existsFavorite(productId, userId) > 0;
     }
 
     @Override
     public long countFavorites(String productId) {
-        return productDao.countFavorites(productId);
+        return productFavoriteDao.countFavorites(productId);
     }
 
     @Override
     public List<ProductEntity> listFavorites(String userId, int offset, int limit) {
         // 收藏关系行主查 → 商品行两段查（原 INNER JOIN product 的行集与 state != 'DELETED' 谓词）
-        List<String> favoriteIds = productDao.selectFavoriteProductIdsByUser(userId);
-        if (favoriteIds.isEmpty()) {
+        List<String> favoriteIdList = productFavoriteDao.selectFavoriteProductIdsByUser(userId);
+        if (favoriteIdList.isEmpty()) {
             return List.of();
         }
-        Map<String, Product> productsById = productDao.selectByIds(favoriteIds).stream()
+        Map<String, Product> productsById = productDao.selectByIds(favoriteIdList).stream()
                 .collect(Collectors.toMap(Product::getProductId, product -> product, (a, b) -> a));
-        List<Product> visibleRows = new ArrayList<>(favoriteIds.size());
-        for (String productId : favoriteIds) {
+        List<Product> visibleProductList = new ArrayList<>(favoriteIdList.size());
+        for (String productId : favoriteIdList) {
             Product product = productsById.get(productId);
             if (product != null && !ProductStatusVO.DELETED.name().equals(product.getState())) {
-                visibleRows.add(product);
+                visibleProductList.add(product);
             }
         }
-        List<Product> page = visibleRows.stream().skip(offset).limit(limit).toList();
-        fillProductExtras(page);
-        return page.stream().map(this::toProductEntity).toList();
+        List<Product> productList = visibleProductList.stream().skip(offset).limit(limit).toList();
+        fillProductExtras(productList);
+        return productList.stream().map(this::toProductEntity).toList();
     }
 
     @Override
     public List<ProductEntity> pageBySeller(String userId, int offset, int limit) {
-        List<Product> rows = productDao.selectPageBySeller(userId, offset, limit);
-        fillProductExtras(rows);
-        return rows.stream().map(this::toProductEntity).toList();
+        List<Product> productList = productDao.selectPageBySeller(userId, offset, limit);
+        fillProductExtras(productList);
+        return productList.stream().map(this::toProductEntity).toList();
     }
 
     @Override
@@ -459,9 +476,9 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public List<ProductEntity> pageOnSaleByUser(String userId, int offset, int limit) {
-        List<Product> rows = productDao.selectOnSalePageByUser(userId, offset, limit);
-        fillProductExtras(rows);
-        return rows.stream().map(this::toProductEntity).toList();
+        List<Product> productList = productDao.selectOnSalePageByUser(userId, offset, limit);
+        fillProductExtras(productList);
+        return productList.stream().map(this::toProductEntity).toList();
     }
 
     @Override
@@ -483,18 +500,18 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public List<ProductEntity> listByIds(List<String> productIds) {
-        List<Product> rows = productDao.selectByIds(productIds);
-        fillProductExtras(rows);
-        return rows.stream().map(this::toProductEntity).toList();
+    public List<ProductEntity> listByIds(List<String> productIdList) {
+        List<Product> productList = productDao.selectByIds(productIdList);
+        fillProductExtras(productList);
+        return productList.stream().map(this::toProductEntity).toList();
     }
 
     @Override
-    public List<String> selectViewedProductIds(String userId, List<String> productIds) {
-        if (userId == null || productIds == null || productIds.isEmpty()) {
+    public List<String> selectViewedProductIds(String userId, List<String> productIdList) {
+        if (userId == null || productIdList == null || productIdList.isEmpty()) {
             return List.of();
         }
-        return productDao.selectViewedProductIds(userId, productIds);
+        return productViewHistoryDao.selectViewedProductIds(userId, productIdList);
     }
 
     @Override
@@ -533,18 +550,18 @@ public class TradeRepository implements ITradeRepository {
      * <p><b>不再写主表列</b>：{@code product.view_count} 旧 PV 列随本票停写（读路径已换源
      * {@code product_view_count}），删列随收口票 06。
      */
-    public List<LikeState> flushViewGroup(String productId, List<CountEvent> events) {
+    public List<LikeState> flushViewGroup(String productId, List<CountEvent> countEventList) {
         // 合并器键即商品业务 ID 字符串（UUID，uuid-biz-id 票 05 起直传，过渡期的 parseLong 缝合已拆）
         return transactionTemplate.execute(status -> {
-            List<String> userIds = distinctUserIds(events);
-            int inserted = productDao.insertProductViewHistory(productId, userIds);
-            productDao.touchProductViewedAt(productId, userIds);
+            List<String> userIdList = distinctUserIds(countEventList);
+            int inserted = productViewHistoryDao.insertProductViewHistory(productId, userIdList);
+            productViewHistoryDao.touchProductViewedAt(productId, userIdList);
             if (inserted > 0) {
-                productDao.upsertProductViewCount(productId, inserted);
+                productViewCountDao.upsertProductViewCount(productId, inserted);
                 // 热度排序键旁路 ±N（market-feed-uv 票 03）：索引行 view_count 同事务跟上
                 syncFeedIndexViewCount(productId, inserted);
             }
-            return Collections.nCopies(events.size(), LikeState.APPLIED);
+            return Collections.nCopies(countEventList.size(), LikeState.APPLIED);
         });
     }
 
@@ -554,7 +571,7 @@ public class TradeRepository implements ITradeRepository {
      * 不在写路径凭空补行
      */
     private void syncFeedIndexState(String productId, ProductStatusVO state) {
-        productDao.updateFeedIndexState(productId, state.name());
+        productFeedIndexDao.updateFeedIndexState(productId, state.name());
     }
 
     /**
@@ -562,14 +579,14 @@ public class TradeRepository implements ITradeRepository {
      * 索引行缺失（未过审商品被本人浏览、或存量异常），落 warn 交重建 job（票 06），不在写路径补行
      */
     private void syncFeedIndexViewCount(String productId, int delta) {
-        if (productDao.updateFeedIndexViewCount(productId, delta) == 0) {
+        if (productFeedIndexDao.updateFeedIndexViewCount(productId, delta) == 0) {
             log.warn("[TradeRepository] 商品浏览旁路落 0 行：索引行缺失（未过审商品的浏览或存量异常），交重建 job 兜底 productId={}", productId);
         }
     }
 
     /** 一组内的去重浏览者（同组同人是重复件，明细表主键也只收得下一行） */
-    private List<String> distinctUserIds(List<CountEvent> events) {
-        return events.stream().map(CountEvent::userId).distinct().toList();
+    private List<String> distinctUserIds(List<CountEvent> countEventList) {
+        return countEventList.stream().map(CountEvent::userId).distinct().toList();
     }
 
     // ---------- 商品托管订单 ----------
@@ -642,9 +659,9 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public List<ProductOrderEntity> listMineByBuyer(String userId, int offset, int limit) {
-        List<ProductOrder> rows = productOrderDao.selectMineByBuyer(userId, offset, limit);
-        fillOrderUserExtras(rows);
-        return rows.stream().map(this::toOrderEntity).toList();
+        List<ProductOrder> productOrderList = productOrderDao.selectMineByBuyer(userId, offset, limit);
+        fillOrderUserExtras(productOrderList);
+        return productOrderList.stream().map(this::toOrderEntity).toList();
     }
 
     @Override
@@ -654,9 +671,9 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public List<ProductOrderEntity> listMineBySeller(String userId, int offset, int limit) {
-        List<ProductOrder> rows = productOrderDao.selectMineBySeller(userId, offset, limit);
-        fillOrderUserExtras(rows);
-        return rows.stream().map(this::toOrderEntity).toList();
+        List<ProductOrder> productOrderList = productOrderDao.selectMineBySeller(userId, offset, limit);
+        fillOrderUserExtras(productOrderList);
+        return productOrderList.stream().map(this::toOrderEntity).toList();
     }
 
     @Override
@@ -820,16 +837,16 @@ public class TradeRepository implements ITradeRepository {
      * 商品行补齐浏览 UV 加速列 + 卖家昵称头像：product_view_count 一次 IN 批量回查、bs_user 一次 IN 批量回查。
      * 缺行补 0 / 补 null（与原 LEFT JOIN 合成口径一致）；列表与详情共用
      */
-    private void fillProductExtras(List<Product> rows) {
-        if (rows.isEmpty()) {
+    private void fillProductExtras(List<Product> productList) {
+        if (productList.isEmpty()) {
             return;
         }
         Map<String, Product> viewRows = viewCountRowsById(
-                productDao.selectViewCountsByProductIds(rows.stream().map(Product::getProductId).toList()));
-        List<String> userIds = rows.stream().map(Product::getUserId).filter(Objects::nonNull).distinct().toList();
-        Map<String, User> users = userIds.isEmpty() ? Map.of() : userDao.selectByIds(userIds).stream()
+                productViewCountDao.selectViewCountsByProductIds(productList.stream().map(Product::getProductId).toList()));
+        List<String> userIdList = productList.stream().map(Product::getUserId).filter(Objects::nonNull).distinct().toList();
+        Map<String, User> users = userIdList.isEmpty() ? Map.of() : userDao.selectByIds(userIdList).stream()
                 .collect(Collectors.toMap(User::getUserId, user -> user, (a, b) -> a));
-        for (Product row : rows) {
+        for (Product row : productList) {
             row.setViewCount(viewCountOf(viewRows, row.getProductId()));
             User user = users.get(row.getUserId());
             if (user != null) {
@@ -840,8 +857,8 @@ public class TradeRepository implements ITradeRepository {
     }
 
     /** 部分列计数行 → productId 索引 */
-    private static Map<String, Product> viewCountRowsById(List<Product> viewRows) {
-        return viewRows.stream().collect(Collectors.toMap(Product::getProductId, row -> row, (a, b) -> a));
+    private static Map<String, Product> viewCountRowsById(List<Product> viewCountRowList) {
+        return viewCountRowList.stream().collect(Collectors.toMap(Product::getProductId, row -> row, (a, b) -> a));
     }
 
     /** 窄表缺行 = 计数 0（与原 LEFT JOIN IFNULL(x, 0) 同口径） */
@@ -854,19 +871,19 @@ public class TradeRepository implements ITradeRepository {
      * 订单行补齐买卖双方昵称头像（原 SELECT 里 bs_user ×2 的 LEFT JOIN 列）：
      * 买卖双方 userId 合并一次 bs_user 批量回查，缺行补 null（与 LEFT JOIN 一致）
      */
-    private void fillOrderUserExtras(List<ProductOrder> rows) {
-        if (rows.isEmpty()) {
+    private void fillOrderUserExtras(List<ProductOrder> productOrderList) {
+        if (productOrderList.isEmpty()) {
             return;
         }
-        List<String> userIds = new ArrayList<>(rows.size() * 2);
-        for (ProductOrder row : rows) {
-            userIds.add(row.getBuyerId());
-            userIds.add(row.getSellerId());
+        List<String> userIdList = new ArrayList<>(productOrderList.size() * 2);
+        for (ProductOrder row : productOrderList) {
+            userIdList.add(row.getBuyerId());
+            userIdList.add(row.getSellerId());
         }
         Map<String, User> users = userDao.selectByIds(
-                userIds.stream().filter(Objects::nonNull).distinct().toList()).stream()
+                userIdList.stream().filter(Objects::nonNull).distinct().toList()).stream()
                 .collect(Collectors.toMap(User::getUserId, user -> user, (a, b) -> a));
-        for (ProductOrder row : rows) {
+        for (ProductOrder row : productOrderList) {
             User buyer = users.get(row.getBuyerId());
             User seller = users.get(row.getSellerId());
             row.setBuyerNickname(buyer == null ? null : buyer.getNickname());
@@ -973,9 +990,9 @@ public class TradeRepository implements ITradeRepository {
         return orderEntity;
     }
 
-    private String toImagesJson(List<String> images) {
+    private String toImagesJson(List<String> imageList) {
         try {
-            return objectMapper.writeValueAsString(images);
+            return objectMapper.writeValueAsString(imageList);
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("商品图片序列化失败", e);
         }
@@ -997,12 +1014,12 @@ public class TradeRepository implements ITradeRepository {
      * 订单侧图片快照序列化（与商品侧刻意分开，两实现原样搬入前语义不同，不改动）：
      * 空列表落 SQL NULL（列可空，见 docs/db/trade.md）；失败抛 FrameworkException。
      */
-    private String toOrderImagesJson(List<String> images) {
-        if (images == null || images.isEmpty()) {
+    private String toOrderImagesJson(List<String> imageList) {
+        if (imageList == null || imageList.isEmpty()) {
             return null;
         }
         try {
-            return objectMapper.writeValueAsString(images);
+            return objectMapper.writeValueAsString(imageList);
         } catch (JsonProcessingException e) {
             throw new FrameworkException("商品图片快照序列化失败", e);
         }
@@ -1036,6 +1053,6 @@ public class TradeRepository implements ITradeRepository {
         event.setActorId(actorId);
         event.setActorRole(actorRole);
         event.setReasonType(reasonType);
-        productOrderDao.insertOrderEvent(event);
+        productOrderEventDao.insertOrderEvent(event);
     }
 }

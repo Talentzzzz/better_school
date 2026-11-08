@@ -96,11 +96,11 @@ public class ChatQueryServiceImpl implements IChatQueryService {
         // 游标倒退取页，页内按 seq 升序交付（前端整块前插）
         Collections.reverse(messages);
         // 撤回脱敏「已撤回」空壳：content 库内保留取证，读路径一律不出服务端
-        for (MessageEntity message : messages) {
-            if (message.isRecalled()) {
-                message.setContent(null);
-                message.setRefType(null);
-                message.setRefId(null);
+        for (MessageEntity messageEntity : messages) {
+            if (messageEntity.isRecalled()) {
+                messageEntity.setContent(null);
+                messageEntity.setRefType(null);
+                messageEntity.setRefId(null);
             }
         }
         return messages;
@@ -134,12 +134,12 @@ public class ChatQueryServiceImpl implements IChatQueryService {
         Map<String, ChatUserVO> users = userQueryPort.listByIds(memberIds).stream()
                 .collect(Collectors.toMap(ChatUserVO::getUserId, Function.identity()));
         List<RoomMemberVO> result = new ArrayList<>(members.size());
-        for (RoomMemberEntity member : members) {
+        for (RoomMemberEntity memberEntity : members) {
             RoomMemberVO vo = new RoomMemberVO();
-            vo.setUserId(member.getUserId());
-            UserRoomEntity userRoom = userRooms.get(member.getUserId());
-            vo.setReadSeq(userRoom == null ? 0L : userRoom.getReadSeq());
-            ChatUserVO user = users.get(member.getUserId());
+            vo.setUserId(memberEntity.getUserId());
+            UserRoomEntity userRoomEntity = userRooms.get(memberEntity.getUserId());
+            vo.setReadSeq(userRoomEntity == null ? 0L : userRoomEntity.getReadSeq());
+            ChatUserVO user = users.get(memberEntity.getUserId());
             vo.setNickname(user == null ? null : user.getNickname());
             vo.setAvatar(user == null ? null : user.getAvatar());
             result.add(vo);

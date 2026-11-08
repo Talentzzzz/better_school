@@ -42,20 +42,20 @@ public class TimeoutRepository implements ITimeoutRepository {
     private final ITimeoutTaskDao timeoutTaskDao;
 
     @Override
-    public boolean register(TimeoutTaskEntity task) {
-        if (insertIfAbsent(task)) {
+    public boolean register(TimeoutTaskEntity taskEntity) {
+        if (insertIfAbsent(taskEntity)) {
             return true;
         }
         // 撞 uk_type_biz：终态行复活（重开一轮、刷新 action_time），在途行（WAITING/RETRYING）幂等不改期。
         // 裁决权在 reviveTerminal 的条件 UPDATE 上：打中 = 终态复活；没打中 = 在途 = 幂等成功（无副作用）。
         // 三分支全在库上原子裁决，与「读-判-写」的时序无关（并发注册同一键也安全）。
-        return reviveTerminal(task);
+        return reviveTerminal(taskEntity);
     }
 
     @Override
-    public boolean insertIfAbsent(TimeoutTaskEntity task) {
+    public boolean insertIfAbsent(TimeoutTaskEntity taskEntity) {
         try {
-            withSlot(task.getBizId(), () -> timeoutTaskDao.insert(toPO(task)));
+            withSlot(taskEntity.getBizId(), () -> timeoutTaskDao.insert(toPO(taskEntity)));
             return true;
         } catch (DuplicateKeyException e) {
             return false;
@@ -69,8 +69,8 @@ public class TimeoutRepository implements ITimeoutRepository {
     }
 
     @Override
-    public boolean reviveTerminal(TimeoutTaskEntity task) {
-        return withSlot(task.getBizId(), () -> timeoutTaskDao.reviveTerminal(toPO(task))) > 0;
+    public boolean reviveTerminal(TimeoutTaskEntity taskEntity) {
+        return withSlot(taskEntity.getBizId(), () -> timeoutTaskDao.reviveTerminal(toPO(taskEntity))) > 0;
     }
 
     @Override
@@ -87,11 +87,11 @@ public class TimeoutRepository implements ITimeoutRepository {
     }
 
     @Override
-    public int markSuccessBatch(int slot, String taskType, List<String> bizIds) {
-        if (bizIds.isEmpty()) {
+    public int markSuccessBatch(int slot, String taskType, List<String> bizIdList) {
+        if (bizIdList.isEmpty()) {
             return 0;
         }
-        return withSlotHint(slot, () -> timeoutTaskDao.markSuccessBatch(taskType, bizIds));
+        return withSlotHint(slot, () -> timeoutTaskDao.markSuccessBatch(taskType, bizIdList));
     }
 
     @Override
@@ -106,11 +106,11 @@ public class TimeoutRepository implements ITimeoutRepository {
     }
 
     @Override
-    public int markDeadBatch(int slot, String taskType, List<String> bizIds) {
-        if (bizIds.isEmpty()) {
+    public int markDeadBatch(int slot, String taskType, List<String> bizIdList) {
+        if (bizIdList.isEmpty()) {
             return 0;
         }
-        return withSlotHint(slot, () -> timeoutTaskDao.markDeadBatch(taskType, bizIds));
+        return withSlotHint(slot, () -> timeoutTaskDao.markDeadBatch(taskType, bizIdList));
     }
 
     @Override
@@ -145,9 +145,9 @@ public class TimeoutRepository implements ITimeoutRepository {
     }
 
     /** 给从某槽位捞出来的行盖上槽位号（不落库，供结算批量语句塞 hint） */
-    private static TimeoutTaskEntity withSlotOf(TimeoutTaskEntity task, int slot) {
-        task.setShardSlot(slot);
-        return task;
+    private static TimeoutTaskEntity withSlotOf(TimeoutTaskEntity taskEntity, int slot) {
+        taskEntity.setShardSlot(slot);
+        return taskEntity;
     }
 
     /**
@@ -168,28 +168,28 @@ public class TimeoutRepository implements ITimeoutRepository {
         }
     }
 
-    private static TimeoutTask toPO(TimeoutTaskEntity task) {
+    private static TimeoutTask toPO(TimeoutTaskEntity taskEntity) {
         TimeoutTask po = new TimeoutTask();
-        po.setId(task.getId());
-        po.setTaskType(task.getTaskType());
-        po.setBizId(task.getBizId());
-        po.setDelaySeconds(task.getDelaySeconds());
-        po.setStatus(task.getStatus() == null ? null : task.getStatus().name());
-        po.setRetryCount(task.getRetryCount());
+        po.setId(taskEntity.getId());
+        po.setTaskType(taskEntity.getTaskType());
+        po.setBizId(taskEntity.getBizId());
+        po.setDelaySeconds(taskEntity.getDelaySeconds());
+        po.setStatus(taskEntity.getStatus() == null ? null : taskEntity.getStatus().name());
+        po.setRetryCount(taskEntity.getRetryCount());
         return po;
     }
 
     private static TimeoutTaskEntity toEntity(TimeoutTask po) {
-        TimeoutTaskEntity task = new TimeoutTaskEntity();
-        task.setId(po.getId());
-        task.setTaskType(po.getTaskType());
-        task.setBizId(po.getBizId());
-        task.setActionTime(po.getActionTime());
-        task.setNextFireTime(po.getNextFireTime());
-        task.setStatus(po.getStatus() == null ? null : TaskStatusVO.valueOf(po.getStatus()));
-        task.setRetryCount(po.getRetryCount());
-        task.setCreatedAt(po.getCreatedAt());
-        task.setUpdatedAt(po.getUpdatedAt());
-        return task;
+        TimeoutTaskEntity taskEntity = new TimeoutTaskEntity();
+        taskEntity.setId(po.getId());
+        taskEntity.setTaskType(po.getTaskType());
+        taskEntity.setBizId(po.getBizId());
+        taskEntity.setActionTime(po.getActionTime());
+        taskEntity.setNextFireTime(po.getNextFireTime());
+        taskEntity.setStatus(po.getStatus() == null ? null : TaskStatusVO.valueOf(po.getStatus()));
+        taskEntity.setRetryCount(po.getRetryCount());
+        taskEntity.setCreatedAt(po.getCreatedAt());
+        taskEntity.setUpdatedAt(po.getUpdatedAt());
+        return taskEntity;
     }
 }

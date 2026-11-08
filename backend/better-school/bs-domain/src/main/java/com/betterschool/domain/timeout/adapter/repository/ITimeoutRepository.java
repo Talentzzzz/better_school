@@ -40,14 +40,14 @@ public interface ITimeoutRepository {
      *
      * @return true = 本次注册生效（新插入或复活）；false = 在途同键幂等吸收（无副作用）
      */
-    boolean register(TimeoutTaskEntity task);
+    boolean register(TimeoutTaskEntity taskEntity);
 
     /**
      * 不存在才插入。
      *
      * @return true = 新插入成功；false = 撞上 uk_type_biz（同键已有行，由调用方查行走「已存在」分支）
      */
-    boolean insertIfAbsent(TimeoutTaskEntity task);
+    boolean insertIfAbsent(TimeoutTaskEntity taskEntity);
 
     /** 按自然键取行；不存在返回 {@code null} */
     TimeoutTaskEntity findByKey(String taskType, String bizId);
@@ -59,7 +59,7 @@ public interface ITimeoutRepository {
      *
      * @return true = 命中并复活；false = 行不在终态（在途，幂等不改期）
      */
-    boolean reviveTerminal(TimeoutTaskEntity task);
+    boolean reviveTerminal(TimeoutTaskEntity taskEntity);
 
     /**
      * 未终态行软置 CANCELED（条件 UPDATE 只打 WAITING/RETRYING）。
@@ -92,7 +92,7 @@ public interface ITimeoutRepository {
      * 只打未终态行——「回调在途被取消」等竞态仍由库原子裁决，因此**返回行数**可能与入参条数不等：
      * 差值 = 已被别的路径改走/已终态的行数，不是错误。
      */
-    int markSuccessBatch(int slot, String taskType, List<String> bizIds);
+    int markSuccessBatch(int slot, String taskType, List<String> bizIdList);
 
     /**
      * 结算·重试桶：一批未终态行批量置 RETRYING、{@code retry_count + 1}，并**逐行**后移到各自的退避时刻
@@ -115,7 +115,7 @@ public interface ITimeoutRepository {
      *
      * @return 本桶实际改到的行数（差值 = 已被取消/已终态的行）
      */
-    int markDeadBatch(int slot, String taskType, List<String> bizIds);
+    int markDeadBatch(int slot, String taskType, List<String> bizIdList);
 
     /**
      * 死信重发：FAILED 行置回 RETRYING、{@code retry_count} 清零、{@code next_fire_time = now}

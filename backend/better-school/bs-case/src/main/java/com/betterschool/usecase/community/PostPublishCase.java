@@ -71,11 +71,11 @@ public class PostPublishCase {
 
     /** 提交帖子草稿：与直接发布同门槛校验，初筛命中停留草稿，通过进入待审 */
     public void submitPostDraft(String userId, String postId) {
-        PostEntity draft = communityPostService.getOwnedPostDraft(userId, postId);
+        PostEntity draftEntity = communityPostService.getOwnedPostDraft(userId, postId);
         creditAccountService.ensureOperable(userId);
-        validatePostDraftComplete(draft);
+        validatePostDraftComplete(draftEntity);
         // 同步初筛：命中即提交失败，草稿原样保留可继续修改
-        screenText(draft.getTitle(), draft.getContent());
+        screenText(draftEntity.getTitle(), draftEntity.getContent());
         communityPostService.submitPostDraft(userId, postId);
     }
 
@@ -117,8 +117,8 @@ public class PostPublishCase {
     }
 
     /** 草稿用例层完整性校验：正文必填，标题/配图/封面可空 */
-    private void validatePostDraftComplete(PostEntity draft) {
-        if (draft.getContent() == null || draft.getContent().isBlank()) {
+    private void validatePostDraftComplete(PostEntity draftEntity) {
+        if (draftEntity.getContent() == null || draftEntity.getContent().isBlank()) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "草稿内容不完整，请补全正文后再提交");
         }
     }

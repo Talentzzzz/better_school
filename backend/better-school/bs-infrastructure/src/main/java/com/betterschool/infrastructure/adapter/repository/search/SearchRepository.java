@@ -153,19 +153,19 @@ public class SearchRepository implements ISearchRepository {
                 Function.identity());
     }
 
-    private <I> SearchPageVO<I> search(String indexName, List<String> searchFields, List<String> publicStatuses,
+    private <I> SearchPageVO<I> search(String indexName, List<String> searchFieldList, List<String> publicStatusList,
                                        String keyword, int page, int pageSize, Function<String, I> idOf) {
         if (keyword == null || keyword.isBlank()) {
             return new SearchPageVO<>(0, List.of());
         }
         try {
             SearchResponse<JsonData> response = client.search(buildSearchRequest(
-                    indexName, searchFields, publicStatuses, keyword, page, pageSize), JsonData.class);
-            List<I> ids = response.hits().hits().stream()
+                    indexName, searchFieldList, publicStatusList, keyword, page, pageSize), JsonData.class);
+            List<I> idList = response.hits().hits().stream()
                     .map(hit -> idOf.apply(hit.id()))
                     .toList();
             long total = response.hits().total() == null ? 0 : response.hits().total().value();
-            return new SearchPageVO<>(total, ids);
+            return new SearchPageVO<>(total, idList);
         } catch (ElasticsearchException e) {
             if (e.status() == 404) {
                 // 索引尚未初始化：按空结果处理（Initializer 兜底创建）
@@ -178,17 +178,17 @@ public class SearchRepository implements ISearchRepository {
     }
 
     /** 布尔查询分步构建，避免 lambda 深嵌套（multi_match 关键词 + status 公开集过滤） */
-    private SearchRequest buildSearchRequest(String indexName, List<String> searchFields, List<String> publicStatuses,
+    private SearchRequest buildSearchRequest(String indexName, List<String> searchFieldList, List<String> publicStatusList,
                                              String keyword, int page, int pageSize) {
-        List<FieldValue> statusValues = publicStatuses.stream().map(FieldValue::of).toList();
-        TermsQueryField statusField = TermsQueryField.of(terms -> terms.value(statusValues));
+        List<FieldValue> statusValueList = publicStatusList.stream().map(FieldValue::of).toList();
+        TermsQueryField statusField = TermsQueryField.of(terms -> terms.value(statusValueList));
         TermsQuery statusQuery = new TermsQuery.Builder()
                 .field("status")
                 .terms(statusField)
                 .build();
         MultiMatchQuery multiMatchQuery = new MultiMatchQuery.Builder()
                 .query(keyword)
-                .fields(searchFields)
+                .fields(searchFieldList)
                 .build();
         Query query = new Query.Builder()
                 .bool(boolQuery -> boolQuery
@@ -205,23 +205,23 @@ public class SearchRepository implements ISearchRepository {
     }
 
     @Override
-    public void bulkUpsertPostDocs(List<PostSearchDocVO> docs) {
-        bulkUpsert("bs_post", docs, PostSearchDocVO::getPostId);
+    public void bulkUpsertPostDocs(List<PostSearchDocVO> postSearchDocList) {
+        bulkUpsert("bs_post", postSearchDocList, PostSearchDocVO::getPostId);
     }
 
     @Override
-    public void bulkUpsertProductDocs(List<ProductSearchDocVO> docs) {
-        bulkUpsert("bs_product", docs, ProductSearchDocVO::getProductId);
+    public void bulkUpsertProductDocs(List<ProductSearchDocVO> productSearchDocList) {
+        bulkUpsert("bs_product", productSearchDocList, ProductSearchDocVO::getProductId);
     }
 
     @Override
-    public void bulkUpsertErrandDocs(List<ErrandSearchDocVO> docs) {
-        bulkUpsert("bs_errand", docs, ErrandSearchDocVO::getOrderId);
+    public void bulkUpsertErrandDocs(List<ErrandSearchDocVO> errandSearchDocList) {
+        bulkUpsert("bs_errand", errandSearchDocList, ErrandSearchDocVO::getOrderId);
     }
 
     @Override
-    public void bulkUpsertUserDocs(List<UserSearchDocVO> docs) {
-        bulkUpsert("bs_user", docs, UserSearchDocVO::getUserId);
+    public void bulkUpsertUserDocs(List<UserSearchDocVO> userSearchDocList) {
+        bulkUpsert("bs_user", userSearchDocList, UserSearchDocVO::getUserId);
     }
 
     /**
@@ -229,13 +229,13 @@ public class SearchRepository implements ISearchRepository {
      * 经 JsonData 走原始 JSON 通道，避免 client 内部 mapper 序列化 POJO 的日期格式差异
      */
     // 文档 _id 类型随实体：业务 id 统一是 UUID 字符串（uuid-biz-id 票 05）
-    private <T, I> void bulkUpsert(String indexName, List<T> docs, java.util.function.Function<T, I> idGetter) {
-        if (docs.isEmpty()) {
+    private <T, I> void bulkUpsert(String indexName, List<T> docList, java.util.function.Function<T, I> idGetter) {
+        if (docList.isEmpty()) {
             return;
         }
         try {
             BulkRequest.Builder bulkRequest = new BulkRequest.Builder();
-            for (T doc : docs) {
+            for (T doc : docList) {
                 ObjectNode jsonNode = objectMapper.valueToTree(doc);
                 bulkRequest.operations(operation -> operation.index(indexOperation -> indexOperation
                         .index(indexName)
@@ -244,11 +244,11 @@ public class SearchRepository implements ISearchRepository {
             }
             BulkResponse response = client.bulk(bulkRequest.build());
             if (response.errors()) {
-                List<String> failedItems = response.items().stream()
+                List<String> failedItemList = response.items().stream()
                         .filter(item -> item.error() != null)
                         .map(item -> item.id() + ":" + item.error().reason())
                         .collect(Collectors.toList());
-                throw new IllegalStateException("ES bulk 部分失败 index=" + indexName + "，failed=" + failedItems);
+                throw new IllegalStateException("ES bulk 部分失败 index=" + indexName + "，failed=" + failedItemList);
             }
         } catch (IOException e) {
             throw new IllegalStateException("ES bulk 失败 index=" + indexName, e);

@@ -38,8 +38,8 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
 ### GET /timeline
 增量补拉（`?afterDeliverySeq=&limit=`，默认 200 硬顶 500）。按 per-user 投递序号升序，游标 0（新设备/首次）= 全量；返回条数 < limit 即追平，否则循环拉；timeline 永不删除，游标永远有效。每条含消息全量 + `roomId/seq/deliverySeq`（多会话按投递序全局归并）。消息体与历史/发送 200 同构。
 
-### POST /rooms/{roomId}/messages
-发送消息。Body: `clientMsgId`（客户端 UUID，≤36）、`msgType`（TEXT/IMAGE/CARD）、`content?`、`refType?`、`refId?`。
+### POST /rooms/messages
+发送消息。Body: `roomId`（目标会话，必填）、`clientMsgId`（客户端 UUID，≤36）、`msgType`（TEXT/IMAGE/CARD）、`content?`、`refType?`、`refId?`。
 
 - 类型语义（载荷按类型分）：
   - TEXT：裸文本 ≤500 字，超长报参数错误

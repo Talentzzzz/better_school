@@ -29,14 +29,14 @@ public class UserQueryPort implements IUserQueryPort {
         return userRepository.listByIds(userIds).stream().map(this::toVO).toList();
     }
 
-    private ChatUserVO toVO(UserEntity user) {
-        if (user == null) {
+    private ChatUserVO toVO(UserEntity userEntity) {
+        if (userEntity == null) {
             return null;
         }
         ChatUserVO chatUser = new ChatUserVO();
-        chatUser.setUserId(user.getUserId());
-        chatUser.setNickname(user.getNickname());
-        chatUser.setAvatar(user.getAvatar());
+        chatUser.setUserId(userEntity.getUserId());
+        chatUser.setNickname(userEntity.getNickname());
+        chatUser.setAvatar(userEntity.getAvatar());
         return chatUser;
     }
 }

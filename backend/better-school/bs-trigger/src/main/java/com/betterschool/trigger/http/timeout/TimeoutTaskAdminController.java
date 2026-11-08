@@ -140,15 +140,15 @@ public class TimeoutTaskAdminController implements ITimeoutTaskAdminService {
     }
 
     /** 实体 → 只读 DTO（死信的 status 恒为 FAILED，不占一列） */
-    private static DeadLetterTaskDTO toDTO(TimeoutTaskEntity task) {
+    private static DeadLetterTaskDTO toDTO(TimeoutTaskEntity taskEntity) {
         DeadLetterTaskDTO dto = new DeadLetterTaskDTO();
-        dto.setTaskType(task.getTaskType());
-        dto.setBizId(task.getBizId());
-        dto.setActionTime(task.getActionTime());
-        dto.setNextFireTime(task.getNextFireTime());
-        dto.setRetryCount(task.getRetryCount());
-        dto.setCreatedAt(task.getCreatedAt());
-        dto.setUpdatedAt(task.getUpdatedAt());
+        dto.setTaskType(taskEntity.getTaskType());
+        dto.setBizId(taskEntity.getBizId());
+        dto.setActionTime(taskEntity.getActionTime());
+        dto.setNextFireTime(taskEntity.getNextFireTime());
+        dto.setRetryCount(taskEntity.getRetryCount());
+        dto.setCreatedAt(taskEntity.getCreatedAt());
+        dto.setUpdatedAt(taskEntity.getUpdatedAt());
         return dto;
     }
 }

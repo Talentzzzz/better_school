@@ -12,6 +12,7 @@ import com.betterschool.marketing.domain.points.model.valobj.PointsTransactionDi
 import com.betterschool.marketing.domain.points.model.valobj.PointsTransactionVO;
 import com.betterschool.marketing.infrastructure.common.outbox.OutboxMessageStore;
 import com.betterschool.marketing.infrastructure.points.dao.IPointsDao;
+import com.betterschool.marketing.infrastructure.points.dao.IPointsDetailDao;
 import com.betterschool.marketing.infrastructure.points.dao.po.PointsBucketPO;
 import com.betterschool.marketing.infrastructure.points.dao.po.PointsDetailPO;
 import com.betterschool.marketing.infrastructure.points.dao.po.PointsTransactionPO;
@@ -45,6 +46,7 @@ import java.util.List;
 public class PointsRepository implements IPointsRepository {
 
     private final IPointsDao pointsDao;
+    private final IPointsDetailDao pointsDetailDao;
     private final OutboxMessageStore outboxMessageStore;
     private final IPointsConfigPort pointsConfigPort;
     private final TransactionTemplate transactionTemplate;
@@ -145,7 +147,7 @@ public class PointsRepository implements IPointsRepository {
      * 要收它得改幂等键的粒度（例如按兑换单号唯一），那是另开票的事。
      */
     private boolean existsConsume(String userId, PointsReasonType reasonType, String refId) {
-        return pointsDao.selectConsumeId(userId, reasonType.name(), refId) != null;
+        return pointsDetailDao.selectConsumeId(userId, reasonType.name(), refId) != null;
     }
 
     /** 当前可用桶（{@code remain > 0 AND expire_at > NOW()}），按 FIFO（expire_at, id）加行锁 */
@@ -178,7 +180,7 @@ public class PointsRepository implements IPointsRepository {
         List<PointsDetailPO> details = deductions.stream()
                 .map(deduction -> toDetailPO(newDetail(userId, deduction, reasonType, refId, now)))
                 .toList();
-        if (pointsDao.insertIgnoreDetails(details) != details.size()) {
+        if (pointsDetailDao.insertIgnoreDetails(details) != details.size()) {
             return false;
         }
         // 第二条：扣光的桶一条语句清零。桶已在 listAvailableBucketsForUpdate 里加了行锁，方案又按同一份 remain

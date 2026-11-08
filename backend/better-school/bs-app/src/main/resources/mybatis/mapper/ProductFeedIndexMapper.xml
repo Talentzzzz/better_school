@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.product.IProductFeedIndexDao">
+
+    <!-- 闲置推荐页索引序扫描（market-feed-uv 票 04）：state 过滤 + (排序键, product_id) 索引序 range scan。
+         五档排序共用一条语句——热度 (state, view_count, create_time, product_id)、最新/最早
+         (state, feed_time, product_id) 正向/反向扫描、价格升降 (state, price, product_id)；
+         续页谓词与排序方向同构（降序 &lt;、升序 &gt;），配合 ORDER BY 的列序方向才能走 range scan
+         而不是全表 filesort。排序键随行带出，供编下一页游标。
+         热度档三段收敛（uuid-biz-id 票 05）：view_count 同值按 create_time DESC、product_id DESC
+         收敛成确定序（业务 ID 是 UUID 无序，不能再拿它当时间代理） -->
+    <select id="selectFeedIndex" resultType="com.betterschool.domain.trade.model.valobj.ProductFeedIndexItemVO">
+        SELECT product_id, feed_time, create_time, price, view_count
+        FROM product_feed_index
+        WHERE state = 'ON_SALE'
+        <if test="cursor != null and !cursor.isFirstPage()">
+            <choose>
+                <when test="sort == 'hot'">
+                    AND (view_count &lt; #{cursor.viewCount}
+                        OR (view_count = #{cursor.viewCount} AND create_time &lt; #{cursor.createTime})
+                        OR (view_count = #{cursor.viewCount} AND create_time = #{cursor.createTime}
+                            AND product_id &lt; #{cursor.productId}))
+                </when>
+                <when test="sort == 'time_asc'">
+                    AND (feed_time &gt; #{cursor.feedTime}
+                        OR (feed_time = #{cursor.feedTime} AND product_id &gt; #{cursor.productId}))
+                </when>
+                <when test="sort == 'price_asc'">
+                    AND (price &gt; #{cursor.price}
+                        OR (price = #{cursor.price} AND product_id &gt; #{cursor.productId}))
+                </when>
+                <when test="sort == 'price_desc'">
+                    AND (price &lt; #{cursor.price}
+                        OR (price = #{cursor.price} AND product_id &lt; #{cursor.productId}))
+                </when>
+                <otherwise>
+                    AND (feed_time &lt; #{cursor.feedTime}
+                        OR (feed_time = #{cursor.feedTime} AND product_id &lt; #{cursor.productId}))
+                </otherwise>
+            </choose>
+        </if>
+        ORDER BY
+        <choose>
+            <when test="sort == 'hot'">view_count DESC, create_time DESC, product_id DESC</when>
+            <when test="sort == 'time_asc'">feed_time ASC, product_id ASC</when>
+            <when test="sort == 'price_asc'">price ASC, product_id ASC</when>
+            <when test="sort == 'price_desc'">price DESC, product_id DESC</when>
+            <otherwise>feed_time DESC, product_id DESC</otherwise>
+        </choose>
+        LIMIT #{limit}
+    </select>
+
+    <!-- 审核通过：行诞生 / 翻回 ON_SALE。INSERT...SELECT 从 product 行取 price 快照（approve 彼时的价格）
+         与 create_time 快照（热度档同值收敛键，uuid-biz-id 票 05）；
+         feed_time = 本次通过时刻——行诞生落第一次，重提再通过（relist / 在售改内容回审 / 下架后重提）
+         经 ODKU 刷新为「进入当前对外可见轮」的时刻（schema 注释口径，与票 01 回填、票 06 重建的
+         MAX(APPROVE) 一致；帖子先例不刷新是因其 ODKU 不可达，商品的重提是正常路径）。
+         ODKU 不碰 view_count（浏览合并事务旁路独占维护） -->
+    <update id="upsertFeedIndexOnApprove">
+        INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, view_count, update_time)
+        SELECT p.product_id, 'ON_SALE', NOW(), p.create_time, p.price, 0, NOW()
+        FROM product p
+        WHERE p.product_id = #{productId}
+        ON DUPLICATE KEY UPDATE
+            state       = 'ON_SALE',
+            feed_time   = NOW(),
+            price       = VALUES(price),
+            update_time = NOW()
+    </update>
+
+    <!-- 状态快照同步：镜像 product 的新状态（LOCKED / SOLD / PENDING_REVIEW / DRAFT / REJECTED / DELETED，
+         feed 只查 ON_SALE）。行不存在（从未通过审）= 0 行静默，不 upsert——未通过过的商品不该凭空进索引 -->
+    <update id="updateFeedIndexState">
+        UPDATE product_feed_index
+        SET state       = #{state},
+            update_time = NOW()
+        WHERE product_id = #{productId}
+    </update>
+
+    <!-- 在售改价旁路同步（立即生效不进审核）：纯 UPDATE（ON_SALE 行必存在——行诞生于通过事务）。
+         非在售态的价格变更（草稿编辑、改内容回审混提新价）不在此同步：期间行不可见，
+         恢复可见由 approve 语句的 price 快照兜住，不产生漂移窗口 -->
+    <update id="updateFeedIndexPrice">
+        UPDATE product_feed_index
+        SET price       = #{price},
+            update_time = NOW()
+        WHERE product_id = #{productId}
+    </update>
+
+    <!-- 浏览合并事务旁路 ±N：纯 UPDATE 不 upsert；命中 0 行 = 索引行缺失（未过审商品被本人浏览、
+         或存量异常），调用方落 warn 交重建 job（票 06），不在写路径凭空补行 -->
+    <update id="updateFeedIndexViewCount">
+        UPDATE product_feed_index
+        SET view_count  = view_count + #{delta},
+            update_time = NOW()
+        WHERE product_id = #{productId}
+    </update>
+
+    <!-- 重建第一步：清空索引表。用 DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉与重灌语句的原子性 -->
+    <delete id="clearFeedIndex">
+        DELETE FROM product_feed_index
+    </delete>
+
+    <!-- 重灌写回：仓储拼装好的行集批量 INSERT（feed_time = MAX(APPROVE) 兜底 create_time；view_count 抄计数窄表） -->
+    <insert id="insertFeedIndexRows">
+        INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, view_count, update_time)
+        VALUES
+        <foreach collection="rows" item="row" separator=",">
+            (#{row.productId}, #{row.state}, #{row.feedTime}, #{row.createTime}, #{row.price}, #{row.viewCount}, NOW())
+        </foreach>
+    </insert>
+
+</mapper>

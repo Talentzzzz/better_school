@@ -52,12 +52,12 @@ public class CountFlushDispatcher implements ICountFlushHandler {
      * 这里逼一次「它该落到哪个域的落库方法」的决策，而不是让它在运行期掉进某个静默分支。
      */
     @Override
-    public List<LikeState> flushGroup(CountAction action, String shardKey, List<CountEvent> events) {
+    public List<LikeState> flushGroup(CountAction action, String shardKey, List<CountEvent> countEventList) {
         return switch (action) {
             case POST_LIKE, POST_UNLIKE, COMMENT_LIKE, POST_VIEW ->
-                    communityRepository.flushGroup(action, shardKey, events);
-            case PRODUCT_VIEW -> tradeRepository.flushViewGroup(shardKey, events);
-            case ERRAND_VIEW -> errandRepository.flushViewGroup(shardKey, events);
+                    communityRepository.flushGroup(action, shardKey, countEventList);
+            case PRODUCT_VIEW -> tradeRepository.flushViewGroup(shardKey, countEventList);
+            case ERRAND_VIEW -> errandRepository.flushViewGroup(shardKey, countEventList);
         };
     }
 }

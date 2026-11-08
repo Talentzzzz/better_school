@@ -58,9 +58,9 @@ public class PostDetailCache {
             bloomFilter = redissonClient.getBloomFilter(BLOOM_KEY);
             if (bloomFilter.tryInit(EXPECTED_INSERTIONS, FALSE_POSITIVE_PROBABILITY)) {
                 // 首次创建：加载全量帖子 id（软删的也在内，无害——布隆只加不删）
-                List<String> postIds = postDao.selectAllIds();
-                postIds.forEach(bloomFilter::add);
-                log.info("帖子布隆过滤器初始化完成，加载 {} 个 id", postIds.size());
+                List<String> postIdList = postDao.selectAllIds();
+                postIdList.forEach(bloomFilter::add);
+                log.info("帖子布隆过滤器初始化完成，加载 {} 个 id", postIdList.size());
             }
         } catch (Exception e) {
             log.warn("帖子布隆过滤器初始化失败，降级为全部放行", e);
@@ -147,9 +147,9 @@ public class PostDetailCache {
      */
     public PostEntity getOrLoad(String postId, Supplier<PostEntity> loader) {
         for (int i = 0; i <= LOCK_RETRY_TIMES; i++) {
-            PostEntity cached = get(postId);
-            if (cached != null) {
-                return cached;
+            PostEntity cachedEntity = get(postId);
+            if (cachedEntity != null) {
+                return cachedEntity;
             }
             RLock lock = redissonClient.getLock(LOCK_KEY + postId);
             boolean locked = false;
@@ -160,15 +160,15 @@ public class PostDetailCache {
             }
             if (locked) {
                 try {
-                    PostEntity again = get(postId); // 双检：等待期间可能已被回填
-                    if (again != null) {
-                        return again;
+                    PostEntity againEntity = get(postId); // 双检：等待期间可能已被回填
+                    if (againEntity != null) {
+                        return againEntity;
                     }
-                    PostEntity loaded = loader.get();
-                    if (loaded != null && loaded.getStatus() == PostStatusVO.NORMAL) {
-                        put(postId, loaded);
+                    PostEntity loadedEntity = loader.get();
+                    if (loadedEntity != null && loadedEntity.getStatus() == PostStatusVO.NORMAL) {
+                        put(postId, loadedEntity);
                     }
-                    return loaded;
+                    return loadedEntity;
                 } catch (Exception e) {
                     throw e;
                 } finally {

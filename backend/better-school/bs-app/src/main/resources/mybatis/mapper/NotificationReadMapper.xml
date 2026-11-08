@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.notification.INotificationReadDao">
+
+    <select id="selectLastReadSeq" resultType="long">
+        SELECT last_read_seq
+        FROM notification_read
+        WHERE user_id = #{userId} AND scope = #{scope}
+    </select>
+
+    <insert id="upsertReadWatermark">
+        INSERT INTO notification_read (user_id, scope, last_read_seq, create_time, update_time)
+        VALUES (#{userId}, #{scope}, #{lastReadSeq}, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE last_read_seq = GREATEST(last_read_seq, VALUES(last_read_seq)), update_time = NOW()
+    </insert>
+
+</mapper>

@@ -4,11 +4,11 @@ import com.betterschool.infrastructure.dao.productorder.po.ProductOrder;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 商品托管订单 Mapper：SQL 定义在 app 模块 resources/mybatis/mapper/ProductOrderMapper.xml
+ * 商品托管订单 Mapper（product_order 单表）：SQL 定义在 app 模块 resources/mybatis/mapper/ProductOrderMapper.xml
+ * （状态流转事件拆分至 IProductOrderEventDao 及 ProductOrderEventMapper.xml）
  */
 @Mapper
 public interface IProductOrderDao {
@@ -36,7 +36,4 @@ public interface IProductOrderDao {
                                             @Param("limit") int limit);
 
     long countMineBySeller(@Param("userId") String userId);
-
-    /** 订单状态流转事件落表（同事务，只插入） */
-    int insertOrderEvent(com.betterschool.infrastructure.dao.productorder.po.ProductOrderEvent event);
 }

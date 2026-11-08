@@ -20,7 +20,7 @@ public interface IChatService {
     Response<ChatRoomResponseDTO> createDirectRoom(CreateDirectRoomRequestDTO request);
 
     /** 发送消息：200 返回完整消息体（含 roomId/seq），重复提交同 clientMsgId 收敛同一条 */
-    Response<ChatMessageResponseDTO> sendMessage(String roomId, SendMessageRequestDTO request);
+    Response<ChatMessageResponseDTO> sendMessage(SendMessageRequestDTO request);
 
     /** 会话列表：排除隐藏，last_msg_at 倒序分页，拼对方资料，unread O(1) */
     Response<ChatRoomListResponseDTO> listRooms(int page, int pageSize);

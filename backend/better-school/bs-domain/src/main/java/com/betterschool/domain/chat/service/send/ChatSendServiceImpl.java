@@ -6,6 +6,8 @@ import com.betterschool.domain.chat.adapter.repository.IChatRepository;
 import com.betterschool.domain.chat.model.entity.MessageEntity;
 import com.betterschool.domain.chat.model.entity.RoomEntity;
 import com.betterschool.domain.chat.model.valobj.CardRefTypeVO;
+import com.betterschool.domain.chat.model.valobj.ChatMessagePushEvent;
+import com.betterschool.domain.chat.model.valobj.ChatUserVO;
 import com.betterschool.domain.chat.model.valobj.DirectRoomPairVO;
 import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
 import com.betterschool.domain.chat.model.valobj.RoomSourceEnum;
@@ -38,7 +40,6 @@ public class ChatSendServiceImpl implements IChatSendService {
     private final IChatRepository chatRepository;
     private final IUserQueryPort userQueryPort;
     private final ICardRefQueryPort cardRefQueryPort;
-    private final ChatMessageFanoutService fanoutService;
     private final ObjectMapper objectMapper;
 
     /** 本站图片访问前缀（minio public-url），IMAGE url 须以它开头 */
@@ -57,16 +58,16 @@ public class ChatSendServiceImpl implements IChatSendService {
         DirectRoomPairVO pairKey = DirectRoomPairVO.canonicalOf(userId, targetUserId);
 
         // 首来源钉死：既有会话原样返回，带来源的二次进入（如先私信后从市集联系）不覆盖来源与创建人
-        RoomEntity existing = chatRepository.findDirectRoom(pairKey.getUserMin(), pairKey.getUserMax());
-        if (existing != null) {
-            return existing;
+        RoomEntity existingEntity = chatRepository.findDirectRoom(pairKey.getUserMin(), pairKey.getUserMax());
+        if (existingEntity != null) {
+            return existingEntity;
         }
-        RoomEntity room = new RoomEntity();
-        room.setSource(source);
-        room.setCreatorId(userId);
+        RoomEntity roomEntity = new RoomEntity();
+        roomEntity.setSource(source);
+        roomEntity.setCreatorId(userId);
         try {
             // 建会话 + 两名成员 + 配对行是一个原子用例（仓储内事务，配对行收尾兜幂等）
-            return chatRepository.createDirectRoom(room, targetUserId);
+            return chatRepository.createDirectRoom(roomEntity, targetUserId);
         } catch (DuplicateKeyException e) {
             // 并发建会话撞 user_pair_room.uk_pair：幂等返回既有 room
             return chatRepository.findDirectRoom(pairKey.getUserMin(), pairKey.getUserMax());
@@ -74,10 +75,11 @@ public class ChatSendServiceImpl implements IChatSendService {
     }
 
     @Override
-    public MessageEntity sendMessage(String roomId, String userId, String clientMsgId, MsgTypeVO msgType,
-                                     String content, CardRefTypeVO refType, String refId) {
-        RoomEntity room = chatRepository.findRoomById(roomId);
-        if (room == null) {
+    public MessageEntity sendMessage(MessageEntity messageEntity) {
+        String roomId = messageEntity.getRoomId();
+        String userId = messageEntity.getFromUserId();
+        RoomEntity roomEntity = chatRepository.findRoomById(roomId);
+        if (roomEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "会话不存在");
         }
         if (chatRepository.findUserRoom(roomId, userId) == null) {
@@ -86,21 +88,34 @@ public class ChatSendServiceImpl implements IChatSendService {
 
         // 幂等快路径：同 client_msg_id 已落库（超时重发/双击），收敛原消息——
         // 须在载荷校验之前，重发语义不受目标失效影响
-        MessageEntity existing = chatRepository.findMessageByClientMsgId(roomId, clientMsgId);
-        if (existing != null) {
-            return existing;
+        MessageEntity existingEntity = chatRepository.findMessageByClientMsgId(roomId, messageEntity.getClientMsgId());
+        if (existingEntity != null) {
+            return existingEntity;
         }
 
-        validateContent(msgType, content, refType, refId);
+        validateContent(messageEntity.getMsgType(), messageEntity.getContent(), messageEntity.getRefType(), messageEntity.getRefId());
 
         try {
+            // 推送载荷在此组装（发送人昵称头像拼进 WS 推送，收端免二次反查）；
             // 取号 + 落消息 + 扇出 + outbox 是一个原子用例（仓储内事务）
-            return fanoutService.deliver(roomId, userId, clientMsgId, msgType, content, refType, refId);
+            ChatUserVO sender = userQueryPort.findById(userId);
+            ChatMessagePushEvent chatMessagePushEvent = ChatMessagePushEvent.builder()
+                    .roomId(roomId)
+                    .fromUserId(userId)
+                    .fromNickname(sender.getNickname())
+                    .fromAvatar(sender.getAvatar())
+                    .msgType(messageEntity.getMsgType())
+                    .content(messageEntity.getContent())
+                    .refType(messageEntity.getRefType())
+                    .refId(messageEntity.getRefId())
+                    .clientMsgId(messageEntity.getClientMsgId())
+                    .build();
+            return chatRepository.deliverMessage(messageEntity, chatMessagePushEvent);
         } catch (DuplicateKeyException e) {
             // 并发未落库时序：另一事务持有 uk 锁未提交，本事务取号与写入全部回滚后回查收敛
-            MessageEntity original = chatRepository.findMessageByClientMsgId(roomId, clientMsgId);
-            if (original != null) {
-                return original;
+            MessageEntity originalEntity = chatRepository.findMessageByClientMsgId(roomId, messageEntity.getClientMsgId());
+            if (originalEntity != null) {
+                return originalEntity;
             }
             throw e;
         }

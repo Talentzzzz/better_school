@@ -2,47 +2,6 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.betterschool.marketing.infrastructure.raffle.dao.IRaffleDao">
 
-    <select id="selectActivityByActivityId"
-            resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawActivityPO">
-        SELECT id, activity_id, activity_name, strategy_id, begin_date_time, end_date_time, state,
-               create_time, update_time
-        FROM draw_activity
-        WHERE activity_id = #{activityId}
-    </select>
-
-    <select id="selectStrategyByStrategyId"
-            resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyPO">
-        SELECT id, strategy_id, strategy_desc, rule, create_time, update_time
-        FROM draw_strategy
-        WHERE strategy_id = #{strategyId}
-    </select>
-
-    <select id="selectAwardListByStrategyId"
-            resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyAwardPO">
-        SELECT id, strategy_id, award_id, award_name, award_desc, award_type, award_rate, level, inv_id, type, sort,
-               create_time, update_time
-        FROM draw_strategy_award
-        WHERE strategy_id = #{strategyId}
-        ORDER BY sort ASC, id ASC
-    </select>
-
-    <select id="selectWeightListByStrategyId"
-            resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyWeightPO">
-        SELECT id, strategy_id, count, weights, create_time, update_time
-        FROM draw_strategy_weight
-        WHERE strategy_id = #{strategyId}
-        ORDER BY count ASC
-    </select>
-
-    <!-- 特型奖品位：blacklist / fallback 各取第一行（sort,id 最小）；没有该型行返回 null -->
-    <select id="selectAwardIdBySlot" resultType="java.lang.String">
-        SELECT award_id
-        FROM draw_strategy_award
-        WHERE strategy_id = #{strategyId} AND type = #{type}
-        ORDER BY sort ASC, id ASC
-        LIMIT 1
-    </select>
-
     <!-- 累计抽数 = draw_record 行数：权重档「count ≤ 累计抽数」的命中判据 -->
     <select id="countUserRecords" resultType="int">
         SELECT COUNT(*)
@@ -58,22 +17,7 @@
                 #{awardType}, #{level}, #{invId}, #{state}, #{createTime}, #{updateTime})
     </insert>
 
-    <!-- 只插入语义：撞 uk_record_type 返回 0 = 该记录该动作已落过 -->
-    <insert id="insertIgnoreRecordDetail"
-            parameterType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordDetailPO">
-        INSERT IGNORE INTO draw_record_detail (user_id, record_id, type, create_time, update_time)
-        VALUES (#{userId}, #{recordId}, #{type}, #{createTime}, #{updateTime})
-    </insert>
-
     <!-- =============== 读侧（票 13） =============== -->
-
-    <select id="selectCurrentActivity" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawActivityPO">
-        SELECT id, activity_id, activity_name, strategy_id, begin_date_time, end_date_time, state,
-               create_time, update_time
-        FROM draw_activity
-        ORDER BY id DESC
-        LIMIT 1
-    </select>
 
     <select id="selectRecordByRecordId" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordPO">
         SELECT id, record_id, user_id, activity_id, strategy_id, award_id, award_name, award_desc,
@@ -82,38 +26,10 @@
         WHERE record_id = #{recordId}
     </select>
 
-    <!-- 面额只对积分台账有意义（DRAW_COUNT 型库存不放这个字段） -->
-    <select id="selectPointsValueByInvId" resultType="java.lang.Integer">
-        SELECT value
-        FROM virtual_inventory_quota
-        WHERE inv_id = #{invId} AND type = 'POINTS'
-    </select>
-
     <select id="countTodayDrawn" resultType="int">
         SELECT COUNT(*)
         FROM draw_record
         WHERE user_id = #{userId} AND create_time >= CURDATE()
-    </select>
-
-    <!--
-        目录的库存展示口径：真相在 DB 台账（票 12），不读 Redis 桶（在途预扣会让「剩余」抖动）。
-        remaining = 台账 surplus_qty；total = 投放总量（虚拟 surplus+issued，实物 surplus+waiting+issued）。
-        surplus_qty = -1 是「不限量」，remaining/total 落 null 由 unlimited 表达。
-        原三表 LEFT JOIN 一步投影改为三段查拼装（SQL 层零 JOIN）：①奖品行 selectAwardListByStrategyId
-        （同 sort,id 排序）；②虚拟台账 ③实物台账按 inv_id 集批量回查，CASE 语义在仓储 Java 收口。
-    -->
-    <select id="selectVirtualQuotasByInvIds" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.VirtualQuotaRowPO">
-        SELECT inv_id AS invId, type, value, surplus_qty AS surplusQty, issued_qty AS issuedQty
-        FROM virtual_inventory_quota
-        WHERE inv_id IN
-        <foreach collection="invIds" item="invId" open="(" separator="," close=")">#{invId}</foreach>
-    </select>
-
-    <select id="selectPhysicalQuotasByInvIds" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.PhysicalQuotaRowPO">
-        SELECT inv_id AS invId, surplus_qty AS surplusQty, waiting_qty AS waitingQty, issued_qty AS issuedQty
-        FROM physical_marketing_quota
-        WHERE inv_id IN
-        <foreach collection="invIds" item="invId" open="(" separator="," close=")">#{invId}</foreach>
     </select>
 
     <select id="countDrawRecords" resultType="int">
@@ -136,15 +52,6 @@
         WHERE r.user_id = #{userId} AND r.award_type != 'THANKS'
         ORDER BY r.create_time DESC, r.id DESC
         LIMIT #{offset}, #{limit}
-    </select>
-
-    <!-- 积分面额批量读：仅 type=POINTS 的虚拟台账行（面额只对积分台账有意义，DRAW_COUNT 型不放这个字段） -->
-    <select id="selectPointValuesByInvIds" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.VirtualQuotaRowPO">
-        SELECT inv_id AS invId, value
-        FROM virtual_inventory_quota
-        WHERE type = 'POINTS'
-          AND inv_id IN
-        <foreach collection="invIds" item="invId" open="(" separator="," close=")">#{invId}</foreach>
     </select>
 
     <select id="countMyPrizes" resultType="int">
@@ -175,15 +82,6 @@
         </if>
         ORDER BY r.create_time DESC, r.id DESC
         LIMIT #{offset}, #{limit}
-    </select>
-
-    <!-- 兑换动作明细批量读（draw_record_detail 单表；该表原本只有 insert，这是第一条单表查询语句） -->
-    <select id="selectExchangeDetailsByRecordIds" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.ExchangeDetailRowPO">
-        SELECT record_id AS recordId, create_time AS createTime
-        FROM draw_record_detail
-        WHERE type = 'EXCHANGE'
-          AND record_id IN
-        <foreach collection="recordIds" item="recordId" open="(" separator="," close=")">#{recordId}</foreach>
     </select>
 
     <!-- =============== 发货状态机写面（票 14） =============== -->

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.moderation.IContentReviewDao">
+
+    <!-- 审核动作记录：uk_target_action_round(target_type,target_id,action,review_round) 冲突 = 该轮已记录过
+         （INSERT IGNORE 幂等，审计只插一次；review_round 取业务表当前的审核轮次（= 第 N 次进入待审），
+         重放裁决同轮次撞 uk 自然幂等跳过；author_id 冗余作者列，spec §5.1；
+         review_id 业务 ID UUID 由应用层 UUID.randomUUID() 随 insert 一次写入，uuid-biz-id 票 06） -->
+    <insert id="insertIgnoreReview" parameterType="com.betterschool.infrastructure.dao.moderation.po.ContentReview">
+        INSERT IGNORE INTO content_review (review_id, target_type, target_id, author_id, review_round, action, source, operator_id, reason, reason_code, create_time, update_time)
+        VALUES (#{reviewId}, #{targetType}, #{targetId}, #{authorId}, #{reviewRound}, #{action}, #{source}, #{operatorId}, #{reason}, #{reasonCode}, NOW(), NOW())
+    </insert>
+
+    <!-- 同一内容历轮裁决：重提前后各轮各自的结论与拒绝理由（review_round 升序；
+         轮次受业务表 review_round 有界（uk_target_action_round 同轮至多一行），不加 LIMIT -->
+    <select id="selectReviewsByTarget" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReview">
+        SELECT review_id, target_type, target_id, author_id, review_round, action, source, operator_id,
+               reason, reason_code, create_time, update_time
+        FROM content_review
+        WHERE target_type = #{targetType}
+          AND target_id = #{targetId}
+        ORDER BY review_round ASC, id ASC
+    </select>
+
+    <!-- 同一作者历史裁决：author_id 冗余列使按作者聚合单表可查、免 join 工单表（spec §5.1） -->
+    <select id="selectReviewsByAuthor" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReview">
+        SELECT review_id, target_type, target_id, author_id, review_round, action, source, operator_id,
+               reason, reason_code, create_time, update_time
+        FROM content_review
+        WHERE author_id = #{authorId}
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 拒绝理由：同一目标可多轮被拒（轮次幂等键），按最新一次展示 -->
+    <select id="selectRejectReason" resultType="string">
+        SELECT reason
+        FROM content_review
+        WHERE target_type = #{targetType}
+          AND target_id = #{targetId}
+          AND action = 'REJECT'
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <!-- 批量拒绝理由取数（每个 target 取最新一轮 REJECT 行 = 物理 id 最大的行）：单表查全部 REJECT 行，
+         「按 target 取最新」的裁决在仓储 Java 侧做（原自连派生表 JOIN 的多查形态）；列表页免 N+1 -->
+    <select id="selectRejectRowsByTargetIds" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReview">
+        SELECT id, target_id AS targetId, reason
+        FROM content_review
+        WHERE target_type = #{targetType}
+          AND action = 'REJECT'
+          AND target_id IN
+          <foreach collection="targetIds" item="id" open="(" separator="," close=")">
+              #{id}
+          </foreach>
+    </select>
+
+    <!-- feed 索引重建取数：某类型全部 APPROVE 流水的最新时刻（content_review 单表 GROUP BY，
+         CommunityRepository 拼 feed_time 用，与「feed_time = 最近 APPROVE ?? create_time」口径配套） -->
+    <select id="selectApproveRowsByTargetType" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReview">
+        SELECT target_id AS targetId, MAX(create_time) AS createTime
+        FROM content_review
+        WHERE target_type = #{targetType}
+          AND action = 'APPROVE'
+        GROUP BY target_id
+    </select>
+
+</mapper>

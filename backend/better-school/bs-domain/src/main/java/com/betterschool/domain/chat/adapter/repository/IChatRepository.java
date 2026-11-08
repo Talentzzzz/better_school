@@ -5,9 +5,9 @@ import com.betterschool.domain.chat.model.entity.RoomEntity;
 import com.betterschool.domain.chat.model.entity.RoomMemberEntity;
 import com.betterschool.domain.chat.model.entity.TimelineEntity;
 import com.betterschool.domain.chat.model.entity.UserRoomEntity;
-import com.betterschool.domain.chat.model.valobj.ChatMessagePushMessage;
-import com.betterschool.domain.chat.model.valobj.ChatReadPushMessage;
-import com.betterschool.domain.chat.model.valobj.ChatRecallPushMessage;
+import com.betterschool.domain.chat.model.valobj.ChatMessagePushEvent;
+import com.betterschool.domain.chat.model.valobj.ChatReadPushEvent;
+import com.betterschool.domain.chat.model.valobj.ChatRecallPushEvent;
 import com.betterschool.domain.chat.model.valobj.RecallByVO;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
 import com.betterschool.domain.chat.model.valobj.TimelineItemVO;
@@ -41,13 +41,14 @@ public interface IChatRepository {
     RoomEntity createDirectRoom(RoomEntity roomEntity, String targetUserId);
 
     /**
-     * 发送落库段（一个原子用例）：取号 → 落消息 → 按名册扇出时间线（per-user delivery_seq 取号）
-     * → 逐用户清 hidden 弹回 → 逐用户刷 user_room 列表排序键（last_msg_time；预览不落副本，读时现算）
-     * → 写 MSG 推送事件。推送载荷（发送者昵称头像等）由调用方备好，实现内只补事务中生成的消息 ID/序号/时间
+     * 发送落库段（一个原子用例）：取号 → 落消息 → 名册事务内一次读取 → 按成员集扇出时间线（per-user
+     * delivery_seq 取号）→ 逐用户清 hidden 弹回 → 逐用户刷 user_room 列表排序键（last_msg_time；
+     * 预览不落副本，读时现算）→ 写 MSG 推送事件。
+     * 推送载荷（发送者昵称头像等）由调用方备好，实现内只补事务中生成的消息 ID/序号/时间
      *
      * @return 落库后的完整消息体（含 roomId/seq/messageId/createdAt）
      */
-    MessageEntity deliverMessage(MessageEntity messageEntity, ChatMessagePushMessage pushMessage);
+    MessageEntity deliverMessage(MessageEntity messageEntity, ChatMessagePushEvent chatMessagePushEvent);
 
     /**
      * 已读水位线推进 + READ 事件（一个原子用例）。
@@ -75,10 +76,11 @@ public interface IChatRepository {
     long increaseLastSeq(String roomId);
 
     /**
-     * 发送事务内刷用户行列表排序键（与取号同事务）：last_msg_time 按名册成员集逐用户刷新（1v1 恒两行）；
+     * 发送事务内刷用户行列表排序键（与取号同事务）：last_msg_time 按给定成员集逐用户刷新（1v1 恒两行）；
+     * 成员集由调用方给定（发送事务内名册一次读取，扇出/清隐藏/刷排序键共用同一成员集）；
      * 预览不落副本（读时按 message 真相现算），未读数不落副本，由 room.last_seq 现算
      */
-    void updateUserRoomLastMsgTime(String roomId, LocalDateTime lastMsgTime);
+    void updateUserRoomLastMsgTime(String roomId, List<String> memberIdList, LocalDateTime lastMsgTime);
 
     /**
      * 会话列表四段查（SQL 层零 JOIN）：排除 hidden_at 非空，按 last_msg_time 倒序分页；
@@ -103,7 +105,7 @@ public interface IChatRepository {
     // ===== room_member（会话维度名册：「这个会话有谁」） =====
 
     /** 多值 INSERT 名册扇出（1v1 恒两行，join_seq=0 入群水位）；与两行 user_room 同事务成对写入 */
-    void insertRoomMembers(List<RoomMemberEntity> memberEntities);
+    void insertRoomMembers(List<RoomMemberEntity> roomMemberEntityList);
 
     /** 名册枚举（成员扇出/对家回查/成员页的成员集来源，room_id 片键单分片查询面） */
     List<RoomMemberEntity> listRoomMembers(String roomId);
@@ -112,13 +114,13 @@ public interface IChatRepository {
 
     // ===== user_room（用户维度会话状态） =====
 
-    void insertUserRooms(List<UserRoomEntity> userRoomEntities);
+    void insertUserRooms(List<UserRoomEntity> userRoomEntityList);
 
     /** 本人用户行点查（成员资格判据：行不存在 = 非成员） */
     UserRoomEntity findUserRoom(String roomId, String userId);
 
     /** 成员页两段查之②：名册给定成员集的用户行批量回查（水位线拼装，SQL 层零 JOIN） */
-    List<UserRoomEntity> listUserRooms(String roomId, List<String> userIds);
+    List<UserRoomEntity> listUserRooms(String roomId, List<String> userIdList);
 
     /**
      * 已读水位线只前进不回退（read_seq &lt; 目标才更新，幂等）。
@@ -127,8 +129,8 @@ public interface IChatRepository {
      */
     boolean updateUserReadSeq(String roomId, String userId, long readSeq);
 
-    /** 新消息扇出时按名册成员集清空隐藏位（删除的会话弹回，微信行为；逐用户执行） */
-    void clearHidden(String roomId);
+    /** 新消息扇出时按给定成员集清空隐藏位（删除的会话弹回，微信行为；逐用户执行；成员集由调用方给定） */
+    void clearHidden(String roomId, List<String> memberIdList);
 
     /** 用户侧隐藏会话（置 hidden_at，时刻取数据库时钟）；新消息 clearHidden 弹回 */
     void hideRoom(String roomId, String userId);
@@ -156,7 +158,7 @@ public interface IChatRepository {
     // ===== timeline（不可变瘦收件箱） =====
 
     /** 多值 INSERT 扇出：一条消息 N 个成员 N 行，只插不改 */
-    void insertTimelines(List<TimelineEntity> timelineEntities);
+    void insertTimelines(List<TimelineEntity> timelineEntityList);
 
     // ===== user_seq（per-user 投递序号计数器） =====
 
@@ -171,11 +173,11 @@ public interface IChatRepository {
     // ===== outbox（推送事件） =====
 
     /** 发送事务内写 MSG 推送事件（outbox），事务提交后异步发 MQ，由 WS 推送消费（票 04） */
-    void savePushMessage(ChatMessagePushMessage message);
+    void savePushMessage(ChatMessagePushEvent chatMessagePushEvent);
 
     /** 水位线推进事务内写 READ 推送事件（outbox），仅水位线实际前进时调用（幂等无噪音） */
-    void saveReadMessage(ChatReadPushMessage message);
+    void saveReadMessage(ChatReadPushEvent chatReadPushEvent);
 
     /** 撤回事务内写 RECALL 轻事件（outbox）：载荷只带 roomId+seq 定位，内容终态以拉取为准 */
-    void saveRecallMessage(ChatRecallPushMessage message);
+    void saveRecallMessage(ChatRecallPushEvent chatRecallPushEvent);
 }

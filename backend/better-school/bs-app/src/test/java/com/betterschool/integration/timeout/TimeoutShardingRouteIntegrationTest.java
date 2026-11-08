@@ -53,8 +53,8 @@ class TimeoutShardingRouteIntegrationTest extends CommunityApiTestBase {
         try {
             // 注册（事务内直插的仓储原语，票 03 接管注册语义）：WAITING、next_fire_time = action_time
             //（时刻一律数据库时钟，Java 只传时长）
-            TimeoutTaskEntity task = TimeoutTaskEntity.newWaiting(taskType, bizId, 3600L);
-            assertThat(timeoutRepository.insertIfAbsent(task))
+            TimeoutTaskEntity taskEntity = TimeoutTaskEntity.newWaiting(taskType, bizId, 3600L);
+            assertThat(timeoutRepository.insertIfAbsent(taskEntity))
                     .as("新键插入应成功").isTrue();
             assertThat(timeoutRepository.findByKey(taskType, bizId))
                     .as("按键读回（hint 同槽位）应命中").isNotNull();
@@ -70,7 +70,7 @@ class TimeoutShardingRouteIntegrationTest extends CommunityApiTestBase {
             }
 
             // 同键重注册 = 幂等（uk_type_biz 撞键翻返回值，不抛异常）
-            assertThat(timeoutRepository.insertIfAbsent(task))
+            assertThat(timeoutRepository.insertIfAbsent(taskEntity))
                     .as("同键二次插入应返回 false（已存在）").isFalse();
 
             // 业务取消（软置 CANCELED，只打未终态行）→ 终态复活（改期 + 计数清零）
@@ -81,16 +81,16 @@ class TimeoutShardingRouteIntegrationTest extends CommunityApiTestBase {
 
             // 复活传时长 2h：action_time/next_fire_time 由 SQL 侧 TIMESTAMPADD 按数据库时钟刷新
             //（DB 时钟 ≈ 本机时钟，±5s 容差给两条时钟读数留余量）
-            TimeoutTaskEntity revive = TimeoutTaskEntity.newWaiting(taskType, bizId, 7200L);
-            assertThat(timeoutRepository.reviveTerminal(revive))
+            TimeoutTaskEntity reviveEntity = TimeoutTaskEntity.newWaiting(taskType, bizId, 7200L);
+            assertThat(timeoutRepository.reviveTerminal(reviveEntity))
                     .as("终态行应被复活").isTrue();
-            TimeoutTaskEntity afterRevive = timeoutRepository.findByKey(taskType, bizId);
-            assertThat(afterRevive.getStatus().name()).isEqualTo("WAITING");
-            assertThat(afterRevive.getNextFireTime())
+            TimeoutTaskEntity afterReviveEntity = timeoutRepository.findByKey(taskType, bizId);
+            assertThat(afterReviveEntity.getStatus().name()).isEqualTo("WAITING");
+            assertThat(afterReviveEntity.getNextFireTime())
                     .as("复活刷新 next_fire_time = 落库时刻 + 2h")
                     .isBetween(LocalDateTime.now().plusHours(2).minusSeconds(5),
                             LocalDateTime.now().plusHours(2).plusSeconds(5));
-            assertThat(afterRevive.getRetryCount()).isZero();
+            assertThat(afterReviveEntity.getRetryCount()).isZero();
         } finally {
             // 不留痕：物理表直删（测试行带唯一 bizId，不影响他用例）
             try (Connection connection = DriverManager.getConnection(rawMysqlUrl, rawUser, rawPassword)) {

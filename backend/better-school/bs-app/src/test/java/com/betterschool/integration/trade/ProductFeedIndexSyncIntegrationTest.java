@@ -61,10 +61,10 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
         LocalDateTime reapproveAt = LocalDateTime.now();
         jdbcTemplate.update("UPDATE product_feed_index SET feed_time = DATE_SUB(NOW(), INTERVAL 1 HOUR) "
                 + "WHERE product_id = ?", productId);
-        ProductEntity edit = new ProductEntity();
-        edit.setProductId(productId);
-        edit.setPrice(new BigDecimal("20.00"));
-        assertThat(tradeRepository.editOnSaleContent(edit)).as("在售改内容回待审").isTrue();
+        ProductEntity editEntity = new ProductEntity();
+        editEntity.setProductId(productId);
+        editEntity.setPrice(new BigDecimal("20.00"));
+        assertThat(tradeRepository.editOnSaleContent(editEntity)).as("在售改内容回待审").isTrue();
         assertThat(feedState(productId)).as("回审期间索引行不可见（state 快照 PENDING_REVIEW）")
                 .isEqualTo("PENDING_REVIEW");
 

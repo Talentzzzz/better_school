@@ -38,5 +38,22 @@ public interface IUserDao {
     List<String> selectIdsByRole(@Param("role") String role);
 
     /** 按 id 列表查询（搜索同步反查/搜索结果组装用） */
-    List<User> selectByIds(@Param("ids") List<String> userIds);
+    List<User> selectByIds(@Param("ids") List<String> userIdList);
+
+    /** 指派/回收审核员：条件 UPDATE bs_user.role（已是目标角色不生效），返回影响行数 */
+    int updateUserRole(@Param("userId") String userId, @Param("role") String role);
+
+    int existsUser(@Param("userId") String userId);
+
+    String selectStatus(@Param("userId") String userId);
+
+    Integer selectCreditScore(@Param("userId") String userId);
+
+    int updateCreditScore(@Param("userId") String userId, @Param("delta") int delta);
+
+    /** 返回影响行数：1 = 本次刚封禁（幂等依据） */
+    int banIfLowScore(@Param("userId") String userId);
+
+    /** 封禁/解封通用（条件 state <> 目标值），返回影响行数 */
+    int updateStatus(@Param("userId") String userId, @Param("state") String state);
 }

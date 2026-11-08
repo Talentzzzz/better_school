@@ -196,7 +196,7 @@ public interface IErrandRepository {
     boolean autoCompleteWithSearchSync(String orderId);
 
     /** 按 id 列表查询（不分状态，搜索同步/搜索命中反查用；返回顺序与入参无关，调用方按 id 重排） */
-    List<ErrandOrderEntity> listByIds(List<String> orderIds);
+    List<ErrandOrderEntity> listByIds(List<String> orderIdList);
 
     /**
      * 搜索索引全量重建的游标页（uuid-biz-id 票 05）：业务 ID 是 UUID 字符串，按 errand_order_id
@@ -232,5 +232,5 @@ public interface IErrandRepository {
      * 走 {@code errand_view_history} 主键 {@code (user_id, errand_order_id)} 前缀，一页一次 IN 查询。
      * userId 为 null（未登录）或集合为空返回空集
      */
-    List<String> selectViewedOrderIds(String userId, List<String> orderIds);
+    List<String> selectViewedOrderIds(String userId, List<String> orderIdList);
 }

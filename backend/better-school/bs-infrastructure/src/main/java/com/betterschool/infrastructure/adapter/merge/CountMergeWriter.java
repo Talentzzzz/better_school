@@ -82,19 +82,19 @@ public class CountMergeWriter {
      */
     private LikeStateVO degrade(CountAction action, String rowId, CountEvent event, String reason) {
         log.debug("合并器未接住，降级为同步落库：action={}, rowId={}, reason={}", action, rowId, reason);
-        List<LikeState> results;
+        List<LikeState> resultList;
         try {
-            results = flushHandler.flushGroup(action, rowId, List.of(event));
+            resultList = flushHandler.flushGroup(action, rowId, List.of(event));
         } catch (RuntimeException e) {
             log.error("同步降级落库失败：action={}, rowId={}, reason={}", action, rowId, reason, e);
             throw retryable(action, rowId, "降级落库失败");
         }
-        if (results == null || results.isEmpty() || results.get(0) == null) {
+        if (resultList == null || resultList.isEmpty() || resultList.get(0) == null) {
             // 落库方法漏回填：宁可让调用方重试，也不给一个「成功但不知道成没成」
             log.error("同步降级落库漏回填：action={}, rowId={}, reason={}", action, rowId, reason);
             throw retryable(action, rowId, "降级落库未回填结果");
         }
-        return toDomain(results.get(0), action);
+        return toDomain(resultList.get(0), action);
     }
 
     /** 引擎的结果枚举 → 域的结果枚举；两套枚举分开是为了让域不依赖基础设施的合并器包 */

@@ -268,8 +268,8 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
     }
 
     private void sendTextInRoom(String targetRoomId, String clientMsgId, String content) {
-        JsonNode response = postJson("/api/chat/rooms/" + targetRoomId + "/messages", Map.of(
-                "clientMsgId", clientMsgId, "msgType", "TEXT", "content", content), userA);
+        JsonNode response = postJson("/api/chat/rooms/messages", Map.of(
+                "roomId", targetRoomId, "clientMsgId", clientMsgId, "msgType", "TEXT", "content", content), userA);
         assertSuccess(response, "发送消息 " + clientMsgId);
     }
 

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.chat.ITimelineDao">
+
+    <!-- ===== timeline（只插不改） ===== -->
+
+    <insert id="insertTimelines">
+        INSERT INTO timeline (user_id, room_id, seq, msg_id, delivery_seq, create_time, update_time)
+        VALUES
+        <foreach collection="timelines" item="t" separator=",">
+            (#{t.userId}, #{t.roomId}, #{t.seq}, #{t.msgId}, #{t.deliverySeq}, NOW(), NOW())
+        </foreach>
+    </insert>
+
+    <!-- 增量补拉两段查之①（timeline.uk_user_delivery 主路径）：delivery_seq 升序扫本人投递行；
+         消息全量由仓储按 msg_id 集二次回查拼装（selectMessagesByIds，SQL 层零 JOIN；
+         timeline.msg_id 外联的是消息业务 ID（message.msg_id），不是物理主键） -->
+    <select id="selectTimelineRows" resultType="com.betterschool.infrastructure.dao.chat.po.TimelineDeliveryRow">
+        SELECT t.msg_id AS msgId, t.delivery_seq AS deliverySeq
+        FROM timeline t
+        WHERE t.user_id = #{userId}
+          AND t.delivery_seq &gt; #{afterDeliverySeq}
+        ORDER BY t.delivery_seq ASC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

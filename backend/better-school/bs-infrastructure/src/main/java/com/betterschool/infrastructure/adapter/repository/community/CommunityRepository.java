@@ -20,12 +20,21 @@ import com.betterschool.infrastructure.adapter.merge.LikeState;
 import com.betterschool.infrastructure.adapter.merge.ViewMergeWriter;
 import com.betterschool.infrastructure.adapter.repository.moderation.ReviewTaskPoolStore;
 import com.betterschool.infrastructure.dao.comment.IPostCommentDao;
+import com.betterschool.infrastructure.dao.comment.IPostCommentCountDao;
+import com.betterschool.infrastructure.dao.comment.IPostCommentFeedIndexDao;
+import com.betterschool.infrastructure.dao.comment.IPostCommentLikeCountDao;
+import com.betterschool.infrastructure.dao.comment.IPostCommentLikeDao;
 import com.betterschool.infrastructure.dao.comment.po.CommentFeedIndexRow;
 import com.betterschool.infrastructure.dao.comment.po.PostCommentLikeCount;
 import com.betterschool.infrastructure.dao.comment.po.PostComment;
-import com.betterschool.infrastructure.dao.moderation.IModerationDao;
+import com.betterschool.infrastructure.dao.moderation.IContentReviewDao;
 import com.betterschool.infrastructure.dao.moderation.po.ContentReview;
 import com.betterschool.infrastructure.dao.post.IPostDao;
+import com.betterschool.infrastructure.dao.post.IPostFeedIndexDao;
+import com.betterschool.infrastructure.dao.post.IPostLikeCountDao;
+import com.betterschool.infrastructure.dao.post.IPostLikeDao;
+import com.betterschool.infrastructure.dao.post.IPostViewCountDao;
+import com.betterschool.infrastructure.dao.post.IUserViewHistoryDao;
 import com.betterschool.infrastructure.dao.post.po.PostFeedIndexRow;
 import com.betterschool.infrastructure.dao.post.po.Post;
 import com.betterschool.infrastructure.dao.post.po.PostRelationRow;
@@ -61,7 +70,13 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
- * 社区仓储（帖子 + 评论合一）：持有 IPostDao + IPostCommentDao，多写原子用例在实现内用编程式事务（默认 REQUIRED）。
+ * 社区仓储（帖子 + 评论合一）：持有一张表一个 DAO 的社区域 DAO 全家桶——
+ * IPostDao（post）/ IPostCommentDao（post_comment）+ IPostLikeDao（post_like）/
+ * IPostLikeCountDao（post_like_count）/ IPostViewCountDao（post_view_count）/
+ * IUserViewHistoryDao（user_view_history）/ IPostFeedIndexDao（post_feed_index）/
+ * IPostCommentCountDao（post_comment_count）/ IPostCommentLikeDao（post_comment_like）/
+ * IPostCommentLikeCountDao（post_comment_like_count）/ IPostCommentFeedIndexDao（post_comment_feed_index），
+ * 多写原子用例在实现内用编程式事务（默认 REQUIRED）。
  * PO / Mapper XML 位置不变；帖子详情缓存仍只依赖 IPostDao（不经本类）。
  *
  * <p>本类同时是计数合并器的<b>落库方法</b>（{@link ICountFlushHandler}）：点赞 / 取消赞 / 评论赞 /
@@ -76,10 +91,28 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
 
     private final IPostDao postDao;
     private final IPostCommentDao commentDao;
+    /** 帖子点赞关系行（post_like 单表） */
+    private final IPostLikeDao postLikeDao;
+    /** 帖子点赞计数窄表（post_like_count 单表） */
+    private final IPostLikeCountDao postLikeCountDao;
+    /** 帖子浏览 UV 加速列（post_view_count 单表） */
+    private final IPostViewCountDao postViewCountDao;
+    /** 帖子浏览历史明细（user_view_history 单表） */
+    private final IUserViewHistoryDao userViewHistoryDao;
+    /** 帖子 feed 异构索引（post_feed_index 单表） */
+    private final IPostFeedIndexDao postFeedIndexDao;
+    /** 评论计数窄表（post_comment_count 单表） */
+    private final IPostCommentCountDao postCommentCountDao;
+    /** 评论点赞关系行（post_comment_like 单表） */
+    private final IPostCommentLikeDao postCommentLikeDao;
+    /** 评论点赞计数窄表（post_comment_like_count 单表） */
+    private final IPostCommentLikeCountDao postCommentLikeCountDao;
+    /** 根评论热评索引（post_comment_feed_index 单表） */
+    private final IPostCommentFeedIndexDao postCommentFeedIndexDao;
     /** 作者昵称头像批量回查（SQL 层零 JOIN：列表/详情的 bs_user 信息在这里多查一次拼装） */
     private final IUserDao userDao;
-    /** feed 索引重建取 APPROVE 审批流水（content_review 单表，IModerationDao 内该语句零 JOIN） */
-    private final IModerationDao moderationDao;
+    /** feed 索引重建取 APPROVE 审批流水（content_review 单表，IContentReviewDao 内该语句零 JOIN） */
+    private final IContentReviewDao contentReviewDao;
     /** 业务 ID 统一发号入口（uuid-biz-id 票 01）：帖 / 评在 insert 前发号一次写入 */
     private final ObjectMapper objectMapper;
     private final OutboxMessageStore outboxMessageStore;
@@ -115,14 +148,14 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     public PostEntity findPostById(String postId) {
         // 详情缓存：命中直接返回；布隆拦截"一定不存在"；miss 单飞回填（仅 NORMAL 进缓存）。
         // 读路径拆两段（票 05 / spec §3.3）：内容走缓存，三个计数每次回库拼装——缓存与计数零耦合
-        PostEntity cached = postDetailCache.get(postId);
-        if (cached != null) {
-            return withLiveCounts(postId, cached);
+        PostEntity cachedEntity = postDetailCache.get(postId);
+        if (cachedEntity != null) {
+            return withLiveCounts(postId, cachedEntity);
         }
         if (!postDetailCache.mightContain(postId)) {
             return null;
         }
-        PostEntity loaded = postDetailCache.getOrLoad(postId, () -> {
+        PostEntity loadedEntity = postDetailCache.getOrLoad(postId, () -> {
             Post row = postDao.selectById(postId);
             if (row == null) {
                 return null;
@@ -130,7 +163,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
             fillPostExtras(List.of(row));
             return toPostEntity(row);
         });
-        return loaded == null ? null : withLiveCounts(postId, loaded);
+        return loadedEntity == null ? null : withLiveCounts(postId, loadedEntity);
     }
 
     /**
@@ -154,7 +187,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
         transactionTemplate.execute(status -> {
             postDao.softDelete(postId);
             // feed 索引行同事务不可见化（feed-index-uv 票 03）：软删/强删共用此口，行不存在时 0 行静默
-            postDao.updateFeedIndexState(postId, PostStatusVO.DELETED.name());
+            postFeedIndexDao.updateFeedIndexState(postId, PostStatusVO.DELETED.name());
             return null;
         });
         postDetailCache.evict(postId);
@@ -190,7 +223,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
                 // 退出待审（撤回回草稿箱）：在途工单出池停 DONE，防池中遗留指向非待审行的幽灵工单
                 reviewTaskPoolStore.close(ReviewTargetTypeVO.POST, postId);
                 // 撤回同事务索引行不可见化（feed-index-uv 票 03）：行不存在（从未通过审）时 0 行静默
-                postDao.updateFeedIndexState(postId, PostStatusVO.DRAFT.name());
+                postFeedIndexDao.updateFeedIndexState(postId, PostStatusVO.DRAFT.name());
             }
             return withdrawn;
         }));
@@ -202,7 +235,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
             boolean updated = postDao.rejectToDraft(postId) > 0;
             if (updated) {
                 // 被拒转草稿同事务索引行不可见化（feed-index-uv 票 03）：行不存在（从未通过审）时 0 行静默
-                postDao.updateFeedIndexState(postId, PostStatusVO.DRAFT.name());
+                postFeedIndexDao.updateFeedIndexState(postId, PostStatusVO.DRAFT.name());
             }
             return updated;
         });
@@ -215,7 +248,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
             boolean updated = postDao.approveById(postId) > 0;
             if (updated) {
                 // feed 索引行诞生/翻回（feed-index-uv 票 03，同事务）：feed_time 只在 INSERT 侧落
-                postDao.upsertFeedIndexOnApprove(postId);
+                postFeedIndexDao.upsertFeedIndexOnApprove(postId);
             }
             return updated;
         });
@@ -230,7 +263,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
             boolean updated = postDao.rejectById(postId) > 0;
             if (updated) {
                 // 驳回同事务索引行不可见化（feed-index-uv 票 03）：行不存在（从未通过审）时 0 行静默
-                postDao.updateFeedIndexState(postId, PostStatusVO.REJECTED.name());
+                postFeedIndexDao.updateFeedIndexState(postId, PostStatusVO.REJECTED.name());
             }
             return updated;
         });
@@ -249,12 +282,12 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     public List<PostEntity> pageList(String sort, int offset, int limit) {
         // hot 档排序键 like_count 在窄表（SQL 不能 JOIN 进来）：NORMAL 全集 + 窄表批量回查 + 内存排序切片。
         // 旧直查路径仅作降级（feed-index-uv 票 04/06，主路径是索引），数据集有界，可接受
-        List<Post> rows;
+        List<Post> postList;
         if ("hot".equals(sort)) {
-            List<Post> allNormal = postDao.selectNormalRows();
-            Map<String, Post> likeRows = countRowsById(postDao.selectLikeCountsByPostIds(
-                    allNormal.stream().map(Post::getPostId).toList()));
-            rows = allNormal.stream()
+            List<Post> allNormalPostList = postDao.selectNormalRows();
+            Map<String, Post> likeRows = countRowsById(postLikeCountDao.selectLikeCountsByPostIds(
+                    allNormalPostList.stream().map(Post::getPostId).toList()));
+            postList = allNormalPostList.stream()
                     .sorted(Comparator
                             .comparing((Post p) -> countOf(likeRows, p.getPostId(), Post::getLikeCount)).reversed()
                             .thenComparing(Post::getCreateTime, Comparator.reverseOrder())
@@ -263,10 +296,10 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
                     .limit(limit)
                     .toList();
         } else {
-            rows = postDao.selectPage(offset, limit);
+            postList = postDao.selectPage(offset, limit);
         }
-        fillPostExtras(rows);
-        return rows.stream().map(this::toPostEntity).toList();
+        fillPostExtras(postList);
+        return postList.stream().map(this::toPostEntity).toList();
     }
 
     @Override
@@ -276,15 +309,15 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
 
     @Override
     public List<FeedIndexItemVO> scanFeedIndex(String sortType, FeedCursorVO cursor, int limit) {
-        return postDao.selectFeedIndex(sortType, cursor, limit);
+        return postFeedIndexDao.selectFeedIndex(sortType, cursor, limit);
     }
 
     @Override
     public void rebuildFeedIndex() {
         transactionTemplate.executeWithoutResult(status -> {
-            int recalibrated = postDao.recalibrateViewCounts();
-            int orphans = postDao.deleteViewCountsMissingHistory();
-            postDao.clearFeedIndex();
+            int recalibrated = postViewCountDao.recalibrateViewCounts();
+            int orphans = postViewCountDao.deleteViewCountsMissingHistory();
+            postFeedIndexDao.clearFeedIndex();
             int rebuilt = rebuildFeedIndexRows();
             log.info("[FeedIndexRebuild] post_feed_index 清空重灌 {} 行；post_view_count 校准 {} 行、清理孤儿 {} 行",
                     rebuilt, recalibrated, orphans);
@@ -294,15 +327,15 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     /**
      * 重灌行集拼装（原 INSERT..SELECT 一步投影的多查形态）：行集 = NORMAL 帖 ∪ 有过审批通过的帖。
      * 三段取数——① post 全量 (post_id, state, create_time)；② content_review 的 APPROVE 流水
-     * （feed_time 真源，经 IModerationDao 单表 GROUP BY）；③ like_count 窄表批量抄入（无行 = 0）——
+     * （feed_time 真源，经 IContentReviewDao 单表 GROUP BY）；③ like_count 窄表批量抄入（无行 = 0）——
      * 组装后批量写回，与原「feed_time = 最近 APPROVE ?? create_time」口径逐行一致
      */
     private int rebuildFeedIndexRows() {
         Map<String, LocalDateTime> approveTimes = new HashMap<>();
-        for (ContentReview approveRow : moderationDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.POST.name())) {
+        for (ContentReview approveRow : contentReviewDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.POST.name())) {
             approveTimes.put(approveRow.getTargetId(), approveRow.getCreateTime());
         }
-        List<PostFeedIndexRow> rows = new ArrayList<>();
+        List<PostFeedIndexRow> postFeedIndexRowList = new ArrayList<>();
         for (PostFeedIndexRow candidate : postDao.selectRebuildRows()) {
             boolean approved = approveTimes.containsKey(candidate.getPostId());
             if (!PostStatusVO.NORMAL.name().equals(candidate.getState()) && !approved) {
@@ -310,26 +343,26 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
                 continue;
             }
             candidate.setFeedTime(approveTimes.getOrDefault(candidate.getPostId(), candidate.getCreateTime()));
-            rows.add(candidate);
+            postFeedIndexRowList.add(candidate);
         }
-        if (!rows.isEmpty()) {
-            Map<String, Post> likeRows = countRowsById(postDao.selectLikeCountsByPostIds(
-                    rows.stream().map(PostFeedIndexRow::getPostId).toList()));
-            for (PostFeedIndexRow row : rows) {
+        if (!postFeedIndexRowList.isEmpty()) {
+            Map<String, Post> likeRows = countRowsById(postLikeCountDao.selectLikeCountsByPostIds(
+                    postFeedIndexRowList.stream().map(PostFeedIndexRow::getPostId).toList()));
+            for (PostFeedIndexRow row : postFeedIndexRowList) {
                 row.setLikeCount(countOf(likeRows, row.getPostId(), Post::getLikeCount));
             }
-            for (int from = 0; from < rows.size(); from += REBUILD_INSERT_BATCH) {
-                postDao.insertFeedIndexRows(rows.subList(from, Math.min(from + REBUILD_INSERT_BATCH, rows.size())));
+            for (int from = 0; from < postFeedIndexRowList.size(); from += REBUILD_INSERT_BATCH) {
+                postFeedIndexDao.insertFeedIndexRows(postFeedIndexRowList.subList(from, Math.min(from + REBUILD_INSERT_BATCH, postFeedIndexRowList.size())));
             }
         }
-        return rows.size();
+        return postFeedIndexRowList.size();
     }
 
     @Override
     public List<PostEntity> pagePostsByUser(String userId, int offset, int limit) {
-        List<Post> rows = postDao.selectPageByUser(userId, offset, limit);
-        fillPostExtras(rows);
-        return rows.stream().map(this::toPostEntity).toList();
+        List<Post> postList = postDao.selectPageByUser(userId, offset, limit);
+        fillPostExtras(postList);
+        return postList.stream().map(this::toPostEntity).toList();
     }
 
     @Override
@@ -340,29 +373,29 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     @Override
     public List<PostEntity> pageLikedByUser(String userId, int offset, int limit) {
         // 「我赞过的」：点赞后帖子可能被驳回/转入待审，仍向点赞者展示
-        return pageOf(relationPosts(postDao.selectRelationLikedRows(userId), CommunityRepository::visibleToLiker), offset, limit);
+        return pageOf(relationPosts(postLikeDao.selectRelationLikedRows(userId), CommunityRepository::visibleToLiker), offset, limit);
     }
 
     @Override
     public long countLikedByUser(String userId) {
-        return relationPosts(postDao.selectRelationLikedRows(userId), CommunityRepository::visibleToLiker).size();
+        return relationPosts(postLikeDao.selectRelationLikedRows(userId), CommunityRepository::visibleToLiker).size();
     }
 
     @Override
     public List<PostEntity> pageCommentedByUser(String userId, int offset, int limit) {
-        return pageOf(relationPosts(postDao.selectRelationCommentedRows(userId), CommunityRepository::visibleToLiker), offset, limit);
+        return pageOf(relationPosts(commentDao.selectRelationCommentedRows(userId), CommunityRepository::visibleToLiker), offset, limit);
     }
 
     @Override
     public long countCommentedByUser(String userId) {
-        return relationPosts(postDao.selectRelationCommentedRows(userId), CommunityRepository::visibleToLiker).size();
+        return relationPosts(commentDao.selectRelationCommentedRows(userId), CommunityRepository::visibleToLiker).size();
     }
 
     @Override
     public List<PostEntity> pageNormalByUser(String userId, int offset, int limit) {
-        List<Post> rows = postDao.selectNormalPageByUser(userId, offset, limit);
-        fillPostExtras(rows);
-        return rows.stream().map(this::toPostEntity).toList();
+        List<Post> postList = postDao.selectNormalPageByUser(userId, offset, limit);
+        fillPostExtras(postList);
+        return postList.stream().map(this::toPostEntity).toList();
     }
 
     @Override
@@ -373,50 +406,50 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     @Override
     public List<PostEntity> pagePublicLikedByUser(String userId, int offset, int limit) {
         // 作者主页「赞过」tab：源帖仅 NORMAL（待审/驳回不外露）
-        return pageOf(relationPosts(postDao.selectRelationLikedRows(userId), CommunityRepository::isNormal), offset, limit);
+        return pageOf(relationPosts(postLikeDao.selectRelationLikedRows(userId), CommunityRepository::isNormal), offset, limit);
     }
 
     @Override
     public long countPublicLikedByUser(String userId) {
-        return relationPosts(postDao.selectRelationLikedRows(userId), CommunityRepository::isNormal).size();
+        return relationPosts(postLikeDao.selectRelationLikedRows(userId), CommunityRepository::isNormal).size();
     }
 
     @Override
     public List<PostEntity> pageViewHistoryByUser(String userId, int offset, int limit) {
-        return pageOf(relationPosts(postDao.selectRelationViewedRows(userId), post -> visibleInHistory(userId, post)), offset, limit);
+        return pageOf(relationPosts(userViewHistoryDao.selectRelationViewedRows(userId), post -> visibleInHistory(userId, post)), offset, limit);
     }
 
     @Override
     public long countViewHistoryByUser(String userId) {
-        return relationPosts(postDao.selectRelationViewedRows(userId), post -> visibleInHistory(userId, post)).size();
+        return relationPosts(userViewHistoryDao.selectRelationViewedRows(userId), post -> visibleInHistory(userId, post)).size();
     }
 
     @Override
-    public List<String> selectViewedPostIds(String userId, List<String> postIds) {
-        if (userId == null || postIds == null || postIds.isEmpty()) {
+    public List<String> selectViewedPostIds(String userId, List<String> postIdList) {
+        if (userId == null || postIdList == null || postIdList.isEmpty()) {
             return List.of();
         }
-        return postDao.selectViewedPostIds(userId, postIds);
+        return userViewHistoryDao.selectViewedPostIds(userId, postIdList);
     }
 
     @Override
     public boolean isPostLiked(String postId, String userId) {
-        return postDao.existsLike(postId, userId) > 0;
+        return postLikeDao.existsLike(postId, userId) > 0;
     }
 
     @Override
-    public List<String> selectLikedPostIds(String userId, List<String> postIds) {
-        if (userId == null || postIds == null || postIds.isEmpty()) {
+    public List<String> selectLikedPostIds(String userId, List<String> postIdList) {
+        if (userId == null || postIdList == null || postIdList.isEmpty()) {
             return List.of();
         }
-        return postDao.selectLikedPostIds(userId, postIds);
+        return postLikeDao.selectLikedPostIds(userId, postIdList);
     }
 
     @Override
-    public List<PostEntity> listByIds(List<String> postIds) {
-        List<Post> rows = postDao.selectByIds(postIds);
-        fillPostExtras(rows);
-        return rows.stream().map(this::toPostEntity).toList();
+    public List<PostEntity> listByIds(List<String> postIdList) {
+        List<Post> postList = postDao.selectByIds(postIdList);
+        fillPostExtras(postList);
+        return postList.stream().map(this::toPostEntity).toList();
     }
 
     @Override
@@ -521,12 +554,12 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
      * {@code (user_id, post_id)} 主键。
      */
     @Override
-    public List<LikeState> flushGroup(CountAction action, String shardKey, List<CountEvent> events) {
+    public List<LikeState> flushGroup(CountAction action, String shardKey, List<CountEvent> countEventList) {
         return switch (action) {
-            case POST_LIKE -> transactionTemplate.execute(status -> likePosts(shardKey, events));
-            case POST_UNLIKE -> transactionTemplate.execute(status -> unlikePosts(shardKey, events));
-            case COMMENT_LIKE -> transactionTemplate.execute(status -> likeComments(shardKey, events));
-            case POST_VIEW -> transactionTemplate.execute(status -> viewPosts(shardKey, events));
+            case POST_LIKE -> transactionTemplate.execute(status -> likePosts(shardKey, countEventList));
+            case POST_UNLIKE -> transactionTemplate.execute(status -> unlikePosts(shardKey, countEventList));
+            case COMMENT_LIKE -> transactionTemplate.execute(status -> likeComments(shardKey, countEventList));
+            case POST_VIEW -> transactionTemplate.execute(status -> viewPosts(shardKey, countEventList));
             // 商品/跑腿浏览打的是各自的 UV 表，落库方法在 TradeRepository / ErrandRepository；由 CountFlushDispatcher 分流
             case PRODUCT_VIEW, ERRAND_VIEW -> throw new IllegalArgumentException(
                     "商品/跑腿浏览的落库方法在 TradeRepository / ErrandRepository，不该由社区仓储处理：" + action);
@@ -551,42 +584,42 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
      * 非 null 的占位值。引擎把「null / 缺位」当作落库方法漏回填，会补 {@code FAILED} 并计入
      * {@code failed}；那样 {@code flushed} 会漏掉这些件，合并比与「accepted − flushed」两个读数同时失真。
      */
-    private List<LikeState> viewPosts(String postId, List<CountEvent> events) {
-        List<String> userIds = distinctUserIds(events);
-        int inserted = postDao.insertViewHistory(postId, userIds);
-        postDao.touchViewedAt(postId, userIds);
+    private List<LikeState> viewPosts(String postId, List<CountEvent> countEventList) {
+        List<String> userIdList = distinctUserIds(countEventList);
+        int inserted = userViewHistoryDao.insertViewHistory(postId, userIdList);
+        userViewHistoryDao.touchViewedAt(postId, userIdList);
         if (inserted > 0) {
-            postDao.upsertViewCount(postId, inserted);
+            postViewCountDao.upsertViewCount(postId, inserted);
         }
-        return Collections.nCopies(events.size(), LikeState.APPLIED);
+        return Collections.nCopies(countEventList.size(), LikeState.APPLIED);
     }
 
     /** 一组点赞：关系行批量 INSERT IGNORE → 计数 + 真正插入的行数 */
-    private List<LikeState> likePosts(String postId, List<CountEvent> events) {
-        List<String> userIds = distinctUserIds(events);
-        Set<String> alreadyLiked = new HashSet<>(postDao.selectLikeUserIds(postId, userIds));
-        int inserted = postDao.insertLikes(postId, userIds);
+    private List<LikeState> likePosts(String postId, List<CountEvent> countEventList) {
+        List<String> userIdList = distinctUserIds(countEventList);
+        Set<String> alreadyLiked = new HashSet<>(postLikeDao.selectLikeUserIds(postId, userIdList));
+        int inserted = postLikeDao.insertLikes(postId, userIdList);
         if (inserted > 0) {
-            postDao.upsertLikeCount(postId, inserted);
+            postLikeCountDao.upsertLikeCount(postId, inserted);
             // feed 索引 like_count 快照同事务旁路 +N（feed-index-uv 票 03）：热榜排序键与窄表同步推进
             syncFeedIndexLikeCount(postId, inserted);
         }
         // 已经赞过 → DUPLICATE；没赞过 → LIKED；同批重复 → 第一件已写，后面的必然撞键
-        return attribute(events, alreadyLiked, LikeState.DUPLICATE, LikeState.LIKED, LikeState.DUPLICATE);
+        return attribute(countEventList, alreadyLiked, LikeState.DUPLICATE, LikeState.LIKED, LikeState.DUPLICATE);
     }
 
     /** 一组取消赞：关系行批量 DELETE → 计数 - 真正删掉的行数（GREATEST 兜住不为负） */
-    private List<LikeState> unlikePosts(String postId, List<CountEvent> events) {
-        List<String> userIds = distinctUserIds(events);
-        Set<String> alreadyLiked = new HashSet<>(postDao.selectLikeUserIds(postId, userIds));
-        int deleted = postDao.deleteLikes(postId, userIds);
+    private List<LikeState> unlikePosts(String postId, List<CountEvent> countEventList) {
+        List<String> userIdList = distinctUserIds(countEventList);
+        Set<String> alreadyLiked = new HashSet<>(postLikeDao.selectLikeUserIds(postId, userIdList));
+        int deleted = postLikeDao.deleteLikes(postId, userIdList);
         if (deleted > 0) {
-            postDao.decreaseLikeCount(postId, deleted);
+            postLikeCountDao.decreaseLikeCount(postId, deleted);
             // feed 索引 like_count 快照同事务旁路 -N（feed-index-uv 票 03）
             syncFeedIndexLikeCount(postId, -deleted);
         }
         // 原本有赞 → 删掉了 → UNLIKED；本来就没赞 → NOT_FOUND；同批重复 → 第二件起已无行可删
-        return attribute(events, alreadyLiked, LikeState.UNLIKED, LikeState.NOT_FOUND, LikeState.NOT_FOUND);
+        return attribute(countEventList, alreadyLiked, LikeState.UNLIKED, LikeState.NOT_FOUND, LikeState.NOT_FOUND);
     }
 
     /**
@@ -595,22 +628,22 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
      * 命中 0 行 = 索引行缺失的存量异常（如回填遗漏），不补行、落日志交重建 job（feed-index-uv 票 07）
      */
     private void syncFeedIndexLikeCount(String postId, int delta) {
-        if (postDao.updateFeedIndexLikeCount(postId, delta) == 0) {
+        if (postFeedIndexDao.updateFeedIndexLikeCount(postId, delta) == 0) {
             log.warn("post_feed_index 行缺失，like_count 快照未同步（postId={}, delta={}），交由重建 job 修复", postId, delta);
         }
     }
 
     /** 一组评论点赞：关系行批量 INSERT IGNORE → 窄表 like_count + 真正插入的行数 + 根评论索引旁带 */
-    private List<LikeState> likeComments(String commentId, List<CountEvent> events) {
-        List<String> userIds = distinctUserIds(events);
-        Set<String> alreadyLiked = new HashSet<>(commentDao.selectCommentLikeUserIds(commentId, userIds));
-        int inserted = commentDao.insertCommentLikes(commentId, userIds);
+    private List<LikeState> likeComments(String commentId, List<CountEvent> countEventList) {
+        List<String> userIdList = distinctUserIds(countEventList);
+        Set<String> alreadyLiked = new HashSet<>(postCommentLikeDao.selectCommentLikeUserIds(commentId, userIdList));
+        int inserted = postCommentLikeDao.insertCommentLikes(commentId, userIdList);
         if (inserted > 0) {
             // 评论点赞计数落窄表（票 02）；根评论的热评索引 like_count 快照同事务旁路 +N（票 01）
-            updateLikeCount(commentId, inserted);
+            postCommentLikeCountDao.updateLikeCount(commentId, inserted);
             syncCommentFeedIndexLikeCount(commentId, inserted);
         }
-        return attribute(events, alreadyLiked, LikeState.DUPLICATE, LikeState.LIKED, LikeState.DUPLICATE);
+        return attribute(countEventList, alreadyLiked, LikeState.DUPLICATE, LikeState.LIKED, LikeState.DUPLICATE);
     }
 
     /**
@@ -636,7 +669,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
         if (!PostCommentEntity.NO_REFERENCE.equals(rootId)) {
             return;
         }
-        if (commentDao.updateFeedIndexLikeCount(commentId, delta) == 0) {
+        if (postCommentFeedIndexDao.updateFeedIndexLikeCount(commentId, delta) == 0) {
             log.warn("post_comment_feed_index 行缺失，like_count 快照未同步（commentId={}, delta={}），交由重建 job 修复",
                     commentId, delta);
         }
@@ -657,24 +690,24 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
      * （只可能发生在「缓冲满降级」与「同分片 flush」同时跑的那一刻），逐件的成功/重复判定可能偏向
      * 「成功」；计数按影响行数走，与关系行条数仍然严格相等。
      */
-    private static List<LikeState> attribute(List<CountEvent> events, Set<String> existing,
+    private static List<LikeState> attribute(List<CountEvent> countEventList, Set<String> existing,
                                              LikeState ifExisting, LikeState ifAbsent, LikeState ifRepeated) {
         Set<String> seen = new HashSet<>();
-        List<LikeState> results = new ArrayList<>(events.size());
-        for (CountEvent event : events) {
+        List<LikeState> likeStateList = new ArrayList<>(countEventList.size());
+        for (CountEvent event : countEventList) {
             if (!seen.add(event.userId())) {
-                results.add(ifRepeated);
+                likeStateList.add(ifRepeated);
             } else {
-                results.add(existing.contains(event.userId()) ? ifExisting : ifAbsent);
+                likeStateList.add(existing.contains(event.userId()) ? ifExisting : ifAbsent);
             }
         }
-        return results;
+        return likeStateList;
     }
 
     /** 去重后的 user_id（保持入队顺序）：同一个人在一批里出现多次时，SQL 只需要一个占位 */
-    private static List<String> distinctUserIds(List<CountEvent> events) {
-        Set<String> userIds = new LinkedHashSet<>(events.size());
-        for (CountEvent event : events) {
+    private static List<String> distinctUserIds(List<CountEvent> countEventList) {
+        Set<String> userIds = new LinkedHashSet<>(countEventList.size());
+        for (CountEvent event : countEventList) {
             userIds.add(event.userId());
         }
         return new ArrayList<>(userIds);
@@ -735,22 +768,22 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
      * {@code post_comment_like_count} 的真值——两条取数通路分开，索引刷偏只动顺序不动数字。
      */
     private List<PostCommentEntity> pageHotRootsByPostId(String postId, int offset, int limit) {
-        List<String> commentIds = commentDao.selectRootFeedCommentIds(postId, offset, limit);
-        if (commentIds.isEmpty()) {
+        List<String> commentIdList = postCommentFeedIndexDao.selectRootFeedCommentIds(postId, offset, limit);
+        if (commentIdList.isEmpty()) {
             return List.of();
         }
-        Map<String, PostComment> rowsById = new HashMap<>(commentIds.size());
-        for (PostComment row : commentDao.selectNormalRootsByIds(commentIds)) {
+        Map<String, PostComment> rowsById = new HashMap<>(commentIdList.size());
+        for (PostComment row : commentDao.selectNormalRootsByIds(commentIdList)) {
             rowsById.put(row.getCommentId(), row);
         }
-        List<PostComment> ordered = new ArrayList<>(commentIds.size());
-        for (String commentId : commentIds) {
+        List<PostComment> commentList = new ArrayList<>(commentIdList.size());
+        for (String commentId : commentIdList) {
             PostComment row = rowsById.get(commentId);
             if (row != null) {
-                ordered.add(row);
+                commentList.add(row);
             }
         }
-        return toCommentEntities(ordered);
+        return toCommentEntities(commentList);
     }
 
     @Override
@@ -781,32 +814,32 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
 
     @Override
     public boolean removeCommentLike(String commentId, String userId) {
-        return commentDao.deleteCommentLike(commentId, userId) > 0;
+        return postCommentLikeDao.deleteCommentLike(commentId, userId) > 0;
     }
 
     @Override
     public void updateLikeCount(String commentId, int delta) {
         // 计数真源是窄表（票 02）：0 行 = 窄表行缺失的漂移，落 warn 交手工对账，不 ODKU 补行
-        if (commentDao.updateLikeCount(commentId, delta) == 0) {
+        if (postCommentLikeCountDao.updateLikeCount(commentId, delta) == 0) {
             log.warn("post_comment_like_count 行缺失，评论 like_count 未变更（commentId={}, delta={}），需手工对账",
                     commentId, delta);
         }
     }
 
     @Override
-    public List<String> selectLikedCommentIds(String userId, List<String> commentIds) {
-        if (userId == null || commentIds == null || commentIds.isEmpty()) {
+    public List<String> selectLikedCommentIds(String userId, List<String> commentIdList) {
+        if (userId == null || commentIdList == null || commentIdList.isEmpty()) {
             return List.of();
         }
-        return commentDao.selectLikedCommentIds(userId, commentIds);
+        return postCommentLikeDao.selectLikedCommentIds(userId, commentIdList);
     }
 
     @Override
     public List<PostCommentEntity> pageCommentsByUser(String userId, int offset, int limit) {
         // 源帖 NORMAL 过滤与来源帖标题/封面（原 JOIN post 的 WHERE + 投影列）：两段查 + Java 收口
-        List<PostComment> visibleRows = commentRowsOnVisiblePosts(commentDao.selectNormalRowsByUser(userId));
-        List<PostComment> page = visibleRows.stream().skip(offset).limit(limit).toList();
-        return toCommentEntities(page);
+        List<PostComment> visibleCommentList = commentRowsOnVisiblePosts(commentDao.selectNormalRowsByUser(userId));
+        List<PostComment> commentList = visibleCommentList.stream().skip(offset).limit(limit).toList();
+        return toCommentEntities(commentList);
     }
 
     @Override
@@ -815,23 +848,23 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     }
 
     /** 主页「评论」tab 的源帖过滤与标题/封面回填：用户自己的 NORMAL 评论行有界，total = 过滤后集合大小 */
-    private List<PostComment> commentRowsOnVisiblePosts(List<PostComment> rows) {
-        if (rows.isEmpty()) {
+    private List<PostComment> commentRowsOnVisiblePosts(List<PostComment> commentList) {
+        if (commentList.isEmpty()) {
             return List.of();
         }
-        Map<String, Post> posts = postDao.selectByIds(rows.stream().map(PostComment::getPostId).distinct().toList())
+        Map<String, Post> posts = postDao.selectByIds(commentList.stream().map(PostComment::getPostId).distinct().toList())
                 .stream().collect(Collectors.toMap(Post::getPostId, post -> post, (a, b) -> a));
-        List<PostComment> visible = new ArrayList<>(rows.size());
-        for (PostComment row : rows) {
+        List<PostComment> visibleCommentList = new ArrayList<>(commentList.size());
+        for (PostComment row : commentList) {
             Post post = posts.get(row.getPostId());
             if (post == null || !PostStatusVO.NORMAL.name().equals(post.getState())) {
                 continue;
             }
             row.setPostTitle(post.getTitle());
             row.setPostCover(post.getCover());
-            visible.add(row);
+            visibleCommentList.add(row);
         }
-        return visible;
+        return visibleCommentList;
     }
 
     @Override
@@ -847,7 +880,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     @Override
     public void updatePostCommentCount(String postId, int delta) {
         // 计数不进详情缓存（票 05）：窄表 +1/-1 落库后下一次读自然取到新值，无需任何缓存失效
-        commentDao.upsertPostCommentCount(postId, delta);
+        postCommentCountDao.upsertPostCommentCount(postId, delta);
     }
 
     @Override
@@ -876,7 +909,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
             updatePostCommentCount(postId, 1);
             // 计数窄表行诞生（票 02）：根评论与子回复都入表，赞数恒 0。
             // INSERT IGNORE 只吞重复键（漂移），0 行落 warn 留痕、不覆盖既有计数
-            if (commentDao.insertLikeCountOnApprove(commentId) == 0) {
+            if (postCommentLikeCountDao.insertLikeCountOnApprove(commentId) == 0) {
                 log.warn("post_comment_like_count 行已存在，审核通过未新建计数行（commentId={}），需手工对账", commentId);
             }
             if (!PostCommentEntity.NO_REFERENCE.equals(rootId)) {
@@ -884,7 +917,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
                 updateReplyCount(rootId, 1);
             } else {
                 // 根评论通过 → 热评索引行诞生（票 01，赞数恒 0：待审态不可被赞）
-                commentDao.insertFeedIndexOnApprove(commentId, postId);
+                postCommentFeedIndexDao.insertFeedIndexOnApprove(commentId, postId);
             }
             return null;
         });
@@ -903,7 +936,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
                     updatePostCommentCount(postId, totalDelta);
                     // 根评论软删 → 热评索引行物理退场（票 01）：行集 = 当前可见根评论，楼消失则排序里也不该有它。
                     // 评论软删是终态、无恢复路径，所以不需要帖子的「行常驻 + state 镜像」
-                    commentDao.deleteFeedIndex(commentId);
+                    postCommentFeedIndexDao.deleteFeedIndex(commentId);
                 }
             } else {
                 markDeletedFromStatus(commentId, PostStatusVO.PENDING_REVIEW);
@@ -946,7 +979,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     @Override
     public void rebuildCommentFeedIndex() {
         transactionTemplate.executeWithoutResult(status -> {
-            commentDao.clearFeedIndex();
+            postCommentFeedIndexDao.clearFeedIndex();
             int rebuilt = rebuildCommentFeedIndexRows();
             log.info("[CommentFeedIndexRebuild] post_comment_feed_index 清空重灌 {} 行", rebuilt);
         });
@@ -956,32 +989,32 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
      * 重灌行集拼装（原 INSERT..SELECT 一步投影的多查形态）：行集 = {@code root_id = '0' AND state = 'NORMAL'}
      * 根评论。三段取数——① 根评论行（comment_id + post_id + create_time）；② like_count 从计数窄表抄入
      * （无行 = 0，与运行期「窄表无行即计数 0」同口径）；③ create_time 取审核记录最近一次 APPROVE 时刻
-     * （行诞生时的口径 = 通过时刻，经 IModerationDao 单表 GROUP BY，查不到审批流水取评论 create_time 兜底）——
+     * （行诞生时的口径 = 通过时刻，经 IContentReviewDao 单表 GROUP BY，查不到审批流水取评论 create_time 兜底）——
      * 组装后批量写回。只兜索引、不兜窄表：窄表是真值源，重建不改写它
      */
     private int rebuildCommentFeedIndexRows() {
-        List<CommentFeedIndexRow> rows = commentDao.selectRebuildRows();
-        if (rows.isEmpty()) {
+        List<CommentFeedIndexRow> commentFeedIndexRowList = commentDao.selectRebuildRows();
+        if (commentFeedIndexRowList.isEmpty()) {
             return 0;
         }
         Map<String, LocalDateTime> approveTimes = new HashMap<>();
-        for (ContentReview approveRow : moderationDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.COMMENT.name())) {
+        for (ContentReview approveRow : contentReviewDao.selectApproveRowsByTargetType(ReviewTargetTypeVO.COMMENT.name())) {
             approveTimes.put(approveRow.getTargetId(), approveRow.getCreateTime());
         }
-        Map<String, PostCommentLikeCount> likeRows = new HashMap<>(rows.size());
-        for (PostCommentLikeCount likeRow : commentDao.selectLikeCountsByIds(
-                rows.stream().map(CommentFeedIndexRow::getCommentId).toList())) {
+        Map<String, PostCommentLikeCount> likeRows = new HashMap<>(commentFeedIndexRowList.size());
+        for (PostCommentLikeCount likeRow : postCommentLikeCountDao.selectLikeCountsByIds(
+                commentFeedIndexRowList.stream().map(CommentFeedIndexRow::getCommentId).toList())) {
             likeRows.put(likeRow.getCommentId(), likeRow);
         }
-        for (CommentFeedIndexRow row : rows) {
+        for (CommentFeedIndexRow row : commentFeedIndexRowList) {
             row.setFeedTime(approveTimes.getOrDefault(row.getCommentId(), row.getCreateTime()));
             PostCommentLikeCount likeRow = likeRows.get(row.getCommentId());
             row.setLikeCount(likeRow == null ? 0L : likeRow.getLikeCount());
         }
-        for (int from = 0; from < rows.size(); from += REBUILD_INSERT_BATCH) {
-            commentDao.insertFeedIndexRows(rows.subList(from, Math.min(from + REBUILD_INSERT_BATCH, rows.size())));
+        for (int from = 0; from < commentFeedIndexRowList.size(); from += REBUILD_INSERT_BATCH) {
+            postCommentFeedIndexDao.insertFeedIndexRows(commentFeedIndexRowList.subList(from, Math.min(from + REBUILD_INSERT_BATCH, commentFeedIndexRowList.size())));
         }
-        return rows.size();
+        return commentFeedIndexRowList.size();
     }
 
     // ---------- 拼装辅助：计数窄表 / 作者信息 / 关系列表两段查（SQL 层零 JOIN 的 Java 收口点） ----------
@@ -993,16 +1026,16 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
      * 页内帖子行补齐三个计数 + 作者昵称头像：三张窄表各一次 IN 批量回查、bs_user 一次 IN 批量回查。
      * 缺行补 0 / 补 null（与原 LEFT JOIN COALESCE 合成口径一致）；列表、详情、降级热榜共用
      */
-    private void fillPostExtras(List<Post> rows) {
-        if (rows.isEmpty()) {
+    private void fillPostExtras(List<Post> postList) {
+        if (postList.isEmpty()) {
             return;
         }
-        List<String> postIds = rows.stream().map(Post::getPostId).toList();
-        Map<String, Post> likeRows = countRowsById(postDao.selectLikeCountsByPostIds(postIds));
-        Map<String, Post> commentRows = countRowsById(postDao.selectCommentCountsByPostIds(postIds));
-        Map<String, Post> viewRows = countRowsById(postDao.selectViewCountsByPostIds(postIds));
-        Map<String, User> users = usersByIds(rows.stream().map(Post::getUserId).toList());
-        for (Post row : rows) {
+        List<String> postIdList = postList.stream().map(Post::getPostId).toList();
+        Map<String, Post> likeRows = countRowsById(postLikeCountDao.selectLikeCountsByPostIds(postIdList));
+        Map<String, Post> commentRows = countRowsById(postCommentCountDao.selectCommentCountsByPostIds(postIdList));
+        Map<String, Post> viewRows = countRowsById(postViewCountDao.selectViewCountsByPostIds(postIdList));
+        Map<String, User> users = usersByIds(postList.stream().map(Post::getUserId).toList());
+        for (Post row : postList) {
             row.setLikeCount(countOf(likeRows, row.getPostId(), Post::getLikeCount));
             row.setCommentCount(countOf(commentRows, row.getPostId(), Post::getCommentCount));
             row.setViewCount(countOf(viewRows, row.getPostId(), Post::getViewCount));
@@ -1015,8 +1048,8 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     }
 
     /** 部分列计数行 → postId 索引 */
-    private static Map<String, Post> countRowsById(List<Post> countRows) {
-        return countRows.stream().collect(Collectors.toMap(Post::getPostId, row -> row, (a, b) -> a));
+    private static Map<String, Post> countRowsById(List<Post> countPostList) {
+        return countPostList.stream().collect(Collectors.toMap(Post::getPostId, row -> row, (a, b) -> a));
     }
 
     /** 窄表缺行 = 计数 0（与原 LEFT JOIN COALESCE(x, 0) 同口径） */
@@ -1027,11 +1060,11 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
 
     /** userId 集 → bs_user 批量回查索引 */
     private Map<String, User> usersByIds(Collection<String> userIds) {
-        List<String> ids = userIds.stream().filter(Objects::nonNull).distinct().toList();
-        if (ids.isEmpty()) {
+        List<String> userIdList = userIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (userIdList.isEmpty()) {
             return Map.of();
         }
-        return userDao.selectByIds(ids).stream()
+        return userDao.selectByIds(userIdList).stream()
                 .collect(Collectors.toMap(User::getUserId, user -> user, (a, b) -> a));
     }
 
@@ -1040,28 +1073,28 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
      * 可见性谓词 Java 收口（原 SQL JOIN WHERE 里的 state 过滤），保持关系行顺序。
      * total 语义 = 过滤后集合大小，与原 JOIN COUNT 同口径（每用户关系行有界）
      */
-    private List<Post> relationPosts(List<PostRelationRow> rows, Predicate<Post> visible) {
-        if (rows.isEmpty()) {
+    private List<Post> relationPosts(List<PostRelationRow> postRelationRowList, Predicate<Post> visible) {
+        if (postRelationRowList.isEmpty()) {
             return List.of();
         }
-        List<String> postIds = rows.stream().map(PostRelationRow::getPostId).distinct().toList();
-        Map<String, Post> postsById = postDao.selectByIds(postIds).stream()
+        List<String> postIdList = postRelationRowList.stream().map(PostRelationRow::getPostId).distinct().toList();
+        Map<String, Post> postsById = postDao.selectByIds(postIdList).stream()
                 .collect(Collectors.toMap(Post::getPostId, post -> post, (a, b) -> a));
-        List<Post> visibleRows = new ArrayList<>(rows.size());
-        for (PostRelationRow row : rows) {
+        List<Post> visiblePostList = new ArrayList<>(postRelationRowList.size());
+        for (PostRelationRow row : postRelationRowList) {
             Post post = postsById.get(row.getPostId());
             if (post != null && visible.test(post)) {
-                visibleRows.add(post);
+                visiblePostList.add(post);
             }
         }
-        return visibleRows;
+        return visiblePostList;
     }
 
     /** 可见行切片成页：只对页内行做计数/作者回查，过滤集有界（每用户关系行有界） */
-    private List<PostEntity> pageOf(List<Post> rows, int offset, int limit) {
-        List<Post> page = rows.stream().skip(offset).limit(limit).toList();
-        fillPostExtras(page);
-        return page.stream().map(this::toPostEntity).toList();
+    private List<PostEntity> pageOf(List<Post> postList, int offset, int limit) {
+        List<Post> pagePostList = postList.stream().skip(offset).limit(limit).toList();
+        fillPostExtras(pagePostList);
+        return pagePostList.stream().map(this::toPostEntity).toList();
     }
 
     /** 点赞者视角可见性：NORMAL / 待审 / 驳回照常展示（草稿从未公开、已删除一律过滤） */
@@ -1124,9 +1157,9 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
         return postEntity;
     }
 
-    private String toImagesJson(List<String> images) {
+    private String toImagesJson(List<String> imageList) {
         try {
-            return objectMapper.writeValueAsString(images);
+            return objectMapper.writeValueAsString(imageList);
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("帖子图片序列化失败", e);
         }
@@ -1157,29 +1190,29 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
      *
      * <p>缺行补 0（存量语义）：窄表行诞生于审核通过，票 02 之前过审的历史评论没有计数行。
      */
-    private List<PostCommentEntity> toCommentEntities(List<PostComment> commentRows) {
-        if (commentRows.isEmpty()) {
+    private List<PostCommentEntity> toCommentEntities(List<PostComment> commentList) {
+        if (commentList.isEmpty()) {
             return List.of();
         }
-        Map<String, Long> likeCounts = likeCountsOf(commentRows.stream().map(PostComment::getCommentId).toList());
-        fillAuthorsAndRejectReasons(commentRows);
-        List<PostCommentEntity> commentEntities = new ArrayList<>(commentRows.size());
-        for (PostComment commentRow : commentRows) {
+        Map<String, Long> likeCounts = likeCountsOf(commentList.stream().map(PostComment::getCommentId).toList());
+        fillAuthorsAndRejectReasons(commentList);
+        List<PostCommentEntity> commentEntityList = new ArrayList<>(commentList.size());
+        for (PostComment commentRow : commentList) {
             commentRow.setLikeCount(likeCounts.getOrDefault(commentRow.getCommentId(), 0L));
-            commentEntities.add(toCommentEntity(commentRow));
+            commentEntityList.add(toCommentEntity(commentRow));
         }
-        return commentEntities;
+        return commentEntityList;
     }
 
     /**
      * 作者昵称（bs_user）与审核未通过理由（content_review 最新 REJECT 行）批量回填：
      * 原 rootCommentJoins / 楼内 / 单行语句里的两个展示 JOIN 列，统一到这里多查一次
      */
-    private void fillAuthorsAndRejectReasons(List<PostComment> rows) {
-        Map<String, User> users = usersByIds(rows.stream().map(PostComment::getUserId).toList());
+    private void fillAuthorsAndRejectReasons(List<PostComment> commentList) {
+        Map<String, User> users = usersByIds(commentList.stream().map(PostComment::getUserId).toList());
         Map<String, String> rejectReasons = latestRejectReasons(ReviewTargetTypeVO.COMMENT,
-                rows.stream().map(PostComment::getCommentId).toList());
-        for (PostComment row : rows) {
+                commentList.stream().map(PostComment::getCommentId).toList());
+        for (PostComment row : commentList) {
             User user = users.get(row.getUserId());
             row.setAuthorNickname(user == null ? null : user.getNickname());
             row.setRejectReason(rejectReasons.get(row.getCommentId()));
@@ -1187,12 +1220,12 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     }
 
     /** 每 target 最新一轮 REJECT 行的理由（物理 id 最大者，单表取全量后 Java 裁决；缺行 = 未被拒过） */
-    private Map<String, String> latestRejectReasons(ReviewTargetTypeVO targetType, List<String> targetIds) {
-        if (targetIds.isEmpty()) {
+    private Map<String, String> latestRejectReasons(ReviewTargetTypeVO targetType, List<String> targetIdList) {
+        if (targetIdList.isEmpty()) {
             return Map.of();
         }
         Map<String, ContentReview> latestByTarget = new HashMap<>();
-        for (ContentReview row : moderationDao.selectRejectRowsByTargetIds(targetType.name(), targetIds)) {
+        for (ContentReview row : contentReviewDao.selectRejectRowsByTargetIds(targetType.name(), targetIdList)) {
             latestByTarget.merge(row.getTargetId(), row,
                     (older, newer) -> newer.getId() != null && (older.getId() == null || newer.getId() > older.getId()) ? newer : older);
         }
@@ -1206,19 +1239,19 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
      * （被指向评论被删/未通过时昵称仍可读；父行缺失 = 老楼/漂移，reply_to 落 null 与原 LEFT JOIN 一致），
      * 指向昵称再经 bs_user 批量回查。作者/驳回理由等公共列仍走 {@link #toCommentEntities}
      */
-    private List<PostCommentEntity> toReplyEntities(List<PostComment> rows) {
-        if (rows.isEmpty()) {
+    private List<PostCommentEntity> toReplyEntities(List<PostComment> commentList) {
+        if (commentList.isEmpty()) {
             return List.of();
         }
-        List<String> parentIds = rows.stream().map(PostComment::getParentId)
+        List<String> parentIdList = commentList.stream().map(PostComment::getParentId)
                 .filter(parentId -> parentId != null && !PostCommentEntity.NO_REFERENCE.equals(parentId))
                 .distinct().toList();
-        Map<String, PostComment> parentsById = parentIds.isEmpty() ? Map.of()
-                : commentDao.selectByIds(parentIds).stream()
+        Map<String, PostComment> parentsById = parentIdList.isEmpty() ? Map.of()
+                : commentDao.selectByIds(parentIdList).stream()
                         .collect(Collectors.toMap(PostComment::getCommentId, parent -> parent, (a, b) -> a));
         Map<String, User> users = usersByIds(parentsById.values().stream()
                 .map(PostComment::getUserId).filter(Objects::nonNull).toList());
-        for (PostComment row : rows) {
+        for (PostComment row : commentList) {
             PostComment parent = parentsById.get(row.getParentId());
             if (parent == null) {
                 continue;
@@ -1227,13 +1260,13 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
             User parentUser = users.get(parent.getUserId());
             row.setReplyToNickname(parentUser == null ? null : parentUser.getNickname());
         }
-        return toCommentEntities(rows);
+        return toCommentEntities(commentList);
     }
 
     /** 页内评论 id 集 → 窄表赞数（缺行不在返回值里，由调用方按 0 处理） */
-    private Map<String, Long> likeCountsOf(List<String> commentIds) {
-        Map<String, Long> likeCounts = new HashMap<>(commentIds.size());
-        for (PostCommentLikeCount countRow : commentDao.selectLikeCountsByIds(commentIds)) {
+    private Map<String, Long> likeCountsOf(List<String> commentIdList) {
+        Map<String, Long> likeCounts = new HashMap<>(commentIdList.size());
+        for (PostCommentLikeCount countRow : postCommentLikeCountDao.selectLikeCountsByIds(commentIdList)) {
             likeCounts.put(countRow.getCommentId(), countRow.getLikeCount());
         }
         return likeCounts;

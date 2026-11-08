@@ -196,8 +196,8 @@ public class ChatRecallReportIntegrationTest extends CommunityApiTestBase {
     }
 
     private String sendText(String roomId, String clientMsgId, String content, Session sender) {
-        JsonNode response = postJson("/api/chat/rooms/" + roomId + "/messages",
-                Map.of("clientMsgId", clientMsgId, "msgType", "TEXT", "content", content), sender);
+        JsonNode response = postJson("/api/chat/rooms/messages",
+                Map.of("roomId", roomId, "clientMsgId", clientMsgId, "msgType", "TEXT", "content", content), sender);
         assertSuccess(response, "发送消息 " + clientMsgId);
         String messageId = response.path("data").path("messageId").asText();
         assertUuidId(messageId); // uuid-biz-id 票 04：messageId 必须是可解析的 UUID 字符串
@@ -205,8 +205,8 @@ public class ChatRecallReportIntegrationTest extends CommunityApiTestBase {
     }
 
     private String sendCard(String roomId, String postId, Session sender) {
-        JsonNode response = postJson("/api/chat/rooms/" + roomId + "/messages",
-                Map.of("clientMsgId", postId, "msgType", "CARD", "refType", "POST", "refId", postId), sender); // postId 是 36 位 UUID，直接充当 clientMsgId（≤36 限制）
+        JsonNode response = postJson("/api/chat/rooms/messages",
+                Map.of("roomId", roomId, "clientMsgId", postId, "msgType", "CARD", "refType", "POST", "refId", postId), sender); // postId 是 36 位 UUID，直接充当 clientMsgId（≤36 限制）
         assertSuccess(response, "发送卡片消息");
         return response.path("data").path("messageId").asText();
     }

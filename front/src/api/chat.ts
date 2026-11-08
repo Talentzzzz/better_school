@@ -23,6 +23,7 @@ export function listMessages(roomId: number, params: { beforeSeq?: number; limit
 }
 
 export interface SendMessageBody {
+  roomId: number
   clientMsgId: string
   msgType: 'TEXT' | 'IMAGE' | 'CARD'
   content?: string
@@ -30,8 +31,8 @@ export interface SendMessageBody {
   refId?: number
 }
 
-export function sendMessage(roomId: number, body: SendMessageBody) {
-  return httpPost<ChatMessage>(`/chat/rooms/${roomId}/messages`, body)
+export function sendMessage(body: SendMessageBody) {
+  return httpPost<ChatMessage>('/chat/rooms/messages', body)
 }
 
 export function markRead(roomId: number) {

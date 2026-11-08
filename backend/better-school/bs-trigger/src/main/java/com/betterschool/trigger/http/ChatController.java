@@ -64,22 +64,27 @@ public class ChatController implements IChatService {
     @Override
     @PostMapping("/rooms/direct")
     public Response<ChatRoomResponseDTO> createDirectRoom(@Valid @RequestBody CreateDirectRoomRequestDTO request) {
-        RoomEntity room = chatSendService.createDirectRoom(SecurityUtils.currentUserId(),
+        RoomEntity roomEntity = chatSendService.createDirectRoom(SecurityUtils.currentUserId(),
                 request.getTargetUserId(), parseRoomSource(request.getSource()));
         ChatRoomResponseDTO dto = new ChatRoomResponseDTO();
-        dto.setRoomId(room.getRoomId());
+        dto.setRoomId(roomEntity.getRoomId());
         return Response.ok(dto);
     }
 
     @Override
-    @PostMapping("/rooms/{roomId}/messages")
-    public Response<ChatMessageResponseDTO> sendMessage(@PathVariable String roomId,
-                                                        @Valid @RequestBody SendMessageRequestDTO request) {
-        MessageEntity message = chatSendService.sendMessage(roomId, SecurityUtils.currentUserId(),
-                request.getClientMsgId(), parseMsgType(request.getMsgType()), request.getContent(),
-                parseRefType(request.getRefType()), request.getRefId());
-        ChatMessageResponseDTO dto = toMessageResponseDTO(message, null);
-        fillSenderInfo(dto, message.getFromUserId());
+    @PostMapping("/rooms/messages")
+    public Response<ChatMessageResponseDTO> sendMessage(@Valid @RequestBody SendMessageRequestDTO request) {
+        MessageEntity draftEntity = new MessageEntity();
+        draftEntity.setRoomId(request.getRoomId());
+        draftEntity.setFromUserId(SecurityUtils.currentUserId());
+        draftEntity.setClientMsgId(request.getClientMsgId());
+        draftEntity.setMsgType(parseMsgType(request.getMsgType()));
+        draftEntity.setContent(request.getContent());
+        draftEntity.setRefType(parseRefType(request.getRefType()));
+        draftEntity.setRefId(request.getRefId());
+        MessageEntity messageEntity = chatSendService.sendMessage(draftEntity);
+        ChatMessageResponseDTO dto = toMessageResponseDTO(messageEntity, null);
+        fillSenderInfo(dto, messageEntity.getFromUserId());
         return Response.ok(dto);
     }
 
@@ -226,9 +231,9 @@ public class ChatController implements IChatService {
         if (fromUserId == null) {
             return dto;
         }
-        UserEntity sender = userRepository.findById(fromUserId);
-        dto.setFromNickname(sender == null ? null : sender.getNickname());
-        dto.setFromAvatar(sender == null ? null : sender.getAvatar());
+        UserEntity senderEntity = userRepository.findById(fromUserId);
+        dto.setFromNickname(senderEntity == null ? null : senderEntity.getNickname());
+        dto.setFromAvatar(senderEntity == null ? null : senderEntity.getAvatar());
         return dto;
     }
 
@@ -244,27 +249,27 @@ public class ChatController implements IChatService {
         Map<String, UserEntity> senders = userRepository.listByIds(senderIds).stream()
                 .collect(Collectors.toMap(UserEntity::getUserId, Function.identity()));
         for (ChatMessageResponseDTO dto : dtos) {
-            UserEntity sender = senders.get(dto.getFromUserId());
-            dto.setFromNickname(sender == null ? null : sender.getNickname());
-            dto.setFromAvatar(sender == null ? null : sender.getAvatar());
+            UserEntity senderEntity = senders.get(dto.getFromUserId());
+            dto.setFromNickname(senderEntity == null ? null : senderEntity.getNickname());
+            dto.setFromAvatar(senderEntity == null ? null : senderEntity.getAvatar());
         }
         return dtos;
     }
 
-    private ChatMessageResponseDTO toMessageResponseDTO(MessageEntity message, Long deliverySeq) {
+    private ChatMessageResponseDTO toMessageResponseDTO(MessageEntity messageEntity, Long deliverySeq) {
         ChatMessageResponseDTO dto = new ChatMessageResponseDTO();
-        dto.setRoomId(message.getRoomId());
-        dto.setMessageId(message.getMessageId());
-        dto.setSeq(message.getSeq());
-        dto.setFromUserId(message.getFromUserId());
-        dto.setMsgType(message.getMsgType().name());
-        dto.setStatus(message.getStatus().name());
-        dto.setContent(message.getContent());
-        dto.setRefType(message.getRefType() == null ? null : message.getRefType().name());
-        dto.setRefId(message.getRefId());
-        dto.setClientMsgId(message.getClientMsgId());
+        dto.setRoomId(messageEntity.getRoomId());
+        dto.setMessageId(messageEntity.getMessageId());
+        dto.setSeq(messageEntity.getSeq());
+        dto.setFromUserId(messageEntity.getFromUserId());
+        dto.setMsgType(messageEntity.getMsgType().name());
+        dto.setStatus(messageEntity.getStatus().name());
+        dto.setContent(messageEntity.getContent());
+        dto.setRefType(messageEntity.getRefType() == null ? null : messageEntity.getRefType().name());
+        dto.setRefId(messageEntity.getRefId());
+        dto.setClientMsgId(messageEntity.getClientMsgId());
         dto.setDeliverySeq(deliverySeq);
-        dto.setCreatedAt(message.getCreatedAt());
+        dto.setCreatedAt(messageEntity.getCreatedAt());
         return dto;
     }
 }

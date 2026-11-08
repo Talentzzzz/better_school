@@ -64,13 +64,13 @@ class TimeoutTaskCallbackIntegrationTest extends CommunityApiTestBase {
         Session buyer = registerAndLogin("13800001104", "买家2");
         String productId = createApprovedProduct(seller, "九成新键盘");
         String orderId = createProductOrder(buyer, productId);
-        TimeoutTaskEntity task = payTask(Constants.PRODUCT_ORDER_PAY_TIMEOUT, orderId);
+        TimeoutTaskEntity taskEntity = payTask(Constants.PRODUCT_ORDER_PAY_TIMEOUT, orderId);
 
-        callback(timeoutTaskCallback, task);
+        callback(timeoutTaskCallback, taskEntity);
         long syncAfterFirst = searchSyncCount(productId);
 
         // 中心 at-least-once：同键重投（如回调成功但状态未落，进程崩溃后下轮重扫）
-        Set<String> failures = callback(timeoutTaskCallback, task);
+        Set<String> failures = callback(timeoutTaskCallback, taskEntity);
 
         assertThat(failures).as("重复回调仍按成功（未命中状态机 = 幂等成功）").isEmpty();
         assertThat(productOrderStatus(orderId)).isEqualTo("CANCELLED");

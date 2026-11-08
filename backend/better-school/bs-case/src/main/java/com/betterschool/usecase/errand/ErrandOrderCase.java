@@ -95,10 +95,10 @@ public class ErrandOrderCase {
      * 通过后转 PENDING_PAYMENT 且支付超时随状态迁移同事务注册
      */
     public void submitDraft(String orderId, String userId) {
-        ErrandOrderEntity draft = errandOrderService.getOwnedDraft(orderId, userId);
+        ErrandOrderEntity draftEntity = errandOrderService.getOwnedDraft(orderId, userId);
         creditAccountService.ensureOperable(userId);
-        validateDraftComplete(draft);
-        if (moderationScreenService.screen(draft.getDescription())) {
+        validateDraftComplete(draftEntity);
+        if (moderationScreenService.screen(draftEntity.getDescription())) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "内容包含违规词汇，请修改后重试");
         }
         errandOrderService.submitDraft(orderId, userId);
@@ -315,14 +315,14 @@ public class ErrandOrderCase {
     }
 
     /** 提交门槛：必填 = 直接发布的必填项（类型/描述/取送地点/悬赏≥10/时限） */
-    private void validateDraftComplete(ErrandOrderEntity draft) {
-        if (draft.getType() == null
-                || isBlank(draft.getDescription())
-                || isBlank(draft.getPickupLocation())
-                || isBlank(draft.getDeliveryLocation())
-                || draft.getReward() == null
-                || draft.getReward().compareTo(MIN_REWARD) < 0
-                || draft.getTimeLimitHours() == null) {
+    private void validateDraftComplete(ErrandOrderEntity draftEntity) {
+        if (draftEntity.getType() == null
+                || isBlank(draftEntity.getDescription())
+                || isBlank(draftEntity.getPickupLocation())
+                || isBlank(draftEntity.getDeliveryLocation())
+                || draftEntity.getReward() == null
+                || draftEntity.getReward().compareTo(MIN_REWARD) < 0
+                || draftEntity.getTimeLimitHours() == null) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR,
                     "草稿内容不完整，请补全类型、描述、取送地点、悬赏（不低于 10）与时限后再提交");
         }

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.post.IPostViewCountDao">
+
+    <!-- 计数窄表批量读（票 05 拆两段之二）：view 段换源（feed-index-uv 票 02）：post.view_count 停读，
+         走 post_view_count（真相源 user_view_history）。仓储拼回 PO/实体——每次读都查、在仓储拼回——
+         缓存命中路径的数也恒等于库值（acceptance C5）；缺行 = 计数 0（COALESCE 在仓储做），
+         与原 LEFT JOIN 合成口径一致 -->
+    <select id="selectViewCountsByPostIds" resultType="com.betterschool.infrastructure.dao.post.po.Post">
+        SELECT c.post_id AS postId, c.view_count AS viewCount
+        FROM post_view_count c
+        WHERE c.post_id IN
+        <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
+    </select>
+
+    <!-- 加速列 upsert（行懒建，与 post_like_count 同款 ODKU）；增量 = insertViewHistory 的影响行数，
+         不是 ODKU 的 affected rows——同秒重复刷 viewed_at 会把 ODKU 的 affected rows 打乱，不能拿来当增量 -->
+    <update id="upsertViewCount">
+        INSERT INTO post_view_count (post_id, view_count, create_time, update_time)
+        VALUES (#{postId}, #{delta}, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            view_count  = view_count + #{delta},
+            update_time = NOW()
+    </update>
+
+    <!-- 浏览 UV 加速列校准第一步：清掉没有明细行的孤儿计数行（懒建行口径：无浏览不建行） -->
+    <delete id="deleteViewCountsMissingHistory">
+        DELETE FROM post_view_count
+         WHERE NOT EXISTS (SELECT 1
+                             FROM user_view_history h
+                            WHERE h.post_id = post_view_count.post_id)
+    </delete>
+
+    <!-- 重灌：post_view_count 重投影 = user_view_history 行数（ODKU：缺行补建、漂移值刷新、
+         已对齐的行落回同值，幂等不动点） -->
+    <insert id="recalibrateViewCounts">
+        INSERT INTO post_view_count (post_id, view_count, create_time, update_time)
+        SELECT h.post_id, COUNT(*), NOW(), NOW()
+          FROM user_view_history h
+         GROUP BY h.post_id
+        ON DUPLICATE KEY UPDATE
+            view_count  = VALUES(view_count),
+            update_time = NOW()
+    </insert>
+
+</mapper>

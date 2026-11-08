@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.notification.INotificationSeqDao">
+
+    <insert id="upsertIncreaseSeq">
+        INSERT INTO notification_seq (user_id, scope, seq, create_time, update_time)
+        VALUES (#{userId}, #{scope}, 1, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE seq = seq + 1, update_time = NOW()
+    </insert>
+
+    <select id="selectSeq" resultType="long">
+        SELECT seq
+        FROM notification_seq
+        WHERE user_id = #{userId} AND scope = #{scope}
+    </select>
+
+</mapper>

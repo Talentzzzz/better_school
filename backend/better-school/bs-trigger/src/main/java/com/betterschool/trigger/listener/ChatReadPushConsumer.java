@@ -1,6 +1,6 @@
 package com.betterschool.trigger.listener;
 
-import com.betterschool.domain.chat.model.valobj.ChatReadPushMessage;
+import com.betterschool.domain.chat.model.valobj.ChatReadPushEvent;
 import com.betterschool.trigger.ws.ChatWsPushService;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,8 +27,8 @@ public class ChatReadPushConsumer implements RocketMQListener<String> {
     @Override
     public void onMessage(String payload) {
         try {
-            ChatReadPushMessage message = objectMapper.readValue(payload, ChatReadPushMessage.class);
-            chatWsPushService.pushRead(message);
+            ChatReadPushEvent chatReadPushEvent = objectMapper.readValue(payload, ChatReadPushEvent.class);
+            chatWsPushService.pushRead(chatReadPushEvent);
         } catch (Exception e) {
             log.error("[ChatReadPushConsumer] READ 推送失败 payload={}", payload, e);
         }

@@ -23,12 +23,12 @@ public class CommentLikeCase {
     private final INotificationService notificationService;
 
     public void like(String commentId, String userId) {
-        PostCommentEntity comment = communityCommentService.likeComment(commentId, userId);
-        if (comment.getUserId().equals(userId)) {
+        PostCommentEntity commentEntity = communityCommentService.likeComment(commentId, userId);
+        if (commentEntity.getUserId().equals(userId)) {
             return; // 自赞不发
         }
         try {
-            notificationService.sendInteraction(comment.getUserId(), userId, NotificationScopeVO.INTERACTION_LIKE, NotificationTypeVO.COMMENT_LIKED,
+            notificationService.sendInteraction(commentEntity.getUserId(), userId, NotificationScopeVO.INTERACTION_LIKE, NotificationTypeVO.COMMENT_LIKED,
                     "互动通知", "你的评论收到了一个赞", "COMMENT", commentId,
                     NotificationTypeVO.COMMENT_LIKED.name() + ":" + commentId + ":" + userId);
         } catch (Exception e) {

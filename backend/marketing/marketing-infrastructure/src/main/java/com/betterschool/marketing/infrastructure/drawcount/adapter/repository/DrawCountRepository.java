@@ -5,6 +5,7 @@ import com.betterschool.marketing.domain.drawcount.adapter.repository.IDrawCount
 import com.betterschool.marketing.domain.drawcount.model.entity.DrawCountBucketEntity;
 import com.betterschool.marketing.domain.drawcount.model.entity.DrawCountDetailEntity;
 import com.betterschool.marketing.infrastructure.drawcount.dao.IDrawCountDao;
+import com.betterschool.marketing.infrastructure.drawcount.dao.IDrawCountDetailDao;
 import com.betterschool.marketing.infrastructure.drawcount.dao.po.DrawCountBucketPO;
 import com.betterschool.marketing.infrastructure.drawcount.dao.po.DrawCountDetailPO;
 import com.betterschool.marketing.types.id.IIdGenerator;
@@ -29,6 +30,7 @@ import java.util.List;
 public class DrawCountRepository implements IDrawCountRepository {
 
     private final IDrawCountDao drawCountDao;
+    private final IDrawCountDetailDao drawCountDetailDao;
     private final IDrawCountConfigPort drawCountConfigPort;
     private final TransactionTemplate transactionTemplate;
     private final IIdGenerator idGenerator;
@@ -75,7 +77,7 @@ public class DrawCountRepository implements IDrawCountRepository {
 
     @Override
     public boolean existsDetailForUpdate(String refId) {
-        return drawCountDao.selectDetailIdForUpdate(refId) != null;
+        return drawCountDetailDao.selectDetailIdForUpdate(refId) != null;
     }
 
     @Override
@@ -91,7 +93,7 @@ public class DrawCountRepository implements IDrawCountRepository {
         detailPO.setRefId(detail.getRefId());
         detailPO.setCreateTime(detail.getCreateTime());
         detailPO.setUpdateTime(detail.getUpdateTime());
-        if (drawCountDao.insertIgnoreDetail(detailPO) == 0) {
+        if (drawCountDetailDao.insertIgnoreDetail(detailPO) == 0) {
             return false;
         }
         // 桶已在 listAvailableBucketsForUpdate 里加了行锁，这里必然命中 1 行；命中 0 行说明不变量被破坏

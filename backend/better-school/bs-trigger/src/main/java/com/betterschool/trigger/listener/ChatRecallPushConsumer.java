@@ -1,6 +1,6 @@
 package com.betterschool.trigger.listener;
 
-import com.betterschool.domain.chat.model.valobj.ChatRecallPushMessage;
+import com.betterschool.domain.chat.model.valobj.ChatRecallPushEvent;
 import com.betterschool.trigger.ws.ChatWsPushService;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,8 +26,8 @@ public class ChatRecallPushConsumer implements RocketMQListener<String> {
     @Override
     public void onMessage(String payload) {
         try {
-            ChatRecallPushMessage message = objectMapper.readValue(payload, ChatRecallPushMessage.class);
-            chatWsPushService.pushRecall(message);
+            ChatRecallPushEvent chatRecallPushEvent = objectMapper.readValue(payload, ChatRecallPushEvent.class);
+            chatWsPushService.pushRecall(chatRecallPushEvent);
         } catch (Exception e) {
             log.error("[ChatRecallPushConsumer] RECALL 推送失败 payload={}", payload, e);
         }

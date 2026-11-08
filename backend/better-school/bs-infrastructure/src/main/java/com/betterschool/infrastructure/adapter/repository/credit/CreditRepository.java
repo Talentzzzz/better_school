@@ -3,8 +3,9 @@ package com.betterschool.infrastructure.adapter.repository.credit;
 import com.betterschool.domain.credit.adapter.repository.ICreditRepository;
 import com.betterschool.domain.credit.model.entity.CreditDetailEntity;
 import com.betterschool.domain.credit.model.valobj.CreditChangeResult;
-import com.betterschool.infrastructure.dao.credit.ICreditDao;
+import com.betterschool.infrastructure.dao.credit.IUserCreditDao;
 import com.betterschool.infrastructure.dao.credit.po.CreditDetail;
+import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -26,54 +27,57 @@ public class CreditRepository implements ICreditRepository {
     private static final String STATE_NORMAL = "NORMAL";
     private static final String STATE_BANNED = "BANNED";
 
-    private final ICreditDao creditDao;
+    /** bs_user（credit_score/state 列）读写，按主表归属 user 域 DAO */
+    private final IUserDao userDao;
+    /** 信用分流水（user_credit_detail）按表拆分的 DAO */
+    private final IUserCreditDao userCreditDao;
     private final TransactionTemplate transactionTemplate;
 
     @Override
     public String getStatus(String userId) {
-        return creditDao.selectStatus(userId);
+        return userDao.selectStatus(userId);
     }
 
     @Override
     public int getCreditScore(String userId) {
-        Integer creditScore = creditDao.selectCreditScore(userId);
+        Integer creditScore = userDao.selectCreditScore(userId);
         return creditScore == null ? 0 : creditScore;
     }
 
     @Override
     public void updateCreditScore(String userId, int delta) {
-        creditDao.updateCreditScore(userId, delta);
+        userDao.updateCreditScore(userId, delta);
     }
 
     @Override
     public boolean insertCreditDetail(CreditDetailEntity creditDetailEntity) {
-        return creditDao.insertIgnoreCreditDetail(toPO(creditDetailEntity)) == 1;
+        return userCreditDao.insertIgnoreCreditDetail(toPO(creditDetailEntity)) == 1;
     }
 
     @Override
     public int sumTodayChange(String userId, String reasonType, LocalDate today) {
-        Integer sum = creditDao.sumTodayChange(userId, reasonType, today.atStartOfDay(), today.plusDays(1).atStartOfDay());
+        Integer sum = userCreditDao.sumTodayChange(userId, reasonType, today.atStartOfDay(), today.plusDays(1).atStartOfDay());
         return sum == null ? 0 : sum;
     }
 
     @Override
     public boolean banIfLowScore(String userId) {
-        return creditDao.banIfLowScore(userId) == 1;
+        return userDao.banIfLowScore(userId) == 1;
     }
 
     @Override
     public List<CreditDetailEntity> pageList(String userId, int offset, int limit) {
-        return creditDao.selectPage(userId, offset, limit).stream().map(this::toEntity).toList();
+        return userCreditDao.selectPage(userId, offset, limit).stream().map(this::toEntity).toList();
     }
 
     @Override
     public long countDetails(String userId) {
-        return creditDao.countDetails(userId);
+        return userCreditDao.countDetails(userId);
     }
 
     @Override
     public boolean updateStatus(String userId, String status) {
-        return creditDao.updateStatus(userId, status) == 1;
+        return userDao.updateStatus(userId, status) == 1;
     }
 
     // ---------- 原子用例：仓储方法即一次事务（REQUIRED，与既有事务合流） ----------

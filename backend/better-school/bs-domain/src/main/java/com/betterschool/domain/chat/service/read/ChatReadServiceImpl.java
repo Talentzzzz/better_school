@@ -21,8 +21,8 @@ public class ChatReadServiceImpl implements IChatReadService {
 
     @Override
     public long markRead(String roomId, String userId) {
-        UserRoomEntity self = chatRepository.findUserRoom(roomId, userId);
-        if (self == null) {
+        UserRoomEntity selfEntity = chatRepository.findUserRoom(roomId, userId);
+        if (selfEntity == null) {
             // 成员行不存在 = 会话不存在或非成员，两种对外口径不变（先查 room 保 404 语义）
             if (chatRepository.findRoomById(roomId) == null) {
                 throw new BusinessException(ResponseCode.NOT_FOUND, "会话不存在");
@@ -30,9 +30,9 @@ public class ChatReadServiceImpl implements IChatReadService {
             throw new BusinessException(ResponseCode.FORBIDDEN, "非会话成员");
         }
         long readSeq = chatRepository.findRoomById(roomId).getLastSeq();
-        if (self.getReadSeq() >= readSeq) {
+        if (selfEntity.getReadSeq() >= readSeq) {
             // 已追平：连守卫 UPDATE 都省了，无事件无写放大
-            return self.getReadSeq();
+            return selfEntity.getReadSeq();
         }
         chatRepository.advanceReadWatermark(roomId, userId, readSeq);
         return readSeq;
@@ -43,8 +43,8 @@ public class ChatReadServiceImpl implements IChatReadService {
         if (chatRepository.findRoomById(roomId) == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "会话不存在");
         }
-        UserRoomEntity self = chatRepository.findUserRoom(roomId, userId);
-        if (self == null) {
+        UserRoomEntity selfEntity = chatRepository.findUserRoom(roomId, userId);
+        if (selfEntity == null) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "非会话成员");
         }
         // hidden_at 由 SQL NOW() 落库（时刻一律数据库时钟；该列只作「非 NULL 即隐藏」判断）

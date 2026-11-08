@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.chat.IRoomDao">
+
+    <!-- 会话表列口径（sql.md）：id 是纯物理自增（内部键），room_id 是业务 ID（UUID 字符串，应用层 insert 前发号）；
+         user_room.room_id、room_member.room_id、message.room_id、timeline.room_id 引用的都是业务 ID（room.room_id）。
+         双维度拆分（chat-member-table-refactor 票 01）：user_room = 用户维度会话状态（贴 user_id 片键，uk 首列前置），
+         room_member = 会话维度名册「这个会话有谁」（贴 room_id 片键）——对家回查/成员扇出只走名册，
+         user_room 只做 user_id 前缀查询（逐用户写路径由仓储按名册成员集驱动） -->
+    <sql id="roomColumns">
+        r.id, r.room_id, r.source, r.creator_id, r.last_seq, r.create_time, r.update_time
+    </sql>
+
+    <!-- ===== room ===== -->
+
+    <insert id="insertRoom" parameterType="com.betterschool.infrastructure.dao.chat.po.Room">
+        INSERT INTO room (room_id, source, creator_id, last_seq, create_time, update_time)
+        VALUES (#{roomId}, #{source}, #{creatorId}, #{lastSeq}, NOW(), NOW())
+    </insert>
+
+    <select id="selectRoomById" resultType="com.betterschool.infrastructure.dao.chat.po.Room">
+        SELECT <include refid="roomColumns"/>
+        FROM room r
+        WHERE r.room_id = #{roomId}
+    </select>
+
+    <!-- 发消息事务内原子取号：行锁到提交，失败回滚无空洞；取号后由 selectLastSeq 读回（须同事务同连接） -->
+    <update id="increaseLastSeq">
+        UPDATE room
+        SET last_seq    = last_seq + 1,
+            update_time = NOW()
+        WHERE room_id = #{roomId}
+    </update>
+
+    <select id="selectLastSeq" resultType="long">
+        SELECT last_seq
+        FROM room
+        WHERE room_id = #{roomId}
+    </select>
+
+    <!-- 会话列表三段查之②：按 room_id 集批量回查会话行（lastSeq 未读数真源 + source/creator_id 角色标签锚点） -->
+    <select id="selectRoomsByIds" resultType="com.betterschool.infrastructure.dao.chat.po.Room">
+        SELECT <include refid="roomColumns"/>
+        FROM room r
+        WHERE r.room_id IN
+        <foreach collection="roomIds" item="roomId" open="(" separator="," close=")">#{roomId}</foreach>
+    </select>
+
+</mapper>

@@ -87,10 +87,10 @@ public class OutboxMessageSender {
         while (!Thread.currentThread().isInterrupted()) {
             try {
                 MarkTask first = markQueue.take();
-                List<MarkTask> batch = new ArrayList<>(MARK_BATCH_SIZE);
-                batch.add(first);
-                markQueue.drainTo(batch, MARK_BATCH_SIZE - 1);
-                processBatch(batch);
+                List<MarkTask> markTaskList = new ArrayList<>(MARK_BATCH_SIZE);
+                markTaskList.add(first);
+                markQueue.drainTo(markTaskList, MARK_BATCH_SIZE - 1);
+                processBatch(markTaskList);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 log.info("outbox 标记线程已退出");
@@ -101,25 +101,25 @@ public class OutboxMessageSender {
         }
     }
 
-    private void processBatch(List<MarkTask> batch) {
-        List<Long> sentIds = new ArrayList<>();
-        List<Long> retryIds = new ArrayList<>();
-        List<Long> deadIds = new ArrayList<>();
-        for (MarkTask task : batch) {
+    private void processBatch(List<MarkTask> markTaskList) {
+        List<Long> sentIdList = new ArrayList<>();
+        List<Long> retryIdList = new ArrayList<>();
+        List<Long> deadIdList = new ArrayList<>();
+        for (MarkTask task : markTaskList) {
             switch (task.action) {
-                case MARK_SENT -> sentIds.add(task.id);
-                case INCREMENT_RETRY -> retryIds.add(task.id);
-                case MARK_DEAD -> deadIds.add(task.id);
+                case MARK_SENT -> sentIdList.add(task.id);
+                case INCREMENT_RETRY -> retryIdList.add(task.id);
+                case MARK_DEAD -> deadIdList.add(task.id);
             }
         }
-        if (!sentIds.isEmpty()) {
-            outboxDao.markSentBatch(sentIds);
+        if (!sentIdList.isEmpty()) {
+            outboxDao.markSentBatch(sentIdList);
         }
-        if (!retryIds.isEmpty()) {
-            outboxDao.incrementRetryBatch(retryIds);
+        if (!retryIdList.isEmpty()) {
+            outboxDao.incrementRetryBatch(retryIdList);
         }
-        if (!deadIds.isEmpty()) {
-            outboxDao.markDeadBatch(deadIds);
+        if (!deadIdList.isEmpty()) {
+            outboxDao.markDeadBatch(deadIdList);
         }
     }
 

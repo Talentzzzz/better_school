@@ -28,38 +28,38 @@ public class ChatRecallServiceImpl implements IChatRecallService {
 
     @Override
     public void recall(String roomId, Long seq, String userId) {
-        MessageEntity message = chatRepository.findMessage(roomId, seq);
-        if (message == null) {
+        MessageEntity messageEntity = chatRepository.findMessage(roomId, seq);
+        if (messageEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "消息不存在");
         }
-        if (message.getFromUserId() == null || !message.getFromUserId().equals(userId)) {
+        if (messageEntity.getFromUserId() == null || !messageEntity.getFromUserId().equals(userId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "仅发送者本人可撤回");
         }
-        if (message.isRecalled()) {
+        if (messageEntity.isRecalled()) {
             return;
         }
-        if (LocalDateTime.now().isAfter(message.getCreatedAt().plus(RECALL_WINDOW))) {
+        if (LocalDateTime.now().isAfter(messageEntity.getCreatedAt().plus(RECALL_WINDOW))) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "已超过可撤回时间");
         }
-        doRecall(message, RecallByVO.USER);
+        doRecall(messageEntity, RecallByVO.USER);
     }
 
     @Override
     public void forceRecallByAuditor(String messageId) {
-        MessageEntity message = chatRepository.findMessageById(messageId);
-        if (message == null) {
+        MessageEntity messageEntity = chatRepository.findMessageById(messageId);
+        if (messageEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "消息不存在");
         }
-        if (message.isRecalled()) {
+        if (messageEntity.isRecalled()) {
             // 已自行撤回：只落举报处理结论，不覆盖撤回者、不重复推送
             return;
         }
-        doRecall(message, RecallByVO.AUDITOR);
+        doRecall(messageEntity, RecallByVO.AUDITOR);
     }
 
-    private void doRecall(MessageEntity message, RecallByVO recalledBy) {
+    private void doRecall(MessageEntity messageEntity, RecallByVO recalledBy) {
         // 条件 UPDATE（status=NORMAL 才生效）：并发撤回先到先得，落空即已被撤回，幂等静默；
         // recalled_at 由 SQL NOW() 落库（时刻一律数据库时钟）
-        chatRepository.recallMessageWithEvent(message.getRoomId(), message.getSeq(), recalledBy);
+        chatRepository.recallMessageWithEvent(messageEntity.getRoomId(), messageEntity.getSeq(), recalledBy);
     }
 }

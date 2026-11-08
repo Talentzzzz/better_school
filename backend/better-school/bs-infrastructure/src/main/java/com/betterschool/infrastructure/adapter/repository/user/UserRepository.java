@@ -8,6 +8,7 @@ import com.betterschool.domain.user.model.valobj.GenderVO;
 import com.betterschool.domain.user.model.valobj.UserRoleVO;
 import com.betterschool.domain.user.model.valobj.UserStatusVO;
 import com.betterschool.infrastructure.dao.post.IPostDao;
+import com.betterschool.infrastructure.dao.post.IPostLikeCountDao;
 import com.betterschool.infrastructure.dao.post.po.Post;
 import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.infrastructure.dao.user.po.User;
@@ -30,8 +31,10 @@ import java.util.function.Function;
 public class UserRepository implements IUserRepository {
 
     private final IUserDao userDao;
-    /** 获赞统计回查帖 id 集 + like_count 窄表（SQL 层零 JOIN） */
+    /** 获赞统计回查帖 id 集（post 单表） */
     private final IPostDao postDao;
+    /** 获赞统计回查 like_count 窄表（post_like_count 单表，SQL 层零 JOIN） */
+    private final IPostLikeCountDao postLikeCountDao;
 
     private final RedissonClient redissonClient;
 
@@ -88,12 +91,12 @@ public class UserRepository implements IUserRepository {
     public long sumNormalPostLikeCount(String userId) {
         // 两段查拼装（原 post ⋈ post_like_count 的 SUM）：①post 单表取 NORMAL 帖 id 集；
         // ②like_count 窄表批量读，Java 求和（缺行 = 计数 0，与原 INNER JOIN 行集口径一致）
-        List<String> postIds = postDao.selectNormalIdsByUser(userId);
-        if (postIds.isEmpty()) {
+        List<String> postIdList = postDao.selectNormalIdsByUser(userId);
+        if (postIdList.isEmpty()) {
             return 0;
         }
         long total = 0;
-        for (Post countRow : postDao.selectLikeCountsByPostIds(postIds)) {
+        for (Post countRow : postLikeCountDao.selectLikeCountsByPostIds(postIdList)) {
             total += countRow.getLikeCount() == null ? 0 : countRow.getLikeCount();
         }
         return total;
@@ -114,8 +117,8 @@ public class UserRepository implements IUserRepository {
         if (viewerId != null && viewerId.equals(ownerId)) {
             return true;
         }
-        UserEntity owner = findById(ownerId);
-        return owner == null || !Boolean.FALSE.equals(switchGetter.apply(owner));
+        UserEntity ownerEntity = findById(ownerId);
+        return ownerEntity == null || !Boolean.FALSE.equals(switchGetter.apply(ownerEntity));
     }
 
     @Override
@@ -153,8 +156,8 @@ public class UserRepository implements IUserRepository {
     }
 
     @Override
-    public List<UserEntity> listByIds(List<String> userIds) {
-        return userDao.selectByIds(userIds).stream().map(this::toEntity).toList();
+    public List<UserEntity> listByIds(List<String> userIdList) {
+        return userDao.selectByIds(userIdList).stream().map(this::toEntity).toList();
     }
 
     private UserEntity toEntity(User user) {

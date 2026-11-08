@@ -24,21 +24,21 @@ public final class TimeoutCallbackFixture {
 
     /** 造一条 {@code actionTime = minutesAgo 分钟前}（已到点）的任务，taskType/bizId 原样带上 */
     public static TimeoutTaskEntity dueTask(String taskType, String bizId, int minutesAgo) {
-        TimeoutTaskEntity task = new TimeoutTaskEntity();
-        task.setTaskType(taskType);
-        task.setBizId(bizId);
-        task.setActionTime(LocalDateTime.now().minusMinutes(minutesAgo));
-        return task;
+        TimeoutTaskEntity taskEntity = new TimeoutTaskEntity();
+        taskEntity.setTaskType(taskType);
+        taskEntity.setBizId(bizId);
+        taskEntity.setActionTime(LocalDateTime.now().minusMinutes(minutesAgo));
+        return taskEntity;
     }
 
     /** 逐项驱动真分发器并逐项隔离，返回失败项的 {@code taskType:bizId}（空集 = 全部成功） */
     public static Set<String> callback(TimeoutTaskCallbackDispatcher dispatcher, TimeoutTaskEntity... tasks) {
         Set<String> failures = new LinkedHashSet<>();
-        for (TimeoutTaskEntity task : tasks) {
+        for (TimeoutTaskEntity taskEntity : tasks) {
             try {
-                dispatcher.callback(task);
+                dispatcher.callback(taskEntity);
             } catch (Exception e) {
-                failures.add(task.getTaskType() + ":" + task.getBizId());
+                failures.add(taskEntity.getTaskType() + ":" + taskEntity.getBizId());
             }
         }
         return failures;

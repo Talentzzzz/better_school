@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.comment.IPostCommentLikeDao">
+
+    <!-- 评论点赞批量写（合并器一组一个事务，一评一条语句）：
+         INSERT IGNORE 让唯一键裁决重复赞；影响行数 = 本次真正插入的行数，窄表 like_count 只按它 +N。
+         「哪几件撞了键」由调用方在本事务内回查（selectCommentLikeUserIds）定位 -->
+    <insert id="insertCommentLikes">
+        INSERT IGNORE INTO post_comment_like (comment_id, user_id, create_time, update_time)
+        VALUES
+        <foreach collection="userIds" item="userId" separator=",">
+            (#{commentId}, #{userId}, NOW(), NOW())
+        </foreach>
+    </insert>
+
+    <!-- 批内撞键定位：只查这一批的 (comment_id, user_id) -->
+    <select id="selectCommentLikeUserIds" resultType="string">
+        SELECT user_id
+        FROM post_comment_like
+        WHERE comment_id = #{commentId}
+          AND user_id IN
+        <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
+    </select>
+
+    <delete id="deleteCommentLike">
+        DELETE FROM post_comment_like
+        WHERE comment_id = #{commentId}
+          AND user_id = #{userId}
+    </delete>
+
+    <select id="selectLikedCommentIds" resultType="string">
+        SELECT comment_id
+        FROM post_comment_like
+        WHERE user_id = #{userId}
+          AND comment_id IN
+        <foreach collection="commentIds" item="commentId" open="(" separator="," close=")">#{commentId}</foreach>
+    </select>
+
+</mapper>

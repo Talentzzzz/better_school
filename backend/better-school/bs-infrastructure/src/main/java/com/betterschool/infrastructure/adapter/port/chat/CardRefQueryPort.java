@@ -28,19 +28,19 @@ public class CardRefQueryPort implements ICardRefQueryPort {
 
     @Override
     public PostStatusVO findPostStatus(String postId) {
-        PostEntity post = communityRepository.findPostById(postId);
-        return post == null ? null : post.getStatus();
+        PostEntity postEntity = communityRepository.findPostById(postId);
+        return postEntity == null ? null : postEntity.getStatus();
     }
 
     @Override
     public ProductStatusVO findProductStatus(String productId) {
-        ProductEntity product = tradeRepository.findById(productId);
-        return product == null ? null : product.getStatus();
+        ProductEntity productEntity = tradeRepository.findById(productId);
+        return productEntity == null ? null : productEntity.getStatus();
     }
 
     @Override
     public ErrandStatusVO findErrandStatus(String errandId) {
-        ErrandOrderEntity errand = errandRepository.findById(errandId);
-        return errand == null ? null : errand.getStatus();
+        ErrandOrderEntity errandEntity = errandRepository.findById(errandId);
+        return errandEntity == null ? null : errandEntity.getStatus();
     }
 }

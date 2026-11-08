@@ -19,15 +19,15 @@ public class CommunityUserQueryPort implements IUserQueryPort {
 
     @Override
     public CommunityUserVO findById(String userId) {
-        UserEntity user = userRepository.findById(userId);
-        if (user == null) {
+        UserEntity userEntity = userRepository.findById(userId);
+        if (userEntity == null) {
             return null;
         }
         CommunityUserVO userVO = new CommunityUserVO();
-        userVO.setUserId(user.getUserId());
-        userVO.setNickname(user.getNickname());
-        userVO.setShowLiked(user.getShowLiked());
-        userVO.setShowComments(user.getShowComments());
+        userVO.setUserId(userEntity.getUserId());
+        userVO.setNickname(userEntity.getNickname());
+        userVO.setShowLiked(userEntity.getShowLiked());
+        userVO.setShowComments(userEntity.getShowComments());
         return userVO;
     }
 }

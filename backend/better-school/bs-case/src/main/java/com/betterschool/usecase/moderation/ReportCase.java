@@ -114,30 +114,30 @@ public class ReportCase {
 
     /** 消息举报：举报者须为会话成员（含被移除成员，与历史可读口径一致）、不能举报自己、SYSTEM 无作者不可举报；已撤回消息可举报（追责留痕）；messageId 是 msg_id 业务键（UUID 字符串） */
     private String submitMessageReport(String reporterId, String messageId, String reason) {
-        MessageEntity message = chatRepository.findMessageById(messageId);
-        if (message == null) {
+        MessageEntity messageEntity = chatRepository.findMessageById(messageId);
+        if (messageEntity == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "消息不存在");
         }
-        if (message.getFromUserId() == null) {
+        if (messageEntity.getFromUserId() == null) {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "系统消息不支持举报");
         }
-        if (reporterId.equals(message.getFromUserId())) {
+        if (reporterId.equals(messageEntity.getFromUserId())) {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "不能举报自己的消息");
         }
-        UserRoomEntity membership = chatRepository.findUserRoom(message.getRoomId(), reporterId);
-        if (membership == null) {
+        UserRoomEntity membershipEntity = chatRepository.findUserRoom(messageEntity.getRoomId(), reporterId);
+        if (membershipEntity == null) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "仅会话成员可举报消息");
         }
         return reportService.submitReport(reporterId, ReviewTargetTypeVO.MESSAGE, messageId,
-                message.getFromUserId(), reason, messageSnapshot(message));
+                messageEntity.getFromUserId(), reason, messageSnapshot(messageEntity));
     }
 
     /** 消息举报快照（≤500 字）：TEXT/IMAGE 存载荷原文，CARD 存 ref 标识（如 CARD:PRODUCT#123） */
-    private String messageSnapshot(MessageEntity message) {
-        if (message.getMsgType() == MsgTypeVO.CARD) {
-            return "CARD:" + message.getRefType() + "#" + message.getRefId();
+    private String messageSnapshot(MessageEntity messageEntity) {
+        if (messageEntity.getMsgType() == MsgTypeVO.CARD) {
+            return "CARD:" + messageEntity.getRefType() + "#" + messageEntity.getRefId();
         }
-        return snapshot(message.getContent());
+        return snapshot(messageEntity.getContent());
     }
 
     /** 举报证据快照（≤500 字） */

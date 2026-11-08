@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.errand.IErrandOrderEventDao">
+
+    <!-- 订单状态流转事件（只插入，纠纷溯源事实源）：随条件 UPDATE 成功在同一事务写入 -->
+    <insert id="insertOrderEvent" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderEvent">
+        <!-- create_time/update_time 取数据库时钟 -->
+        INSERT INTO errand_order_event (order_id, event_type, from_state, to_state, actor_id, actor_role,
+                                        reason_type, reason, images, create_time, update_time)
+        VALUES (#{orderId}, #{eventType}, #{fromState}, #{toState}, #{actorId}, #{actorRole},
+                #{reasonType}, #{reason}, #{images}, NOW(), NOW())
+    </insert>
+
+    <!-- 防占单降级回落（票 05）：窗口内主动放弃次数（事实源查询；走 idx_actor_type_time） -->
+    <select id="countAbandonsSince" resultType="int">
+        SELECT COUNT(1)
+        FROM errand_order_event
+        WHERE actor_id = #{actorId}
+          AND event_type = 'LOCK_ABANDONED'
+          AND create_time &gt;= #{since}
+    </select>
+
+    <!-- 防占单降级回落（票 05）：窗口内最近一次主动放弃时刻（估算冷却到期用，无则 NULL） -->
+    <select id="selectLatestAbandonTimeSince" resultType="java.time.LocalDateTime">
+        SELECT MAX(create_time)
+        FROM errand_order_event
+        WHERE actor_id = #{actorId}
+          AND event_type = 'LOCK_ABANDONED'
+          AND create_time &gt;= #{since}
+    </select>
+
+</mapper>

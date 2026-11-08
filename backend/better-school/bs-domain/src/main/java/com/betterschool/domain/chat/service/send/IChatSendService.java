@@ -24,8 +24,9 @@ public interface IChatSendService {
     /**
      * 发送消息（用户侧四类型中 SYSTEM 仅系统侧不可经此发送）。
      *
+     * @param messageEntity 待发消息草稿：roomId/fromUserId/clientMsgId/msgType/content/refType/refId 由调用方装配；
+     *                messageId/seq/status/createdAt 由服务内事务补齐
      * @return 落库后的完整消息体（含 roomId/seq/messageId/createdAt）；重复提交收敛返回原消息
      */
-    MessageEntity sendMessage(String roomId, String userId, String clientMsgId, MsgTypeVO msgType,
-                              String content, CardRefTypeVO refType, String refId);
+    MessageEntity sendMessage(MessageEntity messageEntity);
 }

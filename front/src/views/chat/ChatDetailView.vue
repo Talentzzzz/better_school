@@ -177,7 +177,8 @@ function optimisticRow(partial: Partial<ChatMessage>, extra?: Partial<Row>): Row
 async function doSendText(row: Row) {
   row.state = 'pending'
   try {
-    const saved = await sendMessage(roomId, {
+    const saved = await sendMessage({
+      roomId,
       clientMsgId: row.msg.clientMsgId!,
       msgType: 'TEXT',
       content: row.msg.content
@@ -206,7 +207,8 @@ async function doSendImage(row: Row) {
     const url = row.file ? await uploadImage(row.file) : parseImageContent(row.msg.content)?.url
     if (!url) throw new Error('no url')
     const dims = await imageDims(url)
-    const saved = await sendMessage(roomId, {
+    const saved = await sendMessage({
+      roomId,
       clientMsgId: row.msg.clientMsgId!,
       msgType: 'IMAGE',
       content: JSON.stringify({ url, ...dims })
@@ -353,7 +355,8 @@ function dropPendingCardQuery() {
 async function doSendCard(row: Row) {
   row.state = 'pending'
   try {
-    const saved = await sendMessage(roomId, {
+    const saved = await sendMessage({
+      roomId,
       clientMsgId: row.msg.clientMsgId!,
       msgType: 'CARD',
       refType: row.msg.refType!,

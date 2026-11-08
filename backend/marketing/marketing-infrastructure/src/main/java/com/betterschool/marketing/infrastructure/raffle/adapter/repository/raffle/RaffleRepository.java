@@ -13,6 +13,13 @@ import com.betterschool.marketing.domain.raffle.model.valobj.DrawRecordVO;
 import com.betterschool.marketing.domain.raffle.model.valobj.PrizeCatalogVO;
 import com.betterschool.marketing.domain.raffle.model.valobj.UserPrizeVO;
 import com.betterschool.marketing.infrastructure.common.outbox.OutboxMessageStore;
+import com.betterschool.marketing.infrastructure.inventory.dao.IPhysicalQuotaDao;
+import com.betterschool.marketing.infrastructure.inventory.dao.IVirtualInventoryQuotaDao;
+import com.betterschool.marketing.infrastructure.raffle.dao.IDrawActivityDao;
+import com.betterschool.marketing.infrastructure.raffle.dao.IDrawRecordDetailDao;
+import com.betterschool.marketing.infrastructure.raffle.dao.IDrawStrategyAwardDao;
+import com.betterschool.marketing.infrastructure.raffle.dao.IDrawStrategyDao;
+import com.betterschool.marketing.infrastructure.raffle.dao.IDrawStrategyWeightDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IRaffleDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawActivityPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordDetailPO;
@@ -44,14 +51,22 @@ import java.util.stream.Collectors;
 
 /**
  * 抽奖域唯一仓储实现：四张面（决策侧配置读 + 决策数据 Redis 读写、读侧翻页视图、落库写面、
- * 发货状态机写面）原样合成，全部走同一个 {@code IRaffleDao}；只有跨表 / 带 outbox 的写面用
- * {@code TransactionTemplate}（REQUIRED，可并入调用方事务）。
+ * 发货状态机写面）原样合成，数据访问按表分落各 DAO（一表一 DAO；台账批量回查直接注入
+ * 库存域的 {@code IVirtualInventoryQuotaDao} / {@code IPhysicalQuotaDao}）；只有跨表 /
+ * 带 outbox 的写面用 {@code TransactionTemplate}（REQUIRED，可并入调用方事务）。
  */
 @Repository
 @RequiredArgsConstructor
 public class RaffleRepository implements IRaffleRepository {
 
     private final IRaffleDao raffleDao;
+    private final IDrawActivityDao drawActivityDao;
+    private final IDrawStrategyDao drawStrategyDao;
+    private final IDrawStrategyAwardDao drawStrategyAwardDao;
+    private final IDrawStrategyWeightDao drawStrategyWeightDao;
+    private final IDrawRecordDetailDao drawRecordDetailDao;
+    private final IVirtualInventoryQuotaDao virtualInventoryQuotaDao;
+    private final IPhysicalQuotaDao physicalQuotaDao;
     private final RedissonClient redissonClient;
     private final TransactionTemplate transactionTemplate;
     private final OutboxMessageStore outboxMessageStore;
@@ -60,12 +75,12 @@ public class RaffleRepository implements IRaffleRepository {
 
     @Override
     public DrawActivityEntity queryActivityEntityByActivityId(String activityId) {
-        return toActivityEntity(raffleDao.selectActivityByActivityId(activityId));
+        return toActivityEntity(drawActivityDao.selectActivityByActivityId(activityId));
     }
 
     @Override
     public DrawStrategyEntity queryStrategyEntityByStrategyId(String strategyId) {
-        DrawStrategyPO strategyPO = raffleDao.selectStrategyByStrategyId(strategyId);
+        DrawStrategyPO strategyPO = drawStrategyDao.selectStrategyByStrategyId(strategyId);
         if (strategyPO == null) {
             return null;
         }
@@ -86,13 +101,13 @@ public class RaffleRepository implements IRaffleRepository {
 
     @Override
     public List<DrawStrategyAwardEntity> queryAwardListByStrategyId(String strategyId) {
-        return raffleDao.selectAwardListByStrategyId(strategyId).stream()
+        return drawStrategyAwardDao.selectAwardListByStrategyId(strategyId).stream()
                 .map(this::toAwardEntity).toList();
     }
 
     @Override
     public List<DrawStrategyWeightEntity> queryWeightListByStrategyId(String strategyId) {
-        return raffleDao.selectWeightListByStrategyId(strategyId).stream().map(weightPO -> {
+        return drawStrategyWeightDao.selectWeightListByStrategyId(strategyId).stream().map(weightPO -> {
             DrawStrategyWeightEntity entity = new DrawStrategyWeightEntity();
             entity.setId(weightPO.getId());
             entity.setStrategyId(weightPO.getStrategyId());
@@ -142,7 +157,7 @@ public class RaffleRepository implements IRaffleRepository {
         if (cached != null) {
             return cached;
         }
-        String awardId = raffleDao.selectAwardIdBySlot(strategyId, slot);
+        String awardId = drawStrategyAwardDao.selectAwardIdBySlot(strategyId, slot);
         if (awardId != null) {
             cacheAwardId(strategyId, slot, awardId);
         }
@@ -165,7 +180,7 @@ public class RaffleRepository implements IRaffleRepository {
 
     @Override
     public DrawActivityEntity queryCurrentActivity() {
-        return toActivityEntity(raffleDao.selectCurrentActivity());
+        return toActivityEntity(drawActivityDao.selectCurrentActivity());
     }
 
     @Override
@@ -175,7 +190,7 @@ public class RaffleRepository implements IRaffleRepository {
 
     @Override
     public Integer queryPointsValueByInvId(String invId) {
-        return raffleDao.selectPointsValueByInvId(invId);
+        return virtualInventoryQuotaDao.selectPointsValueByInvId(invId);
     }
 
     @Override
@@ -189,7 +204,7 @@ public class RaffleRepository implements IRaffleRepository {
         // ②虚拟台账 ③实物台账按 inv_id 集批量回查；CASE 语义在 Java 收口——
         // remaining = 台账 surplus_qty、total = 虚拟 surplus+issued / 实物 surplus+waiting+issued，
         // inv_id='0'（不限量哨兵）或 surplus < 0 落 null 由 unlimited 表达；台账行缺失 = 原 LEFT JOIN 空行，同样落 null
-        List<DrawStrategyAwardPO> awards = raffleDao.selectAwardListByStrategyId(strategyId);
+        List<DrawStrategyAwardPO> awards = drawStrategyAwardDao.selectAwardListByStrategyId(strategyId);
         if (awards.isEmpty()) {
             return List.of();
         }
@@ -197,10 +212,10 @@ public class RaffleRepository implements IRaffleRepository {
                 .filter(invId -> invId != null && !"0".equals(invId))
                 .distinct().toList();
         Map<String, VirtualQuotaRowPO> virtualByInv = invIds.isEmpty() ? Map.of()
-                : raffleDao.selectVirtualQuotasByInvIds(invIds).stream()
+                : virtualInventoryQuotaDao.selectVirtualQuotasByInvIds(invIds).stream()
                         .collect(Collectors.toMap(VirtualQuotaRowPO::getInvId, row -> row, (a, b) -> a));
         Map<String, PhysicalQuotaRowPO> physicalByInv = invIds.isEmpty() ? Map.of()
-                : raffleDao.selectPhysicalQuotasByInvIds(invIds).stream()
+                : physicalQuotaDao.selectPhysicalQuotasByInvIds(invIds).stream()
                         .collect(Collectors.toMap(PhysicalQuotaRowPO::getInvId, row -> row, (a, b) -> a));
         List<PrizeCatalogVO> prizes = new ArrayList<>(awards.size());
         for (DrawStrategyAwardPO award : awards) {
@@ -249,7 +264,7 @@ public class RaffleRepository implements IRaffleRepository {
                 .filter(invId -> invId != null && !"0".equals(invId))
                 .distinct().toList();
         Map<String, Integer> pointValues = invIds.isEmpty() ? Map.of()
-                : raffleDao.selectPointValuesByInvIds(invIds).stream()
+                : virtualInventoryQuotaDao.selectPointValuesByInvIds(invIds).stream()
                         .filter(row -> row.getValue() != null)
                         .collect(Collectors.toMap(VirtualQuotaRowPO::getInvId, VirtualQuotaRowPO::getValue, (a, b) -> a));
         return rows.stream().map(po -> new DrawRecordVO(po.getRecordId(), po.getAwardId(), po.getAwardName(),
@@ -269,7 +284,7 @@ public class RaffleRepository implements IRaffleRepository {
         if (rows.isEmpty()) {
             return List.of();
         }
-        Map<String, LocalDateTime> claimedAtByRecord = raffleDao.selectExchangeDetailsByRecordIds(
+        Map<String, LocalDateTime> claimedAtByRecord = drawRecordDetailDao.selectExchangeDetailsByRecordIds(
                 rows.stream().map(DrawUserPrizeViewPO::getRecordId).toList()).stream()
                 .collect(Collectors.toMap(ExchangeDetailRowPO::getRecordId,
                         ExchangeDetailRowPO::getCreateTime, (a, b) -> a));
@@ -307,7 +322,7 @@ public class RaffleRepository implements IRaffleRepository {
             detailPO.setUpdateTime(aggregate.getDetail().getUpdateTime());
             // detail 撞 uk_record_type = 该记录 DRAW 已落过（重试重放），忽略；
             // record 撞 uk_record_id 抛 DuplicateKeyException，重放判定归调用方编排层
-            raffleDao.insertIgnoreRecordDetail(detailPO);
+            drawRecordDetailDao.insertIgnoreRecordDetail(detailPO);
 
             // 中奖事件：THANKS 档不带事件（谢谢参与不发），其余与业务写同事务落 outbox
             if (aggregate.getDrawnEvent() != null) {
@@ -338,7 +353,7 @@ public class RaffleRepository implements IRaffleRepository {
                 detailPO.setType(detail.getType());
                 detailPO.setCreateTime(detail.getCreateTime());
                 detailPO.setUpdateTime(detail.getUpdateTime());
-                raffleDao.insertIgnoreRecordDetail(detailPO);
+                drawRecordDetailDao.insertIgnoreRecordDetail(detailPO);
                 currentState = toState;
             }
             return true;

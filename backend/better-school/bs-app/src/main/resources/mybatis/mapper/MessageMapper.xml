@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.chat.IMessageDao">
+
+    <!-- 消息表列口径（sql.md）：id 物理自增，msg_id 业务 ID（UUID 字符串，应用层 insert 前发号；跨表引用与对外暴露用它）；
+         state/recalled_at/recalled_by 承载撤回，create_time/update_time 收尾 -->
+    <sql id="messageColumns">
+        m.id, m.msg_id, m.room_id, m.seq, m.from_user_id, m.msg_type, m.content, m.client_msg_id,
+        m.ref_type, m.ref_id, m.state, m.recalled_at, m.recalled_by, m.create_time, m.update_time
+    </sql>
+
+    <!-- ===== message ===== -->
+
+    <insert id="insertMessage" parameterType="com.betterschool.infrastructure.dao.chat.po.Message">
+        INSERT INTO message (msg_id, room_id, seq, from_user_id, msg_type, content, client_msg_id,
+                             ref_type, ref_id, state, create_time, update_time)
+        VALUES (#{msgId}, #{roomId}, #{seq}, #{fromUserId}, #{msgType}, #{content}, #{clientMsgId},
+                #{refType}, #{refId}, #{state}, NOW(), NOW())
+    </insert>
+
+    <select id="selectMessage" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
+        SELECT <include refid="messageColumns"/>
+        FROM message m
+        WHERE m.room_id = #{roomId} AND m.seq = #{seq}
+    </select>
+
+    <select id="selectMessageByClientMsgId" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
+        SELECT <include refid="messageColumns"/>
+        FROM message m
+        WHERE m.room_id = #{roomId} AND m.client_msg_id = #{clientMsgId}
+    </select>
+
+    <!-- 撤回占 seq 不回退、不动水位线，content 库内保留取证（读路径脱敏为「已撤回」空壳）；
+         state=NORMAL 守卫：用户撤回与强制撤回并发先到先得，已撤回行不被覆盖；recalled_at 取数据库时钟 -->
+    <update id="recallMessage">
+        UPDATE message
+        SET state       = 'RECALLED',
+            recalled_at = NOW(),
+            recalled_by = #{recalledBy},
+            update_time = NOW()
+        WHERE room_id = #{roomId}
+          AND seq = #{seq}
+          AND state = 'NORMAL'
+    </update>
+
+    <!-- 举报回查/强制撤回入口：按业务 ID（msg_id）取消息 -->
+    <select id="selectMessageById" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
+        SELECT <include refid="messageColumns"/>
+        FROM message m
+        WHERE m.msg_id = #{messageId}
+    </select>
+
+    <!-- 历史分页（uk_room_seq 主路径）：beforeSeq 为 NULL 取最新一页，页内 seq 倒序 -->
+    <select id="selectMessagesBefore" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
+        SELECT <include refid="messageColumns"/>
+        FROM message m
+        WHERE m.room_id = #{roomId}
+        <if test="beforeSeq != null">
+          AND m.seq &lt; #{beforeSeq}
+        </if>
+        ORDER BY m.seq DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 增量补拉两段查之②：按 msg_id 集批量回查消息全量 -->
+    <select id="selectMessagesByIds" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
+        SELECT <include refid="messageColumns"/>
+        FROM message m
+        WHERE m.msg_id IN
+        <foreach collection="msgIds" item="msgId" open="(" separator="," close=")">#{msgId}</foreach>
+    </select>
+
+</mapper>

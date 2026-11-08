@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.wallet.IWalletDetailDao">
+
+    <!-- 流水先行：uk_order_type(order_id, type, biz_round, user_id) 冲突 → INSERT IGNORE 影响 0 行 = 该操作已执行过（幂等跳过）；
+         biz_round 支撑同一订单同类型多轮合法资金操作（预留），当前业务恒 0。
+         wallet_id/user_id 从 virtual_wallet 按 user_id 单行取（源表引用，不迁移建 DAO） -->
+    <insert id="insertIgnoreDetail" parameterType="com.betterschool.infrastructure.dao.wallet.po.WalletDetail">
+        INSERT IGNORE INTO wallet_detail (wallet_id, user_id, type, amount, order_id, biz_round, create_time, update_time)
+        SELECT wallet_id, user_id, #{type}, #{amount}, #{orderId}, #{bizRound}, NOW(), NOW()
+        FROM virtual_wallet
+        WHERE user_id = #{userId}
+    </insert>
+
+    <select id="selectDetails" resultType="com.betterschool.infrastructure.dao.wallet.po.WalletDetail">
+        SELECT id, wallet_id, user_id, type, amount, order_id, biz_round, create_time, update_time
+        FROM wallet_detail
+        WHERE user_id = #{userId}
+        ORDER BY id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countDetails" resultType="long">
+        SELECT COUNT(1)
+        FROM wallet_detail
+        WHERE user_id = #{userId}
+    </select>
+
+</mapper>

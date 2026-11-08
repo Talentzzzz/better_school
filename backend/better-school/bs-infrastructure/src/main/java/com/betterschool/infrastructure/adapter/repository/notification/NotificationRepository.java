@@ -7,6 +7,8 @@ import com.betterschool.domain.notification.model.valobj.NotificationBroadcastMe
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.infrastructure.dao.notification.INotificationDao;
+import com.betterschool.infrastructure.dao.notification.INotificationReadDao;
+import com.betterschool.infrastructure.dao.notification.INotificationSeqDao;
 import com.betterschool.infrastructure.dao.notification.po.Notification;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
 import com.betterschool.types.common.Constants;
@@ -25,6 +27,9 @@ import java.util.UUID;
 public class NotificationRepository implements INotificationRepository {
 
     private final INotificationDao notificationDao;
+    /** 取号计数器（notification_seq）与已读水位（notification_read）按表拆分的 DAO */
+    private final INotificationSeqDao notificationSeqDao;
+    private final INotificationReadDao notificationReadDao;
     private final OutboxMessageStore outboxMessageStore;
     private final IBroadcastRecipientPort broadcastRecipientPort;
     private final TransactionTemplate transactionTemplate;
@@ -32,18 +37,18 @@ public class NotificationRepository implements INotificationRepository {
     @Override
     public List<NotificationEntity> pageList(String userId, NotificationScopeVO scope, int offset, int limit) {
         String scopeName = scope == null ? null : scope.name();
-        List<Notification> rows = notificationDao.selectPage(userId, scopeName, offset, limit);
+        List<Notification> notificationList = notificationDao.selectPage(userId, scopeName, offset, limit);
         // is_read（原 LEFT JOIN notification_read 的计算列）：页内 scope 集逐 scope 查水位后 Java 计算
         // ——水位每 user_id × scope 一行，scope 个数有界（当前两个），不随页大小增长
         Map<String, Long> watermarks = new HashMap<>();
-        for (String rowScope : rows.stream().map(Notification::getScope).distinct().toList()) {
-            Long lastReadSeq = notificationDao.selectLastReadSeq(userId, rowScope);
+        for (String rowScope : notificationList.stream().map(Notification::getScope).distinct().toList()) {
+            Long lastReadSeq = notificationReadDao.selectLastReadSeq(userId, rowScope);
             watermarks.put(rowScope, lastReadSeq == null ? 0L : lastReadSeq);
         }
-        for (Notification row : rows) {
+        for (Notification row : notificationList) {
             row.setIsRead(row.getSeq() != null && row.getSeq() <= watermarks.getOrDefault(row.getScope(), 0L));
         }
-        return rows.stream().map(this::toEntity).toList();
+        return notificationList.stream().map(this::toEntity).toList();
     }
 
     @Override
@@ -53,22 +58,22 @@ public class NotificationRepository implements INotificationRepository {
 
     @Override
     public long unreadCount(String userId, NotificationScopeVO scope) {
-        Long seq = notificationDao.selectSeq(userId, scope.name());
+        Long seq = notificationSeqDao.selectSeq(userId, scope.name());
         if (seq == null) {
             return 0;
         }
-        Long lastReadSeq = notificationDao.selectLastReadSeq(userId, scope.name());
+        Long lastReadSeq = notificationReadDao.selectLastReadSeq(userId, scope.name());
         return Math.max(0, seq - (lastReadSeq == null ? 0 : lastReadSeq));
     }
 
     @Override
     public void markRead(String userId, NotificationScopeVO scope) {
-        Long seq = notificationDao.selectSeq(userId, scope.name());
+        Long seq = notificationSeqDao.selectSeq(userId, scope.name());
         if (seq == null) {
             // 该范围从未收到过通知：无水位可推
             return;
         }
-        notificationDao.upsertReadWatermark(userId, scope.name(), seq);
+        notificationReadDao.upsertReadWatermark(userId, scope.name(), seq);
     }
 
     @Override
@@ -92,8 +97,8 @@ public class NotificationRepository implements INotificationRepository {
                 // outbox 重发导致的重复消费：幂等忽略
                 return;
             }
-            List<String> userIds = broadcastRecipientPort.listAllUserIds();
-            for (String userId : userIds) {
+            List<String> userIdList = broadcastRecipientPort.listAllUserIds();
+            for (String userId : userIdList) {
                 NotificationEntity notificationEntity = NotificationEntity.create(userId,
                         NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.valueOf(type), title, content,
                         "BROADCAST", null);
@@ -111,8 +116,8 @@ public class NotificationRepository implements INotificationRepository {
             return;
         }
         String scope = notificationEntity.getScope().name();
-        notificationDao.upsertIncreaseSeq(notificationEntity.getUserId(), scope);
-        notificationEntity.setSeq(notificationDao.selectSeq(notificationEntity.getUserId(), scope));
+        notificationSeqDao.upsertIncreaseSeq(notificationEntity.getUserId(), scope);
+        notificationEntity.setSeq(notificationSeqDao.selectSeq(notificationEntity.getUserId(), scope));
         Notification notification = toPO(notificationEntity);
         if (notification.getNotificationId() == null) {
             // 业务 ID 随 insert 一次写入（uuid-biz-id 票 06）；撞 uk_dedup 被 IGNORE 时本行未落库，发号作废无害

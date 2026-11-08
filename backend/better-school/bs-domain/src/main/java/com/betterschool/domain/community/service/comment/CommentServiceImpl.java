@@ -59,21 +59,21 @@ public class CommentServiceImpl implements ICommunityCommentService {
 
     @Override
     public PostCommentEntity addReply(String targetCommentId, String userId, String content) {
-        PostCommentEntity target = communityRepository.findCommentById(targetCommentId);
+        PostCommentEntity targetEntity = communityRepository.findCommentById(targetCommentId);
         // 允许回复待审中的评论（其作者本人可见，指向昵称也需可读）；驳回/下架评论对所有人不可见，视同不存在
-        if (target == null || target.getStatus() == PostStatusVO.REJECTED || target.getStatus() == PostStatusVO.DELETED) {
+        if (targetEntity == null || targetEntity.getStatus() == PostStatusVO.REJECTED || targetEntity.getStatus() == PostStatusVO.DELETED) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "评论不存在");
         }
         // 树模型（ADR-0001）：回复根评论 root=parent=根评论 id；回复子回复 root=楼根、parent=被回复子回复。
         // 归属一律由服务端推导，客户端无从伪造
-        String rootId = target.isRoot() ? target.getCommentId() : target.getRootId();
-        PostCommentEntity reply = PostCommentEntity.createReply(target.getPostId(), rootId,
-                target.getCommentId(), userId, content, PostStatusVO.PENDING_REVIEW);
-        publishForAsyncReview(reply);
-        reply.setAuthorNickname(nicknameOf(userId));
-        reply.setReplyToUserId(target.getUserId());
-        reply.setReplyToNickname(target.getAuthorNickname());
-        return reply;
+        String rootId = targetEntity.isRoot() ? targetEntity.getCommentId() : targetEntity.getRootId();
+        PostCommentEntity replyEntity = PostCommentEntity.createReply(targetEntity.getPostId(), rootId,
+                targetEntity.getCommentId(), userId, content, PostStatusVO.PENDING_REVIEW);
+        publishForAsyncReview(replyEntity);
+        replyEntity.setAuthorNickname(nicknameOf(userId));
+        replyEntity.setReplyToUserId(targetEntity.getUserId());
+        replyEntity.setReplyToNickname(targetEntity.getAuthorNickname());
+        return replyEntity;
     }
 
     /** 零同步审核（ADR-0002）：落库即待审，同事务（仓储内）写 outbox 审核消息；计数在审核通过时 +1 */
@@ -104,8 +104,8 @@ public class CommentServiceImpl implements ICommunityCommentService {
 
     /** 删根整楼消失（票 07）：楼根被软删后，楼内子回复随楼一起不可达；其余状态维持原行为 */
     private boolean threadVisible(String rootId) {
-        PostCommentEntity root = communityRepository.findCommentById(rootId);
-        return root != null && root.getStatus() != PostStatusVO.DELETED;
+        PostCommentEntity rootEntity = communityRepository.findCommentById(rootId);
+        return rootEntity != null && rootEntity.getStatus() != PostStatusVO.DELETED;
     }
 
     @Override

@@ -163,7 +163,7 @@ final class ShardBuffer {
      * 等待窗口由定时器承担、不占任何线程。
      */
     private void runFlush(long myGeneration) {
-        List<Pending> batch;
+        List<Pending> pendingList;
         lock.lock();
         try {
             if (closed || myGeneration != generation) {
@@ -178,16 +178,16 @@ final class ShardBuffer {
                 return;
             }
             running = true;
-            batch = takeBatch();
+            pendingList = takeBatch();
         } finally {
             lock.unlock();
         }
 
         try {
-            flushCallback.accept(batch);
+            flushCallback.accept(pendingList);
         } catch (RuntimeException e) {
             // 引擎内部已按组兜住落库异常；能漏到这里的只有引擎自身的 bug
-            log.error("分片 {} 的 flush 兜底异常（{} 件可能未回填）", shardNo, batch.size(), e);
+            log.error("分片 {} 的 flush 兜底异常（{} 件可能未回填）", shardNo, pendingList.size(), e);
         } finally {
             lock.lock();
             try {
@@ -211,17 +211,17 @@ final class ShardBuffer {
     private List<Pending> takeBatch() {
         int buffered = pending.size();
         if (buffered <= maxBatch) {
-            List<Pending> batch = pending;
+            List<Pending> pendingList = pending;
             pending = new ArrayList<>(INITIAL_CAPACITY);
             size = 0;
-            return batch;
+            return pendingList;
         }
-        List<Pending> batch = new ArrayList<>(pending.subList(0, maxBatch));
-        List<Pending> rest = new ArrayList<>(buffered - maxBatch);
-        rest.addAll(pending.subList(maxBatch, buffered));
-        pending = rest;
-        size = rest.size();
-        return batch;
+        List<Pending> pendingList = new ArrayList<>(pending.subList(0, maxBatch));
+        List<Pending> restList = new ArrayList<>(buffered - maxBatch);
+        restList.addAll(pending.subList(maxBatch, buffered));
+        pending = restList;
+        size = restList.size();
+        return pendingList;
     }
 
     /**
@@ -251,15 +251,15 @@ final class ShardBuffer {
         if (pending.isEmpty()) {
             return 0;
         }
-        List<Pending> leftover = pending;
+        List<Pending> leftoverList = pending;
         pending = new ArrayList<>(INITIAL_CAPACITY);
         int filled = 0;
-        for (Pending item : leftover) {
+        for (Pending item : leftoverList) {
             if (item.complete(MergeState.FAILED, null)) {
                 filled++;
             }
         }
-        log.warn("分片 {} 未落库即回填 {} 件（原因：{}）", shardNo, leftover.size(), reason);
+        log.warn("分片 {} 未落库即回填 {} 件（原因：{}）", shardNo, leftoverList.size(), reason);
         return filled;
     }
 

@@ -14,7 +14,9 @@ import java.util.List;
 
 /**
  * 社区仓储（帖子 + 评论合一，一域一仓储）：覆盖 community 领域服务所需全部持久化能力，
- * 由 infrastructure 实现（实现内持 IPostDao + IPostCommentDao）。
+ * 由 infrastructure 实现（实现内持社区域一张表一个 DAO 的全家桶：IPostDao + IPostCommentDao
+ * 及 post_like / post_like_count / post_view_count / user_view_history / post_feed_index /
+ * post_comment_count / post_comment_like / post_comment_like_count / post_comment_feed_index 各自的窄表 DAO）。
  * 需要多 DAO 原子写的能力收成仓储方法，事务在实现内（编程式，默认 REQUIRED）
  */
 public interface ICommunityRepository {
@@ -105,15 +107,15 @@ public interface ICommunityRepository {
     long countViewHistoryByUser(String userId);
 
     /** 当前用户浏览过的帖子 id 集合（feed 已读灰显批量回显；未登录传 null 返回空集合） */
-    List<String> selectViewedPostIds(String userId, List<String> postIds);
+    List<String> selectViewedPostIds(String userId, List<String> postIdList);
 
     boolean isPostLiked(String postId, String userId);
 
     /** 当前用户已点赞的帖子 id 集合（列表 liked 状态批量回显；未登录传 null 返回空集合） */
-    List<String> selectLikedPostIds(String userId, List<String> postIds);
+    List<String> selectLikedPostIds(String userId, List<String> postIdList);
 
     /** 按 id 列表查询（不分状态，搜索同步/搜索命中反查用；返回顺序与入参无关，调用方按 id 重排） */
-    List<PostEntity> listByIds(List<String> postIds);
+    List<PostEntity> listByIds(List<String> postIdList);
 
     /** 搜索索引全量重建的游标页：id > lastId 按 id 升序取 limit 条（无界结果集一律游标化） */
     List<String> listIdsAfter(String lastId, int limit);
@@ -211,7 +213,7 @@ public interface ICommunityRepository {
     void updateLikeCount(String commentId, int delta);
 
     /** 当前用户在给定评论集合中已点赞的评论 id（根评论与子回复通用） */
-    List<String> selectLikedCommentIds(String userId, List<String> commentIds);
+    List<String> selectLikedCommentIds(String userId, List<String> commentIdList);
 
     /** 按用户列评论分页（作者主页「评论」tab）：该用户 NORMAL 评论且源帖 NORMAL，按评论时间倒序 */
     List<PostCommentEntity> pageCommentsByUser(String userId, int offset, int limit);

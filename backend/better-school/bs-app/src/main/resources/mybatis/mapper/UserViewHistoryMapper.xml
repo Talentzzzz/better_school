@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.post.IUserViewHistoryDao">
+
+    <!-- 浏览 UV 明细批量写（合并器一组一个事务的第一步）：同帖 N 个用户一条语句。
+         INSERT IGNORE 的裁决与点赞同理：(user_id, post_id) 主键撞了就不插，
+         影响行数 = 本组真正新增的 UV 数，加速列只按它增量（重复浏览不重复计） -->
+    <insert id="insertViewHistory">
+        INSERT IGNORE INTO user_view_history (user_id, post_id, viewed_at)
+        VALUES
+        <foreach collection="userIds" item="userId" separator=",">
+            (#{userId}, #{postId}, NOW())
+        </foreach>
+    </insert>
+
+    <!-- 第二步：刷新本组全部键的浏览时刻（含刚插入的行）——重复浏览的唯一可见效果就是 viewed_at 变新 -->
+    <update id="touchViewedAt">
+        UPDATE user_view_history
+        SET viewed_at = NOW()
+        WHERE post_id = #{postId}
+          AND user_id IN
+        <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
+    </update>
+
+    <!-- ── 浏览历史的两个读能力（feed-index-uv 票 05：user_view_history 明细即事实源）── -->
+
+    <!-- 我的浏览历史：明细行主查（idx_user_viewed (user_id, viewed_at) 倒序扫描）；帖子行与可见性过滤
+         由仓储两段查拼装——NORMAL 公开；本人看自己浏览过的待审/驳回/草稿帖照常展示（详情对作者可见），
+         已删除一律过滤（点卡片要能进详情，非可见态进详情是 404） -->
+    <select id="selectRelationViewedRows" resultType="com.betterschool.infrastructure.dao.post.po.PostRelationRow">
+        SELECT uvh.post_id AS postId, uvh.viewed_at AS sortTime
+        FROM user_view_history uvh
+        WHERE uvh.user_id = #{userId}
+        ORDER BY uvh.viewed_at DESC, uvh.post_id DESC
+    </select>
+
+    <!-- feed 已读灰显批量回显：页内 post_id 的浏览记录，走 (user_id, post_id) 主键前缀 -->
+    <select id="selectViewedPostIds" resultType="string">
+        SELECT post_id
+        FROM user_view_history
+        WHERE user_id = #{userId}
+          AND post_id IN
+        <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
+    </select>
+
+</mapper>

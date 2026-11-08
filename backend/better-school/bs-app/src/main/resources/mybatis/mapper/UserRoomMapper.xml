@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.chat.IUserRoomDao">
+
+    <!-- ===== user_room（用户维度会话状态，每用户每会话一行） ===== -->
+
+    <!-- 发送扇出时在用户维度行上刷列表排序键（票 02 预览去副本：只刷 last_msg_time，预览读时现算）：
+         成员集由名册给定（恒两行），逐用户执行；未读数不落副本，由 room.last_seq 现算 -->
+    <update id="updateUserRoomLastMsgTime">
+        UPDATE user_room
+        SET last_msg_time = #{lastMsgTime},
+            update_time   = NOW()
+        WHERE room_id = #{roomId}
+          AND user_id = #{userId}
+    </update>
+
+    <!-- 会话列表四段查之①（user_room.idx_user_msg 主路径）：本人用户行分页，排除隐藏，last_msg_time
+         倒序；排序键在本人用户行上，room 真相（source/creator_id/last_seq——未读数真源）与对家
+         user_id 由仓储按 room_id 集二次回查拼装（②selectRoomsByIds ③selectPeerMembers 名册回查
+         ④selectMessage 按 (room_id, last_seq) 逐会话点查预览真源，SQL 层零 JOIN；1v1 恒两行名册）；
+         unread = r.last_seq − ur.read_seq 服务端拼装，不落副本 -->
+    <select id="selectUserRoomPage" resultType="com.betterschool.infrastructure.dao.chat.po.RoomListItem">
+        SELECT ur.room_id AS roomId,
+               ur.last_msg_time,
+               ur.read_seq AS readSeq
+        FROM user_room ur
+        WHERE ur.user_id = #{userId}
+          AND ur.hidden_at IS NULL
+        ORDER BY ur.last_msg_time DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countRoomsForUser" resultType="long">
+        SELECT COUNT(1)
+        FROM user_room
+        WHERE user_id = #{userId}
+          AND hidden_at IS NULL
+    </select>
+
+    <!-- 建会话事务内与两行名册同事务写入：read_seq 从 0 起（join_seq 入群水位在名册行上） -->
+    <insert id="insertUserRooms">
+        INSERT INTO user_room (room_id, user_id, read_seq, create_time, update_time)
+        VALUES
+        <foreach collection="userRooms" item="u" separator=",">
+            (#{u.roomId}, #{u.userId}, 0, NOW(), NOW())
+        </foreach>
+    </insert>
+
+    <select id="selectUserRoom" resultType="com.betterschool.infrastructure.dao.chat.po.UserRoom">
+        SELECT id, room_id, user_id, last_msg_time,
+               read_seq AS readSeq, hidden_at, create_time AS createTime, update_time
+        FROM user_room
+        WHERE room_id = #{roomId} AND user_id = #{userId}
+    </select>
+
+    <!-- 成员页两段查之②：名册给定成员集的用户行批量回查（水位线拼装，SQL 层零 JOIN；
+         uk_user_room 前缀 user_id 等值 + room_id 等值，逐成员走索引） -->
+    <select id="selectUserRooms" resultType="com.betterschool.infrastructure.dao.chat.po.UserRoom">
+        SELECT id, room_id, user_id, last_msg_time,
+               read_seq AS readSeq, hidden_at, create_time AS createTime, update_time
+        FROM user_room
+        WHERE room_id = #{roomId}
+          AND user_id IN
+        <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
+    </select>
+
+    <!-- 已读水位线只前进不回退（幂等推高） -->
+    <update id="updateUserRoomReadSeq">
+        UPDATE user_room
+        SET read_seq    = #{readSeq},
+            update_time = NOW()
+        WHERE room_id = #{roomId}
+          AND user_id = #{userId}
+          AND read_seq &lt; #{readSeq}
+    </update>
+
+    <!-- 用户侧隐藏会话（软删）：hidden_at 只作「非 NULL 即隐藏」判断，时刻取数据库时钟 -->
+    <update id="updateUserRoomHiddenAt">
+        UPDATE user_room
+        SET hidden_at   = NOW(),
+            update_time = NOW()
+        WHERE room_id = #{roomId}
+          AND user_id = #{userId}
+    </update>
+
+    <!-- 新消息扇出时清空单个成员的隐藏位（删除的会话弹回；成员集由名册给定，逐用户执行） -->
+    <update id="clearUserRoomHidden">
+        UPDATE user_room
+        SET hidden_at   = NULL,
+            update_time = NOW()
+        WHERE room_id = #{roomId}
+          AND user_id = #{userId}
+          AND hidden_at IS NOT NULL
+    </update>
+
+</mapper>

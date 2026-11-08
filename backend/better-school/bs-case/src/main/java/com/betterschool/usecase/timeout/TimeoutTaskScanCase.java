@@ -135,13 +135,13 @@ public class TimeoutTaskScanCase {
      */
     private CallbackReportVO callback(List<TimeoutTaskEntity> batch, int slot) {
         Set<TaskKeyVO> succeeded = new HashSet<>(batch.size());
-        for (TimeoutTaskEntity task : batch) {
+        for (TimeoutTaskEntity taskEntity : batch) {
             try {
-                timeoutTaskCallbackPort.callback(task);
-                succeeded.add(TaskKeyVO.of(task.getTaskType(), task.getBizId()));
+                timeoutTaskCallbackPort.callback(taskEntity);
+                succeeded.add(TaskKeyVO.of(taskEntity.getTaskType(), taskEntity.getBizId()));
             } catch (Exception e) {
                 log.error("[超时中心告警] 回调失败，本项按失败重投：taskType={}, bizId={}, 槽位={}",
-                        task.getTaskType(), task.getBizId(), slot, e);
+                        taskEntity.getTaskType(), taskEntity.getBizId(), slot, e);
             }
         }
         return CallbackReportVO.of(succeeded);

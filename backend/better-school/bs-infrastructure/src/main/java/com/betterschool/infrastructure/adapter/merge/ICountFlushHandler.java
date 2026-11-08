@@ -31,8 +31,8 @@ public interface ICountFlushHandler {
     /**
      * @param action   该组统一的动作类型
      * @param shardKey 该组统一的<b>业务行主键字符串</b>（= 调用方给的 shardKey，postId / commentId 等）
-     * @param events   该组的事件，顺序 = 入队顺序
-     * @return 与 {@code events} 一一对应的逐件业务结果
+     * @param countEventList 该组的事件，顺序 = 入队顺序
+     * @return 与 {@code countEventList} 一一对应的逐件业务结果
      */
-    List<LikeState> flushGroup(CountAction action, String shardKey, List<CountEvent> events);
+    List<LikeState> flushGroup(CountAction action, String shardKey, List<CountEvent> countEventList);
 }

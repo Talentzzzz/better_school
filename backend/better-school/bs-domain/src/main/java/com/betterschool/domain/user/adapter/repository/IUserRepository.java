@@ -54,5 +54,5 @@ public interface IUserRepository {
     List<String> listUserIdsByRole(UserRoleVO role);
 
     /** 按 id 列表查询（搜索同步/搜索命中反查用；返回顺序与入参无关，调用方按 id 重排） */
-    List<UserEntity> listByIds(List<String> userIds);
+    List<UserEntity> listByIds(List<String> userIdList);
 }

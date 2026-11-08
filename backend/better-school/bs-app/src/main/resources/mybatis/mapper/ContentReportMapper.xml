@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.moderation.IContentReportDao">
+
+    <!-- 举报单：uk_reporter_target(reporter_id,target_type,target_id) 冲突 = 重复举报（INSERT IGNORE 幂等）；
+         report_id 业务 ID UUID 由应用层 UUID.randomUUID() 随 insert 一次写入（uuid-biz-id 票 06） -->
+    <insert id="insertIgnoreReport" parameterType="com.betterschool.infrastructure.dao.moderation.po.ContentReport">
+        INSERT IGNORE INTO content_report (report_id, target_type, target_id, author_id, reporter_id, reason, content_snapshot, status, create_time, update_time)
+        VALUES (#{reportId}, #{targetType}, #{targetId}, #{authorId}, #{reporterId}, #{reason}, #{contentSnapshot}, 'PENDING', NOW(), NOW())
+    </insert>
+
+    <!-- 核实：PENDING → PROCESSED（条件 UPDATE，影响行数 1 = 本次刚核实；按业务键 report_id 定位） -->
+    <update id="processById">
+        UPDATE content_report
+        SET status = 'PROCESSED', handler_id = #{handlerId}, handled_at = NOW(), update_time = NOW()
+        WHERE report_id = #{reportId}
+          AND status = 'PENDING'
+    </update>
+
+    <!-- 忽略：PENDING → IGNORED -->
+    <update id="ignoreById">
+        UPDATE content_report
+        SET status = 'IGNORED', handler_id = #{handlerId}, handled_at = NOW(), update_time = NOW()
+        WHERE report_id = #{reportId}
+          AND status = 'PENDING'
+    </update>
+
+    <select id="selectReportById" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReport">
+        SELECT report_id, target_type, target_id, author_id, reporter_id, reason, content_snapshot,
+               status, handler_id, handled_at, create_time, update_time
+        FROM content_report
+        WHERE report_id = #{reportId}
+    </select>
+
+    <!-- 举报列表（可按状态过滤）；物理自增 id DESC 定稳定序（report_id 已 UUID 化不代表插入先后）。
+         举报人/被举报人昵称由仓储回查 bs_user 拼装（SQL 层零 JOIN） -->
+    <select id="selectReports" resultType="com.betterschool.infrastructure.dao.moderation.po.ContentReport">
+        SELECT r.report_id, r.target_type, r.target_id, r.author_id, r.reporter_id, r.reason,
+               r.content_snapshot, r.status, r.handler_id, r.handled_at, r.create_time, r.update_time
+        FROM content_report r
+        <where>
+            <if test="status != null">
+                r.status = #{status}
+            </if>
+        </where>
+        ORDER BY r.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countReports" resultType="long">
+        SELECT COUNT(1)
+        FROM content_report
+        <where>
+            <if test="status != null">
+                status = #{status}
+            </if>
+        </where>
+    </select>
+
+</mapper>

@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.post.IPostFeedIndexDao">
+
+    <!-- ── feed 异构索引：读路径（feed-index-uv 票 04）── -->
+
+    <!-- 主页 feed 索引序扫描：只取 NORMAL，排序键与两个索引（idx_state_feed / idx_state_like）的列序一致，
+         续页谓词写成同构比较让优化器走 range scan 而不是全索引扫。
+         time 排序键 = feed_time、hot = like_count；<b>两档都以 (feed_time DESC, post_id DESC) 收敛并列</b>
+         ——业务 ID 是 UUID、无序，不能再拿它当「发布时间先后」的代理（uuid-biz-id 票 03）。
+         部分列直映域 VO（排序键随行带出，域服务拿最后一行编下一页游标） -->
+    <select id="selectFeedIndex" resultType="com.betterschool.domain.community.model.valobj.FeedIndexItemVO">
+        SELECT post_id, feed_time, like_count
+        FROM post_feed_index
+        WHERE state = 'NORMAL'
+        <if test="cursor != null and !cursor.isFirstPage()">
+            <choose>
+                <when test="sort == 'hot'">
+                    AND (like_count &lt; #{cursor.likeCount}
+                        OR (like_count = #{cursor.likeCount} AND feed_time &lt; #{cursor.feedTime})
+                        OR (like_count = #{cursor.likeCount} AND feed_time = #{cursor.feedTime}
+                            AND post_id &lt; #{cursor.postId}))
+                </when>
+                <otherwise>
+                    AND (feed_time &lt; #{cursor.feedTime}
+                        OR (feed_time = #{cursor.feedTime} AND post_id &lt; #{cursor.postId}))
+                </otherwise>
+            </choose>
+        </if>
+        ORDER BY
+        <choose>
+            <when test="sort == 'hot'">like_count DESC, feed_time DESC, post_id DESC</when>
+            <otherwise>feed_time DESC, post_id DESC</otherwise>
+        </choose>
+        LIMIT #{limit}
+    </select>
+
+    <!-- ── feed 异构索引同事务直写（feed-index-uv 票 03：索引行与 post 行同库，状态流转 / 赞合并事务带写）── -->
+
+    <!-- 审核通过：行诞生 / 翻回 NORMAL。feed_time 只在 INSERT 侧落（行诞生时刻 = 本次通过时刻，重提再通过
+         的可见轮从本次起算）；ODKU 命中已有行（防御分支：NORMAL 不可重回待审，正常流不会走到）只翻 state，
+         不刷 feed_time、不碰 like_count——like_count 由赞合并事务独占维护 -->
+    <update id="upsertFeedIndexOnApprove">
+        INSERT INTO post_feed_index (post_id, state, feed_time, like_count, update_time)
+        VALUES (#{postId}, 'NORMAL', NOW(), 0, NOW())
+        ON DUPLICATE KEY UPDATE
+            state       = 'NORMAL',
+            update_time = NOW()
+    </update>
+
+    <!-- 不可见化：state 快照同步成 post 的新状态（REJECTED / DRAFT / DELETED，feed 只查 NORMAL）。
+         行不存在（从未通过审，驳回/撤回/转草稿的常态）= 0 行静默，不 upsert——未通过过的帖子不该凭空进索引 -->
+    <update id="updateFeedIndexState">
+        UPDATE post_feed_index
+        SET state       = #{state},
+            update_time = NOW()
+        WHERE post_id = #{postId}
+    </update>
+
+    <!-- 赞合并事务旁路 ±N：纯 UPDATE 不 upsert（能被赞的帖子行必存在——NORMAL 才可赞，通过事务已建行）。
+         GREATEST 兜底不为负，与窄表 decreaseLikeCount 同口径；命中 0 行 = 索引行缺失的存量异常，
+         调用方落日志交重建 job（票 07），不在写路径凭空补行 -->
+    <update id="updateFeedIndexLikeCount">
+        UPDATE post_feed_index
+        SET like_count  = GREATEST(0, like_count + #{delta}),
+            update_time = NOW()
+        WHERE post_id = #{postId}
+    </update>
+
+    <!-- ── feed 索引全量重建（feed-index-uv 票 07：兜底恢复手段，照 SearchIndexRebuildJob 样板手动触发）── -->
+
+    <!-- 重建第一步：清空索引表。用 DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉与重灌语句的原子性 -->
+    <delete id="clearFeedIndex">
+        DELETE FROM post_feed_index
+    </delete>
+
+    <!-- 重灌取数：① 的 post 全量 (post_id, state, create_time) 在 IPostDao.selectRebuildRows（主表 post）；
+         ② content_review 的 APPROVE 流水经 IContentReviewDao.selectApproveRowsByTargetType 查（feed_time 真源）；
+         ③ like_count 从窄表批量抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径），
+         仓储组装成行集后走本 mapper 的 insertFeedIndexRows 批量写入 -->
+
+    <!-- 重灌写回：一帖一行 1:1 投影，行集由仓储组装（见 IPostDao.selectRebuildRows 注释） -->
+    <insert id="insertFeedIndexRows">
+        INSERT INTO post_feed_index (post_id, state, feed_time, like_count, update_time)
+        VALUES
+        <foreach collection="rows" item="row" separator=",">
+            (#{row.postId}, #{row.state}, #{row.feedTime}, #{row.likeCount}, NOW())
+        </foreach>
+    </insert>
+
+</mapper>

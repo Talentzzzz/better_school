@@ -5,6 +5,7 @@ import com.betterschool.domain.wallet.model.entity.VirtualWalletEntity;
 import com.betterschool.domain.wallet.model.entity.WalletDetailEntity;
 import com.betterschool.domain.wallet.model.valobj.WalletDetailTypeVO;
 import com.betterschool.infrastructure.dao.wallet.IWalletDao;
+import com.betterschool.infrastructure.dao.wallet.IWalletDetailDao;
 import com.betterschool.infrastructure.dao.wallet.po.VirtualWallet;
 import com.betterschool.infrastructure.dao.wallet.po.WalletDetail;
 import com.betterschool.types.enums.ResponseCode;
@@ -30,6 +31,8 @@ public class WalletRepository implements IWalletRepository {
     private static final BigDecimal INITIAL_BALANCE = new BigDecimal("1000");
 
     private final IWalletDao walletDao;
+    /** 钱包流水（wallet_detail）按表拆分的 DAO */
+    private final IWalletDetailDao walletDetailDao;
 
     /** 资金动作都是「流水先行 + 余额条件 UPDATE」的原子用例：仓储方法内用事务（REQUIRED）收口 */
     private final TransactionTemplate transactionTemplate;
@@ -130,12 +133,12 @@ public class WalletRepository implements IWalletRepository {
 
     @Override
     public List<WalletDetailEntity> listDetails(String userId, int offset, int limit) {
-        return walletDao.selectDetails(userId, offset, limit).stream().map(this::toDetailEntity).toList();
+        return walletDetailDao.selectDetails(userId, offset, limit).stream().map(this::toDetailEntity).toList();
     }
 
     @Override
     public long countDetails(String userId) {
-        return walletDao.countDetails(userId);
+        return walletDetailDao.countDetails(userId);
     }
 
     /** 返回影响行数：0 = 该流水已存在（幂等跳过） */
@@ -146,7 +149,7 @@ public class WalletRepository implements IWalletRepository {
         detail.setAmount(amount);
         detail.setOrderId(orderId);
         detail.setBizRound(bizRound);
-        return walletDao.insertIgnoreDetail(detail);
+        return walletDetailDao.insertIgnoreDetail(detail);
     }
 
     private VirtualWalletEntity toEntity(VirtualWallet wallet) {

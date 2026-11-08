@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.chat.IRoomMemberDao">
+
+    <!-- ===== room_member（会话维度名册，「这个会话有谁」，每会话恒两行） ===== -->
+
+    <!-- 建会话事务内与两行 user_room 同事务写入：1v1 恒两行，join_seq 入群水位（1v1 恒 0） -->
+    <insert id="insertRoomMembers">
+        INSERT INTO room_member (room_id, user_id, join_seq, create_time, update_time)
+        VALUES
+        <foreach collection="members" item="m" separator=",">
+            (#{m.roomId}, #{m.userId}, 0, NOW(), NOW())
+        </foreach>
+    </insert>
+
+    <select id="listRoomMembers" resultType="com.betterschool.infrastructure.dao.chat.po.RoomMember">
+        SELECT id, room_id, user_id, join_seq AS joinSeq, create_time AS createTime, update_time
+        FROM room_member
+        WHERE room_id = #{roomId}
+        ORDER BY id
+    </select>
+
+    <select id="countRoomMembers" resultType="long">
+        SELECT COUNT(1)
+        FROM room_member
+        WHERE room_id = #{roomId}
+    </select>
+
+    <!-- 会话列表三段查之③：本批会话的对家名册行（名册表回查替代旧「成员表 user_id != 我」过滤；
+         1v1 恒两行名册，每会话恰出一行对家） -->
+    <select id="selectPeerMembers" resultType="com.betterschool.infrastructure.dao.chat.po.RoomPeerRow">
+        SELECT rm.room_id AS roomId, rm.user_id AS userId
+        FROM room_member rm
+        WHERE rm.room_id IN
+        <foreach collection="roomIds" item="roomId" open="(" separator="," close=")">#{roomId}</foreach>
+          AND rm.user_id != #{userId}
+    </select>
+
+</mapper>

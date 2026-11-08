@@ -110,14 +110,14 @@ public class TimeoutTaskScanService implements ITimeoutTaskScanService {
      */
     private Map<String, BucketIds> partition(List<TimeoutTaskEntity> batch, CallbackReportVO report) {
         Map<String, BucketIds> byTaskType = new LinkedHashMap<>();
-        for (TimeoutTaskEntity task : batch) {
-            BucketIds buckets = byTaskType.computeIfAbsent(task.getTaskType(), key -> new BucketIds());
-            if (report.isSucceeded(TaskKeyVO.of(task.getTaskType(), task.getBizId()))) {
-                buckets.successIds.add(task.getBizId());
-            } else if (reachesRetryLimit(task)) {
-                buckets.deadIds.add(task.getBizId());
+        for (TimeoutTaskEntity taskEntity : batch) {
+            BucketIds buckets = byTaskType.computeIfAbsent(taskEntity.getTaskType(), key -> new BucketIds());
+            if (report.isSucceeded(TaskKeyVO.of(taskEntity.getTaskType(), taskEntity.getBizId()))) {
+                buckets.successIds.add(taskEntity.getBizId());
+            } else if (reachesRetryLimit(taskEntity)) {
+                buckets.deadIds.add(taskEntity.getBizId());
             } else {
-                buckets.backoffSeconds.put(task.getBizId(), backoffSecondsAfterFailure(task));
+                buckets.backoffSeconds.put(taskEntity.getBizId(), backoffSecondsAfterFailure(taskEntity));
             }
         }
         return byTaskType;
@@ -185,13 +185,13 @@ public class TimeoutTaskScanService implements ITimeoutTaskScanService {
      * <p>
      * 上限兜底 ≥1：配成 0 或负数时首次失败即进死信，是合理读法；但不能让它变成「永不进死信」。
      */
-    private boolean reachesRetryLimit(TimeoutTaskEntity task) {
-        return failedTimes(task) >= retryLimit();
+    private boolean reachesRetryLimit(TimeoutTaskEntity taskEntity) {
+        return failedTimes(taskEntity) >= retryLimit();
     }
 
     /** 本次失败之后 {@code retry_count} 会变成的值（行上的值时本次失败尚未记上） */
-    private static int failedTimes(TimeoutTaskEntity task) {
-        return (task.getRetryCount() == null ? 0 : task.getRetryCount()) + 1;
+    private static int failedTimes(TimeoutTaskEntity taskEntity) {
+        return (taskEntity.getRetryCount() == null ? 0 : taskEntity.getRetryCount()) + 1;
     }
 
     private int retryLimit() {
@@ -206,8 +206,8 @@ public class TimeoutTaskScanService implements ITimeoutTaskScanService {
      * 行上的 {@code retry_count} 是**已失败次数**：首次失败后它为 1，间隔就该是 base（30s），
      * 所以指数取 {@code 失败次数 - 1}。左移即乘 2 的幂（倍率固定 2，「指数翻倍」写死）。
      */
-    private int backoffSecondsAfterFailure(TimeoutTaskEntity task) {
-        int exponent = Math.min(Math.max(failedTimes(task) - 1, 0), MAX_BACKOFF_EXPONENT);
+    private int backoffSecondsAfterFailure(TimeoutTaskEntity taskEntity) {
+        int exponent = Math.min(Math.max(failedTimes(taskEntity) - 1, 0), MAX_BACKOFF_EXPONENT);
         // 两个配置项都兜底：底数 ≥1s、封顶 ≥1s（只兜底数是不够的——`max-seconds: 0` 会让退避算成 0，
         // next_fire_time 贴住落库时刻，那一行在同一轮里被反复捞起 → 「循环拉批到空」拉不到空，
         // 一次 tick 就把 16 次重试跑光。配置写错了也不该炸在这里）

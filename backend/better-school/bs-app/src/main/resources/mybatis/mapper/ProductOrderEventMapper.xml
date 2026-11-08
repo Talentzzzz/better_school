@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.productorder.IProductOrderEventDao">
+
+    <!-- 订单状态流转事件（只插入，纠纷溯源事实源）：随条件 UPDATE 成功在同一事务写入 -->
+    <insert id="insertOrderEvent" parameterType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderEvent">
+        INSERT INTO product_order_event (order_id, event_type, from_state, to_state, actor_id, actor_role,
+                                         reason_type, reason, images, create_time, update_time)
+        VALUES (#{orderId}, #{eventType}, #{fromState}, #{toState}, #{actorId}, #{actorRole},
+                #{reasonType}, #{reason}, #{images}, NOW(), NOW())
+    </insert>
+
+</mapper>

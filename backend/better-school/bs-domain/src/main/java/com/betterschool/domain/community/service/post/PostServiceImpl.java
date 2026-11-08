@@ -259,11 +259,11 @@ public class PostServiceImpl implements ICommunityPostService {
     public void approvePost(String postId) {
         // 条件 UPDATE 先行，0 行时终态判定（并发双审/重试）
         if (!communityRepository.approveWithSearchSync(postId)) {
-            PostEntity current = communityRepository.findPostById(postId);
-            if (current == null || current.getStatus() == PostStatusVO.DELETED) {
+            PostEntity currentEntity = communityRepository.findPostById(postId);
+            if (currentEntity == null || currentEntity.getStatus() == PostStatusVO.DELETED) {
                 throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
             }
-            if (current.getStatus() == PostStatusVO.NORMAL) {
+            if (currentEntity.getStatus() == PostStatusVO.NORMAL) {
                 return; // 幂等：已通过
             }
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "帖子已被驳回或审核状态已变化");
@@ -273,11 +273,11 @@ public class PostServiceImpl implements ICommunityPostService {
     @Override
     public void rejectPost(String postId) {
         if (!communityRepository.rejectWithSearchSync(postId)) {
-            PostEntity current = communityRepository.findPostById(postId);
-            if (current == null || current.getStatus() == PostStatusVO.DELETED) {
+            PostEntity currentEntity = communityRepository.findPostById(postId);
+            if (currentEntity == null || currentEntity.getStatus() == PostStatusVO.DELETED) {
                 throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
             }
-            if (current.getStatus() == PostStatusVO.REJECTED) {
+            if (currentEntity.getStatus() == PostStatusVO.REJECTED) {
                 return; // 幂等：已驳回
             }
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "帖子已通过或审核状态已变化，无法驳回");

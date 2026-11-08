@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.comment.IPostCommentFeedIndexDao">
+
+    <!-- 最热档第一步：在根评论索引上按 (like_count DESC, create_time ASC, comment_id ASC) 扫出本页 comment_id 序。
+         (post_id, like_count, create_time, comment_id) 前缀把扫描锁在单帖、覆盖索引不回表；赞数同值时的
+         「发布先后」由 create_time 表达，comment_id（UUID）只做同值最终收敛——UUID 无序，不能再拿它当时间代理
+         （uuid-biz-id 票 03）。混合方向（降序 + 升序）索引序给不出，所以排序落在「本帖那几十行」这个窄范围内
+         （EXPLAIN：covering index lookup + Sort）——单帖楼数量级可接受（spec §4.3），换来的仍是
+         「排序键与评论行分离」：索引被人为刷偏时顺序跟着索引走，与主列无关 -->
+    <select id="selectRootFeedCommentIds" resultType="string">
+        SELECT comment_id
+        FROM post_comment_feed_index
+        WHERE post_id = #{postId}
+        ORDER BY like_count DESC, create_time, comment_id
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <!-- ── 根评论热评索引同事务直写（票 01：索引行与评论行同库，审核 / 赞合并 / 软删事务带写）── -->
+
+    <!-- 根评论审核通过：索引行诞生。赞数恒 0——待审态不可被赞（点赞前置检查锁 NORMAL），行诞生时必然还没被赞过；
+         子回复不入索引（楼内不按赞排），调用方按 root_id 分流。与状态翻转同事务：通过事务回滚则行不诞生 -->
+    <insert id="insertFeedIndexOnApprove">
+        INSERT INTO post_comment_feed_index (comment_id, post_id, like_count, create_time, update_time)
+        VALUES (#{commentId}, #{postId}, 0, NOW(), NOW())
+    </insert>
+
+    <!-- 赞合并 / 取消赞事务旁带 ±N：纯 UPDATE 不 upsert（能被赞的根评论行必存在——NORMAL 才可赞，通过事务已建行）。
+         GREATEST 兜底不为负，与主列 decrease 同口径；命中 0 行 = 索引行缺失的漂移，调用方落日志交重建 job -->
+    <update id="updateFeedIndexLikeCount">
+        UPDATE post_comment_feed_index
+        SET like_count  = GREATEST(0, like_count + #{delta}),
+            update_time = NOW()
+        WHERE comment_id = #{commentId}
+    </update>
+
+    <!-- 根评论软删：索引行物理退场（行集 = 当前可见根评论）。评论软删是终态、没有恢复路径，
+         不需要帖子的「行常驻 + state 镜像」；本就不在索引里的子回复，调用方不走到这里 -->
+    <delete id="deleteFeedIndex">
+        DELETE FROM post_comment_feed_index
+        WHERE comment_id = #{commentId}
+    </delete>
+
+    <!-- ── 热评索引全量重建（票 03：兜底恢复手段，照帖子 feedIndexRebuildJob / 市集票 06 样板手动触发）── -->
+
+    <!-- 重建第一步：清空索引表。用 DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉与重灌语句的原子性
+         （读者要么看到重建前、要么看到重建后的完整索引，不见空窗） -->
+    <delete id="clearFeedIndex">
+        DELETE FROM post_comment_feed_index
+    </delete>
+
+    <!-- 重灌取数：① 的根评论行集（comment_id + post_id + create_time）在 IPostCommentDao.selectRebuildRows
+         （主表 post_comment）；② like_count 从计数窄表抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径）；
+         ③ create_time 取审核记录最近一次 APPROVE 时刻 = 行诞生时的口径（通过时刻，经
+         IContentReviewDao.selectApproveRowsByTargetType），查不到审批流水的存量行取评论 create_time 兜底；
+         仓储组装后走本 mapper 的 insertFeedIndexRows 批量写回 -->
+
+    <!-- 重灌写回：仓储拼装好的行集批量 INSERT（见 IPostCommentDao.selectRebuildRows 注释） -->
+    <insert id="insertFeedIndexRows">
+        INSERT INTO post_comment_feed_index (comment_id, post_id, like_count, create_time, update_time)
+        VALUES
+        <foreach collection="rows" item="row" separator=",">
+            (#{row.commentId}, #{row.postId}, #{row.likeCount}, #{row.feedTime}, NOW())
+        </foreach>
+    </insert>
+
+</mapper>

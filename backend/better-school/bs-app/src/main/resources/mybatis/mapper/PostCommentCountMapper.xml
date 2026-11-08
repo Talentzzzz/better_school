@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.comment.IPostCommentCountDao">
+
+    <!-- 评论计数窄表批量读：按 id 集单表 IN 查询，仓储 COALESCE 0 拼回 PO/实体（详情与列表共用），
+         缺行 = 计数 0，与原 LEFT JOIN 合成口径一致 -->
+    <select id="selectCommentCountsByPostIds" resultType="com.betterschool.infrastructure.dao.post.po.Post">
+        SELECT c.post_id AS postId, c.comment_count AS commentCount
+        FROM post_comment_count c
+        WHERE c.post_id IN
+        <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
+    </select>
+
+    <!-- 评论计数窄表 upsert（评论通过 +1 / 软删 -1，只计 NORMAL 态；同事务调用，不再锁 post 行） -->
+    <update id="upsertPostCommentCount">
+        INSERT INTO post_comment_count (post_id, comment_count, create_time, update_time)
+        VALUES (#{postId}, GREATEST(#{delta}, 0), NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            comment_count = GREATEST(0, comment_count + #{delta}),
+            update_time   = NOW()
+    </update>
+
+</mapper>

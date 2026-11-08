@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.chat.IUserSeqDao">
+
+    <!-- ===== user_seq ===== -->
+
+    <!-- 扇出事务内取号：行不存在按 seq=N 建行（本次分配 [1,N]），存在则 +N（旧值 old，本次分配 [old+1, old+N]） -->
+    <insert id="upsertIncreaseUserSeq">
+        INSERT INTO user_seq (user_id, seq, create_time, update_time)
+        VALUES (#{userId}, #{n}, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE seq = seq + #{n}, update_time = NOW()
+    </insert>
+
+    <select id="selectUserSeq" resultType="long">
+        SELECT seq
+        FROM user_seq
+        WHERE user_id = #{userId}
+    </select>
+
+</mapper>

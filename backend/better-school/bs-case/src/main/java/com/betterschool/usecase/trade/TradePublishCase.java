@@ -65,10 +65,10 @@ public class TradePublishCase {
 
     /** 提交商品草稿：与直接发布同门槛校验，初筛命中停留草稿，通过进入待审 */
     public void submitProductDraft(String userId, String productId) {
-        ProductEntity draft = productService.getOwnedProductDraft(userId, productId);
+        ProductEntity draftEntity = productService.getOwnedProductDraft(userId, productId);
         creditAccountService.ensureOperable(userId);
-        validateProductDraftComplete(draft);
-        screenText(draft.getTitle(), draft.getDescription());
+        validateProductDraftComplete(draftEntity);
+        screenText(draftEntity.getTitle(), draftEntity.getDescription());
         productService.submitProductDraft(userId, productId);
     }
 
@@ -126,9 +126,9 @@ public class TradePublishCase {
         }
     }
 
-    private void validateProductDraftComplete(ProductEntity draft) {
-        if (isBlank(draft.getTitle()) || draft.getPrice() == null
-                || isBlank(draft.getTradeLocation()) || draft.getCategory() == null) {
+    private void validateProductDraftComplete(ProductEntity draftEntity) {
+        if (isBlank(draftEntity.getTitle()) || draftEntity.getPrice() == null
+                || isBlank(draftEntity.getTradeLocation()) || draftEntity.getCategory() == null) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "草稿内容不完整，请补全标题、价格、交易地点与分类后再提交");
         }
     }

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.errand.IErrandViewHistoryDao">
+
+    <!-- 跑腿浏览 UV 三步（market-feed-uv 票 02，照帖子 insertViewHistory / touchViewedAt / upsertViewCount 先例） -->
+
+    <!-- 第一步：UV 明细批量写（合并器一组一个事务的第一步）：同订单 N 个用户一条语句。
+         INSERT IGNORE 的裁决与帖子同理：(user_id, errand_order_id) 主键撞了就不插，
+         影响行数 = 本组真正新增的 UV 数，加速列只按它增量（重复浏览不重复计） -->
+    <insert id="insertOrderViewHistory">
+        INSERT IGNORE INTO errand_view_history (user_id, errand_order_id, viewed_at)
+        VALUES
+        <foreach collection="userIds" item="userId" separator=",">
+            (#{userId}, #{orderId}, NOW())
+        </foreach>
+    </insert>
+
+    <!-- 第二步：刷新本组全部键的浏览时刻（含刚插入的行）——重复浏览的唯一可见效果就是 viewed_at 变新 -->
+    <update id="touchOrderViewedAt">
+        UPDATE errand_view_history
+        SET viewed_at = NOW()
+        WHERE errand_order_id = #{orderId}
+          AND user_id IN
+        <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
+    </update>
+
+    <!-- 已读灰显批量回显（market-feed-uv 票 05，照帖子 selectViewedPostIds）：明细表主键
+         (user_id, errand_order_id) 前缀先钉人、再按页内 id 集合 IN，一页一次查询，不做 N+1 -->
+    <select id="selectViewedOrderIds" resultType="string">
+        SELECT errand_order_id
+        FROM errand_view_history
+        WHERE user_id = #{userId}
+          AND errand_order_id IN
+        <foreach collection="orderIds" item="orderId" open="(" separator="," close=")">#{orderId}</foreach>
+    </select>
+
+</mapper>

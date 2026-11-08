@@ -1,3 +1,7 @@
+## Java 编码规范
+
+- Entity 类型（`XxxEntity`）的**局部变量与方法参数**名必须以 `Entity` 结尾（如 `MessageEntity messageEntity`）。**实体类的成员字段除外**——字段保持业务裸名（`roomId`、`fromUserId`），因为字段名联动 Lombok 访问器、MyBatis 属性映射与 JSON 序列化。
+
 ## Agent skills
 
 ### Issue tracker

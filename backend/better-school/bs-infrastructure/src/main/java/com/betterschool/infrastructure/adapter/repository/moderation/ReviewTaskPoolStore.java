@@ -5,7 +5,7 @@ import com.betterschool.domain.moderation.adapter.port.IReviewSignalPort;
 import com.betterschool.domain.moderation.model.valobj.ReviewTargetTypeVO;
 import com.betterschool.domain.timeout.adapter.repository.ITimeoutRepository;
 import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
-import com.betterschool.infrastructure.dao.moderation.IModerationDao;
+import com.betterschool.infrastructure.dao.moderation.IReviewTaskDao;
 import com.betterschool.infrastructure.dao.moderation.po.ReviewTask;
 import com.betterschool.types.common.Constants;
 import lombok.RequiredArgsConstructor;
@@ -42,7 +42,7 @@ public class ReviewTaskPoolStore {
     /** 升级阈值（spec §5.2：recycle_count ≥3 置 escalated=1 并告警；与 Mapper 内 IF 同源，改须同步） */
     static final int ESCALATE_RECYCLE_THRESHOLD = 3;
 
-    private final IModerationDao moderationDao;
+    private final IReviewTaskDao reviewTaskDao;
     private final ITimeoutRepository timeoutRepository;
     private final TransactionTemplate transactionTemplate;
     private final IReviewDispatchMetricsPort reviewDispatchMetrics;
@@ -65,7 +65,7 @@ public class ReviewTaskPoolStore {
      */
     public void enter(ReviewTargetTypeVO targetType, String targetId, int reviewRound, String authorId) {
         // 同轮重提＝新轮次＝新工单行：先关旧轮遗留（业务行已在待审，旧工单必是遗留），再开新单
-        moderationDao.closeStaleRoundTasks(targetType.name(), targetId, reviewRound);
+        reviewTaskDao.closeStaleRoundTasks(targetType.name(), targetId, reviewRound);
         ReviewTask task = new ReviewTask();
         // 业务 ID 随 insert 一次写入（uuid-biz-id 票 06）；撞 uk_target_round 被 IGNORE 时本行未落库，发号作废无害
         task.setTaskId(UUID.randomUUID().toString());
@@ -75,7 +75,7 @@ public class ReviewTaskPoolStore {
         task.setAuthorId(authorId);
         task.setSource("MANUAL");
         // uk_target_round 冲突 = 同轮已开单（幂等入池，0 行不报错）
-        boolean inserted = moderationDao.insertIgnoreTask(task) > 0;
+        boolean inserted = reviewTaskDao.insertIgnoreTask(task) > 0;
         if (inserted) {
             // 派单信号（票 11）：真实开了新工单才广播；afterCommit 触发（回滚随事务消失、不推），
             // 虚拟线程异步执行——业务线程不得阻塞在「查积压数 + 遍历推送」上（对齐 outbox 即时发送先例）
@@ -112,7 +112,7 @@ public class ReviewTaskPoolStore {
 
     /** 出池关单（须处于业务事务内）：该目标全部在途工单停 DONE，裁决结论仍落 content_review */
     public void close(ReviewTargetTypeVO targetType, String targetId) {
-        moderationDao.closeOpenTasks(targetType.name(), targetId);
+        reviewTaskDao.closeOpenTasks(targetType.name(), targetId);
     }
 
     /**
@@ -132,33 +132,33 @@ public class ReviewTaskPoolStore {
         // 观测计数（票 11）随事务提交后落：惰性回收条数与是否真领到单，都在事务内捕获、提交后写 Redis
         int[] lazyRecycledHolder = {0};
         Optional<ReviewTask> claimed = Optional.ofNullable(transactionTemplate.execute(status -> {
-            int lazyRecycled = moderationDao.recycleExpiredLeases();
+            int lazyRecycled = reviewTaskDao.recycleExpiredLeases();
             lazyRecycledHolder[0] = lazyRecycled;
             if (lazyRecycled > 0) {
                 log.warn("[审核工单] 领单前惰性回收过期租约 {} 条（超时中心回调延迟/丢失的兜底）", lazyRecycled);
                 // 批量放回可能把某条推过升级阈值：SQL 内已置 escalated，这里补告警（回调/放回路径各自在行内告警）
-                int escalatedInPool = moderationDao.countEscalatedPending();
+                int escalatedInPool = reviewTaskDao.countEscalatedPending();
                 if (escalatedInPool > 0) {
                     log.warn("[审核工单告警] 惰性回收后池内已有 {} 条工单达回收阈值、被置需人工干预标记",
                             escalatedInPool);
                 }
             }
-            String taskId = moderationDao.selectClaimCandidateId(targetType);
+            String taskId = reviewTaskDao.selectClaimCandidateId(targetType);
             if (taskId == null) {
                 return null; // 池空
             }
-            if (moderationDao.claimById(taskId, claimerId, leaseMinutes) == 0) {
+            if (reviewTaskDao.claimById(taskId, claimerId, leaseMinutes) == 0) {
                 // 并发败者：候选被他人抢先（spec §5.3 影响行数 1 者赢）；不重选取下一条（一次只取一条，spec 无重试环）
                 return null;
             }
             // 复合 bizId 取「本次领单后的轮次」：同事务内读，读到的就是本次 claim_seq+1 的值（同跑腿锁单先例）；
             // taskId 是 UUID 字符串（uuid-biz-id 票 06），与 claimSeq 冒号拼接不受影响（UUID 无冒号）
-            int claimSeq = moderationDao.selectClaimSeqById(taskId);
+            int claimSeq = reviewTaskDao.selectClaimSeqById(taskId);
             // 租约超时注册与抢占同事务直插 timeout_task（内嵌超时中心）：回滚即无行，无幽灵租约
             // Java 只传时长（租约分钟 → 秒），到期时刻由 SQL 侧 TIMESTAMPADD 按数据库时钟落库
             timeoutRepository.register(TimeoutTaskEntity.newWaiting(Constants.REVIEW_LEASE_TIMEOUT,
                     taskId + ":" + claimSeq, leaseMinutes * 60L));
-            return moderationDao.selectTaskById(taskId);
+            return reviewTaskDao.selectTaskById(taskId);
         }));
         if (lazyRecycledHolder[0] > 0) {
             // 已到此处 = 事务已提交（execute 正常返回），惰性回收的租约超时计入观测
@@ -177,7 +177,7 @@ public class ReviewTaskPoolStore {
      */
     public boolean recycleByRound(String taskId, int claimSeq) {
         Boolean recycled = transactionTemplate.execute(status -> {
-            if (moderationDao.recycleByRound(taskId, claimSeq) == 0) {
+            if (reviewTaskDao.recycleByRound(taskId, claimSeq) == 0) {
                 return false;
             }
             alertIfEscalated(taskId, "租约超时回收");
@@ -196,7 +196,7 @@ public class ReviewTaskPoolStore {
      */
     public boolean releaseByClaimer(String taskId, String claimerId) {
         Boolean released = transactionTemplate.execute(status -> {
-            if (moderationDao.releaseByClaimer(taskId, claimerId) == 0) {
+            if (reviewTaskDao.releaseByClaimer(taskId, claimerId) == 0) {
                 return false;
             }
             alertIfEscalated(taskId, "主动放回");
@@ -207,7 +207,7 @@ public class ReviewTaskPoolStore {
 
     /** 回收次数达阈值置 escalated 后告警（spec §5.2「≥3 置需人工干预标记并告警」，沿用 WARN 日志告警先例） */
     private void alertIfEscalated(String taskId, String action) {
-        ReviewTask task = moderationDao.selectTaskById(taskId);
+        ReviewTask task = reviewTaskDao.selectTaskById(taskId);
         if (task != null && task.getRecycleCount() != null
                 && task.getRecycleCount() >= ESCALATE_RECYCLE_THRESHOLD) {
             log.warn("[审核工单告警] 工单 {} 因{}累计回收 {} 次（≥{}），已置需人工干预标记 targetType={} targetId={}",

@@ -6,8 +6,10 @@ import com.betterschool.marketing.domain.inventory.model.valobj.ClaimOutcome;
 import com.betterschool.marketing.domain.inventory.model.valobj.DeductResult;
 import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductRequestVO;
 import com.betterschool.marketing.domain.inventory.model.valobj.InventoryLedgerVO;
+import com.betterschool.marketing.infrastructure.inventory.dao.IPhysicalMarketingQuotaDetailDao;
 import com.betterschool.marketing.infrastructure.inventory.dao.IPhysicalQuotaDao;
 import com.betterschool.marketing.infrastructure.inventory.dao.IVirtualInventoryQuotaDao;
+import com.betterschool.marketing.infrastructure.inventory.dao.IVirtualInventoryQuotaDetailDao;
 import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaDetailPO;
 import com.betterschool.marketing.infrastructure.inventory.dao.po.PhysicalMarketingQuotaPO;
 import com.betterschool.marketing.infrastructure.inventory.dao.po.VirtualInventoryQuotaDetailPO;
@@ -28,7 +30,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 库存域唯一仓储实现：两段各碰自己的 DAO（PO / mapper XML 仍是两套），
+ * 库存域唯一仓储实现：两段各碰自己的台账 / 明细 DAO（一表一 DAO），
  * 对外只呈现一套按 {@link InventorySegmentVO} 分派的方法。分派全部集中在 {@code switch} 表达式里。
  * <p>
  * 事务：{@link #flushDeductGroup}、{@link #flushClaimGroup}（各一组一个事务）
@@ -47,6 +49,8 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
 
     private final IVirtualInventoryQuotaDao virtualInventoryQuotaDao;
     private final IPhysicalQuotaDao physicalQuotaDao;
+    private final IVirtualInventoryQuotaDetailDao virtualInventoryQuotaDetailDao;
+    private final IPhysicalMarketingQuotaDetailDao physicalMarketingQuotaDetailDao;
     private final TransactionTemplate transactionTemplate;
 
     // ---------------------------------------------------------------- 台账
@@ -170,18 +174,19 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
     @Override
     public boolean existsDeductDetail(InventorySegmentVO segment, String invId, String bizType, String bizId) {
         return switch (segment) {
-            case VIRTUAL -> virtualInventoryQuotaDao.existsDeductDetail(invId, bizType, bizId);
+            case VIRTUAL -> virtualInventoryQuotaDetailDao.existsDeductDetail(invId, bizType, bizId);
             // 实物只认 type = 1（预扣结转）的行：type = 2 是兑换确认，不是同一笔预扣
-            case QUOTA -> physicalQuotaDao.existsDeductDetail(invId, Constants.DETAIL_TYPE_DEDUCT, bizType, bizId);
+            case QUOTA -> physicalMarketingQuotaDetailDao.existsDeductDetail(invId, Constants.DETAIL_TYPE_DEDUCT,
+                    bizType, bizId);
         };
     }
 
     /** 批量 {@code INSERT IGNORE}：新代码不写 {@code state}（列默认 0）与 {@code bucket_id}（桶层已删） */
     private int insertDeductDetails(InventorySegmentVO segment, String invId, List<InventoryDeductRequestVO> requests) {
         return switch (segment) {
-            case VIRTUAL -> virtualInventoryQuotaDao.batchInsertIgnoreDeductDetails(invId,
+            case VIRTUAL -> virtualInventoryQuotaDetailDao.batchInsertIgnoreDeductDetails(invId,
                     requests.stream().map(r -> toVirtualDeductPO(invId, r)).toList());
-            case QUOTA -> physicalQuotaDao.batchInsertIgnoreDeductDetails(invId,
+            case QUOTA -> physicalMarketingQuotaDetailDao.batchInsertIgnoreDeductDetails(invId,
                     requests.stream().map(r -> toQuotaDeductPO(invId, r)).toList());
         };
     }
@@ -198,9 +203,9 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
         for (Map.Entry<String, List<String>> entry : byBizType.entrySet()) {
             List<String> bizIds = entry.getValue();
             switch (segment) {
-                case VIRTUAL -> virtualInventoryQuotaDao.listExistingDeductDetails(entry.getKey(), bizIds)
+                case VIRTUAL -> virtualInventoryQuotaDetailDao.listExistingDeductDetails(entry.getKey(), bizIds)
                         .forEach(po -> existingBizIds.add(po.getBizId()));
-                case QUOTA -> physicalQuotaDao.listExistingDeductDetails(entry.getKey(), bizIds)
+                case QUOTA -> physicalMarketingQuotaDetailDao.listExistingDeductDetails(entry.getKey(), bizIds)
                         .forEach(po -> existingBizIds.add(po.getBizId()));
             }
         }
@@ -339,7 +344,7 @@ public class InventoryRepository implements IInventoryRepository, IQuotaMergeFlu
         transactionTemplate.executeWithoutResult(status -> {
             long transferQty = 0;
             for (ClaimItem item : items) {
-                if (physicalQuotaDao.insertIgnoreClaimDetail(toClaimDetailPO(invId, item)) > 0) {
+                if (physicalMarketingQuotaDetailDao.insertIgnoreClaimDetail(toClaimDetailPO(invId, item)) > 0) {
                     // 只有新增行产生转移：撞键回放的行，它的量在更早的事务里已经转过了
                     transferQty += item.quantity();
                 }

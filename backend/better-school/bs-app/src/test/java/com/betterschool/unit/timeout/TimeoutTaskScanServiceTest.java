@@ -149,10 +149,10 @@ class TimeoutTaskScanServiceTest {
 
     @Test
     void 批上没带槽位时立刻报错_不留到没塞hint的批量语句上() {
-        TimeoutTaskEntity task = task("order-1", 0);
-        task.setShardSlot(null);
+        TimeoutTaskEntity taskEntity = task("order-1", 0);
+        taskEntity.setShardSlot(null);
 
-        assertThatThrownBy(() -> service.settle(List.of(task), CallbackReportVO.none()))
+        assertThatThrownBy(() -> service.settle(List.of(taskEntity), CallbackReportVO.none()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("shardSlot");
     }
@@ -180,11 +180,11 @@ class TimeoutTaskScanServiceTest {
     }
 
     private static TimeoutTaskEntity task(String taskType, String bizId, int retryCount) {
-        TimeoutTaskEntity task = TimeoutTaskEntity.newWaiting(taskType, bizId, 60L);
-        task.setStatus(TaskStatusVO.RETRYING);
-        task.setRetryCount(retryCount);
-        task.setShardSlot(SLOT);
-        return task;
+        TimeoutTaskEntity taskEntity = TimeoutTaskEntity.newWaiting(taskType, bizId, 60L);
+        taskEntity.setStatus(TaskStatusVO.RETRYING);
+        taskEntity.setRetryCount(retryCount);
+        taskEntity.setShardSlot(SLOT);
+        return taskEntity;
     }
 
     /** 退避与死信上限取 application(-test).yml 的口径，这里显式摆进服务（域服务用 @Value 默认值兜底） */
@@ -263,12 +263,12 @@ class TimeoutTaskScanServiceTest {
         // ---- 以下按键读写方法本用例用不到 ----
 
         @Override
-        public boolean register(TimeoutTaskEntity task) {
+        public boolean register(TimeoutTaskEntity taskEntity) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public boolean insertIfAbsent(TimeoutTaskEntity task) {
+        public boolean insertIfAbsent(TimeoutTaskEntity taskEntity) {
             throw new UnsupportedOperationException();
         }
 
@@ -278,7 +278,7 @@ class TimeoutTaskScanServiceTest {
         }
 
         @Override
-        public boolean reviveTerminal(TimeoutTaskEntity task) {
+        public boolean reviveTerminal(TimeoutTaskEntity taskEntity) {
             throw new UnsupportedOperationException();
         }
 

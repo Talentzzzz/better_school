@@ -26,14 +26,6 @@
                 NOW(), NOW(), IF(#{state} = 'DRAFT', NULL, DATE_ADD(NOW(), INTERVAL 30 DAY)))
     </insert>
 
-    <!-- 浏览 UV 加速列批量读：按 id 集单表 IN 查询，仓储补 0 拼装（详情单元素与列表共用） -->
-    <select id="selectViewCountsByProductIds" resultType="com.betterschool.infrastructure.dao.product.po.Product">
-        SELECT c.product_id AS productId, c.view_count AS viewCount
-        FROM product_view_count c
-        WHERE c.product_id IN
-        <foreach collection="productIds" item="productId" open="(" separator="," close=")">#{productId}</foreach>
-    </select>
-
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
         FROM product p
@@ -272,54 +264,6 @@
         </if>
     </select>
 
-    <!-- 闲置推荐页索引序扫描（market-feed-uv 票 04）：state 过滤 + (排序键, product_id) 索引序 range scan。
-         五档排序共用一条语句——热度 (state, view_count, create_time, product_id)、最新/最早
-         (state, feed_time, product_id) 正向/反向扫描、价格升降 (state, price, product_id)；
-         续页谓词与排序方向同构（降序 &lt;、升序 &gt;），配合 ORDER BY 的列序方向才能走 range scan
-         而不是全表 filesort。排序键随行带出，供编下一页游标。
-         热度档三段收敛（uuid-biz-id 票 05）：view_count 同值按 create_time DESC、product_id DESC
-         收敛成确定序（业务 ID 是 UUID 无序，不能再拿它当时间代理） -->
-    <select id="selectFeedIndex" resultType="com.betterschool.domain.trade.model.valobj.ProductFeedIndexItemVO">
-        SELECT product_id, feed_time, create_time, price, view_count
-        FROM product_feed_index
-        WHERE state = 'ON_SALE'
-        <if test="cursor != null and !cursor.isFirstPage()">
-            <choose>
-                <when test="sort == 'hot'">
-                    AND (view_count &lt; #{cursor.viewCount}
-                        OR (view_count = #{cursor.viewCount} AND create_time &lt; #{cursor.createTime})
-                        OR (view_count = #{cursor.viewCount} AND create_time = #{cursor.createTime}
-                            AND product_id &lt; #{cursor.productId}))
-                </when>
-                <when test="sort == 'time_asc'">
-                    AND (feed_time &gt; #{cursor.feedTime}
-                        OR (feed_time = #{cursor.feedTime} AND product_id &gt; #{cursor.productId}))
-                </when>
-                <when test="sort == 'price_asc'">
-                    AND (price &gt; #{cursor.price}
-                        OR (price = #{cursor.price} AND product_id &gt; #{cursor.productId}))
-                </when>
-                <when test="sort == 'price_desc'">
-                    AND (price &lt; #{cursor.price}
-                        OR (price = #{cursor.price} AND product_id &lt; #{cursor.productId}))
-                </when>
-                <otherwise>
-                    AND (feed_time &lt; #{cursor.feedTime}
-                        OR (feed_time = #{cursor.feedTime} AND product_id &lt; #{cursor.productId}))
-                </otherwise>
-            </choose>
-        </if>
-        ORDER BY
-        <choose>
-            <when test="sort == 'hot'">view_count DESC, create_time DESC, product_id DESC</when>
-            <when test="sort == 'time_asc'">feed_time ASC, product_id ASC</when>
-            <when test="sort == 'price_asc'">price ASC, product_id ASC</when>
-            <when test="sort == 'price_desc'">price DESC, product_id DESC</when>
-            <otherwise>feed_time DESC, product_id DESC</otherwise>
-        </choose>
-        LIMIT #{limit}
-    </select>
-
     <select id="count" resultType="long">
         SELECT COUNT(1)
         FROM product
@@ -369,177 +313,17 @@
           AND state = 'ON_SALE'
     </select>
 
-    <insert id="insertFavorite">
-        INSERT IGNORE INTO product_favorite (product_id, user_id, create_time, update_time)
-        VALUES (#{productId}, #{userId}, NOW(), NOW())
-    </insert>
-
-    <delete id="deleteFavorite">
-        DELETE FROM product_favorite
-        WHERE product_id = #{productId}
-          AND user_id = #{userId}
-    </delete>
-
-    <select id="existsFavorite" resultType="int">
-        SELECT COUNT(1)
-        FROM product_favorite
-        WHERE product_id = #{productId}
-          AND user_id = #{userId}
-    </select>
-
-    <select id="countFavorites" resultType="long">
-        SELECT COUNT(1)
-        FROM product_favorite
-        WHERE product_id = #{productId}
-    </select>
-
-    <!-- 我的收藏：收藏关系行主查（product_favorite 单表，物理 id DESC = 收藏先后倒序）；
-         商品行与可见性过滤（state != 'DELETED'）由仓储两段查拼装 -->
-    <select id="selectFavoriteProductIdsByUser" resultType="string">
-        SELECT f.product_id
-        FROM product_favorite f
-        WHERE f.user_id = #{userId}
-        ORDER BY f.id DESC
-    </select>
-
-    <!-- ── 商品浏览 UV 三步（market-feed-uv 票 02，照帖子 insertViewHistory / touchViewedAt / upsertViewCount 先例）── -->
-
-    <!-- 第一步：UV 明细批量写（合并器一组一个事务的第一步）：同商品 N 个用户一条语句。
-         INSERT IGNORE 的裁决与帖子同理：(user_id, product_id) 主键撞了就不插，
-         影响行数 = 本组真正新增的 UV 数，加速列只按它增量（重复浏览不重复计） -->
-    <insert id="insertProductViewHistory">
-        INSERT IGNORE INTO product_view_history (user_id, product_id, viewed_at)
-        VALUES
-        <foreach collection="userIds" item="userId" separator=",">
-            (#{userId}, #{productId}, NOW())
-        </foreach>
-    </insert>
-
-    <!-- 第二步：刷新本组全部键的浏览时刻（含刚插入的行）——重复浏览的唯一可见效果就是 viewed_at 变新 -->
-    <update id="touchProductViewedAt">
-        UPDATE product_view_history
-        SET viewed_at = NOW()
-        WHERE product_id = #{productId}
-          AND user_id IN
-        <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
-    </update>
-
-    <!-- 第三步：加速列 upsert（行懒建，与 post_view_count 同款 ODKU）；增量 = insertProductViewHistory
-         的影响行数，不是 ODKU 的 affected rows——同秒重复刷 viewed_at 会把 ODKU 的 affected rows 打乱 -->
-    <update id="upsertProductViewCount">
-        INSERT INTO product_view_count (product_id, view_count, create_time, update_time)
-        VALUES (#{productId}, #{delta}, NOW(), NOW())
-        ON DUPLICATE KEY UPDATE
-            view_count  = view_count + #{delta},
-            update_time = NOW()
-    </update>
-
-    <!-- 已读灰显批量回显（market-feed-uv 票 05，照帖子 selectViewedPostIds）：明细表主键 (user_id, product_id)
-         前缀先钉人、再按页内 id 集合 IN，一页一次查询，不做 N+1 -->
-    <select id="selectViewedProductIds" resultType="string">
-        SELECT product_id
-        FROM product_view_history
-        WHERE user_id = #{userId}
-          AND product_id IN
-        <foreach collection="productIds" item="productId" open="(" separator="," close=")">#{productId}</foreach>
-    </select>
-
-    <!-- ── feed 异构索引同事务直写（market-feed-uv 票 03：索引行与 product 行同库，
-         状态流转 / 改价 / 浏览合并事务带写，照帖子 post_feed_index 先例）── -->
-
-    <!-- 审核通过：行诞生 / 翻回 ON_SALE。INSERT...SELECT 从 product 行取 price 快照（approve 彼时的价格）
-         与 create_time 快照（热度档同值收敛键，uuid-biz-id 票 05）；
-         feed_time = 本次通过时刻——行诞生落第一次，重提再通过（relist / 在售改内容回审 / 下架后重提）
-         经 ODKU 刷新为「进入当前对外可见轮」的时刻（schema 注释口径，与票 01 回填、票 06 重建的
-         MAX(APPROVE) 一致；帖子先例不刷新是因其 ODKU 不可达，商品的重提是正常路径）。
-         ODKU 不碰 view_count（浏览合并事务旁路独占维护） -->
-    <update id="upsertFeedIndexOnApprove">
-        INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, view_count, update_time)
-        SELECT p.product_id, 'ON_SALE', NOW(), p.create_time, p.price, 0, NOW()
-        FROM product p
-        WHERE p.product_id = #{productId}
-        ON DUPLICATE KEY UPDATE
-            state       = 'ON_SALE',
-            feed_time   = NOW(),
-            price       = VALUES(price),
-            update_time = NOW()
-    </update>
-
-    <!-- 状态快照同步：镜像 product 的新状态（LOCKED / SOLD / PENDING_REVIEW / DRAFT / REJECTED / DELETED，
-         feed 只查 ON_SALE）。行不存在（从未通过审）= 0 行静默，不 upsert——未通过过的商品不该凭空进索引 -->
-    <update id="updateFeedIndexState">
-        UPDATE product_feed_index
-        SET state       = #{state},
-            update_time = NOW()
-        WHERE product_id = #{productId}
-    </update>
-
-    <!-- 在售改价旁路同步（立即生效不进审核）：纯 UPDATE（ON_SALE 行必存在——行诞生于通过事务）。
-         非在售态的价格变更（草稿编辑、改内容回审混提新价）不在此同步：期间行不可见，
-         恢复可见由 approve 语句的 price 快照兜住，不产生漂移窗口 -->
-    <update id="updateFeedIndexPrice">
-        UPDATE product_feed_index
-        SET price       = #{price},
-            update_time = NOW()
-        WHERE product_id = #{productId}
-    </update>
-
-    <!-- 浏览合并事务旁路 ±N：纯 UPDATE 不 upsert；命中 0 行 = 索引行缺失（未过审商品被本人浏览、
-         或存量异常），调用方落 warn 交重建 job（票 06），不在写路径凭空补行 -->
-    <update id="updateFeedIndexViewCount">
-        UPDATE product_feed_index
-        SET view_count  = view_count + #{delta},
-            update_time = NOW()
-        WHERE product_id = #{productId}
-    </update>
-
-    <!-- ── feed 索引全量重建（market-feed-uv 票 06：兜底恢复手段，照帖子 IPostDao 的 rebuildFeedIndex 样板手动触发）── -->
-
-    <!-- 重建第一步：清空索引表。用 DELETE 不用 TRUNCATE——TRUNCATE 隐式提交，会毁掉与重灌语句的原子性 -->
-    <delete id="clearFeedIndex">
-        DELETE FROM product_feed_index
-    </delete>
-
-    <!-- 重灌：一商品一行 1:1 投影。行集 = ON_SALE 商品 ∪ 有过审批通过的商品（运行期语义：通过事务才诞生行、
-         之后 state 跟随流转、行不消失；从未通过审的待审/驳回/草稿商品不凭空进索引）。原 INSERT..SELECT
-         一步投影改为仓储三段查拼装：① selectRebuildRows 取 product 全量 (product_id, state, create_time, price)；
-         ② feed_time 取审核记录最近一次 APPROVE 时刻（经 IModerationDao.selectApproveRowsByTargetType，
-         与票 01 回填脚本同口径），查不到审批流水的存量老商品取 create_time 兜底；
-         ③ view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步同时把「过审前被浏览、旁路命中 0 行」
-         漏计的那部分追平（运行期旁路只在本行存在后累加），也与热度排序键的读口径一致。
-         组装后走 insertFeedIndexRows 批量写回 -->
+    <!-- 重灌取数①：product 全量 (product_id, state, create_time, price)——行集 = ON_SALE 商品 ∪ 有过审批
+         通过的商品（运行期语义：通过事务才诞生行、之后 state 跟随流转、行不消失；从未通过审的待审/驳回/
+         草稿商品不凭空进索引）。原 INSERT..SELECT 一步投影改为仓储三段查拼装：① selectRebuildRows 取
+         product 全量 (product_id, state, create_time, price)；② feed_time 取审核记录最近一次 APPROVE 时刻
+         （经 IContentReviewDao.selectApproveRowsByTargetType，与票 01 回填脚本同口径），查不到审批流水的
+         存量老商品取 create_time 兜底；③ view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值，这一步
+         同时把「过审前被浏览、旁路命中 0 行」漏计的那部分追平（运行期旁路只在本行存在后累加），也与热度
+         排序键的读口径一致。组装后走 IProductFeedIndexDao.insertFeedIndexRows 批量写回 -->
     <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.product.po.ProductFeedIndexRow">
         SELECT p.product_id AS productId, p.state AS state, p.create_time AS createTime, p.price AS price
         FROM product p
     </select>
-
-    <!-- 重灌写回：仓储拼装好的行集批量 INSERT（见 selectRebuildRows 注释） -->
-    <insert id="insertFeedIndexRows">
-        INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, view_count, update_time)
-        VALUES
-        <foreach collection="rows" item="row" separator=",">
-            (#{row.productId}, #{row.state}, #{row.feedTime}, #{row.createTime}, #{row.price}, #{row.viewCount}, NOW())
-        </foreach>
-    </insert>
-
-    <!-- 浏览 UV 加速列校准第一步：清掉没有明细行的孤儿计数行（懒建行口径：无浏览不建行） -->
-    <delete id="deleteViewCountsMissingHistory">
-        DELETE FROM product_view_count
-         WHERE NOT EXISTS (SELECT 1
-                             FROM product_view_history h
-                            WHERE h.product_id = product_view_count.product_id)
-    </delete>
-
-    <!-- 重灌：product_view_count 重投影 = product_view_history 行数（ODKU：缺行补建、漂移值刷新、
-         已对齐的行落回同值，幂等不动点） -->
-    <insert id="recalibrateViewCounts">
-        INSERT INTO product_view_count (product_id, view_count, create_time, update_time)
-        SELECT h.product_id, COUNT(*), NOW(), NOW()
-          FROM product_view_history h
-         GROUP BY h.product_id
-        ON DUPLICATE KEY UPDATE
-            view_count  = VALUES(view_count),
-            update_time = NOW()
-    </insert>
 
 </mapper>

@@ -24,12 +24,12 @@ public class PostLikeCase {
 
     public void like(String postId, String userId) {
         communityPostService.likePost(postId, userId);
-        PostEntity post = communityPostService.getPost(postId);
-        if (post == null || post.getUserId().equals(userId)) {
+        PostEntity postEntity = communityPostService.getPost(postId);
+        if (postEntity == null || postEntity.getUserId().equals(userId)) {
             return; // 自赞不发
         }
         try {
-            notificationService.sendInteraction(post.getUserId(), userId, NotificationScopeVO.INTERACTION_LIKE, NotificationTypeVO.POST_LIKED,
+            notificationService.sendInteraction(postEntity.getUserId(), userId, NotificationScopeVO.INTERACTION_LIKE, NotificationTypeVO.POST_LIKED,
                     "互动通知", "你的帖子收到了一个赞", "POST", postId,
                     NotificationTypeVO.POST_LIKED.name() + ":" + postId + ":" + userId);
         } catch (Exception e) {

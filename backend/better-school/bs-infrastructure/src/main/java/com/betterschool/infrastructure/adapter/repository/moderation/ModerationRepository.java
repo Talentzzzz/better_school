@@ -16,7 +16,11 @@ import com.betterschool.infrastructure.dao.comment.IPostCommentDao;
 import com.betterschool.infrastructure.dao.comment.po.PostComment;
 import com.betterschool.infrastructure.dao.errand.IErrandDao;
 import com.betterschool.infrastructure.dao.errand.po.ErrandOrder;
-import com.betterschool.infrastructure.dao.moderation.IModerationDao;
+import com.betterschool.infrastructure.dao.credit.IUserCreditDao;
+import com.betterschool.infrastructure.dao.moderation.IContentReportDao;
+import com.betterschool.infrastructure.dao.moderation.IContentReviewDao;
+import com.betterschool.infrastructure.dao.moderation.IReviewTaskDao;
+import com.betterschool.infrastructure.dao.moderation.ISensitiveWordDao;
 import com.betterschool.infrastructure.dao.moderation.po.ContentReport;
 import com.betterschool.infrastructure.dao.moderation.po.ContentReview;
 import com.betterschool.infrastructure.dao.moderation.po.ReviewQueueItem;
@@ -46,7 +50,12 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ModerationRepository implements IModerationRepository {
 
-    private final IModerationDao moderationDao;
+    private final IReviewTaskDao reviewTaskDao;
+    private final IContentReportDao contentReportDao;
+    private final IContentReviewDao contentReviewDao;
+    private final ISensitiveWordDao sensitiveWordDao;
+    /** 一内容一罚判定（user_credit_detail 主表语句，主表归属 credit 域 DAO） */
+    private final IUserCreditDao userCreditDao;
     private final ReviewTaskPoolStore reviewTaskPoolStore;
     private final ObjectMapper objectMapper;
     // 素材回查 DAO：队列/详情的素材列由 review_task 单表定位后按 target_id 集回查各业务表（SQL 层零 JOIN）
@@ -59,12 +68,12 @@ public class ModerationRepository implements IModerationRepository {
 
     @Override
     public void saveReview(ContentReviewEntity reviewEntity) {
-        moderationDao.insertIgnoreReview(toReviewPO(reviewEntity));
+        contentReviewDao.insertIgnoreReview(toReviewPO(reviewEntity));
     }
 
     @Override
     public void closeOpenTasks(String targetType, String targetId) {
-        moderationDao.closeOpenTasks(targetType, targetId);
+        reviewTaskDao.closeOpenTasks(targetType, targetId);
     }
 
     @Override
@@ -86,7 +95,7 @@ public class ModerationRepository implements IModerationRepository {
     @Override
     public Map<String, Long> countBacklogByType() {
         Map<String, Long> counts = new HashMap<>();
-        for (Map<String, Object> row : moderationDao.countBacklogByType()) {
+        for (Map<String, Object> row : reviewTaskDao.countBacklogByType()) {
             counts.put((String) row.get("targetType"), ((Number) row.get("cnt")).longValue());
         }
         return counts;
@@ -94,7 +103,7 @@ public class ModerationRepository implements IModerationRepository {
 
     @Override
     public ReviewPendingWaitStats pendingWaitStats() {
-        Map<String, Object> row = moderationDao.selectPendingWaitStats();
+        Map<String, Object> row = reviewTaskDao.selectPendingWaitStats();
         if (row == null) {
             return new ReviewPendingWaitStats(0, 0, 0);
         }
@@ -109,60 +118,60 @@ public class ModerationRepository implements IModerationRepository {
         ContentReport report = toReportPO(reportEntity);
         // 业务 ID 随 insert 一次写入（uuid-biz-id 票 06）；撞 uk_reporter_target 被 IGNORE 时本行未落库，发号作废无害
         report.setReportId(UUID.randomUUID().toString());
-        return moderationDao.insertIgnoreReport(report) == 1 ? report.getReportId() : null;
+        return contentReportDao.insertIgnoreReport(report) == 1 ? report.getReportId() : null;
     }
 
     @Override
     public boolean processById(String reportId, String handlerId) {
-        return moderationDao.processById(reportId, handlerId) == 1;
+        return contentReportDao.processById(reportId, handlerId) == 1;
     }
 
     @Override
     public boolean ignoreById(String reportId, String handlerId) {
-        return moderationDao.ignoreById(reportId, handlerId) == 1;
+        return contentReportDao.ignoreById(reportId, handlerId) == 1;
     }
 
     @Override
     public ContentReportEntity findReportById(String reportId) {
-        return toReportEntity(moderationDao.selectReportById(reportId));
+        return toReportEntity(contentReportDao.selectReportById(reportId));
     }
 
     @Override
     public boolean existsProcessedCreditLog(String authorId, String targetType, String targetId) {
-        return moderationDao.existsProcessedCreditLog(authorId, targetType, targetId) > 0;
+        return userCreditDao.existsProcessedCreditLog(authorId, targetType, targetId) > 0;
     }
 
     @Override
     public List<ReviewQueueItemEntity> pageReviewQueue(String targetType, int offset, int limit) {
-        List<ReviewQueueItem> rows = moderationDao.selectReviewQueue(targetType, offset, limit);
-        if (rows.isEmpty()) {
+        List<ReviewQueueItem> queueItemList = reviewTaskDao.selectReviewQueue(targetType, offset, limit);
+        if (queueItemList.isEmpty()) {
             return List.of();
         }
         // 工单只存定位列：素材与作者昵称按 target_id 集回查业务表 + bs_user 拼装（SQL 层零 JOIN）。
         // 业务行缺失或已不在待审态 = 原 INNER JOIN + state 谓词语义，跳过（工单与业务行状态同事务收口，
         // 正常流不会漂移；真漂移交补偿，页可能缩水是可接受的降级）
-        Map<String, Post> posts = postsById(targetIdsOf(rows, ReviewTargetTypeVO.POST));
-        Map<String, PostComment> comments = commentsById(targetIdsOf(rows, ReviewTargetTypeVO.COMMENT));
-        Map<String, Product> products = productsById(targetIdsOf(rows, ReviewTargetTypeVO.PRODUCT));
-        Map<String, ErrandOrder> errands = errandsById(targetIdsOf(rows, ReviewTargetTypeVO.ERRAND));
-        Map<String, User> users = usersByIds(rows.stream().map(ReviewQueueItem::getAuthorId).toList());
-        List<ReviewQueueItem> visible = new ArrayList<>(rows.size());
-        for (ReviewQueueItem row : rows) {
+        Map<String, Post> posts = postsById(targetIdsOf(queueItemList, ReviewTargetTypeVO.POST));
+        Map<String, PostComment> comments = commentsById(targetIdsOf(queueItemList, ReviewTargetTypeVO.COMMENT));
+        Map<String, Product> products = productsById(targetIdsOf(queueItemList, ReviewTargetTypeVO.PRODUCT));
+        Map<String, ErrandOrder> errands = errandsById(targetIdsOf(queueItemList, ReviewTargetTypeVO.ERRAND));
+        Map<String, User> users = usersByIds(queueItemList.stream().map(ReviewQueueItem::getAuthorId).toList());
+        List<ReviewQueueItem> visibleQueueItemList = new ArrayList<>(queueItemList.size());
+        for (ReviewQueueItem row : queueItemList) {
             if (fillQueueMaterial(row, posts, comments, products, errands, users)) {
-                visible.add(row);
+                visibleQueueItemList.add(row);
             }
         }
-        return visible.stream().map(this::toQueueItemEntity).toList();
+        return visibleQueueItemList.stream().map(this::toQueueItemEntity).toList();
     }
 
     @Override
     public long countReviewQueue(String targetType) {
-        return moderationDao.countReviewQueue(targetType);
+        return reviewTaskDao.countReviewQueue(targetType);
     }
 
     @Override
     public ReviewQueueItemEntity findReviewDetail(String targetType, String targetId) {
-        ReviewQueueItem row = moderationDao.selectReviewDetail(targetType, targetId);
+        ReviewQueueItem row = reviewTaskDao.selectReviewDetail(targetType, targetId);
         if (row == null) {
             return null;
         }
@@ -174,22 +183,22 @@ public class ModerationRepository implements IModerationRepository {
 
     @Override
     public ReviewTaskEntity findTaskById(String taskId) {
-        return toTaskEntity(moderationDao.selectTaskById(taskId));
+        return toTaskEntity(reviewTaskDao.selectTaskById(taskId));
     }
 
     @Override
     public ReviewTaskEntity findHeldTaskByTarget(String targetType, String targetId, String claimBy) {
-        return toTaskEntity(moderationDao.selectHeldTaskByTarget(targetType, targetId, claimBy));
+        return toTaskEntity(reviewTaskDao.selectHeldTaskByTarget(targetType, targetId, claimBy));
     }
 
     @Override
     public boolean closeTaskByHolder(String taskId, String claimBy) {
-        return moderationDao.closeByHolder(taskId, claimBy) == 1;
+        return reviewTaskDao.closeByHolder(taskId, claimBy) == 1;
     }
 
     @Override
     public ReviewTargetDetailEntity findTargetDetail(String targetType, String targetId) {
-        ReviewTaskTarget target = moderationDao.selectTaskTargetDetail(targetType, targetId);
+        ReviewTaskTarget target = reviewTaskDao.selectTaskTargetDetail(targetType, targetId);
         if (target == null) {
             return null;
         }
@@ -215,30 +224,30 @@ public class ModerationRepository implements IModerationRepository {
 
     @Override
     public List<ContentReviewEntity> listReviewsByTarget(String targetType, String targetId) {
-        return moderationDao.selectReviewsByTarget(targetType, targetId).stream()
+        return contentReviewDao.selectReviewsByTarget(targetType, targetId).stream()
                 .map(this::toReviewEntity).toList();
     }
 
     @Override
     public List<ContentReviewEntity> listReviewsByAuthor(String authorId, int limit) {
-        return moderationDao.selectReviewsByAuthor(authorId, limit).stream()
+        return contentReviewDao.selectReviewsByAuthor(authorId, limit).stream()
                 .map(this::toReviewEntity).toList();
     }
 
     @Override
     public String findRejectReason(String targetType, String targetId) {
-        return moderationDao.selectRejectReason(targetType, targetId);
+        return contentReviewDao.selectRejectReason(targetType, targetId);
     }
 
     @Override
-    public Map<String, String> findRejectReasons(String targetType, List<String> targetIds) {
-        if (targetIds.isEmpty()) {
+    public Map<String, String> findRejectReasons(String targetType, List<String> targetIdList) {
+        if (targetIdList.isEmpty()) {
             return Map.of();
         }
         // 每 target 取最新一轮 REJECT 行（物理 id 最大）：单表取全部 REJECT 行后 Java 裁决
         // （原自连派生表 JOIN 的多查形态）。target_id 是 VARCHAR（POST/COMMENT=UUID，商品/跑腿为业务键）：按字符串原样收敛
         Map<String, ContentReview> latestByTarget = new HashMap<>();
-        for (ContentReview row : moderationDao.selectRejectRowsByTargetIds(targetType, targetIds)) {
+        for (ContentReview row : contentReviewDao.selectRejectRowsByTargetIds(targetType, targetIdList)) {
             latestByTarget.merge(row.getTargetId(), row,
                     (older, newer) -> newer.getId() != null && (older.getId() == null || newer.getId() > older.getId()) ? newer : older);
         }
@@ -249,65 +258,65 @@ public class ModerationRepository implements IModerationRepository {
 
     @Override
     public List<ContentReportEntity> pageReports(String status, int offset, int limit) {
-        List<ContentReport> rows = moderationDao.selectReports(status, offset, limit);
-        if (rows.isEmpty()) {
+        List<ContentReport> reportList = contentReportDao.selectReports(status, offset, limit);
+        if (reportList.isEmpty()) {
             return List.of();
         }
         // 举报人/被举报人昵称（原两处 LEFT JOIN bs_user 列）批量回查拼装
-        List<String> userIds = new ArrayList<>(rows.size() * 2);
-        for (ContentReport row : rows) {
-            userIds.add(row.getReporterId());
-            userIds.add(row.getAuthorId());
+        List<String> userIdList = new ArrayList<>(reportList.size() * 2);
+        for (ContentReport row : reportList) {
+            userIdList.add(row.getReporterId());
+            userIdList.add(row.getAuthorId());
         }
-        Map<String, User> users = usersByIds(userIds);
-        for (ContentReport row : rows) {
+        Map<String, User> users = usersByIds(userIdList);
+        for (ContentReport row : reportList) {
             User reporter = users.get(row.getReporterId());
             User author = users.get(row.getAuthorId());
             row.setReporterNickname(reporter == null ? null : reporter.getNickname());
             row.setAuthorNickname(author == null ? null : author.getNickname());
         }
-        return rows.stream().map(this::toReportEntity).toList();
+        return reportList.stream().map(this::toReportEntity).toList();
     }
 
     @Override
     public long countReports(String status) {
-        return moderationDao.countReports(status);
+        return contentReportDao.countReports(status);
     }
 
     @Override
     public boolean updateUserRole(String userId, String role) {
-        return moderationDao.updateUserRole(userId, role) == 1;
+        return userDao.updateUserRole(userId, role) == 1;
     }
 
     @Override
     public boolean existsUser(String userId) {
-        return moderationDao.existsUser(userId) > 0;
+        return userDao.existsUser(userId) > 0;
     }
 
     @Override
     public void saveWord(SensitiveWordEntity wordEntity) {
-        moderationDao.insertIgnoreWord(toWordPO(wordEntity));
+        sensitiveWordDao.insertIgnoreWord(toWordPO(wordEntity));
     }
 
     @Override
     public void deleteWord(Long wordId) {
-        moderationDao.deleteWord(wordId);
+        sensitiveWordDao.deleteWord(wordId);
     }
 
     @Override
     public List<String> listEnabledWords() {
-        return moderationDao.selectEnabledWords();
+        return sensitiveWordDao.selectEnabledWords();
     }
 
     @Override
     public List<SensitiveWordEntity> pageWords(int offset, int limit) {
-        return moderationDao.selectWords(offset, limit).stream()
+        return sensitiveWordDao.selectWords(offset, limit).stream()
                 .map(this::toWordEntity).toList();
     }
 
     @Override
     public long countWords() {
-        return moderationDao.countWords();
+        return sensitiveWordDao.countWords();
     }
 
     private ContentReview toReviewPO(ContentReviewEntity reviewEntity) {
@@ -344,51 +353,51 @@ public class ModerationRepository implements IModerationRepository {
     private static final String PENDING_REVIEW = "PENDING_REVIEW";
 
     /** 按类型滤出本页 target_id 集 */
-    private static List<String> targetIdsOf(List<ReviewQueueItem> rows, ReviewTargetTypeVO type) {
+    private static List<String> targetIdsOf(List<ReviewQueueItem> queueItemList, ReviewTargetTypeVO type) {
         String typeName = type.name();
-        return rows.stream().filter(row -> typeName.equals(row.getTargetType()))
+        return queueItemList.stream().filter(row -> typeName.equals(row.getTargetType()))
                 .map(ReviewQueueItem::getTargetId).toList();
     }
 
-    private Map<String, Post> postsById(List<String> ids) {
-        if (ids.isEmpty()) {
+    private Map<String, Post> postsById(List<String> postIdList) {
+        if (postIdList.isEmpty()) {
             return Map.of();
         }
-        return postDao.selectByIds(ids).stream()
+        return postDao.selectByIds(postIdList).stream()
                 .collect(HashMap::new, (m, p) -> m.put(p.getPostId(), p), HashMap::putAll);
     }
 
-    private Map<String, PostComment> commentsById(List<String> ids) {
-        if (ids.isEmpty()) {
+    private Map<String, PostComment> commentsById(List<String> commentIdList) {
+        if (commentIdList.isEmpty()) {
             return Map.of();
         }
-        return commentDao.selectByIds(ids).stream()
+        return commentDao.selectByIds(commentIdList).stream()
                 .collect(HashMap::new, (m, c) -> m.put(c.getCommentId(), c), HashMap::putAll);
     }
 
-    private Map<String, Product> productsById(List<String> ids) {
-        if (ids.isEmpty()) {
+    private Map<String, Product> productsById(List<String> productIdList) {
+        if (productIdList.isEmpty()) {
             return Map.of();
         }
-        return productDao.selectByIds(ids).stream()
+        return productDao.selectByIds(productIdList).stream()
                 .collect(HashMap::new, (m, p) -> m.put(p.getProductId(), p), HashMap::putAll);
     }
 
-    private Map<String, ErrandOrder> errandsById(List<String> ids) {
-        if (ids.isEmpty()) {
+    private Map<String, ErrandOrder> errandsById(List<String> errandIdList) {
+        if (errandIdList.isEmpty()) {
             return Map.of();
         }
-        return errandDao.selectByIds(ids).stream()
+        return errandDao.selectByIds(errandIdList).stream()
                 .collect(HashMap::new, (m, e) -> m.put(e.getErrandOrderId(), e), HashMap::putAll);
     }
 
     /** userId 集 → bs_user 批量回查索引（作者昵称头像/举报人昵称共用） */
-    private Map<String, User> usersByIds(List<String> userIds) {
-        List<String> ids = userIds.stream().filter(Objects::nonNull).distinct().toList();
-        if (ids.isEmpty()) {
+    private Map<String, User> usersByIds(List<String> userIdList) {
+        List<String> distinctUserIdList = userIdList.stream().filter(Objects::nonNull).distinct().toList();
+        if (distinctUserIdList.isEmpty()) {
             return Map.of();
         }
-        return userDao.selectByIds(ids).stream()
+        return userDao.selectByIds(distinctUserIdList).stream()
                 .collect(HashMap::new, (m, u) -> m.put(u.getUserId(), u), HashMap::putAll);
     }
 

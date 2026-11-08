@@ -125,8 +125,8 @@ public class ChatRoomSourceIntegrationTest extends CommunityApiTestBase {
     }
 
     private void sendText(String roomId, Session from, String clientMsgId, String content) {
-        JsonNode response = postJson("/api/chat/rooms/" + roomId + "/messages",
-                Map.of("clientMsgId", clientMsgId, "msgType", "TEXT", "content", content), from);
+        JsonNode response = postJson("/api/chat/rooms/messages",
+                Map.of("roomId", roomId, "clientMsgId", clientMsgId, "msgType", "TEXT", "content", content), from);
         assertSuccess(response, "发消息");
     }
 
