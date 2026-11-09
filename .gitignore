@@ -36,3 +36,9 @@ __pycache__/
 
 # 抽奖参考项目（未入库：含独立 .git，effort 收口后保留在磁盘）
 rafflex-backend/
+
+# 压测探针、从 jar 解包出的 class 树、临时 diff（体积大或可从源重建）
+.scratch/**/probe/
+.scratch/**/*.jar
+/org/
+review_tmp_diff.txt
