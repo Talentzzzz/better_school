@@ -4,6 +4,7 @@ import com.betterschool.api.dto.ChatMembersResponseDTO;
 import com.betterschool.api.dto.ChatMessageResponseDTO;
 import com.betterschool.api.dto.ChatRoomListResponseDTO;
 import com.betterschool.api.dto.ChatRoomResponseDTO;
+import com.betterschool.api.dto.ChatTimelineResponseDTO;
 import com.betterschool.api.dto.CreateDirectRoomRequestDTO;
 import com.betterschool.api.dto.SendMessageRequestDTO;
 import com.betterschool.api.dto.WsTicketResponseDTO;
@@ -28,8 +29,12 @@ public interface IChatService {
     /** 历史消息：beforeSeq 倒序分页（页内 seq 升序），已撤回脱敏「已撤回」空壳 */
     Response<List<ChatMessageResponseDTO>> listMessages(String roomId, Long beforeSeq, Integer limit);
 
-    /** 增量补拉：afterDeliverySeq 游标（0=全量），默认 200 硬顶 500，返回消息全量+deliverySeq */
-    Response<List<ChatMessageResponseDTO>> pullTimeline(Long afterDeliverySeq, Integer limit);
+    /**
+     * 增量补拉：deliverySeqCursor 游标（对应 URL 参数 ?afterDeliverySeq=，0=全量），默认 200 硬顶 500。
+     * 返回 {list, nextCursor, hasMore}：nextCursor 为扫描边界（漂移行被跳过也不卡游标），
+     * hasMore=false 即追平，前端循环拉直到它变 false
+     */
+    Response<ChatTimelineResponseDTO> pullTimeline(Long deliverySeqCursor, Integer limit);
 
     /** 打开会话推水位线到 room.last_seq：幂等，仅水位线前进时 UPDATE+投递 READ 事件；返回推进后水位线 */
     Response<Long> markRead(String roomId);

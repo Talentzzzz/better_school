@@ -4,6 +4,7 @@ import type {
   ChatRoom,
   ChatRoomSummary,
   ChatMessage,
+  ChatTimelinePage,
   RoomMembers,
   Notification,
   RoomSource
@@ -53,7 +54,7 @@ export function listMembers(roomId: number) {
 }
 
 export function pullTimeline(afterDeliverySeq: number, limit = 200) {
-  return httpGet<ChatMessage[]>('/chat/timeline', { afterDeliverySeq, limit })
+  return httpGet<ChatTimelinePage>('/chat/timeline', { afterDeliverySeq, limit })
 }
 
 export function createWsTicket() {

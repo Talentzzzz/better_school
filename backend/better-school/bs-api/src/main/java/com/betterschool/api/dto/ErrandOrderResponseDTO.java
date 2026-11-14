@@ -18,6 +18,8 @@ public class ErrandOrderResponseDTO {
     private String takerNickname;
     private String takerAvatar;
     private String type;
+    /** 订单标题（草稿允许为空，提交时必填） */
+    private String title;
     private String description;
     private String pickupLocation;
     private String deliveryLocation;

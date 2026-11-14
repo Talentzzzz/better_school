@@ -40,7 +40,11 @@ public interface IErrandDao {
 
     long count(@Param("type") String type, @Param("state") String state);
 
-    int payById(@Param("orderId") String orderId, @Param("timeLimitHours") int timeLimitHours);
+    /** 支付确认（deadline 由用户指定随单落库，支付只翻状态；WHERE 带 deadline &gt; NOW() 防过期单支付） */
+    int payById(@Param("orderId") String orderId);
+
+    /** 截止时间合法性（数据库时钟为事实源）：now+15min ~ now+7d 之间返回 true */
+    boolean checkDeadlineLegal(@Param("deadline") LocalDateTime deadline);
 
     int grab(@Param("orderId") String orderId, @Param("takerId") String takerId);
 
@@ -53,8 +57,14 @@ public interface IErrandDao {
     /** 确认接单：LOCKED → CONFIRMED（仅持单人；不改 lock_seq） */
     int acceptLockedById(@Param("orderId") String orderId, @Param("takerId") String takerId);
 
-    /** 放弃：LOCKED → PUBLISHED（仅持单人；清 taker_id，不动 taker_canceled / lock_seq） */
+    /** 放弃：LOCKED → PUBLISHED（仅持单人；清 taker_id，不落 TAKER_CANCELLED 事件、不改 lock_seq） */
     int abandonLockedById(@Param("orderId") String orderId, @Param("takerId") String takerId);
+
+    /** 事件序号取号（写一半）：订单行计数器 +1（事件写入事务内先动订单行持行锁，同订单串行发号） */
+    int bumpEventSeq(@Param("orderId") String orderId);
+
+    /** 事件序号取号（读一半）：同事务内读，得本次事件落表用的 event_seq */
+    int selectEventSeqById(@Param("orderId") String orderId);
 
     int pickupById(@Param("orderId") String orderId, @Param("takerId") String takerId);
 

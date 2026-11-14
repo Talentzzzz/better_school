@@ -99,8 +99,8 @@ class ErrandViewedIntegrationTest extends CommunityApiTestBase {
         String orderId = UUID.randomUUID().toString();
         BigDecimal reward = BigDecimal.valueOf(15).setScale(2);
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
-                        + "pickup_location, delivery_location, reward, time_limit_hours, deadline, state, "
-                        + "create_time, update_time) VALUES (?, ?, 'EXPRESS_PICKUP', ?, '菜鸟驿站', '6号楼', ?, 2, "
+                        + "pickup_location, delivery_location, reward, deadline, state, "
+                        + "create_time, update_time) VALUES (?, ?, 'EXPRESS_PICKUP', ?, '菜鸟驿站', '6号楼', ?, "
                         + "DATE_ADD(NOW(), INTERVAL 2 HOUR), 'PUBLISHED', NOW(), NOW())",
                 orderId, publisher.userId(), description, reward);
         jdbcTemplate.update("INSERT INTO errand_feed_index (errand_order_id, state, feed_time, create_time, price, "

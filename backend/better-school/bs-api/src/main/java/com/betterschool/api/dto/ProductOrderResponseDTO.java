@@ -22,8 +22,11 @@ public class ProductOrderResponseDTO {
     private String sellerNickname;
     private String sellerAvatar;
 
-    /** 成交价快照 */
+    /** 成交单价快照（订单总金额 = price × quantity） */
     private BigDecimal price;
+
+    /** 成交件数（1..N） */
+    private Integer quantity;
 
     /** PENDING_PAYMENT/PAID/DELIVERED/COMPLETED/CANCELLED */
     private String status;

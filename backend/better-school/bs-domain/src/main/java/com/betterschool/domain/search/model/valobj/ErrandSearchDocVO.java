@@ -12,6 +12,7 @@ public class ErrandSearchDocVO {
 
     /** 业务 id 是 UUID 字符串（uuid-biz-id 票 05） */
     private String orderId;
+    private String title;
     private String description;
     private String pickupLocation;
     private String deliveryLocation;

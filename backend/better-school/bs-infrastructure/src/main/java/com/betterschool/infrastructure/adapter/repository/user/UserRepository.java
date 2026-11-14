@@ -5,6 +5,7 @@ import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
 import com.betterschool.domain.user.adapter.repository.IUserRepository;
 import com.betterschool.domain.user.model.entity.UserEntity;
 import com.betterschool.domain.user.model.valobj.GenderVO;
+import com.betterschool.domain.user.model.valobj.UserBriefVO;
 import com.betterschool.domain.user.model.valobj.UserRoleVO;
 import com.betterschool.domain.user.model.valobj.UserStatusVO;
 import com.betterschool.infrastructure.dao.post.IPostDao;
@@ -12,6 +13,7 @@ import com.betterschool.infrastructure.dao.post.IPostLikeCountDao;
 import com.betterschool.infrastructure.dao.post.po.Post;
 import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.infrastructure.dao.user.po.User;
+import com.betterschool.infrastructure.dao.user.po.UserBrief;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
 import com.betterschool.infrastructure.security.JwtService;
 import com.betterschool.types.common.Constants;
@@ -158,6 +160,19 @@ public class UserRepository implements IUserRepository {
     @Override
     public List<UserEntity> listByIds(List<String> userIdList) {
         return userDao.selectByIds(userIdList).stream().map(this::toEntity).toList();
+    }
+
+    @Override
+    public List<UserBriefVO> listBriefByIds(List<String> userIdList) {
+        return userDao.selectBriefByIds(userIdList).stream().map(this::toBriefVO).toList();
+    }
+
+    private UserBriefVO toBriefVO(UserBrief userBrief) {
+        UserBriefVO userBriefVO = new UserBriefVO();
+        userBriefVO.setUserId(userBrief.getUserId());
+        userBriefVO.setNickname(userBrief.getNickname());
+        userBriefVO.setAvatar(userBrief.getAvatar());
+        return userBriefVO;
     }
 
     private UserEntity toEntity(User user) {

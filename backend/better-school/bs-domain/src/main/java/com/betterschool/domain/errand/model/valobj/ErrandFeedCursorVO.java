@@ -66,10 +66,10 @@ public record ErrandFeedCursorVO(String sortType, LocalDateTime feedTime, LocalD
     public static ErrandFeedCursorVO anchorOf(String sortType, ErrandFeedIndexItemVO row) {
         return switch (sortType) {
             case SORT_HOT -> new ErrandFeedCursorVO(sortType, null, row.getCreateTime(), null,
-                    (long) row.getViewCount(), row.getOrderId());
+                    (long) row.getViewCount(), row.getErrandOrderId());
             case SORT_PRICE_ASC, SORT_PRICE_DESC -> new ErrandFeedCursorVO(sortType, null, null, row.getPrice(),
-                    null, row.getOrderId());
-            default -> new ErrandFeedCursorVO(sortType, row.getFeedTime(), null, null, null, row.getOrderId());
+                    null, row.getErrandOrderId());
+            default -> new ErrandFeedCursorVO(sortType, row.getFeedTime(), null, null, null, row.getErrandOrderId());
         };
     }
 

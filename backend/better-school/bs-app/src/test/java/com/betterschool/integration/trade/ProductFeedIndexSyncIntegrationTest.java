@@ -2,6 +2,7 @@ package com.betterschool.integration.trade;
 
 import com.betterschool.domain.trade.adapter.repository.ITradeRepository;
 import com.betterschool.domain.trade.model.entity.ProductEntity;
+import com.betterschool.domain.trade.model.entity.ProductOrderEntity;
 import com.betterschool.domain.trade.model.valobj.ProductCategoryVO;
 import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
 import com.betterschool.infrastructure.adapter.merge.CountAction;
@@ -87,35 +88,41 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     }
 
     @Test
-    @DisplayName("状态快照逐点镜像五态流转；从未上架的流转点 0 行静默不产行；删除后 release 不复活索引")
+    @DisplayName("状态快照逐点镜像状态流转（台账口径）；从未上架的流转点 0 行静默不产行；删除后条件 UPDATE 不复活索引")
     void 状态快照逐点镜像_未上架过不产行_删除后不复活() {
-        // 主链：下架回草稿 → 重提 → 锁定 → 释放回在售 → 锁定 → 已出
+        // 主链：下架回草稿 → 重提 → 下单扣减售罄 → 取消回补翻回在售 → 再售罄（multi-quantity-listing）
         String chainId = insertProduct("ON_SALE", "10.00");
+        insertInventory(chainId, 1);
         assertThat(tradeRepository.takeDown(chainId)).isTrue();
         assertThat(feedState(chainId)).as("下架汇入草稿箱 → DRAFT").isEqualTo("DRAFT");
         tradeRepository.submitDraft(chainId);
         assertThat(feedState(chainId)).as("重提 → ON_SALE（翻回可见）").isEqualTo("ON_SALE");
-        tradeRepository.lock(chainId);
-        assertThat(feedState(chainId)).as("下单锁定 → LOCKED").isEqualTo("LOCKED");
-        tradeRepository.release(chainId);
-        assertThat(feedState(chainId)).as("取消订单释放 → ON_SALE（翻回可见）").isEqualTo("ON_SALE");
-        tradeRepository.lock(chainId);
-        tradeRepository.lockToSold(chainId);
-        assertThat(feedState(chainId)).as("确认收货 → SOLD").isEqualTo("SOLD");
+        String orderId = placeOrder(chainId, "buyer-1");
+        assertThat(feedState(chainId)).as("下单扣到 0 件 → SOLD（售罄随行翻态）").isEqualTo("SOLD");
+        tradeRepository.cancelOrderWithSearchSync(orderId, "buyer-1");
+        assertThat(feedState(chainId)).as("取消回补 remaining > 0 → ON_SALE（翻回可见）").isEqualTo("ON_SALE");
+        String orderId2 = placeOrder(chainId, "buyer-2");
+        assertThat(feedState(chainId)).as("再次售罄 → SOLD").isEqualTo("SOLD");
 
-        // 卖家标记售出 + 重新上架（SOLD → ON_SALE 直接回大厅）
-        String soldId = insertProduct("ON_SALE", "30.00");
-        tradeRepository.markSold(soldId);
-        assertThat(feedState(soldId)).as("卖家标记售出 → SOLD").isEqualTo("SOLD");
-        tradeRepository.relist(soldId);
-        assertThat(feedState(soldId)).as("重新上架直接回大厅 → ON_SALE").isEqualTo("ON_SALE");
+        // 卖家标记售出 + 库存闸门下的重新上架（SOLD → ON_SALE 直接回大厅）
+        tradeRepository.cancelOrderWithSearchSync(orderId2, "buyer-2");
+        assertThat(feedState(chainId)).as("回补翻回 ON_SALE").isEqualTo("ON_SALE");
+        tradeRepository.markSold(chainId);
+        assertThat(feedState(chainId)).as("卖家标记售出 → SOLD（台账剩余同步清零）").isEqualTo("SOLD");
+        assertThat(tradeRepository.relist(chainId))
+                .as("真卖完（remaining = 0）重上架被库存闸门拦下").isFalse();
+        assertThat(feedState(chainId)).as("闸门拦下索引仍 SOLD").isEqualTo("SOLD");
+        tradeRepository.restock(chainId, 1, "999");
+        assertThat(tradeRepository.relist(chainId)).as("加货后重上架 → ON_SALE").isTrue();
+        assertThat(feedState(chainId)).as("重新上架直接回大厅 → ON_SALE").isEqualTo("ON_SALE");
 
-        // 软删：行翻 DELETED 不消失；此态下 release 条件 UPDATE 0 行，索引必须不被复活
+        // 软删：行翻 DELETED 不消失；此态下条件 UPDATE 未命中，索引必须不被复活
         String deletedId = insertProduct("ON_SALE", "40.00");
+        insertInventory(deletedId, 1);
         tradeRepository.deleteById(deletedId);
         assertThat(feedState(deletedId)).as("软删 → DELETED").isEqualTo("DELETED");
-        assertThat(tradeRepository.release(deletedId))
-                .as("对已删商品 release 必然 0 行").isFalse();
+        assertThat(tradeRepository.relist(deletedId))
+                .as("对已删商品 relist 必然 0 行").isFalse();
         assertThat(feedState(deletedId))
                 .as("条件 UPDATE 未命中不得写索引（否则已删商品在 feed 复活）").isEqualTo("DELETED");
 
@@ -124,9 +131,9 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
         assertThat(tradeRepository.takeDown(draftId))
                 .as("草稿商品下架必然 0 行").isFalse();
         assertThat(feedRow(draftId)).as("草稿下架（行不存在）0 行静默").isNull();
-        assertThat(tradeRepository.lock(draftId))
-                .as("草稿商品锁定必然 0 行").isFalse();
-        assertThat(feedRow(draftId)).as("草稿锁定（行不存在）不产索引行").isNull();
+        assertThat(tradeRepository.relist(draftId))
+                .as("草稿商品 relist（无台账行）必然拒绝").isFalse();
+        assertThat(feedRow(draftId)).as("草稿 relist（行不存在）不产索引行").isNull();
     }
 
     @Test
@@ -185,6 +192,19 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
                     + "price, view_count, update_time) VALUES (?, 'ON_SALE', NOW(), NOW(), ?, 0, NOW())", productId, price);
         }
         return productId;
+    }
+
+    /** 直插一行库存台账（存量形态夹具；应用链路 save() 会同事务建账） */
+    private void insertInventory(String productId, int quantity) {
+        jdbcTemplate.update("INSERT INTO product_inventory (product_id, quantity, remaining, create_time, update_time) "
+                + "VALUES (?, ?, ?, NOW(), NOW())", productId, quantity, quantity);
+    }
+
+    /** 真实仓储链路下一件单（下单原子：订单 + 台账扣减 + 流水 + 售罄翻态 + 超时注册） */
+    private String placeOrder(String productId, String buyerId) {
+        ProductEntity product = tradeRepository.findById(productId);
+        ProductOrderEntity order = ProductOrderEntity.create(buyerId, product, 1);
+        return tradeRepository.createOrderWithInventory(order, productId, 15);
     }
 
     /** 索引行整行（无行 = null） */

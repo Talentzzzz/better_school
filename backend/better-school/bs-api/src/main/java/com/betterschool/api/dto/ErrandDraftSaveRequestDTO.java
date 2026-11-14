@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -13,6 +14,9 @@ import java.util.List;
  */
 @Data
 public class ErrandDraftSaveRequestDTO {
+
+    @Size(max = 50, message = "标题最长 50 个字符")
+    private String title;
 
     private String type;
 
@@ -28,7 +32,8 @@ public class ErrandDraftSaveRequestDTO {
     @DecimalMin(value = "10", message = "悬赏金额最低 10")
     private BigDecimal reward;
 
-    private String timeLimit;
+    /** 截止时间（可缺省，提交时必填；区间校验在仓储层对照数据库时钟做） */
+    private LocalDateTime deadline;
 
     @Size(max = 6, message = "配图最多 6 张")
     private List<String> images;

@@ -70,8 +70,8 @@ class SearchIndexRebuildJobIntegrationTest extends CommunityApiTestBase {
     private String insertErrand(String userId, String state) {
         String errandId = UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
-                        + "pickup_location, delivery_location, reward, time_limit_hours, state, create_time, update_time) "
-                        + "VALUES (?, ?, 'BUY', '重建单', '宿舍楼', '食堂', 5.00, 2, ?, NOW(), NOW())",
+                        + "pickup_location, delivery_location, reward, state, create_time, update_time) "
+                        + "VALUES (?, ?, 'BUY', '重建单', '宿舍楼', '食堂', 5.00, ?, NOW(), NOW())",
                 errandId, userId, state);
         return errandId;
     }

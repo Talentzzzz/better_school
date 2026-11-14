@@ -13,14 +13,15 @@
     </insert>
 
     <!-- 增量补拉两段查之①（timeline.uk_user_delivery 主路径）：delivery_seq 升序扫本人投递行；
+         游标 deliverySeqCursor = 已拉到的投递序号（不含）；
          消息全量由仓储按 msg_id 集二次回查拼装（selectMessagesByIds，SQL 层零 JOIN；
          timeline.msg_id 外联的是消息业务 ID（message.msg_id），不是物理主键） -->
     <select id="selectTimelineRows" resultType="com.betterschool.infrastructure.dao.chat.po.TimelineDeliveryRow">
-        SELECT t.msg_id AS msgId, t.delivery_seq AS deliverySeq
-        FROM timeline t
-        WHERE t.user_id = #{userId}
-          AND t.delivery_seq &gt; #{afterDeliverySeq}
-        ORDER BY t.delivery_seq ASC
+        SELECT msg_id, delivery_seq
+        FROM timeline
+        WHERE user_id = #{userId}
+          AND delivery_seq &gt; #{deliverySeqCursor}
+        ORDER BY delivery_seq ASC
         LIMIT #{limit}
     </select>
 

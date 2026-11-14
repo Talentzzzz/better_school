@@ -222,12 +222,13 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
     /** 走到 PUBLISHED 的完整前置：发布 → 支付冻结 → 人工裁决通过 */
     private String publishableOrder(Session author) {
         JsonNode created = postJson("/api/errand/orders", Map.ofEntries(
+                Map.entry("title", "帮忙取个快递"),
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", "帮忙取个快递"),
                 Map.entry("pickupLocation", "菜鸟驿站"),
                 Map.entry("deliveryLocation", "6号楼楼下"),
                 Map.entry("reward", 10),
-                Map.entry("timeLimit", "HOURS_2")), author);
+                Map.entry("deadline", LocalDateTime.now().plusHours(2).toString())), author);
         assertSuccess(created, "发布跑腿");
         String orderId = created.path("data").asText();
         assertUuidId(orderId);

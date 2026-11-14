@@ -18,6 +18,6 @@ public interface ITimelineDao {
 
     /** 增量补拉两段查之①（timeline 单表）：本人投递行（msg_id + delivery_seq 升序）；消息全量仓储回查拼装 */
     List<TimelineDeliveryRow> selectTimelineRows(@Param("userId") String userId,
-                                                   @Param("afterDeliverySeq") long afterDeliverySeq,
-                                                   @Param("limit") int limit);
+                                                 @Param("deliverySeqCursor") long deliverySeqCursor,
+                                                 @Param("limit") int limit);
 }

@@ -32,10 +32,10 @@ public class ProductServiceImpl implements IProductService {
 
     @Override
     public String publishProduct(String userId, String title, String description, List<String> images, BigDecimal price,
-                               String tradeLocation, String category) {
+                               String tradeLocation, String category, Integer quantity) {
         // 信用分门槛与同步初筛由 case 层前置校验
         ProductEntity productEntity = ProductEntity.create(userId, title, description, images, price,
-                tradeLocation, ProductCategoryVO.from(category));
+                tradeLocation, ProductCategoryVO.from(category), quantity);
         // 发布即可见：落库 + feed 索引行诞生 + 搜索同步消息同事务（实现内）
         tradeRepository.save(productEntity);
         return productEntity.getProductId();
@@ -43,21 +43,21 @@ public class ProductServiceImpl implements IProductService {
 
     @Override
     public String saveProductDraft(String userId, String title, String description, List<String> images, BigDecimal price,
-                                 String tradeLocation, String category) {
+                                 String tradeLocation, String category, Integer quantity) {
         // 草稿为私有停靠内容：不做信用分门槛（提交时才校验），字段可缺省
         ProductCategoryVO categoryVO = category == null ? null : ProductCategoryVO.from(category);
         ProductEntity productEntity = ProductEntity.createDraft(userId, title, description, images, price,
-                tradeLocation, categoryVO);
+                tradeLocation, categoryVO, quantity);
         tradeRepository.save(productEntity);
         return productEntity.getProductId();
     }
 
     @Override
     public void updateProductDraft(String userId, String productId, String title, String description, List<String> images,
-                                   BigDecimal price, String tradeLocation, String category) {
+                                   BigDecimal price, String tradeLocation, String category, Integer quantity) {
         ProductEntity productEntity = getOwnedProductDraft(userId, productId);
         ProductCategoryVO categoryVO = category == null ? null : ProductCategoryVO.from(category);
-        productEntity.applyDraftContent(title, description, images, price, tradeLocation, categoryVO);
+        productEntity.applyDraftContent(title, description, images, price, tradeLocation, categoryVO, quantity);
         tradeRepository.updateDraft(productEntity);
     }
 
@@ -278,12 +278,22 @@ public class ProductServiceImpl implements IProductService {
         if (!productEntity.isOwner(currentUserId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只能操作自己发布的商品");
         }
-        // 仅 SOLD 可重新上架：LOCKED（交易中）不可重上架，避免与托管订单互斥
+        // 仅 SOLD 可重新上架（multi-quantity-listing：真卖完 remaining = 0 不可重上架）
         if (productEntity.getStatus() != ProductStatusVO.SOLD) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅已售出的商品可重新上架");
         }
-        // 先审后售：重新上架回到待审，审核通过转 ON_SALE 时才落搜索同步消息
-        tradeRepository.relist(productId);
+        if (!tradeRepository.relist(productId)) {
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "商品已无库存，无法重新上架");
+        }
+    }
+
+    @Override
+    public void restockProduct(String userId, String productId, int quantity) {
+        if (quantity < 1) {
+            throw new BusinessException(ResponseCode.PARAM_ERROR, "加货件数至少 1");
+        }
+        getOwnedOnSaleProduct(userId, productId);
+        tradeRepository.restock(productId, quantity, userId);
     }
 
     @Override
@@ -338,8 +348,8 @@ public class ProductServiceImpl implements IProductService {
     }
 
     /**
-     * 详情/浏览可见性：ON_SALE/LOCKED/SOLD 对外可见（交易中与已售对双方可回看）；
-     * DRAFT 仅卖家本人可见（草稿不外露）；软删对所有人不可见
+     * 详情/浏览可见性：ON_SALE/SOLD 对外可见（已售可回看）；LOCKED 为历史遗留态（订单流已停写，
+     * 仅存量行可见，不外露也不挡回看）；DRAFT 仅卖家本人可见（草稿不外露）；软删对所有人不可见
      */
     private ProductEntity getVisibleProduct(String productId, String currentUserId) {
         ProductEntity productEntity = tradeRepository.findById(productId);

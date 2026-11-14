@@ -1,6 +1,8 @@
 package com.betterschool.api.dto;
 
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -32,4 +34,9 @@ public class ProductPublishRequestDTO {
 
     @NotBlank(message = "分类不能为空")
     private String category;
+
+    /** 挂单件数（同款多件，可缺省默认 1） */
+    @Min(value = 1, message = "件数至少 1")
+    @Max(value = 999, message = "件数最多 999")
+    private Integer quantity;
 }

@@ -15,16 +15,19 @@ public class ErrandOrder {
     private String publisherId;
     private String takerId;
     private String type;
+    /** 订单标题（草稿允许为空，提交时必填） */
+    private String title;
     private String description;
     private String pickupLocation;
     private String deliveryLocation;
     private BigDecimal reward;
-    private Integer timeLimitHours;
     /** 配图 URL 列表（JSON 数组，与 post.images 存储约定一致） */
     private String images;
+    /** 截止时间（用户指定的绝对时刻；到期自动下架与接单方完工时限共用） */
     private LocalDateTime deadline;
     private String state;
-    private Boolean takerCanceled;
+    /** 事件序号计数器（事件表取号用；同订单内递增即事件先后顺序，业务含义只认 event_seq） */
+    private Integer eventSeq;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 

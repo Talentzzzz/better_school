@@ -20,8 +20,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class ErrandFeedIndexItemVO {
 
-    /** 跑腿订单业务 ID（UUID 字符串，uuid-biz-id 票 05） */
-    private String orderId;
+    /** 跑腿订单业务 ID（UUID 字符串，uuid-biz-id 票 05）；列名 errand_order_id 直落，字段随列名 */
+    private String errandOrderId;
 
     /** 「最新 / 最早」排序键（进入大厅的时刻） */
     private LocalDateTime feedTime;

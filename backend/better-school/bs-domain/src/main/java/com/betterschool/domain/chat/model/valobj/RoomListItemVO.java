@@ -1,6 +1,5 @@
 package com.betterschool.domain.chat.model.valobj;
 
-import com.betterschool.domain.chat.model.entity.MessageEntity;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -34,9 +33,9 @@ public class RoomListItemVO {
     /** 未读数 = 本人在会话的水位副本 − 已读水位线（用户维度行上就地可算） */
     private long unread;
 
-    /** 预览真源中间态（票 02 预览去副本）：按 (roomId, room.last_seq) 点查 message 最新一条，
-     * 由域服务渲染成 lastMsgType/lastMsgPreview 后即完成使命，不对外下发 */
-    private MessageEntity lastMessage;
+    /** 预览真源中间态（票 02 预览去副本）：按 (roomId, room.last_seq) 点查 message 最新一条的
+     * 预览四列，由域服务渲染成 lastMsgType/lastMsgPreview 后即完成使命，不对外下发 */
+    private MessagePreviewVO lastPreview;
 
     /** 最后一条消息类型（读时按 message 真相现算，不落副本） */
     private MsgTypeVO lastMsgType;

@@ -11,5 +11,6 @@ import java.math.BigDecimal;
 public class ProductConfirmResult {
     private String buyerId;
     private String sellerId;
-    private BigDecimal price;
+    /** 需解冻/入账金额（成交单价 × 件数） */
+    private BigDecimal amount;
 }

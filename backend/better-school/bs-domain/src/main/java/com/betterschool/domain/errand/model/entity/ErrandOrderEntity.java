@@ -1,7 +1,6 @@
 package com.betterschool.domain.errand.model.entity;
 
 import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
-import com.betterschool.domain.errand.model.valobj.ErrandTimeLimitVO;
 import com.betterschool.domain.errand.model.valobj.ErrandTypeVO;
 import lombok.Data;
 
@@ -17,23 +16,20 @@ public class ErrandOrderEntity {
     private String publisherId;
     private String takerId;
     private ErrandTypeVO type;
+    /** 订单标题（草稿允许为空，提交时必填） */
+    private String title;
     private String description;
     private String pickupLocation;
     private String deliveryLocation;
     private BigDecimal reward;
-    /** 时限小时数（草稿允许为空，提交时必填） */
-    private Integer timeLimitHours;
+    /** 截止时间（用户指定的绝对时刻；到期自动下架与接单方完工时限共用；草稿允许为空，提交时必填） */
     private LocalDateTime deadline;
     private ErrandStatusVO status;
 
     /** 配图 URL 列表（最多 6 张，创建时随单保存） */
     private List<String> images;
 
-    /** 接单方取消幂等位：取消过为 true（重试判定用，防重复扣分） */
-    private boolean takerCanceled;
-
     private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
 
     /**
      * 浏览 UV 数（market-feed-uv 票 02）：详情读路径由 {@code errand_view_count} 接线填充；
@@ -47,42 +43,43 @@ public class ErrandOrderEntity {
     private String takerNickname;
     private String takerAvatar;
 
-    public static ErrandOrderEntity create(String publisherId, ErrandTypeVO type, String description,
+    public static ErrandOrderEntity create(String publisherId, String title, ErrandTypeVO type, String description,
                                            String pickupLocation, String deliveryLocation, BigDecimal reward,
-                                           List<String> images, ErrandTimeLimitVO timeLimit) {
+                                           List<String> images, LocalDateTime deadline) {
         ErrandOrderEntity orderEntity = new ErrandOrderEntity();
         orderEntity.publisherId = publisherId;
+        orderEntity.title = title;
         orderEntity.type = type;
         orderEntity.description = description;
         orderEntity.pickupLocation = pickupLocation;
         orderEntity.deliveryLocation = deliveryLocation;
         orderEntity.reward = reward;
         orderEntity.images = images == null ? List.of() : images;
-        // 先付后审：创建进入待支付（不冻结），支付确认转待审；deadline 从支付时间起算
-        orderEntity.timeLimitHours = timeLimit.getHours();
+        // 先付后发：创建进入待支付（不冻结），支付确认转 PUBLISHED；
+        // deadline 为用户指定的绝对时刻（合法性由仓储对照数据库时钟校验），随单落库
+        orderEntity.deadline = deadline;
         orderEntity.status = ErrandStatusVO.PENDING_PAYMENT;
-        orderEntity.deadline = null;
         return orderEntity;
     }
 
     /**
-     * 创建草稿：私有未提交态——字段可缺省（提交时才校验必填）、落 DRAFT、deadline 为空；
+     * 创建草稿：私有未提交态——字段可缺省（提交时才校验必填）、落 DRAFT；
      * 不付款、不对外、不注册支付超时（支付钟只在提交后起算）
      */
-    public static ErrandOrderEntity createDraft(String publisherId, ErrandTypeVO type, String description,
+    public static ErrandOrderEntity createDraft(String publisherId, String title, ErrandTypeVO type, String description,
                                                String pickupLocation, String deliveryLocation, BigDecimal reward,
-                                               Integer timeLimitHours, List<String> images) {
+                                               LocalDateTime deadline, List<String> images) {
         ErrandOrderEntity orderEntity = new ErrandOrderEntity();
         orderEntity.publisherId = publisherId;
+        orderEntity.title = title;
         orderEntity.type = type;
         orderEntity.description = description;
         orderEntity.pickupLocation = pickupLocation;
         orderEntity.deliveryLocation = deliveryLocation;
         orderEntity.reward = reward;
-        orderEntity.timeLimitHours = timeLimitHours;
+        orderEntity.deadline = deadline;
         orderEntity.images = images == null ? List.of() : images;
         orderEntity.status = ErrandStatusVO.DRAFT;
-        orderEntity.deadline = null;
         return orderEntity;
     }
 
@@ -90,15 +87,16 @@ public class ErrandOrderEntity {
      * 草稿全量编辑：内容字段整体覆盖（null = 该项留空），
      * publisherId 与状态位不在改动范围内——编辑不产生状态迁移
      */
-    public void applyDraftContent(ErrandTypeVO type, String description, String pickupLocation,
-                                  String deliveryLocation, BigDecimal reward, Integer timeLimitHours,
+    public void applyDraftContent(String title, ErrandTypeVO type, String description, String pickupLocation,
+                                  String deliveryLocation, BigDecimal reward, LocalDateTime deadline,
                                   List<String> images) {
+        this.title = title;
         this.type = type;
         this.description = description;
         this.pickupLocation = pickupLocation;
         this.deliveryLocation = deliveryLocation;
         this.reward = reward;
-        this.timeLimitHours = timeLimitHours;
+        this.deadline = deadline;
         this.images = images == null ? List.of() : images;
     }
 

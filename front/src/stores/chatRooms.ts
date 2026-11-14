@@ -96,7 +96,7 @@ export const useChatRoomsStore = defineStore('chatRooms', {
       }
     },
 
-    /** 补拉循环：返回条数不足一页即追平，否则循环拉；游标只被补拉推进 */
+    /** 补拉循环：hasMore 为显式追平信号（不再用「返回条数 < limit」推断）；游标跟服务端扫描边界走 */
     async syncLoop() {
       if (this.pulling) return
       this.pulling = true
@@ -104,11 +104,11 @@ export const useChatRoomsStore = defineStore('chatRooms', {
         // 首轮补拉（cursor 0=全量）期间未读以 loadRooms 服务端值为准，不逐条累加
         const initial = this.cursor === 0
         for (;;) {
-          const entries = await pullTimeline(this.cursor, TIMELINE_LIMIT)
-          for (const msg of entries) this.applyMessage(msg, !initial)
-          const last = entries.length ? entries[entries.length - 1].deliverySeq : null
-          if (last != null) this.cursor = Math.max(this.cursor, last)
-          if (entries.length < TIMELINE_LIMIT) break
+          const page = await pullTimeline(this.cursor, TIMELINE_LIMIT)
+          for (const msg of page.list) this.applyMessage(msg, !initial)
+          // 取 nextCursor 而非最后一条的 deliverySeq：服务端跳过漂移行时游标照样前进
+          this.cursor = Math.max(this.cursor, page.nextCursor)
+          if (!page.hasMore) break
         }
       } catch {
         // 补拉失败不致命：下次重连/刷新再对齐

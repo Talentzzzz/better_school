@@ -82,9 +82,9 @@ class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
     private void insertPayTimeoutErrand() {
         Timestamp twentyMinutesAgo = Timestamp.valueOf(LocalDateTime.now().minusMinutes(20));
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
-                        + "pickup_location, delivery_location, reward, time_limit_hours, state, "
+                        + "pickup_location, delivery_location, reward, state, "
                         + "create_time, update_time) "
-                        + "VALUES (?, ?, 'BUY', '扇出超时单', '菜鸟驿站', '三号宿舍楼', 5.00, 2, 'PENDING_PAYMENT', ?, ?)",
+                        + "VALUES (?, ?, 'BUY', '扇出超时单', '菜鸟驿站', '三号宿舍楼', 5.00, 'PENDING_PAYMENT', ?, ?)",
                 UUID.randomUUID().toString(), registerAndLogin("13900001101", "扇出发单人").userId(),
                 twentyMinutesAgo, twentyMinutesAgo);
     }
@@ -99,8 +99,8 @@ class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
     /** 直插一行已发布跑腿单（口径同上） */
     private void insertPublishedErrand(String userId) {
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
-                + "pickup_location, delivery_location, reward, time_limit_hours, state, create_time, update_time) "
-                + "VALUES (?, ?, 'BUY', '扇出单', '宿舍楼', '食堂', 5.00, 2, 'PUBLISHED', NOW(), NOW())",
+                + "pickup_location, delivery_location, reward, state, create_time, update_time) "
+                + "VALUES (?, ?, 'BUY', '扇出单', '宿舍楼', '食堂', 5.00, 'PUBLISHED', NOW(), NOW())",
                 UUID.randomUUID().toString(), userId);
     }
 }

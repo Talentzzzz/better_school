@@ -178,7 +178,7 @@ onMounted(() => {
               ¥{{ formatMoney(o.reward) }}
             </span>
           </div>
-          <div class="order-desc ellipsis-2">{{ o.description }}</div>
+          <div class="order-desc ellipsis-2">{{ o.title ?? o.description }}</div>
           <div class="order-meta">
             <AppAvatar
               :src="errandRole === 'publish' ? o.takerAvatar : o.publisherAvatar"

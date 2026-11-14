@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -56,12 +57,13 @@ class ErrandPaidNotifyIntegrationTest extends CommunityApiTestBase {
 
     private String createPaidOrder(Session author) {
         JsonNode createResponse = postJson("/api/errand/orders", Map.ofEntries(
+                Map.entry("title", "帮忙取个快递"),
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", "帮忙取个快递"),
                 Map.entry("pickupLocation", "菜鸟驿站"),
                 Map.entry("deliveryLocation", "6号楼楼下"),
                 Map.entry("reward", 10),
-                Map.entry("timeLimit", "HOURS_2")), author);
+                Map.entry("deadline", LocalDateTime.now().plusHours(2).toString())), author);
         assertSuccess(createResponse, "发布跑腿");
         String orderId = createResponse.path("data").asText();
         assertUuidId(orderId);

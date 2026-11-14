@@ -107,9 +107,9 @@ class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {
     private String insertPublishedOrder(String description) {
         String orderId = UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
-                        + "pickup_location, delivery_location, reward, time_limit_hours, state, "
+                        + "pickup_location, delivery_location, reward, state, "
                         + "create_time, update_time) "
-                        + "VALUES (?, 999, 'EXPRESS_PICKUP', ?, '驿站', '南门', 5.00, 4, 'PUBLISHED', NOW(), NOW())",
+                        + "VALUES (?, 999, 'EXPRESS_PICKUP', ?, '驿站', '南门', 5.00, 'PUBLISHED', NOW(), NOW())",
                 orderId, description);
         return orderId;
     }

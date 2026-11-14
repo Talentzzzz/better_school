@@ -11,16 +11,17 @@ import java.util.List;
  */
 public interface IProductService {
 
+    /** 发布（quantity = 挂单件数，null/<=0 按 1 件）：落库即可见 + 同事务建库存台账 */
     String publishProduct(String userId, String title, String description, List<String> images, BigDecimal price,
-                        String tradeLocation, String category);
+                        String tradeLocation, String category, Integer quantity);
 
-    /** 保存草稿（字段可缺省，不做初筛，仅本人可见），返回草稿 id */
+    /** 保存草稿（字段可缺省，不做初筛，仅本人可见；quantity = 挂单件数可缺省），返回草稿 id */
     String saveProductDraft(String userId, String title, String description, List<String> images, BigDecimal price,
-                          String tradeLocation, String category);
+                          String tradeLocation, String category, Integer quantity);
 
-    /** 编辑草稿（仅 DRAFT；待审中不可编辑，需先撤回） */
+    /** 编辑草稿（仅 DRAFT；quantity 非 null 时同事务覆盖台账件数） */
     void updateProductDraft(String userId, String productId, String title, String description, List<String> images,
-                            BigDecimal price, String tradeLocation, String category);
+                            BigDecimal price, String tradeLocation, String category, Integer quantity);
 
     /** 取本人的草稿（供用例层做完整性校验与初筛） */
     ProductEntity getOwnedProductDraft(String userId, String productId);
@@ -77,8 +78,11 @@ public interface IProductService {
     /** 标记已出（作者本人） */
     void markSold(String productId, String currentUserId);
 
-    /** 重新上架（作者本人） */
+    /** 重新上架（作者本人；台账 remaining = 0 视为真卖完，不可重上架） */
     void relistProduct(String productId, String currentUserId);
+
+    /** 卖家加货（作者本人，仅 ON_SALE）：台账 quantity/remaining 同涨 + RESTOCK 流水（同事务） */
+    void restockProduct(String userId, String productId, int quantity);
 
     void favoriteProduct(String productId, String userId);
 

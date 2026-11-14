@@ -27,22 +27,22 @@ public class TradePublishCase {
     private final VirtualThreadFanout fanout;
 
     public String publishProduct(String userId, String title, String description, List<String> images, BigDecimal price,
-                               String tradeLocation, String category) {
+                               String tradeLocation, String category, Integer quantity) {
         creditAccountService.ensureOperable(userId);
-        return productService.publishProduct(userId, title, description, images, price, tradeLocation, category);
+        return productService.publishProduct(userId, title, description, images, price, tradeLocation, category, quantity);
     }
 
     /** 保存商品草稿：不做信用分门槛，字段可缺省 */
     public String saveProductDraft(String userId, String title, String description, List<String> images, BigDecimal price,
-                                 String tradeLocation, String category) {
-        return productService.saveProductDraft(userId, title, description, images, price, tradeLocation, category);
+                                 String tradeLocation, String category, Integer quantity) {
+        return productService.saveProductDraft(userId, title, description, images, price, tradeLocation, category, quantity);
     }
 
     /** 编辑商品草稿：仅 DRAFT 可编辑 */
     public void updateProductDraft(String userId, String productId, String title, String description, List<String> images,
-                                   BigDecimal price, String tradeLocation, String category) {
+                                   BigDecimal price, String tradeLocation, String category, Integer quantity) {
         productService.updateProductDraft(userId, productId, title, description, images, price,
-                tradeLocation, category);
+                tradeLocation, category, quantity);
     }
 
     /** 提交商品草稿：与直接发布同门槛校验，通过即上架可见 */
@@ -60,6 +60,14 @@ public class TradePublishCase {
                                   BigDecimal price) {
         productService.getOwnedOnSaleProduct(userId, productId);
         productService.editOnSaleProduct(productId, title, description, images, price);
+    }
+
+    /**
+     * 卖家加货（multi-quantity-listing）：台账 quantity/remaining 同涨 + RESTOCK 流水（同事务）。
+     * 归属与在售守卫由域层 getOwnedOnSaleProduct 前置
+     */
+    public void restockProduct(String userId, String productId, int quantity) {
+        productService.restockProduct(userId, productId, quantity);
     }
 
     /**

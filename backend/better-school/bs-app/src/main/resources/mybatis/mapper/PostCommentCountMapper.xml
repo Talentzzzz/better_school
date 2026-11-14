@@ -5,9 +5,9 @@
     <!-- 评论计数窄表批量读：按 id 集单表 IN 查询，仓储 COALESCE 0 拼回 PO/实体（详情与列表共用），
          缺行 = 计数 0，与原 LEFT JOIN 合成口径一致 -->
     <select id="selectCommentCountsByPostIds" resultType="com.betterschool.infrastructure.dao.post.po.Post">
-        SELECT c.post_id AS postId, c.comment_count AS commentCount
-        FROM post_comment_count c
-        WHERE c.post_id IN
+        SELECT post_id, comment_count
+        FROM post_comment_count
+        WHERE post_id IN
         <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
     </select>
 

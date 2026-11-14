@@ -125,7 +125,7 @@ async function doSearch(word?: string) {
       ])
       const seen = new Map<number, ErrandOrder>()
       for (const o of [...pub.list, ...take.list]) seen.set(o.orderId, o)
-      errands.value = [...seen.values()].filter((x) => match(x.description, x.pickupLocation + x.deliveryLocation))
+      errands.value = [...seen.values()].filter((x) => match(x.title ?? x.description, x.description + x.pickupLocation + x.deliveryLocation))
       resultTab.value = 'errand'
     }
   } finally {

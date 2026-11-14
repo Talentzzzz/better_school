@@ -3,36 +3,37 @@
 <mapper namespace="com.betterschool.infrastructure.dao.errand.IErrandDao">
 
     <sql id="baseColumns">
-        e.id, e.errand_order_id, e.publisher_id, e.taker_id, e.type, e.description, e.pickup_location, e.delivery_location,
-        e.reward, e.time_limit_hours, e.images, e.deadline, e.state, e.taker_canceled,
-        e.create_time, e.update_time
+        id, errand_order_id, publisher_id, taker_id, type, title, description, pickup_location, delivery_location,
+        reward, images, deadline, state,
+        create_time
     </sql>
 
     <!-- 全部语句纯 errand_order 单表（SQL 层零 JOIN）：发布方/接单方昵称头像与浏览 UV 计数
          由仓储批量回查拼装 -->
 
-    <!-- 时刻一律数据库时钟：create_time/update_time 取 NOW()；deadline 建单恒 NULL（支付确认时才由
-         payById 用 TIMESTAMPADD 从数据库时钟起算锚定），不进 INSERT 列清单 -->
+    <!-- 时刻一律数据库时钟：create_time/update_time 取 NOW()；deadline 为用户指定的绝对时刻
+         （合法区间 now+15min~now+7d 由 checkDeadlineLegal 对照数据库时钟校验）随单落库，
+         支付确认不再换算 -->
     <insert id="insert" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
-        INSERT INTO errand_order (errand_order_id, publisher_id, taker_id, type, description, pickup_location, delivery_location,
-                                  reward, time_limit_hours, images, state,
+        INSERT INTO errand_order (errand_order_id, publisher_id, taker_id, type, title, description, pickup_location, delivery_location,
+                                  reward, images, deadline, state,
                                   create_time, update_time)
-        VALUES (#{errandOrderId}, #{publisherId}, #{takerId}, #{type}, #{description}, #{pickupLocation}, #{deliveryLocation},
-                #{reward}, #{timeLimitHours}, #{images}, #{state},
+        VALUES (#{errandOrderId}, #{publisherId}, #{takerId}, #{type}, #{title}, #{description}, #{pickupLocation}, #{deliveryLocation},
+                #{reward}, #{images}, #{deadline}, #{state},
                 NOW(), NOW())
     </insert>
 
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
-        FROM errand_order e
-        WHERE e.errand_order_id = #{orderId}
+        FROM errand_order
+        WHERE errand_order_id = #{orderId}
     </select>
 
     <!-- 按 id 列表查询：不分状态（搜索同步按 state 判定 upsert/删除，搜索命中组装按公开状态过滤） -->
     <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
-        FROM errand_order e
-        WHERE e.errand_order_id IN
+        FROM errand_order
+        WHERE errand_order_id IN
         <foreach collection="ids" item="orderId" open="(" separator="," close=")">#{orderId}</foreach>
     </select>
 
@@ -50,15 +51,15 @@
          内存排序切片（降级路径，数据集有界） -->
     <select id="selectPage" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
-        FROM errand_order e
+        FROM errand_order
         <where>
             <!-- 公开列表口径：草稿（私有）与软删单一律不出现，显式传 status 也不放行 -->
-            AND e.state NOT IN ('DRAFT', 'DELETED')
+            AND state NOT IN ('DRAFT', 'DELETED')
             <if test="type != null">
-                AND e.type = #{type}
+                AND type = #{type}
             </if>
             <if test="state != null">
-                AND e.state = #{state}
+                AND state = #{state}
             </if>
         </where>
         ORDER BY
@@ -68,10 +69,10 @@
                  无序，不能再拿它当「创建先后」的代理）；其余档 tie-break 取 errand_order_id 字典序，
                  与索引尾列一致。热度档三段收敛（view_count DESC, create_time DESC, errand_order_id DESC）
                  不走本语句：仓储内存排序（见 selectVisibleRows） -->
-            <when test="sort == 'price_asc'">e.reward ASC, e.errand_order_id ASC</when>
-            <when test="sort == 'price_desc'">e.reward DESC, e.errand_order_id DESC</when>
-            <when test="sort == 'time_asc'">e.create_time ASC, e.errand_order_id ASC</when>
-            <otherwise>e.create_time DESC, e.errand_order_id DESC</otherwise>
+            <when test="sort == 'price_asc'">reward ASC, errand_order_id ASC</when>
+            <when test="sort == 'price_desc'">reward DESC, errand_order_id DESC</when>
+            <when test="sort == 'time_asc'">create_time ASC, errand_order_id ASC</when>
+            <otherwise>create_time DESC, errand_order_id DESC</otherwise>
         </choose>
         LIMIT #{offset}, #{limit}
     </select>
@@ -79,42 +80,41 @@
     <!-- hot 档降级取数：公开口径全集（筛选条件同 selectPage，无 LIMIT），窄表批量回查后仓储内存排序切片 -->
     <select id="selectVisibleRows" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
-        FROM errand_order e
+        FROM errand_order
         <where>
-            AND e.state NOT IN ('DRAFT', 'DELETED')
+            AND state NOT IN ('DRAFT', 'DELETED')
             <if test="type != null">
-                AND e.type = #{type}
+                AND type = #{type}
             </if>
             <if test="state != null">
-                AND e.state = #{state}
+                AND state = #{state}
             </if>
         </where>
     </select>
 
     <select id="count" resultType="long">
         SELECT COUNT(1)
-        FROM errand_order e
+        FROM errand_order
         <where>
-            AND e.state NOT IN ('DRAFT', 'DELETED')
+            AND state NOT IN ('DRAFT', 'DELETED')
             <if test="type != null">
-                AND e.type = #{type}
+                AND type = #{type}
             </if>
             <if test="state != null">
-                AND e.state = #{state}
+                AND state = #{state}
             </if>
         </where>
     </select>
 
     <!-- 支付确认：PENDING_PAYMENT → PUBLISHED（支付完成即对外可见）；
-         deadline = NOW() + timeLimitHours（时刻一律数据库时钟，Java 只传时长；TIMESTAMPADD 的占位符
-         在普通参数位，避开 ShardingSphere 丢 INTERVAL 占位符的形态） -->
+         deadline 由用户指定、随单早已落库，支付不再换算；已过期单禁止支付（防冻结后立刻被超时取消） -->
     <update id="payById">
         UPDATE errand_order
         SET state      = 'PUBLISHED',
-            deadline   = TIMESTAMPADD(HOUR, #{timeLimitHours}, NOW()),
             update_time = NOW()
         WHERE errand_order_id = #{orderId}
           AND state = 'PENDING_PAYMENT'
+          AND deadline > NOW()
     </update>
 
     <!-- 抢单（抢 ≠ 开工）：PUBLISHED → LOCKED，写 taker_id + lock_seq+1；状态 + 无人持有 + 时限三重校验先到先得 -->
@@ -148,7 +148,7 @@
     </update>
 
     <!-- 放弃（设计内的正常动作）：LOCKED → PUBLISHED（仅持单人），清 taker_id；
-         不动 taker_canceled（不占「接单取消」幂等位）、不改 lock_seq（轮次留给陈旧回调守卫） -->
+         不落 TAKER_CANCELLED 事件（信用扣分只认该事件）、不改 lock_seq（轮次留给陈旧回调守卫） -->
     <update id="abandonLockedById">
         UPDATE errand_order
         SET taker_id   = NULL,
@@ -208,18 +208,31 @@
           AND state IN ('PENDING_PAYMENT', 'PUBLISHED', 'LOCKED', 'CONFIRMED')
     </update>
 
-    <!-- 接单方取消：taker_canceled 幂等位防重试重复取消（置 1 后重试影响 0 行） -->
+    <!-- 接单方取消：条件 UPDATE 自身幂等（首次取消已改走状态，重试影响 0 行）；
+         重试幂等判定走事件表（最新 TAKER_CANCELLED 事件 + 当前状态，见 cancelOrder） -->
     <update id="cancelByTaker">
         UPDATE errand_order
         SET taker_id        = NULL,
             state           = 'PUBLISHED',
-            taker_canceled  = 1,
             update_time     = NOW()
         WHERE errand_order_id = #{orderId}
           AND taker_id = #{takerId}
           AND state = 'CONFIRMED'
-          AND taker_canceled = 0
     </update>
+
+    <!-- 事件序号取号（写一半）：事件写入事务内计数器 +1；先动订单行持行锁，同订单写入天然串行、号码不乱 -->
+    <update id="bumpEventSeq">
+        UPDATE errand_order
+        SET event_seq   = event_seq + 1
+        WHERE errand_order_id = #{orderId}
+    </update>
+
+    <!-- 事件序号取号（读一半）：同事务内读（UPDATE 已持有该行排他锁，读到的是本次 +1 后的值） -->
+    <select id="selectEventSeqById" resultType="int">
+        SELECT event_seq
+        FROM errand_order
+        WHERE errand_order_id = #{orderId}
+    </select>
 
     <update id="disputeById">
         UPDATE errand_order
@@ -266,11 +279,12 @@
     <update id="updateDraft" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         UPDATE errand_order
         SET type              = #{type},
+            title             = #{title},
             description       = #{description},
             pickup_location   = #{pickupLocation},
             delivery_location = #{deliveryLocation},
             reward            = #{reward},
-            time_limit_hours  = #{timeLimitHours},
+            deadline          = #{deadline},
             images            = #{images},
             update_time       = NOW()
         WHERE errand_order_id = #{errandOrderId}
@@ -326,6 +340,14 @@
         LIMIT #{limit}
     </select>
 
+    <!-- 截止时间合法性：数据库时钟为唯一事实源——用户指定的绝对时刻须落在
+         now+15min（支付窗口内支付后仍有意义）~ now+7d（挂单跨度上限）之间；
+         创建/存草稿/编辑草稿/提交草稿四个落库点共用 -->
+    <select id="checkDeadlineLegal" resultType="boolean">
+        SELECT #{deadline} &gt;= TIMESTAMPADD(MINUTE, 15, NOW())
+           AND #{deadline} &lt;= TIMESTAMPADD(DAY, 7, NOW())
+    </select>
+
     <update id="autoCompleteById">
         UPDATE errand_order
         SET state      = 'COMPLETED',
@@ -336,13 +358,13 @@
 
     <select id="selectMyPublished" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
-        FROM errand_order e
-        WHERE e.publisher_id = #{userId}
-          AND e.state != 'DELETED'
+        FROM errand_order
+        WHERE publisher_id = #{userId}
+          AND state != 'DELETED'
         <if test="state != null">
-            AND e.state = #{state}
+            AND state = #{state}
         </if>
-        ORDER BY e.create_time DESC, e.errand_order_id DESC
+        ORDER BY create_time DESC, errand_order_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -360,10 +382,10 @@
          待支付/终态/争议一律不外露（锁单中可见，展示「锁单中」） -->
     <select id="selectPublicPageByPublisher" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
-        FROM errand_order e
-        WHERE e.publisher_id = #{userId}
-          AND e.state IN ('PUBLISHED', 'LOCKED', 'CONFIRMED')
-        ORDER BY e.create_time DESC, e.errand_order_id DESC
+        FROM errand_order
+        WHERE publisher_id = #{userId}
+          AND state IN ('PUBLISHED', 'LOCKED', 'CONFIRMED')
+        ORDER BY create_time DESC, errand_order_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -377,13 +399,13 @@
     <!-- 我接的：按 taker_id -->
     <select id="selectMyTaken" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
         SELECT <include refid="baseColumns"/>
-        FROM errand_order e
-        WHERE e.taker_id = #{userId}
-          AND e.state != 'DELETED'
+        FROM errand_order
+        WHERE taker_id = #{userId}
+          AND state != 'DELETED'
         <if test="state != null">
-            AND e.state = #{state}
+            AND state = #{state}
         </if>
-        ORDER BY e.create_time DESC, e.errand_order_id DESC
+        ORDER BY create_time DESC, errand_order_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -404,8 +426,8 @@
          feed_time = create_time；② view_count 从计数窄表抄入（无行 = 0）——窄表是 UV 真值。
          组装后走 IErrandFeedIndexDao.insertFeedIndexRows 批量写回 -->
     <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandFeedIndexRow">
-        SELECT e.errand_order_id AS errandOrderId, e.state AS state, e.create_time AS createTime, e.reward AS price
-        FROM errand_order e
+        SELECT errand_order_id, state, create_time, reward
+        FROM errand_order
     </select>
 
 </mapper>

@@ -150,9 +150,9 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     private String insertOrder(String state, String reward) {
         String orderId = UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
-                        + "pickup_location, delivery_location, reward, time_limit_hours, state, deadline, "
+                        + "pickup_location, delivery_location, reward, state, deadline, "
                         + "create_time, update_time) "
-                        + "VALUES (?, ?, 'EXPRESS_PICKUP', '重建夹具', '驿站', '南门', ?, 4, ?, "
+                        + "VALUES (?, ?, 'EXPRESS_PICKUP', '重建夹具', '驿站', '南门', ?, ?, "
                         + "DATE_ADD(NOW(), INTERVAL 1 DAY), NOW(), NOW())",
                 orderId, PUBLISHER_ID, reward, state);
         return orderId;
@@ -163,9 +163,9 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         String orderId = UUID.randomUUID().toString();
         Timestamp twoDaysAgo = Timestamp.valueOf(LocalDateTime.now().minusDays(2));
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
-                        + "pickup_location, delivery_location, reward, time_limit_hours, state, deadline, "
+                        + "pickup_location, delivery_location, reward, state, deadline, "
                         + "create_time, update_time) "
-                        + "VALUES (?, ?, 'EXPRESS_PICKUP', '重建存量单', '驿站', '南门', ?, 4, 'PUBLISHED', "
+                        + "VALUES (?, ?, 'EXPRESS_PICKUP', '重建存量单', '驿站', '南门', ?, 'PUBLISHED', "
                         + "DATE_ADD(NOW(), INTERVAL 1 DAY), ?, ?)",
                 orderId, PUBLISHER_ID, reward, twoDaysAgo, twoDaysAgo);
         return orderId;
@@ -173,7 +173,7 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
 
     /** 支付（真实仓储链路：状态流转 + 索引行诞生） */
     private void pay(String orderId) {
-        assertThat(errandRepository.payById(orderId, PUBLISHER_ID, 4)).as("待支付订单支付").isTrue();
+        assertThat(errandRepository.payById(orderId, PUBLISHER_ID)).as("待支付订单支付").isTrue();
     }
 
     /** 一组浏览落库（同步合并，等价于合并窗口过后的三步 + 索引旁路） */

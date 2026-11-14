@@ -56,9 +56,9 @@
          「进入当前对外可见轮」的时刻。ODKU 不碰 view_count（浏览合并事务旁路独占维护） -->
     <update id="upsertFeedIndexOnApprove">
         INSERT INTO product_feed_index (product_id, state, feed_time, create_time, price, view_count, update_time)
-        SELECT p.product_id, 'ON_SALE', NOW(), p.create_time, p.price, 0, NOW()
-        FROM product p
-        WHERE p.product_id = #{productId}
+        SELECT product_id, 'ON_SALE', NOW(), create_time, price, 0, NOW()
+        FROM product
+        WHERE product_id = #{productId}
         ON DUPLICATE KEY UPDATE
             state       = 'ON_SALE',
             feed_time   = NOW(),

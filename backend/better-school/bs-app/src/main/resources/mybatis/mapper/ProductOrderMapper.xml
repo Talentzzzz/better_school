@@ -5,27 +5,27 @@
     <!-- 商品信息全部为下单时快照列（此后不可变）：跳转/反查仍用 product_id，展示不回查 product 表
          （商品行可被编辑/软删，订单详情必须稳定） -->
     <sql id="baseColumns">
-        po.id, po.product_order_id, po.buyer_id, po.seller_id, po.product_id, po.price,
-        po.product_title, po.product_description, po.product_images, po.product_trade_location, po.product_category,
-        po.state, po.create_time, po.update_time
+        id, product_order_id, buyer_id, seller_id, product_id, price, quantity,
+        product_title, product_description, product_images, product_trade_location, product_category,
+        state, create_time
     </sql>
 
     <!-- uuid-biz-id 票 05：业务 ID 发号在 repository 落库前生成（UUID.randomUUID()），随行一次写入，
          删除 bindBizId 自增同值回写 -->
     <insert id="insert" parameterType="com.betterschool.infrastructure.dao.productorder.po.ProductOrder">
-        INSERT INTO product_order (product_order_id, buyer_id, seller_id, product_id, price,
+        INSERT INTO product_order (product_order_id, buyer_id, seller_id, product_id, price, quantity,
                                    product_title, product_description, product_images, product_trade_location, product_category,
                                    state, create_time, update_time)
-        VALUES (#{productOrderId}, #{buyerId}, #{sellerId}, #{productId}, #{price},
+        VALUES (#{productOrderId}, #{buyerId}, #{sellerId}, #{productId}, #{price}, #{quantity},
                 #{productTitle}, #{productDescription}, #{productImages}, #{productTradeLocation}, #{productCategory},
                 #{state}, NOW(), NOW())
     </insert>
 
     <!-- 纯 product_order 单表：买卖双方昵称头像由仓储查 bs_user 批量回查拼装（SQL 层零 JOIN） -->
-    <select id="selectById" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrder">
+    <select id="selectById" resultType="com.betterschool.infrastructure.dao.productorder.ProductOrder">
         SELECT <include refid="baseColumns"/>
-        FROM product_order po
-        WHERE po.product_order_id = #{orderId}
+        FROM product_order
+        WHERE product_order_id = #{orderId}
     </select>
 
     <update id="payById">
@@ -72,11 +72,11 @@
           AND state = 'PENDING_PAYMENT'
     </update>
 
-    <select id="selectMineByBuyer" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrder">
+    <select id="selectMineByBuyer" resultType="com.betterschool.infrastructure.dao.productorder.ProductOrder">
         SELECT <include refid="baseColumns"/>
-        FROM product_order po
-        WHERE po.buyer_id = #{userId}
-        ORDER BY po.create_time DESC, po.id DESC
+        FROM product_order
+        WHERE buyer_id = #{userId}
+        ORDER BY create_time DESC, id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -86,11 +86,11 @@
         WHERE buyer_id = #{userId}
     </select>
 
-    <select id="selectMineBySeller" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrder">
+    <select id="selectMineBySeller" resultType="com.betterschool.infrastructure.dao.productorder.ProductOrder">
         SELECT <include refid="baseColumns"/>
-        FROM product_order po
-        WHERE po.seller_id = #{userId}
-        ORDER BY po.create_time DESC, po.id DESC
+        FROM product_order
+        WHERE seller_id = #{userId}
+        ORDER BY create_time DESC, id DESC
         LIMIT #{offset}, #{limit}
     </select>
 

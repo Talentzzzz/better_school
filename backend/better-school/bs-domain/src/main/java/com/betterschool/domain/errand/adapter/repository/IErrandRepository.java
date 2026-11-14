@@ -3,6 +3,7 @@ package com.betterschool.domain.errand.adapter.repository;
 import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedCursorVO;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO;
+import com.betterschool.domain.errand.model.valobj.ErrandOrderEventVO;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -38,8 +39,8 @@ public interface IErrandRepository {
      */
     void rebuildFeedIndex();
 
-    /** 支付确认：PENDING_PAYMENT → PUBLISHED（冻结悬赏、进入大厅），deadline = NOW()+timeLimitHours（数据库时钟起算）；同事务落 PAID 事件 */
-    boolean payById(String orderId, String actorId, int timeLimitHours);
+    /** 支付确认：PENDING_PAYMENT → PUBLISHED（冻结悬赏、进入大厅）；deadline 由用户指定随单落库，支付只翻状态（过期单拒付）；同事务落 PAID 事件 */
+    boolean payById(String orderId, String actorId);
 
     /** 抢单：PUBLISHED → LOCKED（状态 + 无人持有 + 时限三重校验，先到先得）；同事务 lock_seq+1 与 LOCKED 事件 */
     boolean grab(String orderId, String takerId);
@@ -54,11 +55,17 @@ public interface IErrandRepository {
     /** 确认接单：LOCKED → CONFIRMED（仅持单人）；不改 lock_seq */
     boolean acceptLockedById(String orderId, String takerId);
 
-    /** 放弃：LOCKED → PUBLISHED（仅持单人，清 taker_id；不动 taker_canceled / lock_seq）；同事务 LOCK_ABANDONED 事件 */
+    /** 放弃：LOCKED → PUBLISHED（仅持单人，清 taker_id；不落 TAKER_CANCELLED 事件、不改 lock_seq）；同事务 LOCK_ABANDONED 事件 */
     boolean abandonLockedById(String orderId, String takerId);
 
     /** 当前锁单轮次（防占单计数 member {@code {orderId}:{lockSeq}} 取用；锁单期不变） */
     int lockSeqOf(String orderId);
+
+    /** 最新一条状态流转事件（同订单 event_seq 最大；取消重试幂等判定事实源，无事件返回 null） */
+    ErrandOrderEventVO latestEventOf(String orderId);
+
+    /** 该订单上是否已存在「本人 + TAKER_CANCELLED + 同请求编号」事件（请求级幂等判定：存在 = 同一次点击的重放） */
+    boolean hasTakerCancelEvent(String orderId, String actorId, String requestId);
 
     /** 窗口内主动放弃次数（防占单 Redis 降级回落事实源：actor_id + LOCK_ABANDONED + create_time >= since） */
     int countRecentAbandons(String userId, LocalDateTime since);
@@ -78,8 +85,8 @@ public interface IErrandRepository {
     /** 发布方取消（限取货前，含锁单期）：PENDING_PAYMENT/PUBLISHED/LOCKED/CONFIRMED → CANCELLED */
     boolean cancelByPublisher(String orderId, String publisherId);
 
-    /** 接单方取消（仅 CONFIRMED）：回 PUBLISHED 并清空接单方 */
-    boolean cancelByTaker(String orderId, String takerId);
+    /** 接单方取消（仅 CONFIRMED）：回 PUBLISHED 并清空接单方；requestId 随 TAKER_CANCELLED 事件落表（请求级幂等判定），可空 */
+    boolean cancelByTaker(String orderId, String takerId, String requestId);
 
     /** 发起仲裁：CONFIRMED/PICKED_UP/DELIVERED → DISPUTED；同事务落 DISPUTED 事件 */
     boolean disputeById(String orderId, String actorId, String actorRole);
@@ -163,7 +170,7 @@ public interface IErrandRepository {
     boolean softDeleteDraft(String orderId, String publisherId);
 
     /** 支付转 PUBLISHED（冻结悬赏、进入大厅）+ feed 索引行诞生 + 落 bs-errand-paid 事件（条件 UPDATE 0 行抛 BUSINESS_ERROR） */
-    void payWithPaidMessage(String orderId, String userId, int timeLimitHours);
+    void payWithPaidMessage(String orderId, String userId);
 
     /** 送达（条件 UPDATE 0 行抛 BUSINESS_ERROR） */
     void deliverByIdOrThrow(String orderId, String takerId);

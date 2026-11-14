@@ -7,9 +7,9 @@
          计数行不存在，仓储批量回查后补 0。所有列表/详情查询纯 product 单表（SQL 层零 JOIN）：
          view_count 与卖家昵称头像由仓储拼装 -->
     <sql id="baseColumns">
-        p.id, p.product_id, p.user_id, p.title, p.description, p.images, p.price, p.trade_location,
-        p.category, p.state,
-        p.create_time, p.update_time, p.expire_at
+        id, product_id, user_id, title, description, images, price, trade_location,
+        category, state,
+        create_time
     </sql>
 
     <!-- 主表不再有浏览列（market-feed-uv 票 06 删列）：浏览 UV 只落 product_view_history + product_view_count -->
@@ -28,16 +28,16 @@
 
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
-        FROM product p
-        WHERE p.product_id = #{productId}
-          AND p.state != 'DELETED'
+        FROM product
+        WHERE product_id = #{productId}
+          AND state != 'DELETED'
     </select>
 
     <!-- 按 id 列表查询：不分状态（搜索同步按 state 判定 upsert/删除，搜索命中组装按 ON_SALE 过滤） -->
     <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
-        FROM product p
-        WHERE p.product_id IN
+        FROM product
+        WHERE product_id IN
         <foreach collection="ids" item="productId" open="(" separator="," close=")">#{productId}</foreach>
     </select>
 
@@ -141,28 +141,13 @@
           AND state = 'ON_SALE'
     </update>
 
-    <update id="lock">
-        UPDATE product
-        SET state = 'LOCKED',
-            update_time = NOW()
-        WHERE product_id = #{productId}
-          AND state = 'ON_SALE'
-    </update>
-
-    <update id="release">
+    <!-- 售罄翻回在售（multi-quantity-listing：关单回补后 remaining > 0 时由仓储调用，不刷 expire_at） -->
+    <update id="restoreFromSold">
         UPDATE product
         SET state = 'ON_SALE',
             update_time = NOW()
         WHERE product_id = #{productId}
-          AND state = 'LOCKED'
-    </update>
-
-    <update id="lockToSold">
-        UPDATE product
-        SET state = 'SOLD',
-            update_time = NOW()
-        WHERE product_id = #{productId}
-          AND state = 'LOCKED'
+          AND state = 'SOLD'
     </update>
 
     <!-- 旧直查降级路径（market-feed-uv 票 04 起仅索引不可用时走）：price/time 四档纯 product 单表 SQL 分页；
@@ -170,16 +155,16 @@
          内存排序切片（降级路径，数据集有界） -->
     <select id="selectPage" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
-        FROM product p
-        WHERE p.state = 'ON_SALE'
+        FROM product
+        WHERE state = 'ON_SALE'
         <if test="category != null">
-            AND p.category = #{category}
+            AND category = #{category}
         </if>
         <if test="minPrice != null">
-            AND p.price &gt;= #{minPrice}
+            AND price &gt;= #{minPrice}
         </if>
         <if test="maxPrice != null">
-            AND p.price &lt;= #{maxPrice}
+            AND price &lt;= #{maxPrice}
         </if>
         ORDER BY
         <choose>
@@ -187,10 +172,10 @@
                  索引取 feed_time（进入当前可见轮的通过时刻）——降级本就发生在「索引不可用」时，拿不到 feed_time，
                  只能取主表最近似的时刻。热度档（uuid-biz-id 票 05 三段收敛 view_count DESC, create_time DESC,
                  product_id DESC）不走本语句：仓储内存排序（见 selectOnSaleRows） -->
-            <when test="sort == 'price_asc'">p.price ASC, p.product_id ASC</when>
-            <when test="sort == 'price_desc'">p.price DESC, p.product_id DESC</when>
-            <when test="sort == 'time_asc'">p.create_time ASC, p.product_id ASC</when>
-            <otherwise>p.create_time DESC, p.product_id DESC</otherwise>
+            <when test="sort == 'price_asc'">price ASC, product_id ASC</when>
+            <when test="sort == 'price_desc'">price DESC, product_id DESC</when>
+            <when test="sort == 'time_asc'">create_time ASC, product_id ASC</when>
+            <otherwise>create_time DESC, product_id DESC</otherwise>
         </choose>
         LIMIT #{offset}, #{limit}
     </select>
@@ -198,16 +183,16 @@
     <!-- hot 档降级取数：ON_SALE 全集（无 LIMIT，筛选条件同 selectPage），窄表批量回查后仓储内存排序切片 -->
     <select id="selectOnSaleRows" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
-        FROM product p
-        WHERE p.state = 'ON_SALE'
+        FROM product
+        WHERE state = 'ON_SALE'
         <if test="category != null">
-            AND p.category = #{category}
+            AND category = #{category}
         </if>
         <if test="minPrice != null">
-            AND p.price &gt;= #{minPrice}
+            AND price &gt;= #{minPrice}
         </if>
         <if test="maxPrice != null">
-            AND p.price &lt;= #{maxPrice}
+            AND price &lt;= #{maxPrice}
         </if>
     </select>
 
@@ -229,10 +214,10 @@
     <!-- 我发布的商品（卖家视角）：含草稿/在售/锁定/已售等自己的全部状态，排除软删，按发布时间倒序 -->
     <select id="selectPageBySeller" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
-        FROM product p
-        WHERE p.user_id = #{userId}
-          AND p.state != 'DELETED'
-        ORDER BY p.create_time DESC, p.product_id DESC
+        FROM product
+        WHERE user_id = #{userId}
+          AND state != 'DELETED'
+        ORDER BY create_time DESC, product_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -246,10 +231,10 @@
     <!-- 某用户在售商品（作者主页「闲置」tab，访客口径）：仅 ON_SALE，草稿/锁定/已售一律不外露 -->
     <select id="selectOnSalePageByUser" resultType="com.betterschool.infrastructure.dao.product.po.Product">
         SELECT <include refid="baseColumns"/>
-        FROM product p
-        WHERE p.user_id = #{userId}
-          AND p.state = 'ON_SALE'
-        ORDER BY p.create_time DESC, p.product_id DESC
+        FROM product
+        WHERE user_id = #{userId}
+          AND state = 'ON_SALE'
+        ORDER BY create_time DESC, product_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -267,8 +252,8 @@
          （无行 = 0）——窄表是 UV 真值，也与热度排序键的读口径一致。组装后走
          IProductFeedIndexDao.insertFeedIndexRows 批量写回 -->
     <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.product.po.ProductFeedIndexRow">
-        SELECT p.product_id AS productId, p.state AS state, p.create_time AS createTime, p.price AS price
-        FROM product p
+        SELECT product_id, state, create_time, price
+        FROM product
     </select>
 
 </mapper>

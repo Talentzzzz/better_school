@@ -21,7 +21,6 @@ public class PostEntity {
     private long commentCount;
     private long viewCount;
     private LocalDateTime createdAt;
-    private LocalDateTime expireAt;
 
     /** 查询冗余字段：作者昵称/头像（列表 JOIN 填充） */
     private String authorNickname;

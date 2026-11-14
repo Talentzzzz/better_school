@@ -4,6 +4,7 @@ import com.betterschool.domain.chat.adapter.port.IUserQueryPort;
 import com.betterschool.domain.chat.model.valobj.ChatUserVO;
 import com.betterschool.domain.user.adapter.repository.IUserRepository;
 import com.betterschool.domain.user.model.entity.UserEntity;
+import com.betterschool.domain.user.model.valobj.UserBriefVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -26,7 +27,8 @@ public class UserQueryPort implements IUserQueryPort {
 
     @Override
     public List<ChatUserVO> listByIds(List<String> userIds) {
-        return userRepository.listByIds(userIds).stream().map(this::toVO).toList();
+        // 展示场景只要昵称头像：走窄投影，不把 phone 等敏感列读进内存
+        return userRepository.listBriefByIds(userIds).stream().map(this::toVO).toList();
     }
 
     private ChatUserVO toVO(UserEntity userEntity) {
@@ -37,6 +39,14 @@ public class UserQueryPort implements IUserQueryPort {
         chatUser.setUserId(userEntity.getUserId());
         chatUser.setNickname(userEntity.getNickname());
         chatUser.setAvatar(userEntity.getAvatar());
+        return chatUser;
+    }
+
+    private ChatUserVO toVO(UserBriefVO userBriefVO) {
+        ChatUserVO chatUser = new ChatUserVO();
+        chatUser.setUserId(userBriefVO.getUserId());
+        chatUser.setNickname(userBriefVO.getNickname());
+        chatUser.setAvatar(userBriefVO.getAvatar());
         return chatUser;
     }
 }

@@ -29,7 +29,7 @@ types →（无内部依赖）
 - **domain 服务禁止互相注入（领域嵌套）**：跨域写组合的编排一律放 case 层（顺序调用，无跨域事务）；域方法返回"外部动作需求"结果对象（如 ErrandXxxResult）。**跨域只读一律经消费方域定义的 port**：需要读他域数据时，在**消费方域**的 `domain/<X>/adapter/port/…` 定义 port（判据留在消费方域，port 里不放判据逻辑），实现落 `infrastructure/adapter/port/<域>/`（实现内可只读他域仓储）；域层从此**只注入本域仓储 + 本域 port**，不再注入他域仓储接口、不再注入 `TransactionTemplate`。
 - **一域一仓储**：每个业务域**恰有一个** `I<域>Repository` 接口与一个实现（读写同一接口）。实现内可注入多个 DAO（`I<域>Dao` 等）；PO、mapper XML、DAO 不因合并而变。
 - **事务落位在仓储内**：需要事务时，域服务构造参数/实体后**只调一次**仓储方法；由**仓储方法自身**在实现里用编程式事务（`TransactionTemplate`，传播恒 `REQUIRED`）把一次操作的多次读改写收成一个原子用例，并在调用方既有事务中合流。**域服务不注入 `TransactionTemplate`**，也不自持事务边界。仓储方法的事务必须是 REQUIRED——取号序/原子性/与域服务事务合流都依赖它。
-- **跨域一致性 = 幂等 + 重试，禁止 case 层包多域事务**：每个域方法自己域内事务原子；重试安全靠"状态机条件 UPDATE / 流水唯一键（wallet_detail uk_order_type、user_credit_detail uk_user_reason_ref）/ 幂等位（errand_order.taker_canceled）"；资金/信用分操作一律**流水先行插入**（INSERT IGNORE，冲突 = 已处理过幂等跳过），流水表是事实源。失败恢复：MQ 路径靠 broker 自动重试，HTTP 路径返回失败让客户端重试。
+- **跨域一致性 = 幂等 + 重试，禁止 case 层包多域事务**：每个域方法自己域内事务原子；重试安全靠"状态机条件 UPDATE / 流水唯一键（wallet_detail uk_order_type、user_credit_detail uk_user_reason_ref）/ 事件流水判定（errand_order_event 同订单 event_seq 顺序，如接单方取消重试 = 最新事件是本人 TAKER_CANCELLED 且订单回 PUBLISHED）"；资金/信用分操作一律**流水先行插入**（INSERT IGNORE，冲突 = 已处理过幂等跳过），流水表是事实源。失败恢复：MQ 路径靠 broker 自动重试，HTTP 路径返回失败让客户端重试。
 - **超时注册的显式例外（超时内嵌化票 03）**：trade / errand 两个业务仓储可在**自己已经开着事务的仓储方法**里注入并调用 `ITimeoutRepository.register(...)`，把超时行与业务行收进同一个本地事务。除此之外仍遵守「域不注入他域仓储」；域服务不注入超时仓储，也不自持事务边界。理由与迁移边界见 [`docs/architecture/timeout.md`](docs/architecture/timeout.md) §1/§3。
 
 ## 2. domain 层包结构（核心）

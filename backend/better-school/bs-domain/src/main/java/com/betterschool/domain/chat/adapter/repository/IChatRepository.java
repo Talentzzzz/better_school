@@ -11,6 +11,7 @@ import com.betterschool.domain.chat.model.valobj.ChatRecallPushEvent;
 import com.betterschool.domain.chat.model.valobj.RecallByVO;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
 import com.betterschool.domain.chat.model.valobj.TimelineItemVO;
+import com.betterschool.domain.chat.model.valobj.TimelinePageVO;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -84,23 +85,24 @@ public interface IChatRepository {
 
     /**
      * 会话列表四段查（SQL 层零 JOIN）：排除 hidden_at 非空，按 last_msg_time 倒序分页；
-     * unread = lastSeq − readSeq 与预览（message 最新一条真源，lastMessage 中间态）由实现拼装，
+     * unread = lastSeq − readSeq 与预览（message 最新一条的预览四列，lastPreview 中间态）由实现拼装，
      * 预览文案渲染归域服务（RoomPreviewRenderer）
      *
      * @return 按 last_msg_time 倒序的会话概要（含本人在会话的水位线与预览真源中间态）
      */
     List<RoomListItemVO> listRoomItems(String userId, int offset, int limit);
 
-    long countRoomsForUser(String userId);
-
     /** 会话历史分页（uk_room_seq 主路径）：seq &lt; beforeSeq 倒序取 limit 条；beforeSeq 为 NULL 取最新一页 */
     List<MessageEntity> listMessagesBefore(String roomId, Long beforeSeq, int limit);
 
     /**
-     * 增量补拉（timeline.uk_user_delivery 主路径）：delivery_seq &gt; afterDeliverySeq 升序取 limit 条，
-     * 按 msg_id 集回查 message 取消息全量。timeline 永不删除，游标永远有效
+     * 增量补拉（timeline.uk_user_delivery 主路径）：delivery_seq &gt; deliverySeqCursor 升序取 limit 条，
+     * 按 msg_id 集回查 message 取消息全量。timeline 永不删除，游标永远有效。
+     * <p>
+     * 返回的 nextCursor 取「扫描边界」（本页最后一行的 delivery_seq），与拼装成功几条无关：
+     * timeline 行在而 message 行缺失（漂移）只少返回一条，游标照样越过它
      */
-    List<TimelineItemVO> listTimelineAfter(String userId, long afterDeliverySeq, int limit);
+    TimelinePageVO listTimelineAfter(String userId, long deliverySeqCursor, int limit);
 
     // ===== room_member（会话维度名册：「这个会话有谁」） =====
 

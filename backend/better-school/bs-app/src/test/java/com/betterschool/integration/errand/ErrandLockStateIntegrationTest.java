@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -127,10 +128,10 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
                 .containsEntry("actor_id", taker.userId());
     }
 
-    // ---------- 放弃：回已发布，不扣分 / 不动幂等位 / 不改轮次；他人可再抢 ----------
+    // ---------- 放弃：回已发布，不扣分 / 不落取消事件 / 不改轮次；他人可再抢 ----------
 
     @Test
-    void 放弃回已发布且不扣分不动幂等位_他人可再抢() {
+    void 放弃回已发布且不扣分不落取消事件_他人可再抢() {
         Session author = registerAndLogin("13800005010", "发单用户4");
         Session takerA = registerAndLogin("13800005011", "接单用户6");
         Session takerB = registerAndLogin("13800005012", "接单用户7");
@@ -141,7 +142,7 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
 
         assertThat(statusOf(orderId)).as("放弃回已发布，他人可再抢").isEqualTo("PUBLISHED");
         assertThat(takerIdOf(orderId)).as("放弃清空接单人").isNull();
-        assertThat(takerCanceledOf(orderId)).as("放弃不动「接单取消」幂等位").isZero();
+        assertThat(countEventsOf(orderId, "TAKER_CANCELLED")).as("放弃不落「接单取消」事件（扣分只认该事件）").isZero();
         assertThat(lockSeqOf(orderId)).as("放弃不改 lock_seq（轮次留给陈旧回调守卫）").isEqualTo(1);
         assertThat(eventRowOf(orderId, "LOCK_ABANDONED"))
                 .as("放弃独立事件：LOCKED→PUBLISHED、原因类型 TAKER_ABANDON")
@@ -173,11 +174,102 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
         assertSuccess(postJson("/api/errand/orders/" + orderId + "/cancel", null, taker), "接单方取消");
 
         assertThat(statusOf(orderId)).as("接单方取消回已发布").isEqualTo("PUBLISHED");
-        assertThat(takerCanceledOf(orderId)).as("置「接单取消」幂等位").isEqualTo(1);
+        assertThat(latestEventOf(orderId))
+                .as("取消事件落在事件链最末（最新事件 = 本人的 TAKER_CANCELLED，重试幂等判定事实源）")
+                .containsEntry("event_type", "TAKER_CANCELLED")
+                .containsEntry("actor_id", taker.userId());
         assertThat(creditScoreOf(taker)).as("已承诺后违约：扣 20").isEqualTo(80);
         assertThat(creditDetailCount(taker, "ERRAND_TAKER_CANCEL")).isEqualTo(1);
         assertThat(eventRowOf(orderId, "TAKER_CANCELLED")).containsEntry("from_state", "CONFIRMED")
                 .containsEntry("to_state", "PUBLISHED");
+    }
+
+    // ---------- 多轮取消：取消→再抢→再取消（事件链幂等判定，替代原 taker_canceled 幂等位） ----------
+
+    @Test
+    void 接单方取消后再抢再取消_两轮各自成功_重试零副作用() {
+        Session author = registerAndLogin("13800006001", "发单用户多轮");
+        Session taker = registerAndLogin("13800006002", "接单用户多轮");
+        String orderId = publishableOrder(author);
+
+        // 第一轮：确认后取消
+        grab(orderId, taker);
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/accept", null, taker), "确认接单");
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/cancel", null, taker), "第一次取消");
+        assertThat(statusOf(orderId)).isEqualTo("PUBLISHED");
+
+        // 第二轮：再抢再取消——旧幂等位若不清理，这一步会被残留标志卡死
+        grab(orderId, taker);
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/accept", null, taker), "再次确认接单");
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/cancel", null, taker), "第二次取消");
+        assertThat(statusOf(orderId)).as("两轮取消后订单仍在待抢").isEqualTo("PUBLISHED");
+        assertThat(countEventsOf(orderId, "TAKER_CANCELLED")).as("两轮取消各落一条事件").isEqualTo(2);
+
+        // 第二轮取消的重试：最新事件 = 本人 TAKER_CANCELLED 且订单回 PUBLISHED → 幂等成功、零副作用
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/cancel", null, taker), "取消重试");
+        assertThat(statusOf(orderId)).isEqualTo("PUBLISHED");
+        assertThat(countEventsOf(orderId, "TAKER_CANCELLED")).as("重试不再追加事件").isEqualTo(2);
+        assertThat(countWalletTransactions(orderId, "UNFROZEN")).as("重试不触发退款").isZero();
+
+        // 重试再走一次扣分入账，credit 流水 uk_user_reason_ref 去重：一单一违约记录，只扣一次
+        assertThat(creditScoreOf(taker)).as("同单多次取消按流水唯一键只扣一次").isEqualTo(80);
+        assertThat(creditDetailCount(taker, "ERRAND_TAKER_CANCEL")).isEqualTo(1);
+    }
+
+    @Test
+    void 接单方取消后他人抢单_原接单人重试不放行_新接单人可正常取消() {
+        Session author = registerAndLogin("13800006003", "发单用户换人");
+        Session takerA = registerAndLogin("13800006004", "接单用户甲");
+        Session takerB = registerAndLogin("13800006005", "接单用户乙");
+        String orderId = publishableOrder(author);
+
+        grab(orderId, takerA);
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/accept", null, takerA), "确认接单");
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/cancel", null, takerA), "甲取消");
+
+        // 乙接手一轮：甲的旧重试进来，最新事件是乙的抢单/取消而非甲的取消 → 拒绝
+        grab(orderId, takerB);
+        assertThat(postJson("/api/errand/orders/" + orderId + "/cancel", null, takerA).path("code").asText())
+                .as("甲已非订单双方，重试不放行").isNotEqualTo("200");
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/accept", null, takerB), "乙确认接单");
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/cancel", null, takerB), "乙取消不受甲的历史影响");
+        assertThat(statusOf(orderId)).isEqualTo("PUBLISHED");
+
+        // 乙自己的重试 → 幂等成功
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/cancel", null, takerB), "乙的取消重试");
+        assertThat(countEventsOf(orderId, "TAKER_CANCELLED")).as("甲乙各一条").isEqualTo(2);
+        assertThat(creditDetailCount(takerA, "ERRAND_TAKER_CANCEL")).isEqualTo(1);
+        assertThat(creditDetailCount(takerB, "ERRAND_TAKER_CANCEL")).isEqualTo(1);
+    }
+
+    @Test
+    void 取消带请求编号_同编号重试零执行_新编号正常执行() {
+        Session author = registerAndLogin("13800006006", "发单用户请求编号");
+        Session taker = registerAndLogin("13800006007", "接单用户请求编号");
+        String orderId = publishableOrder(author);
+        String retryId = "req-aaaa-1111";
+
+        // 首次取消（带请求编号）：正常执行
+        grab(orderId, taker);
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/accept", null, taker), "确认接单");
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/cancel?requestId=" + retryId, null, taker), "首次取消");
+        assertThat(statusOf(orderId)).isEqualTo("PUBLISHED");
+        assertThat(cancelRequestIdOf(orderId)).as("事件随行落请求编号").isEqualTo(retryId);
+
+        // 情况三窗口：甲重抢并再确认，此时同编号的旧重试姗姗来迟
+        grab(orderId, taker);
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/accept", null, taker), "重新确认接单");
+        assertThat(statusOf(orderId)).as("前置：新一轮已确认").isEqualTo("CONFIRMED");
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/cancel?requestId=" + retryId, null, taker), "同编号重试");
+        assertThat(statusOf(orderId)).as("重放不执行业务：新一轮未被误取消").isEqualTo("CONFIRMED");
+        assertThat(countEventsOf(orderId, "TAKER_CANCELLED")).as("重放不追加事件").isEqualTo(1);
+        assertThat(creditScoreOf(taker)).as("重放不重复扣分").isEqualTo(80);
+
+        // 新编号 = 新的一次点击：正常执行第二轮取消
+        assertSuccess(postJson("/api/errand/orders/" + orderId + "/cancel?requestId=req-bbbb-2222", null, taker), "新编号取消");
+        assertThat(statusOf(orderId)).as("新一轮正常取消").isEqualTo("PUBLISHED");
+        assertThat(countEventsOf(orderId, "TAKER_CANCELLED")).isEqualTo(2);
+        assertThat(creditDetailCount(taker, "ERRAND_TAKER_CANCEL")).as("同单流水唯一键只记一次违约").isEqualTo(1);
     }
 
     // ---------- 锁单期：发布方可取消（退款、不扣接单方分）／不可争议 ----------
@@ -260,12 +352,13 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
     /** 走到 PUBLISHED 的完整前置：发布 → 支付冻结 → 人工裁决通过 */
     private String publishableOrder(Session author) {
         JsonNode created = postJson("/api/errand/orders", Map.ofEntries(
+                Map.entry("title", "帮忙取个快递"),
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", "帮忙取个快递"),
                 Map.entry("pickupLocation", "菜鸟驿站"),
                 Map.entry("deliveryLocation", "6号楼楼下"),
                 Map.entry("reward", 10),
-                Map.entry("timeLimit", "HOURS_2")), author);
+                Map.entry("deadline", LocalDateTime.now().plusHours(2).toString())), author);
         assertSuccess(created, "发布跑腿");
         String orderId = created.path("data").asText();
         assertUuidId(orderId);
@@ -295,10 +388,26 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
         return lockSeq == null ? -1 : lockSeq;
     }
 
-    private int takerCanceledOf(String orderId) {
-        Integer canceled = jdbcTemplate.queryForObject(
-                "SELECT taker_canceled FROM errand_order WHERE errand_order_id = ?", Integer.class, orderId);
-        return canceled == null ? -1 : canceled;
+    /** 同订单同类型事件数（多轮取消会落多条 TAKER_CANCELLED，计数用） */
+    private int countEventsOf(String orderId, String eventType) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM errand_order_event WHERE order_id = ? AND event_type = ?",
+                Integer.class, orderId, eventType);
+        return count == null ? 0 : count;
+    }
+
+    /** 首条接单取消事件上的请求编号（未带编号取消为 null） */
+    private String cancelRequestIdOf(String orderId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT request_id FROM errand_order_event WHERE order_id = ? AND event_type = 'TAKER_CANCELLED' "
+                        + "ORDER BY event_seq LIMIT 1", String.class, orderId);
+    }
+
+    /** 事件链最末一条（event_seq 最大 = 业务上最新发生）：幂等判定与断言事实源 */
+    private Map<String, Object> latestEventOf(String orderId) {
+        return jdbcTemplate.queryForMap(
+                "SELECT event_seq, event_type, from_state, to_state, actor_id, actor_role, reason_type "
+                        + "FROM errand_order_event WHERE order_id = ? ORDER BY event_seq DESC LIMIT 1", orderId);
     }
 
     private int creditScoreOf(Session user) {
@@ -329,11 +438,11 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
         return count == null ? 0 : count;
     }
 
-    /** 事件行的五要素（每类事件在一条链路里至多一条，取首条足够） */
+    /** 事件行的五要素（每类事件在一条链路里至多一条，取首条足够；顺序只认 event_seq，自增 id 无业务含义） */
     private Map<String, Object> eventRowOf(String orderId, String eventType) {
         return jdbcTemplate.queryForMap(
                 "SELECT from_state, to_state, actor_id, actor_role, reason_type "
-                        + "FROM errand_order_event WHERE order_id = ? AND event_type = ? ORDER BY id LIMIT 1",
+                        + "FROM errand_order_event WHERE order_id = ? AND event_type = ? ORDER BY event_seq LIMIT 1",
                 orderId, eventType);
     }
 

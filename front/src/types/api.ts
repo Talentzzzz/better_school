@@ -195,7 +195,6 @@ export interface Product {
 
 // ---------- errand ----------
 export type ErrandType = 'EXPRESS_PICKUP' | 'BUY' | 'DELIVER' | 'OTHER'
-export type ErrandTimeLimit = 'HOURS_2' | 'HOURS_4' | 'HOURS_12' | 'HOURS_24' | 'DAYS_7' | 'DAYS_30' | 'DAYS_365'
 export type ErrandStatus =
   | 'DRAFT'
   | 'PENDING_PAYMENT'
@@ -218,6 +217,8 @@ export interface ErrandOrder {
   takerNickname: string | null
   takerAvatar: string | null
   type: ErrandType
+  /** 订单标题（草稿允许为空，提交时必填） */
+  title: string
   description: string
   pickupLocation: string
   deliveryLocation: string
@@ -315,8 +316,17 @@ export interface ChatMessage {
   createdAt: string
 }
 
-/** 会话成员水位线（room_member）：1v1 已读回执的水位初值来源 */
-export interface RoomMember {
+/**
+ * 增量补拉一页：nextCursor 是服务端「本次扫描边界」（不是最后一条消息的位置），
+ * hasMore 为显式「还有没有」——不再用 list.length < limit 推断追平
+ */
+export interface ChatTimelinePage {
+  list: ChatMessage[]
+  nextCursor: number
+  hasMore: boolean
+}
+
+/** 会话成员水位线（room_member）：1v1 已读回执的水位初值来源 */export interface RoomMember {
   userId: number
   nickname: string
   avatar: string | null

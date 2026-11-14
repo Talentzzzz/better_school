@@ -184,12 +184,13 @@ class TimeoutTaskEndToEndIntegrationTest extends TimeoutScanTestBase {
 
     private String createErrand(Session user, String description) {
         JsonNode response = postJson("/api/errand/orders", Map.ofEntries(
+                Map.entry("title", "帮忙取个快递"),
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", description),
                 Map.entry("pickupLocation", "菜鸟驿站"),
                 Map.entry("deliveryLocation", "6号楼楼下"),
                 Map.entry("reward", 10),
-                Map.entry("timeLimit", "HOURS_2")), user);
+                Map.entry("deadline", LocalDateTime.now().plusHours(2).toString())), user);
         assertSuccess(response, "发布跑腿");
         return response.path("data").asText();
     }

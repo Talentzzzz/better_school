@@ -51,7 +51,12 @@ public interface IErrandService {
 
     Response<Void> confirmOrder(String orderId);
 
-    Response<Void> cancelOrder(String orderId);
+    /**
+     * 取消订单（发布方取货前 / 接单方已确认未取货）。
+     * {@code requestId} 可空：客户端每次点击生成、重试沿用的请求编号（UUID），
+     * 供请求级幂等判定——同编号的取消重试直接回放成功、不重复执行
+     */
+    Response<Void> cancelOrder(String orderId, String requestId);
 
     Response<Void> disputeOrder(String orderId);
 

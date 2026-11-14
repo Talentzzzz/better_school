@@ -48,6 +48,9 @@ public interface ITradeService {
 
     Response<Void> relistProduct(String productId);
 
+    /** 卖家加货（同款多件挂单）：台账 quantity/remaining 同涨，仅 ON_SALE 可加 */
+    Response<Void> restockProduct(String productId, Integer quantity);
+
     Response<Void> favoriteProduct(String productId);
 
     Response<Void> unfavoriteProduct(String productId);
@@ -60,8 +63,8 @@ public interface ITradeService {
     /** 我发布的商品（卖家视角）：含已售/已下架，排除软删 */
     Response<PageResult<ProductResponseDTO>> listMyProducts(int page, int pageSize);
 
-    /** 商品托管订单 */
-    Response<String> createProductOrder(String productId);
+    /** 商品托管订单（quantity = 购买件数，1..999，可缺省默认 1） */
+    Response<String> createProductOrder(String productId, Integer quantity);
 
     Response<Void> payProductOrder(String orderId);
 

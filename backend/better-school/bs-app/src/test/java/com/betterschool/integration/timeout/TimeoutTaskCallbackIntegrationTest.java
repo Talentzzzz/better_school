@@ -10,6 +10,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -41,7 +42,7 @@ class TimeoutTaskCallbackIntegrationTest extends CommunityApiTestBase {
         String orderId = createProductOrder(buyer, productId);
         String errandId = createErrand(buyer, "帮忙取个快递");
 
-        // 下单时刻商品已 LOCKED 并落过一条搜索同步消息；关单会再落一条（回在售 → 文档重建）
+        // 下单扣到 0 件商品已 SOLD 并落过一条搜索同步消息；关单会再落一条（回补翻回在售 → 文档重建）
         long syncBefore = searchSyncCount(productId);
 
         Set<String> failures = callback(timeoutTaskCallback,
@@ -96,7 +97,7 @@ class TimeoutTaskCallbackIntegrationTest extends CommunityApiTestBase {
 
         assertThat(failures).as("未命中状态机 = 幂等成功，不算失败").isEmpty();
         assertThat(productOrderStatus(paidOrderId)).as("已支付订单不被超时回调改成取消").isEqualTo("PAID");
-        assertThat(productStatus(productId)).as("商品状态不被回调改动").isEqualTo("LOCKED");
+        assertThat(productStatus(productId)).as("商品状态不被回调改动（单件下单已售罄即 SOLD）").isEqualTo("SOLD");
         assertThat(searchSyncCount(productId)).as("零副作用：不落搜索同步消息").isEqualTo(syncBefore);
         assertThat(errandStatus(errandId)).as("已取消订单保持取消").isEqualTo("CANCELLED");
     }
@@ -150,12 +151,13 @@ class TimeoutTaskCallbackIntegrationTest extends CommunityApiTestBase {
 
     private String createErrand(Session user, String description) {
         JsonNode response = postJson("/api/errand/orders", Map.ofEntries(
+                Map.entry("title", "帮忙取个快递"),
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", description),
                 Map.entry("pickupLocation", "菜鸟驿站"),
                 Map.entry("deliveryLocation", "6号楼楼下"),
                 Map.entry("reward", 10),
-                Map.entry("timeLimit", "HOURS_2")), user);
+                Map.entry("deadline", LocalDateTime.now().plusHours(2).toString())), user);
         assertSuccess(response, "发布跑腿");
         return response.path("data").asText();
     }

@@ -21,7 +21,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useChatRoomsStore } from '@/stores/chatRooms'
 import { toast } from '@/components/Toast'
 import { confirmDialog } from '@/components/ConfirmDialog'
-import { formatMoney, formatTime } from '@/utils/format'
+import { formatDateTime, formatMoney, formatRemaining, formatTime } from '@/utils/format'
 import { ERRAND_STATUS_TEXT, errandTypeText } from '@/utils/errand'
 import NavBar from '@/components/NavBar.vue'
 import AppAvatar from '@/components/AppAvatar.vue'
@@ -71,8 +71,24 @@ async function doAction(fn: () => Promise<unknown>, successMsg: string, needConf
 }
 
 const onPay = () => doAction(() => payErrandOrder(orderId), '支付成功，悬赏已冻结', '确认支付？支付后悬赏资金将托管冻结')
-// 抢单只拿到锁单资格（抢 ≠ 开工），核对信息后再点「确认接单」
-const onGrab = () => doAction(() => grabErrandOrder(orderId), '抢单成功，请确认接单', '确认接下这一单？抢到后需自行确认接单')
+// 抢单只拿到锁单资格（抢 ≠ 开工），核对信息后再点「确认接单」；
+// 截止时间不足 10 分钟时先弹超时风险提醒（deadline 兼作完工时限，超时未完成会扣信用分）
+const GRAB_WARN_MINUTES = 10
+const onGrab = async () => {
+  if (!requireLogin()) return
+  const remainingText = formatRemaining(order.value?.deadline)
+  const minutesLeft = order.value?.deadline
+    ? Math.floor((new Date(order.value.deadline).getTime() - Date.now()) / 60000)
+    : Infinity
+  if (remainingText && minutesLeft < GRAB_WARN_MINUTES) {
+    const ok = await confirmDialog(
+      '剩余时间不足 10 分钟',
+      `该单将在 ${remainingText.replace('剩 ', '')}后自动截止，到期未完成会按违约扣信用分，确定要接吗？`
+    )
+    if (!ok) return
+  }
+  await doAction(() => grabErrandOrder(orderId), '抢单成功，请确认接单', '确认接下这一单？抢到后需自行确认接单')
+}
 // 锁单中的两条出路：确认接单开工，或放弃让单（放弃不扣信用分）
 const onAcceptLocked = () => doAction(() => acceptErrandOrder(orderId), '已确认接单，可开始跑腿')
 const onAbandonLocked = () =>
@@ -137,14 +153,14 @@ onMounted(load)
           <span class="reward-value">{{ order.reward == null ? '—' : '¥' + formatMoney(order.reward) }}</span>
         </div>
         <div class="detail-row"><span class="detail-label">类型</span><span class="detail-text">{{ errandTypeText(order.type) }}</span></div>
-        <div class="detail-row"><span class="detail-label">要求</span><span class="detail-text">{{ order.deadline ? '截止 ' + formatTime(order.deadline) : '—' }}</span></div>
+        <div class="detail-row"><span class="detail-label">截止</span><span class="detail-text">{{ order.deadline ? formatDateTime(order.deadline) : '—' }}{{ formatRemaining(order.deadline) ? '（' + formatRemaining(order.deadline) + '）' : '' }}</span></div>
         <!-- 浏览量（market-feed-uv 票 05）：按用户去重的 UV，与闲置详情「浏览 N」同一口径 -->
         <div class="detail-row"><span class="detail-label">浏览</span><span class="detail-text">{{ order.viewCount }}</span></div>
       </div>
 
       <div class="detail-card">
-        <div class="desc-title">任务描述</div>
-        <div class="desc-text">{{ order.description }}</div>
+        <div class="desc-title">{{ order.title ?? order.description }}</div>
+        <div v-if="order.title" class="desc-text">{{ order.description }}</div>
         <div class="loc-box">
           <div class="loc-line">
             <span class="loc-ico">取</span>
@@ -306,8 +322,10 @@ onMounted(load)
 }
 
 .desc-title {
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
+  color: $text-1;
+  line-height: 1.5;
   margin-bottom: 8px;
 }
 

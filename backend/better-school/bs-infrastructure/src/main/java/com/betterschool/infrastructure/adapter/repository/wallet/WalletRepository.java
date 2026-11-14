@@ -162,7 +162,6 @@ public class WalletRepository implements IWalletRepository {
         walletEntity.setBalance(wallet.getBalance());
         walletEntity.setFrozenAmount(wallet.getFrozenAmount());
         walletEntity.setCreatedAt(wallet.getCreateTime());
-        walletEntity.setUpdatedAt(wallet.getUpdateTime());
         return walletEntity;
     }
 
@@ -176,7 +175,6 @@ public class WalletRepository implements IWalletRepository {
         detailEntity.setOrderId(detail.getOrderId());
         detailEntity.setBizRound(detail.getBizRound());
         detailEntity.setCreateTime(detail.getCreateTime());
-        detailEntity.setUpdateTime(detail.getUpdateTime());
         return detailEntity;
     }
 }

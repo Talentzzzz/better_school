@@ -32,7 +32,7 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
 
         // B 视角：1v1 拼对方资料，unread = room.last_seq − 水位线（服务端拼装）
         JsonNode listForB = listRooms(userB);
-        assertThat(listForB.path("total").asLong()).isEqualTo(1);
+        assertThat(listForB.path("list").size()).isEqualTo(1);
         JsonNode roomForB = listForB.path("list").get(0);
         assertThat(roomForB.path("roomId").asText()).isEqualTo(roomId);
         assertThat(roomForB.path("peerUserId").asText()).isEqualTo(userA.userId());
@@ -48,13 +48,13 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
 
         // A 隐藏会话：自己列表消失，B 不受影响
         assertSuccess(postJson("/api/chat/rooms/" + roomId + "/hide", Map.of(), userA), "隐藏会话");
-        assertThat(listRooms(userA).path("total").asLong()).as("隐藏后不进列表").isZero();
-        assertThat(listRooms(userB).path("total").asLong()).isEqualTo(1);
+        assertThat(listRooms(userA).path("list").size()).as("隐藏后不进列表").isZero();
+        assertThat(listRooms(userB).path("list").size()).isEqualTo(1);
 
         // 新消息弹回（微信行为）：B 再发一条，A 的会话重新出现且未读 +1
         sendText("m3", "弹回测试");
         JsonNode listAfter = listRooms(userA);
-        assertThat(listAfter.path("total").asLong()).as("新消息清空 hidden_at 弹回").isEqualTo(1);
+        assertThat(listAfter.path("list").size()).as("新消息清空 hidden_at 弹回").isEqualTo(1);
         assertThat(listAfter.path("list").get(0).path("unread").asLong()).isEqualTo(1);
     }
 
@@ -116,13 +116,17 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
             sendText("t" + i, "补拉消息" + i);
         }
 
-        // 游标 0 = 全量：deliverySeq 升序、消息全量（roomId/seq/昵称）齐备
+        // 游标 0 = 全量：deliverySeq 升序、消息全量（roomId/seq/昵称）齐备；
+        // 返回壳 {list, nextCursor, hasMore}：nextCursor 是扫描边界，追平与否由 hasMore 显式表达
         JsonNode full = getJson("/api/chat/timeline", userB);
         assertSuccess(full, "补拉全量");
-        assertThat(full.path("data").size()).isEqualTo(3);
-        List<Long> deliverySeqs = full.findValues("deliverySeq").stream().map(JsonNode::asLong).toList();
+        JsonNode fullPage = full.path("data");
+        assertThat(fullPage.path("list").size()).isEqualTo(3);
+        assertThat(fullPage.path("nextCursor").asLong()).as("游标 = 本次扫描边界").isEqualTo(3);
+        assertThat(fullPage.path("hasMore").asBoolean()).as("不足一页即追平").isFalse();
+        List<Long> deliverySeqs = fullPage.path("list").findValues("deliverySeq").stream().map(JsonNode::asLong).toList();
         assertThat(deliverySeqs).as("per-user delivery_seq 从 1 起单调").containsExactly(1L, 2L, 3L);
-        JsonNode first = full.path("data").get(0);
+        JsonNode first = fullPage.path("list").get(0);
         assertThat(first.path("roomId").asText()).isEqualTo(roomId);
         assertThat(first.path("seq").asLong()).isEqualTo(1);
         assertThat(first.path("content").asText()).isEqualTo("补拉消息1");
@@ -132,26 +136,31 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
         jdbcTemplate.update("UPDATE message SET state = 'RECALLED', recalled_at = NOW(), recalled_by = 'USER', " +
                 "update_time = NOW() WHERE room_id = '" + roomId + "' AND seq = 2");
         JsonNode afterRecall = getJson("/api/chat/timeline", userB);
-        JsonNode recalledItem = afterRecall.path("data").get(1);
+        JsonNode recalledItem = afterRecall.path("data").path("list").get(1);
         assertThat(recalledItem.path("seq").asLong()).isEqualTo(2);
         assertThat(recalledItem.path("status").asText()).isEqualTo("RECALLED");
         assertThat(recalledItem.path("content").isNull()).as("补拉不出已撤回 content").isTrue();
 
-        // afterDeliverySeq 增量：只回游标之后，不足一页即追平
+        // afterDeliverySeq 增量：只回游标之后，hasMore=false 即追平
         JsonNode after2 = getJson("/api/chat/timeline?afterDeliverySeq=2", userB);
-        assertThat(after2.findValues("deliverySeq").stream().map(JsonNode::asLong).toList()).containsExactly(3L);
+        assertThat(after2.path("data").path("list").findValues("deliverySeq").stream().map(JsonNode::asLong).toList())
+                .containsExactly(3L);
+        assertThat(after2.path("data").path("hasMore").asBoolean()).isFalse();
 
-        // limit 分页：第一页 2 条 + 第二页 1 条，循环拉语义
+        // limit 分页：第一页 2 条（hasMore=true 继续拉）+ 第二页 1 条（hasMore=false 停）
         JsonNode page1 = getJson("/api/chat/timeline?limit=2", userB);
-        assertThat(page1.path("data").size()).isEqualTo(2);
+        assertThat(page1.path("data").path("list").size()).isEqualTo(2);
+        assertThat(page1.path("data").path("nextCursor").asLong()).isEqualTo(2);
+        assertThat(page1.path("data").path("hasMore").asBoolean()).as("填满一页 = 可能还有").isTrue();
         JsonNode page2 = getJson("/api/chat/timeline?afterDeliverySeq=2&limit=2", userB);
-        assertThat(page2.path("data").size()).isEqualTo(1);
+        assertThat(page2.path("data").path("list").size()).isEqualTo(1);
+        assertThat(page2.path("data").path("hasMore").asBoolean()).isFalse();
 
         // 多会话按 delivery_seq 全局归并（跨 room 单调）
         Session userC = registerAndLogin("13800003005", "补拉用户C");
         String otherRoom = createDirectRoom(userA, userC.userId());
         sendTextInRoom(otherRoom, "t4", "另一个会话");
-        JsonNode merged = getJson("/api/chat/timeline", userA);
+        JsonNode merged = getJson("/api/chat/timeline", userA).path("data").path("list");
         List<String> rooms = merged.findValues("roomId").stream().map(JsonNode::asText).toList();
         List<Long> cursorSeqs = merged.findValues("deliverySeq").stream().map(JsonNode::asLong).toList();
         assertThat(rooms).as("两个会话都出现在补拉流").contains(roomId, otherRoom);
@@ -159,7 +168,7 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
 
         // 非登录用户由安全层拦截，无游标越权面：游标只按本人 user_id 查
         JsonNode foreign = getJson("/api/chat/timeline?afterDeliverySeq=0", userC);
-        assertThat(foreign.path("data").size()).as("C 只见自己的 timeline").isEqualTo(1);
+        assertThat(foreign.path("data").path("list").size()).as("C 只见自己的 timeline").isEqualTo(1);
 
         // limit 硬顶 500（spec §2）：造到 505 行 timeline，limit=1000 也只回 500
         String msgId = queryString("SELECT msg_id FROM message WHERE room_id = '" + roomId + "' AND seq = 1");
@@ -173,7 +182,36 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
                 + String.join(",", rows));
         JsonNode capped = getJson("/api/chat/timeline?afterDeliverySeq=0&limit=1000", userB);
         assertSuccess(capped, "补拉超顶请求");
-        assertThat(capped.path("data").size()).as("服务端硬顶 500").isEqualTo(500);
+        assertThat(capped.path("data").path("list").size()).as("服务端硬顶 500").isEqualTo(500);
+        assertThat(capped.path("data").path("nextCursor").asLong()).as("游标停在扫描边界").isEqualTo(500);
+        assertThat(capped.path("data").path("hasMore").asBoolean()).isTrue();
+    }
+
+    @Test
+    void timelineCursorSkipsOrphanTimelineRows() {
+        initDirectRoom("漂移用户A", "漂移用户B");
+        sendText("d1", "漂移前");
+
+        // 造漂移行：timeline 有行、message 无对应（timeline.msg_id 外联业务 ID，这里给个不存在的）
+        jdbcTemplate.update("INSERT INTO timeline (user_id, room_id, seq, msg_id, delivery_seq, create_time, update_time) "
+                + "VALUES (?, ?, 1, 'drift-msg-id', 2, NOW(), NOW())", userB.userId(), roomId);
+        // 计数器跟上，避免下一条消息撞 uk_user_delivery（取号是真正的号源）
+        jdbcTemplate.update("UPDATE user_seq SET seq = 2 WHERE user_id = ?", userB.userId());
+        sendText("d2", "漂移后");
+
+        // 满页扫描 [1,2]：只有 1 条能拼出消息，但游标必须越过漂移行停在 2，hasMore 也按「扫满一页」算
+        JsonNode page = getJson("/api/chat/timeline?limit=2", userB).path("data");
+        assertThat(page.path("list").size()).as("漂移行只少返回一条").isEqualTo(1);
+        assertThat(page.path("nextCursor").asLong()).as("游标取扫描边界，不卡在漂移行前").isEqualTo(2);
+        assertThat(page.path("hasMore").asBoolean()).as("扫满一页即可能还有").isTrue();
+
+        // 从新游标续拉：拿到漂移行之后的真实消息，不重复吐前一条
+        JsonNode next = getJson("/api/chat/timeline?afterDeliverySeq=" + page.path("nextCursor").asLong(), userB)
+                .path("data");
+        assertThat(next.path("list").size()).isEqualTo(1);
+        assertThat(next.path("list").get(0).path("content").asText()).isEqualTo("漂移后");
+        assertThat(next.path("nextCursor").asLong()).isEqualTo(3);
+        assertThat(next.path("hasMore").asBoolean()).isFalse();
     }
 
     @Test

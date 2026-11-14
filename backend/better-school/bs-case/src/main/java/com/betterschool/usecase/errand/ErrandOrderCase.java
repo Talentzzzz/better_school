@@ -27,6 +27,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -47,13 +48,13 @@ public class ErrandOrderCase {
     private final INotificationService notificationService;
     private final VirtualThreadFanout fanout;
 
-    public String createOrder(String userId, String type, String description, String pickupLocation,
+    public String createOrder(String userId, String title, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward,
-                            List<String> images, String timeLimit) {
+                            List<String> images, LocalDateTime deadline) {
         creditAccountService.ensureOperable(userId);
         checkImages(images);
-        return errandOrderService.createOrder(userId, type, description, pickupLocation, deliveryLocation,
-                reward, images, timeLimit);
+        return errandOrderService.createOrder(userId, title, type, description, pickupLocation, deliveryLocation,
+                reward, images, deadline);
     }
 
     /** 冻结悬赏，由 domain 返回口径 */
@@ -63,19 +64,19 @@ public class ErrandOrderCase {
     }
 
     /** 保存草稿：私有停靠内容——不做同步初筛、不做信用分门槛（提交时才校验），字段可缺省 */
-    public String createDraft(String userId, String type, String description, String pickupLocation,
-                            String deliveryLocation, BigDecimal reward, List<String> images, String timeLimit) {
+    public String createDraft(String userId, String title, String type, String description, String pickupLocation,
+                            String deliveryLocation, BigDecimal reward, List<String> images, LocalDateTime deadline) {
         checkImages(images);
-        return errandOrderService.createDraft(userId, type, description, pickupLocation, deliveryLocation,
-                reward, images, timeLimit);
+        return errandOrderService.createDraft(userId, title, type, description, pickupLocation, deliveryLocation,
+                reward, images, deadline);
     }
 
     /** 编辑草稿：仅 DRAFT 可编辑，全量覆盖内容字段（作者与状态位不可改、不产生状态迁移） */
-    public void updateDraft(String orderId, String userId, String type, String description, String pickupLocation,
-                            String deliveryLocation, BigDecimal reward, List<String> images, String timeLimit) {
+    public void updateDraft(String orderId, String userId, String title, String type, String description, String pickupLocation,
+                            String deliveryLocation, BigDecimal reward, List<String> images, LocalDateTime deadline) {
         checkImages(images);
-        errandOrderService.updateDraft(orderId, userId, type, description, pickupLocation, deliveryLocation,
-                reward, images, timeLimit);
+        errandOrderService.updateDraft(orderId, userId, title, type, description, pickupLocation, deliveryLocation,
+                reward, images, deadline);
     }
 
     /**
@@ -153,8 +154,9 @@ public class ErrandOrderCase {
         }
     }
 
-    public void cancelOrder(String orderId, String userId) {
-        ErrandCancelResult cancelResult = errandOrderService.cancelOrder(orderId, userId);
+    public void cancelOrder(String orderId, String userId, String requestId) {
+        // requestId 可空（请求级幂等键）：同一次点击的重放在 domain 层已被回放拦截，不会走到跨域动作
+        ErrandCancelResult cancelResult = errandOrderService.cancelOrder(orderId, userId, requestId);
         if (cancelResult.isNeedRefund()) {
             walletAccountService.unfreeze(cancelResult.getPublisherId(), cancelResult.getReward(), orderId);
         }
@@ -267,17 +269,18 @@ public class ErrandOrderCase {
         }
     }
 
-    /** 提交门槛：必填 = 直接发布的必填项（类型/描述/取送地点/悬赏≥10/时限） */
+    /** 提交门槛：必填 = 直接发布的必填项（标题/类型/描述/取送地点/悬赏≥10/截止时间） */
     private void validateDraftComplete(ErrandOrderEntity draftEntity) {
-        if (draftEntity.getType() == null
+        if (isBlank(draftEntity.getTitle())
+                || draftEntity.getType() == null
                 || isBlank(draftEntity.getDescription())
                 || isBlank(draftEntity.getPickupLocation())
                 || isBlank(draftEntity.getDeliveryLocation())
                 || draftEntity.getReward() == null
                 || draftEntity.getReward().compareTo(MIN_REWARD) < 0
-                || draftEntity.getTimeLimitHours() == null) {
+                || draftEntity.getDeadline() == null) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR,
-                    "草稿内容不完整，请补全类型、描述、取送地点、悬赏（不低于 10）与时限后再提交");
+                    "草稿内容不完整，请补全标题、类型、描述、取送地点、悬赏（不低于 10）与截止时间后再提交");
         }
     }
 

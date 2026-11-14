@@ -7,9 +7,9 @@
          缓存命中路径的数也恒等于库值（acceptance C5）；缺行 = 计数 0（COALESCE 在仓储做），
          与原 LEFT JOIN 合成口径一致 -->
     <select id="selectViewCountsByPostIds" resultType="com.betterschool.infrastructure.dao.post.po.Post">
-        SELECT c.post_id AS postId, c.view_count AS viewCount
-        FROM post_view_count c
-        WHERE c.post_id IN
+        SELECT post_id, view_count
+        FROM post_view_count
+        WHERE post_id IN
         <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
     </select>
 
@@ -27,17 +27,17 @@
     <delete id="deleteViewCountsMissingHistory">
         DELETE FROM post_view_count
          WHERE NOT EXISTS (SELECT 1
-                             FROM user_view_history h
-                            WHERE h.post_id = post_view_count.post_id)
+                             FROM user_view_history
+                            WHERE post_id = post_view_count.post_id)
     </delete>
 
     <!-- 重灌：post_view_count 重投影 = user_view_history 行数（ODKU：缺行补建、漂移值刷新、
          已对齐的行落回同值，幂等不动点） -->
     <insert id="recalibrateViewCounts">
         INSERT INTO post_view_count (post_id, view_count, create_time, update_time)
-        SELECT h.post_id, COUNT(*), NOW(), NOW()
-          FROM user_view_history h
-         GROUP BY h.post_id
+        SELECT post_id, COUNT(*), NOW(), NOW()
+          FROM user_view_history
+         GROUP BY post_id
         ON DUPLICATE KEY UPDATE
             view_count  = VALUES(view_count),
             update_time = NOW()

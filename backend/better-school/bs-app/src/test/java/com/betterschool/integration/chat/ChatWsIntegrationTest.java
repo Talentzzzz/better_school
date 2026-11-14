@@ -284,8 +284,9 @@ public class ChatWsIntegrationTest extends CommunityApiTestBase {
         // 补拉：游标 0 全量取回三条，每条带 (roomId, seq) 判重键 + delivery_seq 游标
         JsonNode timeline = getJson("/api/chat/timeline?afterDeliverySeq=0", userB);
         assertSuccess(timeline, "补拉全量");
+        assertThat(timeline.path("data").path("hasMore").asBoolean()).as("不足一页即追平").isFalse();
         Set<String> pulledKeys = new LinkedHashSet<>();
-        for (JsonNode item : timeline.path("data")) {
+        for (JsonNode item : timeline.path("data").path("list")) {
             assertThat(item.path("roomId").asText()).as("补拉条目带判重键 roomId").isEqualTo(roomId);
             assertThat(item.path("deliverySeq").asLong()).as("补拉条目带投递序号游标").isPositive();
             pulledKeys.add(item.path("roomId").asText() + ":" + item.path("seq").asLong());

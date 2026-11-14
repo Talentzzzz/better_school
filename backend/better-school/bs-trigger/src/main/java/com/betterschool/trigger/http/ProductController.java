@@ -77,7 +77,7 @@ public class ProductController implements ITradeService {
     public Response<String> publishProduct(@Valid @RequestBody ProductPublishRequestDTO request) {
         String productId = tradePublishCase.publishProduct(SecurityUtils.currentUserId(), request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
-                request.getTradeLocation(), request.getCategory());
+                request.getTradeLocation(), request.getCategory(), request.getQuantity());
         return Response.ok(productId);
     }
 
@@ -86,7 +86,7 @@ public class ProductController implements ITradeService {
     public Response<String> saveProductDraft(@Valid @RequestBody ProductDraftSaveRequestDTO request) {
         String productId = tradePublishCase.saveProductDraft(SecurityUtils.currentUserId(), request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
-                request.getTradeLocation(), request.getCategory());
+                request.getTradeLocation(), request.getCategory(), request.getQuantity());
         return Response.ok(productId);
     }
 
@@ -96,7 +96,7 @@ public class ProductController implements ITradeService {
                                              @Valid @RequestBody ProductDraftSaveRequestDTO request) {
         tradePublishCase.updateProductDraft(SecurityUtils.currentUserId(), productId, request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
-                request.getTradeLocation(), request.getCategory());
+                request.getTradeLocation(), request.getCategory(), request.getQuantity());
         return Response.ok(null);
     }
 
@@ -149,6 +149,13 @@ public class ProductController implements ITradeService {
     @PostMapping("/products/{productId}/relist")
     public Response<Void> relistProduct(@PathVariable String productId) {
         productService.relistProduct(productId, SecurityUtils.currentUserId());
+        return Response.ok(null);
+    }
+
+    @Override
+    @PostMapping("/products/{productId}/stock")
+    public Response<Void> restockProduct(@PathVariable String productId, @RequestParam Integer quantity) {
+        tradePublishCase.restockProduct(SecurityUtils.currentUserId(), productId, quantity);
         return Response.ok(null);
     }
 
@@ -211,8 +218,9 @@ public class ProductController implements ITradeService {
 
     @Override
     @PostMapping("/orders")
-    public Response<String> createProductOrder(@RequestParam String productId) {
-        return Response.ok(productOrderCase.createOrder(SecurityUtils.currentUserId(), productId));
+    public Response<String> createProductOrder(@RequestParam String productId,
+                                               @RequestParam(defaultValue = "1") Integer quantity) {
+        return Response.ok(productOrderCase.createOrder(SecurityUtils.currentUserId(), productId, quantity));
     }
 
     @Override
@@ -286,6 +294,7 @@ public class ProductController implements ITradeService {
         dto.setCategory(productEntity.getCategory() == null ? null : productEntity.getCategory().name());
         dto.setStatus(productEntity.getStatus().name());
         dto.setViewCount(productEntity.getViewCount());
+        dto.setRemainingQuantity(productEntity.getRemainingQuantity());
         dto.setFavoriteCount(productEntity.getFavoriteCount());
         dto.setFavorited(favorited);
         dto.setCreatedAt(productEntity.getCreatedAt());
@@ -304,6 +313,7 @@ public class ProductController implements ITradeService {
         dto.setSellerNickname(orderEntity.getSellerNickname());
         dto.setSellerAvatar(orderEntity.getSellerAvatar());
         dto.setPrice(orderEntity.getPrice());
+        dto.setQuantity(orderEntity.getQuantity());
         dto.setStatus(orderEntity.getStatus().name());
         dto.setCreatedAt(orderEntity.getCreatedAt());
         return dto;

@@ -107,18 +107,20 @@
 放弃（锁单 → 已发布）：设计内的正常动作
 
 - Auth: 需要登录；仅持单人（他人 403）
-- 条件 UPDATE `state='LOCKED' AND taker_id=?` → `PUBLISHED` 并清 `taker_id`；**不扣信用分、不置 `taker_canceled`、不改 `lock_seq`**
+- 条件 UPDATE `state='LOCKED' AND taker_id=?` → `PUBLISHED` 并清 `taker_id`；**不扣信用分、不落 `TAKER_CANCELLED` 事件、不改 `lock_seq`**
 - 同事务落 `LOCK_ABANDONED` 事件（`LOCKED→PUBLISHED`，actor TAKER，`reason_type=TAKER_ABANDON`）
 - 放弃后他人可再抢（下次抢单 `lock_seq` 继续 +1）
 - **防占单计数**（票 05）：主效应成功后按「放弃时刻」写入滑动窗口（Redis ZSET `bs:errand:grab-abandon:{userId}`，member=`{orderId}:{lockSeq}`）；近 24h 达 3 次 → 置 2h 冷却（`bs:errand:grab-cooldown:{userId}`，`SET NX EX 7200`）+ **重置计数窗口** + WARN 日志。Redis 写失败 = 少计 = 宽恕（不引入对账）
-- 与「已确认后接单方取消」（`POST /cancel`：扣 20 信用分 + `taker_canceled=1`）是**分事件的两条路**，不可混
+- 与「已确认后接单方取消」（`POST /cancel`：扣 20 信用分 + 落 `TAKER_CANCELLED` 事件）是**分事件的两条路**，不可混
 
 ## POST /api/errand/orders/{orderId}/cancel
 
 取消（**取货前**）：PENDING_PAYMENT（无冻结）/ PUBLISHED（解冻全额退款）/ **LOCKED** / CONFIRMED 可取消
 
 - 发布方取消：LOCKED 期**可取消**且解冻退款，**不扣接单方信用分**（锁单期还没开工，不是他的错）
-- 接单方取消：仅 CONFIRMED 可退（回 PUBLISHED，扣 20 信用分 + `taker_canceled=1`）；锁单中的接单方走 `POST /abandon`
+- 接单方取消：仅 CONFIRMED 可退（回 PUBLISHED，扣 20 信用分 + 落 `TAKER_CANCELLED` 事件）；锁单中的接单方走 `POST /abandon`
+- 请求级幂等（可选 `requestId` 参数）：客户端**每次点击生成新 UUID、重试沿用同一编号**——同编号的取消重试直接回放成功、业务零执行（含「取消后重抢并再确认」窗口期的迟到重试，不会误伤新一轮）；不带该参数时退化为事件链判定
+- 重试幂等（事件链判定）：请求人非订单双方时，**最新事件是本人 `TAKER_CANCELLED` 且订单回 PUBLISHED** → 幂等成功返回（零副作用；重试触发的扣分入账由 `user_credit_detail` 流水唯一键去重）；订单已被他人再抢则 403
 - PICKED_UP / DELIVERED 不可取消，只能发起仲裁
 
 ## POST /api/errand/orders/{orderId}/pickup

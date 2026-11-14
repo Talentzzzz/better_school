@@ -291,7 +291,7 @@ const CARD_LABELS: Record<string, string> = { PRODUCT: '商品', POST: '帖子',
 const CARD_FETCHERS: Record<string, (id: number) => Promise<string>> = {
   PRODUCT: (id) => getProduct(id).then((p) => p.title),
   POST: (id) => getPost(id).then((p) => p.title),
-  ERRAND: (id) => getErrandOrder(id).then((o) => o.description)
+  ERRAND: (id) => getErrandOrder(id).then((o) => o.title ?? o.description)
 }
 const CARD_ROUTES: Record<string, (id: number) => string> = {
   PRODUCT: (id) => `/product/${id}`,

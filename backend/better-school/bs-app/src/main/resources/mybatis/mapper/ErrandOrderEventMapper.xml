@@ -2,14 +2,36 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.betterschool.infrastructure.dao.errand.IErrandOrderEventDao">
 
-    <!-- 订单状态流转事件（只插入，纠纷溯源事实源）：随条件 UPDATE 成功在同一事务写入 -->
+    <!-- 订单状态流转事件（只插入，纠纷溯源事实源）：随条件 UPDATE 成功在同一事务写入；
+         event_seq 由 saveEvent 先对订单行计数器取号（bumpEventSeq + selectEventSeqById）后随行落库；
+         request_id 仅用户侧取消类事件携带（请求级幂等判定），其余事件为 NULL -->
     <insert id="insertOrderEvent" parameterType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderEvent">
         <!-- create_time/update_time 取数据库时钟 -->
-        INSERT INTO errand_order_event (order_id, event_type, from_state, to_state, actor_id, actor_role,
-                                        reason_type, reason, images, create_time, update_time)
-        VALUES (#{orderId}, #{eventType}, #{fromState}, #{toState}, #{actorId}, #{actorRole},
-                #{reasonType}, #{reason}, #{images}, NOW(), NOW())
+        INSERT INTO errand_order_event (order_id, event_seq, event_type, from_state, to_state, actor_id, actor_role,
+                                        reason_type, reason, images, request_id, create_time, update_time)
+        VALUES (#{orderId}, #{eventSeq}, #{eventType}, #{fromState}, #{toState}, #{actorId}, #{actorRole},
+                #{reasonType}, #{reason}, #{images}, #{requestId}, NOW(), NOW())
     </insert>
+
+    <!-- 最新一条状态流转事件（同订单 event_seq 最大）：接单方取消重试的幂等判定事实源 -->
+    <select id="selectLatestEvent" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrderEvent">
+        SELECT id, order_id, event_seq, event_type, from_state, to_state, actor_id, actor_role,
+               reason_type, reason, images, request_id, create_time, update_time
+        FROM errand_order_event
+        WHERE order_id = #{orderId}
+        ORDER BY event_seq DESC
+        LIMIT 1
+    </select>
+
+    <!-- 请求级幂等判定：同一订单上「本人 + 接单取消 + 同一请求编号」的事件是否已存在（存在 = 同一次点击的重放） -->
+    <select id="countTakerCancelByRequestId" resultType="int">
+        SELECT COUNT(1)
+        FROM errand_order_event
+        WHERE order_id = #{orderId}
+          AND event_type = 'TAKER_CANCELLED'
+          AND actor_id = #{actorId}
+          AND request_id = #{requestId}
+    </select>
 
     <!-- 防占单降级回落（票 05）：窗口内主动放弃次数（事实源查询；走 idx_actor_type_time） -->
     <select id="countAbandonsSince" resultType="int">

@@ -9,6 +9,6 @@ import java.math.BigDecimal;
 @Data
 @AllArgsConstructor
 public class ProductPayResult {
-    /** 需冻结的成交价 */
-    private BigDecimal price;
+    /** 需冻结金额（成交单价 × 件数） */
+    private BigDecimal amount;
 }

@@ -269,6 +269,7 @@ public class SearchServiceImpl implements ISearchService {
     private ErrandSearchDocVO toErrandSearchDocVO(ErrandOrderEntity orderEntity) {
         ErrandSearchDocVO doc = new ErrandSearchDocVO();
         doc.setOrderId(orderEntity.getOrderId());
+        doc.setTitle(orderEntity.getTitle());
         doc.setDescription(orderEntity.getDescription());
         doc.setPickupLocation(orderEntity.getPickupLocation());
         doc.setDeliveryLocation(orderEntity.getDeliveryLocation());

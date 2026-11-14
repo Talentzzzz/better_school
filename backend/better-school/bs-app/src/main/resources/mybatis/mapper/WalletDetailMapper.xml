@@ -13,7 +13,7 @@
     </insert>
 
     <select id="selectDetails" resultType="com.betterschool.infrastructure.dao.wallet.po.WalletDetail">
-        SELECT id, wallet_id, user_id, type, amount, order_id, biz_round, create_time, update_time
+        SELECT id, wallet_id, user_id, type, amount, order_id, biz_round, create_time
         FROM wallet_detail
         WHERE user_id = #{userId}
         ORDER BY id DESC

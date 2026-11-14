@@ -23,11 +23,16 @@ public class ProductEntity {
     private ProductStatusVO status;
     private long viewCount;
     private LocalDateTime createdAt;
-    private LocalDateTime expireAt;
+
+    /** 挂单件数（发布/存草稿入参，null = 1 件；落 product_inventory 台账，不在 product 行上） */
+    private Integer quantity;
 
     /** 查询冗余字段：卖家昵称/头像（列表 JOIN 填充） */
     private String sellerNickname;
     private String sellerAvatar;
+
+    /** 查询冗余字段：剩余可售件数（product_inventory 台账仓储批量回查填充） */
+    private Integer remainingQuantity;
 
     /** 查询冗余字段：收藏数（详情接口填充） */
     private long favoriteCount;
@@ -37,7 +42,7 @@ public class ProductEntity {
 
     public static ProductEntity create(String userId, String title, String description, List<String> images,
                                        BigDecimal price, String tradeLocation,
-                                       ProductCategoryVO category) {
+                                       ProductCategoryVO category, Integer quantity) {
         ProductEntity productEntity = new ProductEntity();
         productEntity.userId = userId;
         productEntity.title = title;
@@ -46,6 +51,7 @@ public class ProductEntity {
         productEntity.price = price;
         productEntity.tradeLocation = tradeLocation;
         productEntity.category = category;
+        productEntity.quantity = quantity;
         // 发布即可见
         productEntity.status = ProductStatusVO.ON_SALE;
         productEntity.viewCount = 0;
@@ -55,7 +61,7 @@ public class ProductEntity {
     /** 草稿：字段可缺省（未填完就存），仅本人可见，可编辑后重新提交回发布流程 */
     public static ProductEntity createDraft(String userId, String title, String description, List<String> images,
                                             BigDecimal price, String tradeLocation,
-                                            ProductCategoryVO category) {
+                                            ProductCategoryVO category, Integer quantity) {
         ProductEntity productEntity = new ProductEntity();
         productEntity.userId = userId;
         productEntity.title = title;
@@ -64,20 +70,22 @@ public class ProductEntity {
         productEntity.price = price;
         productEntity.tradeLocation = tradeLocation;
         productEntity.category = category;
+        productEntity.quantity = quantity;
         productEntity.status = ProductStatusVO.DRAFT;
         productEntity.viewCount = 0;
         return productEntity;
     }
 
-    /** 覆盖草稿内容（全量编辑：文字、图片、价格等全部可改） */
+    /** 覆盖草稿内容（全量编辑：文字、图片、价格、件数等全部可改） */
     public void applyDraftContent(String title, String description, List<String> images, BigDecimal price,
-                                  String tradeLocation, ProductCategoryVO category) {
+                                  String tradeLocation, ProductCategoryVO category, Integer quantity) {
         this.title = title;
         this.description = description;
         this.images = images == null ? List.of() : images;
         this.price = price;
         this.tradeLocation = tradeLocation;
         this.category = category;
+        this.quantity = quantity;
     }
 
     public boolean isOwner(String userId) {

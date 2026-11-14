@@ -82,6 +82,7 @@ public class SearchRepository implements ISearchRepository {
             });
             createIndexIfAbsent("bs_errand", mappings -> {
                 mappings.properties("orderId", p -> p.keyword(k -> k));
+                mappings.properties("title", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
                 mappings.properties("description", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
                 mappings.properties("pickupLocation", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
                 mappings.properties("deliveryLocation", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
@@ -142,7 +143,7 @@ public class SearchRepository implements ISearchRepository {
 
     @Override
     public SearchPageVO<String> searchErrands(String keyword, int page, int pageSize) {
-        return search("bs_errand", List.of("description", "pickupLocation", "deliveryLocation"),
+        return search("bs_errand", List.of("title", "description", "pickupLocation", "deliveryLocation"),
                 PUBLIC_ERRAND_STATUSES, keyword, page, pageSize, Function.identity());
     }
 

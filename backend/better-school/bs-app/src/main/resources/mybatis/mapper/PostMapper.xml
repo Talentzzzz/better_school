@@ -9,8 +9,8 @@
          浏览 UV 的真相源是 user_view_history，加速列 post_view_count）。
          点赞关系 / 浏览历史 / feed 索引语句分别在 PostLikeMapper / UserViewHistoryMapper / PostFeedIndexMapper -->
     <sql id="postColumns">
-        p.id, p.post_id, p.user_id, p.title, p.content, p.images, p.cover, p.state,
-        p.create_time, p.update_time, p.expire_at
+        id, post_id, user_id, title, content, images, cover, state,
+        create_time
     </sql>
 
     <!-- 时刻一律数据库时钟：create_time/update_time=NOW()；发布行 expire_at=NOW()+30d（与 submitDraft
@@ -40,9 +40,9 @@
          不带计数——三个计数由仓储按窄表批量回查，缓存里永远没有计数；作者昵称头像同样仓储回查 -->
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.post.po.Post">
         SELECT <include refid="postColumns"/>
-        FROM post p
-        WHERE p.post_id = #{postId}
-          AND p.state != 'DELETED'
+        FROM post
+        WHERE post_id = #{postId}
+          AND state != 'DELETED'
     </select>
 
     <!-- 覆盖草稿内容（全量编辑：文字、图片、封面全部可改，仅 DRAFT 行生效） -->
@@ -71,8 +71,8 @@
          纯 post 单表：计数/作者由仓储批量回查拼装 -->
     <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.post.po.Post">
         SELECT <include refid="postColumns"/>
-        FROM post p
-        WHERE p.post_id IN
+        FROM post
+        WHERE post_id IN
         <foreach collection="ids" item="postId" open="(" separator="," close=")">#{postId}</foreach>
     </select>
 
@@ -89,17 +89,17 @@
          由仓储走 selectNormalRows 取全集 + 窄表批量回查 + 内存排序切片（降级路径，数据集有界） -->
     <select id="selectPage" resultType="com.betterschool.infrastructure.dao.post.po.Post">
         SELECT <include refid="postColumns"/>
-        FROM post p
-        WHERE p.state = 'NORMAL'
-        ORDER BY p.create_time DESC, p.post_id DESC
+        FROM post
+        WHERE state = 'NORMAL'
+        ORDER BY create_time DESC, post_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
     <!-- hot 档降级取数：NORMAL 全集（无 LIMIT），排序与切片在仓储内存完成 -->
     <select id="selectNormalRows" resultType="com.betterschool.infrastructure.dao.post.po.Post">
         SELECT <include refid="postColumns"/>
-        FROM post p
-        WHERE p.state = 'NORMAL'
+        FROM post
+        WHERE state = 'NORMAL'
     </select>
 
     <select id="count" resultType="long">
@@ -111,10 +111,10 @@
     <!-- 我的帖子分页（作者视角）：NORMAL + 草稿，排除已删除 -->
     <select id="selectPageByUser" resultType="com.betterschool.infrastructure.dao.post.po.Post">
         SELECT <include refid="postColumns"/>
-        FROM post p
-        WHERE p.user_id = #{userId}
-          AND p.state IN ('NORMAL', 'DRAFT')
-        ORDER BY p.create_time DESC, p.post_id DESC
+        FROM post
+        WHERE user_id = #{userId}
+          AND state IN ('NORMAL', 'DRAFT')
+        ORDER BY create_time DESC, post_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -128,10 +128,10 @@
     <!-- 某用户的公开帖子（作者主页「笔记」tab）：仅 NORMAL；本人看自己也走此口径（草稿只在「我的」页） -->
     <select id="selectNormalPageByUser" resultType="com.betterschool.infrastructure.dao.post.po.Post">
         SELECT <include refid="postColumns"/>
-        FROM post p
-        WHERE p.user_id = #{userId}
-          AND p.state = 'NORMAL'
-        ORDER BY p.create_time DESC, p.post_id DESC
+        FROM post
+        WHERE user_id = #{userId}
+          AND state = 'NORMAL'
+        ORDER BY create_time DESC, post_id DESC
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -157,8 +157,8 @@
          feed_time = create_time；② like_count 从窄表批量抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径），
          组装成行集后走 IPostFeedIndexDao.insertFeedIndexRows 批量写入 -->
     <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.post.po.PostFeedIndexRow">
-        SELECT p.post_id AS postId, p.state AS state, p.create_time AS createTime
-        FROM post p
+        SELECT post_id, state, create_time
+        FROM post
     </select>
 
 </mapper>

@@ -4,7 +4,12 @@
 
     <sql id="baseColumns">
         id, user_id, phone, nickname, avatar, signature, gender, show_liked, show_comments,
-        role, state, credit_score, last_login_at, create_time, update_time
+        role, state, credit_score, last_login_at, create_time
+    </sql>
+
+    <!-- 展示用窄投影列口径：会话列表/消息发送者只要这三列，phone 等敏感列不出库 -->
+    <sql id="briefColumns">
+        user_id, nickname, avatar
     </sql>
 
     <select id="selectByPhone" resultType="com.betterschool.infrastructure.dao.user.po.User">
@@ -42,6 +47,14 @@
 
     <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.user.po.User">
         SELECT <include refid="baseColumns"/>
+        FROM bs_user
+        WHERE user_id IN
+        <foreach collection="ids" item="userId" open="(" separator="," close=")">#{userId}</foreach>
+    </select>
+
+    <!-- 展示场景窄投影（会话列表对家/消息发送者）：只回昵称头像，不拉 phone 等敏感列 -->
+    <select id="selectBriefByIds" resultType="com.betterschool.infrastructure.dao.user.po.UserBrief">
+        SELECT <include refid="briefColumns"/>
         FROM bs_user
         WHERE user_id IN
         <foreach collection="ids" item="userId" open="(" separator="," close=")">#{userId}</foreach>

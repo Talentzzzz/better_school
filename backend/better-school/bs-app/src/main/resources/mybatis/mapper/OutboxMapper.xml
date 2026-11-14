@@ -3,7 +3,7 @@
 <mapper namespace="com.betterschool.infrastructure.dao.outbox.IOutboxDao">
 
     <sql id="baseColumns">
-        id, msg_id, destination, payload, state, retry_count, create_time, update_time
+        id, msg_id, destination, payload, state, retry_count, create_time
     </sql>
 
     <insert id="insert" parameterType="com.betterschool.infrastructure.dao.outbox.po.Outbox"

@@ -8,7 +8,7 @@
          room_member = 会话维度名册「这个会话有谁」（贴 room_id 片键）——对家回查/成员扇出只走名册，
          user_room 只做 user_id 前缀查询（逐用户写路径由仓储按名册成员集驱动） -->
     <sql id="roomColumns">
-        r.id, r.room_id, r.source, r.creator_id, r.last_seq, r.create_time, r.update_time
+        id, room_id, source, creator_id, last_seq, create_time
     </sql>
 
     <!-- ===== room ===== -->
@@ -20,8 +20,8 @@
 
     <select id="selectRoomById" resultType="com.betterschool.infrastructure.dao.chat.po.Room">
         SELECT <include refid="roomColumns"/>
-        FROM room r
-        WHERE r.room_id = #{roomId}
+        FROM room
+        WHERE room_id = #{roomId}
     </select>
 
     <!-- 发消息事务内原子取号：行锁到提交，失败回滚无空洞；取号后由 selectLastSeq 读回（须同事务同连接） -->
@@ -41,8 +41,8 @@
     <!-- 会话列表三段查之②：按 room_id 集批量回查会话行（lastSeq 未读数真源 + source/creator_id 角色标签锚点） -->
     <select id="selectRoomsByIds" resultType="com.betterschool.infrastructure.dao.chat.po.Room">
         SELECT <include refid="roomColumns"/>
-        FROM room r
-        WHERE r.room_id IN
+        FROM room
+        WHERE room_id IN
         <foreach collection="roomIds" item="roomId" open="(" separator="," close=")">#{roomId}</foreach>
     </select>
 

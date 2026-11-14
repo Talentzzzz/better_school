@@ -356,7 +356,7 @@ watch(() => auth.isLoggedIn, (v) => v && load())
             @click="router.push(`/errand/${o.orderId}`)"
           >
             <div class="errand-l">
-              <div class="errand-desc ellipsis">{{ o.description }}</div>
+              <div class="errand-desc ellipsis">{{ o.title ?? o.description }}</div>
               <div class="errand-loc ellipsis">{{ o.pickupLocation }} → {{ o.deliveryLocation }}</div>
             </div>
             <div class="errand-r">

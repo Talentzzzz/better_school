@@ -15,6 +15,8 @@ public class ProductOrder {
     private String sellerId;
     private String productId;
     private BigDecimal price;
+    /** 成交件数（1..N，下单时原子扣减台账 remaining；订单总金额 = price × quantity） */
+    private Integer quantity;
     /** 商品信息全部为下单时快照（此后不可变） */
     private String productTitle;
     private String productDescription;

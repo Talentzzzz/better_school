@@ -6,6 +6,7 @@ import com.betterschool.domain.errand.model.valobj.ErrandFeedCursorVO;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO;
 import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
 import com.betterschool.domain.errand.model.valobj.ErrandTypeVO;
+import com.betterschool.domain.errand.model.valobj.ErrandOrderEventVO;
 import com.betterschool.domain.errand.model.valobj.ErrandPaidMessage;
 import com.betterschool.domain.search.model.valobj.SearchEntityType;
 import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
@@ -170,9 +171,9 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean payById(String orderId, String actorId, int timeLimitHours) {
-        // 支付即发布进入大厅（处于支付事务内）
-        boolean updated = errandDao.payById(orderId, timeLimitHours) > 0;
+    public boolean payById(String orderId, String actorId) {
+        // 支付即发布进入大厅（处于支付事务内）；deadline 由用户指定随单落库，支付只翻状态
+        boolean updated = errandDao.payById(orderId) > 0;
         if (updated) {
             saveEvent(orderId, "PAID", "PENDING_PAYMENT", "PUBLISHED", actorId, "PUBLISHER", null);
         }
@@ -210,7 +211,7 @@ public class ErrandRepository implements IErrandRepository {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.abandonLockedById(orderId, takerId) > 0;
             if (updated) {
-                // 放弃：独立事件 LOCK_ABANDONED（原因 TAKER_ABANDON）；不扣信用分、不动 taker_canceled
+                // 放弃：独立事件 LOCK_ABANDONED（原因 TAKER_ABANDON）；不扣信用分、不落 TAKER_CANCELLED 事件
                 saveEvent(orderId, "LOCK_ABANDONED", "LOCKED", "PUBLISHED", takerId, "TAKER", "TAKER_ABANDON");
                 // 索引行同事务翻回 PUBLISHED（重新进大厅可见）
                 syncFeedIndexState(orderId, ErrandStatusVO.PUBLISHED);
@@ -222,6 +223,13 @@ public class ErrandRepository implements IErrandRepository {
     @Override
     public int lockSeqOf(String orderId) {
         return errandDao.selectLockSeqById(orderId);
+    }
+
+    @Override
+    public ErrandOrderEventVO latestEventOf(String orderId) {
+        ErrandOrderEvent latest = errandOrderEventDao.selectLatestEvent(orderId);
+        return latest == null ? null
+                : new ErrandOrderEventVO(latest.getEventSeq(), latest.getEventType(), latest.getActorId());
     }
 
     @Override
@@ -304,16 +312,22 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public boolean cancelByTaker(String orderId, String takerId) {
+    public boolean cancelByTaker(String orderId, String takerId, String requestId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.cancelByTaker(orderId, takerId) > 0;
             if (updated) {
-                saveEvent(orderId, "TAKER_CANCELLED", "CONFIRMED", "PUBLISHED", takerId, "TAKER", "TAKER_CANCEL");
+                saveEvent(orderId, "TAKER_CANCELLED", "CONFIRMED", "PUBLISHED", takerId, "TAKER",
+                        "TAKER_CANCEL", null, requestId);
                 // 索引行同事务翻回 PUBLISHED（重新进大厅可见）
                 syncFeedIndexState(orderId, ErrandStatusVO.PUBLISHED);
             }
             return updated;
         }));
+    }
+
+    @Override
+    public boolean hasTakerCancelEvent(String orderId, String actorId, String requestId) {
+        return errandOrderEventDao.countTakerCancelByRequestId(orderId, actorId, requestId) > 0;
     }
 
     @Override
@@ -484,6 +498,7 @@ public class ErrandRepository implements IErrandRepository {
     @Override
     public void createWithPayTimeout(ErrandOrderEntity orderEntity, int payTimeoutMinutes) {
         transactionTemplate.execute(status -> {
+            validateDeadlineLegal(orderEntity.getDeadline());
             save(orderEntity);
             // "15 分钟未支付"超时任务与订单落库同事务（直插 timeout_task）：
             // Java 只传时长，到期时刻由 SQL 侧 TIMESTAMPADD 按数据库时钟落库
@@ -511,6 +526,10 @@ public class ErrandRepository implements IErrandRepository {
     @Override
     public void saveDraft(ErrandOrderEntity orderEntity) {
         transactionTemplate.execute(status -> {
+            // 草稿 deadline 可空（提交时才必填）；填了就先校验区间
+            if (orderEntity.getDeadline() != null) {
+                validateDeadlineLegal(orderEntity.getDeadline());
+            }
             save(orderEntity);
             return null;
         });
@@ -519,15 +538,19 @@ public class ErrandRepository implements IErrandRepository {
     @Override
     public void updateDraft(ErrandOrderEntity orderEntity) {
         // 手工组装：草稿字段可为 null（toPO 会取 type.name()，不可用），且 UPDATE 只落内容列
+        if (orderEntity.getDeadline() != null) {
+            validateDeadlineLegal(orderEntity.getDeadline());
+        }
         ErrandOrder order = new ErrandOrder();
         order.setErrandOrderId(orderEntity.getOrderId());
         order.setPublisherId(orderEntity.getPublisherId());
         order.setType(orderEntity.getType() == null ? null : orderEntity.getType().name());
+        order.setTitle(orderEntity.getTitle());
         order.setDescription(orderEntity.getDescription());
         order.setPickupLocation(orderEntity.getPickupLocation());
         order.setDeliveryLocation(orderEntity.getDeliveryLocation());
         order.setReward(orderEntity.getReward());
-        order.setTimeLimitHours(orderEntity.getTimeLimitHours());
+        order.setDeadline(orderEntity.getDeadline());
         order.setImages(toImagesJson(orderEntity.getImages()));
         errandDao.updateDraft(order);
     }
@@ -535,6 +558,12 @@ public class ErrandRepository implements IErrandRepository {
     @Override
     public void submitDraftWithPayTimeout(String orderId, String publisherId, int payTimeoutMinutes) {
         transactionTemplate.execute(status -> {
+            // 草稿可能压了几天：提交时复核 deadline 区间（含"已过期/只剩几分钟"），防支付完立刻超时
+            ErrandOrder order = errandDao.selectById(orderId);
+            if (order.getDeadline() == null) {
+                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "草稿缺少截止时间，请补全后再提交");
+            }
+            validateDeadlineLegal(order.getDeadline());
             if (errandDao.submitDraft(orderId, publisherId) == 0) {
                 throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
             }
@@ -558,9 +587,9 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public void payWithPaidMessage(String orderId, String userId, int timeLimitHours) {
+    public void payWithPaidMessage(String orderId, String userId) {
         transactionTemplate.execute(status -> {
-            if (!payById(orderId, userId, timeLimitHours)) {
+            if (!payById(orderId, userId)) {
                 throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
             }
             saveErrandPaidMessage(orderId);
@@ -684,11 +713,12 @@ public class ErrandRepository implements IErrandRepository {
         order.setPublisherId(orderEntity.getPublisherId());
         order.setTakerId(orderEntity.getTakerId());
         order.setType(orderEntity.getType() == null ? null : orderEntity.getType().name());
+        order.setTitle(orderEntity.getTitle());
         order.setDescription(orderEntity.getDescription());
         order.setPickupLocation(orderEntity.getPickupLocation());
         order.setDeliveryLocation(orderEntity.getDeliveryLocation());
         order.setReward(orderEntity.getReward());
-        order.setTimeLimitHours(orderEntity.getTimeLimitHours());
+        order.setDeadline(orderEntity.getDeadline());
         order.setImages(toImagesJson(orderEntity.getImages()));
         order.setState(orderEntity.getStatus().name());
         return order;
@@ -703,20 +733,18 @@ public class ErrandRepository implements IErrandRepository {
         orderEntity.setPublisherId(order.getPublisherId());
         orderEntity.setTakerId(order.getTakerId());
         orderEntity.setType(order.getType() == null ? null : ErrandTypeVO.valueOf(order.getType()));
+        orderEntity.setTitle(order.getTitle());
         orderEntity.setDescription(order.getDescription());
         orderEntity.setPickupLocation(order.getPickupLocation());
         orderEntity.setDeliveryLocation(order.getDeliveryLocation());
         orderEntity.setReward(order.getReward());
-        orderEntity.setTimeLimitHours(order.getTimeLimitHours());
         orderEntity.setImages(toImagesList(order.getImages()));
         orderEntity.setDeadline(order.getDeadline());
         orderEntity.setStatus(ErrandStatusVO.valueOf(order.getState()));
         // 公开列表的浏览量由仓储从计数窄表批量回查带出（selectViewCountsByOrderIds）；其余查询不带
         // 该列（null → 0，详情由 orderDetail 回填）
         orderEntity.setViewCount(order.getViewCount() == null ? 0 : order.getViewCount());
-        orderEntity.setTakerCanceled(order.getTakerCanceled() != null && order.getTakerCanceled());
         orderEntity.setCreatedAt(order.getCreateTime());
-        orderEntity.setUpdatedAt(order.getUpdateTime());
         orderEntity.setPublisherNickname(order.getPublisherNickname());
         orderEntity.setPublisherAvatar(order.getPublisherAvatar());
         orderEntity.setTakerNickname(order.getTakerNickname());
@@ -727,7 +755,23 @@ public class ErrandRepository implements IErrandRepository {
     /** 订单状态流转事件落表（与条件 UPDATE 同事务，只插入；from_state 为 NULL 仅限创建事件） */
     private void saveEvent(String orderId, String eventType, String fromState, String toState,
                            String actorId, String actorRole, String reasonType) {
-        saveEvent(orderId, eventType, fromState, toState, actorId, actorRole, reasonType, null);
+        saveEvent(orderId, eventType, fromState, toState, actorId, actorRole, reasonType, null, null);
+    }
+
+    /** 同上，带原因补充说明（requestId 为 NULL，仅取消类事件需要） */
+    private void saveEvent(String orderId, String eventType, String fromState, String toState,
+                           String actorId, String actorRole, String reasonType, String reason) {
+        saveEvent(orderId, eventType, fromState, toState, actorId, actorRole, reasonType, reason, null);
+    }
+
+    /**
+     * 截止时间合法性（数据库时钟为唯一事实源）：须落在 now+15min ~ now+7d。
+     * 判定走 SQL（{@link IErrandDao#checkDeadlineLegal}），Java 侧只透传用户给定的绝对时刻
+     */
+    private void validateDeadlineLegal(LocalDateTime deadline) {
+        if (deadline == null || !errandDao.checkDeadlineLegal(deadline)) {
+            throw new BusinessException(ResponseCode.PARAM_ERROR, "截止时间需在 15 分钟至 7 天之后");
+        }
     }
 
     // ---------- 拼装辅助：浏览窄表 / 昵称头像（SQL 层零 JOIN 的 Java 收口点） ----------
@@ -789,13 +833,17 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     /**
-     * 订单状态流转事件落表（带原因补充说明）：reason 只在「用户/审核员输入了原因」的事件上非空
-     * （当前仅审核驳回带枚举文案 + 补充说明），SYSTEM 事件恒 NULL——与 sql.md 列注释同口径
+     * 订单状态流转事件落表（完整形态）：reason 只在「用户输入了原因」的事件上非空，SYSTEM 事件恒 NULL；
+     * requestId 仅用户侧取消类事件携带（请求级幂等判定），其余事件恒 NULL——与 sql.md 列注释同口径
      */
     private void saveEvent(String orderId, String eventType, String fromState, String toState,
-                           String actorId, String actorRole, String reasonType, String reason) {
+                           String actorId, String actorRole, String reasonType, String reason, String requestId) {
+        // 事件序号取号：先动订单行（行锁到提交）再计数，同订单写入天然串行、event_seq 严格递增；
+        // 调用点全部处于「已 INSERT/UPDATE 订单行」的事务内，取号不引入新的锁等待
+        errandDao.bumpEventSeq(orderId);
         ErrandOrderEvent event = new ErrandOrderEvent();
         event.setOrderId(orderId);
+        event.setEventSeq(errandDao.selectEventSeqById(orderId));
         event.setEventType(eventType);
         event.setFromState(fromState);
         event.setToState(toState);
@@ -803,6 +851,7 @@ public class ErrandRepository implements IErrandRepository {
         event.setActorRole(actorRole);
         event.setReasonType(reasonType);
         event.setReason(reason);
+        event.setRequestId(requestId);
         errandOrderEventDao.insertOrderEvent(event);
     }
 

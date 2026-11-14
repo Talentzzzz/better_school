@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { createErrandOrder, saveErrandDraft } from '@/api/errand'
 import { getMyCredit } from '@/api/credit'
 import { getBalance } from '@/api/wallet'
-import type { ErrandTimeLimit, ErrandType } from '@/types/api'
+import type { ErrandType } from '@/types/api'
 import { toast } from '@/components/Toast'
 import NavBar from '@/components/NavBar.vue'
 import ImageUrlPicker from '@/components/ImageUrlPicker.vue'
@@ -12,11 +12,12 @@ import ImageUrlPicker from '@/components/ImageUrlPicker.vue'
 const router = useRouter()
 
 const type = ref<ErrandType>('EXPRESS_PICKUP')
+const title = ref('')
 const description = ref('')
 const pickupLocation = ref('')
 const deliveryLocation = ref('')
 const reward = ref('20')
-const timeLimit = ref<ErrandTimeLimit>('HOURS_2')
+const deadline = ref('')
 const images = ref<string[]>([])
 const submitting = ref(false)
 const checking = ref(true)
@@ -29,15 +30,14 @@ const types: { value: ErrandType; label: string }[] = [
   { value: 'OTHER', label: '其他' }
 ]
 
-const limits: { value: ErrandTimeLimit; label: string }[] = [
-  { value: 'HOURS_2', label: '2 小时' },
-  { value: 'HOURS_4', label: '4 小时' },
-  { value: 'HOURS_12', label: '12 小时' },
-  { value: 'HOURS_24', label: '24 小时' },
-  { value: 'DAYS_7', label: '7 天' },
-  { value: 'DAYS_30', label: '30 天' },
-  { value: 'DAYS_365', label: '一年' }
-]
+/** 截止时间合法区间（与服务端数据库时钟校验同口径，这里做客户端粗校验） */
+const MIN_LEAD_MINUTES = 15
+const MAX_LEAD_DAYS = 7
+
+/** datetime-local 值即 ISO 本地时刻（YYYY-MM-DDTHH:mm），后端 LocalDateTime 直解；无值返回 undefined */
+function deadlineIsoOrUndefined(): string | undefined {
+  return deadline.value || undefined
+}
 
 onMounted(async () => {
   try {
@@ -57,11 +57,12 @@ async function onSaveDraft() {
   try {
     await saveErrandDraft({
       type: type.value,
+      title: title.value.trim() || undefined,
       description: description.value.trim() || undefined,
       pickupLocation: pickupLocation.value.trim() || undefined,
       deliveryLocation: deliveryLocation.value.trim() || undefined,
       reward: reward.value ? Number(reward.value) : undefined,
-      timeLimit: timeLimit.value,
+      deadline: deadlineIsoOrUndefined(),
       images: images.value
     })
     toast('已存草稿，可在「我的-跑腿」继续处理')
@@ -74,6 +75,10 @@ async function onSaveDraft() {
 }
 
 async function onSubmit() {
+  if (!title.value.trim()) {
+    toast('请填写订单标题')
+    return
+  }
   if (!description.value.trim()) {
     toast('请填写任务描述')
     return
@@ -85,6 +90,20 @@ async function onSubmit() {
   const rewardNum = Number(reward.value)
   if (!rewardNum || rewardNum < 10) {
     toast('悬赏不低于 10 校园币')
+    return
+  }
+  if (!deadline.value) {
+    toast('请选择截止时间')
+    return
+  }
+  // 客户端粗校验（服务端以数据库时钟为准再校验一次）
+  const leadMs = new Date(deadline.value).getTime() - Date.now()
+  if (leadMs < MIN_LEAD_MINUTES * 60000) {
+    toast('截止时间至少在 15 分钟之后')
+    return
+  }
+  if (leadMs > MAX_LEAD_DAYS * 24 * 60 * 60000) {
+    toast('截止时间最远不超过 7 天')
     return
   }
   submitting.value = true
@@ -102,11 +121,12 @@ async function onSubmit() {
     }
     const orderId = await createErrandOrder({
       type: type.value,
+      title: title.value.trim(),
       description: description.value.trim(),
       pickupLocation: pickupLocation.value.trim(),
       deliveryLocation: deliveryLocation.value.trim(),
       reward: rewardNum,
-      timeLimit: timeLimit.value,
+      deadline: deadline.value,
       images: images.value
     })
     toast('发布成功，支付后自动上架')
@@ -139,6 +159,8 @@ async function onSubmit() {
             {{ t.label }}
           </button>
         </div>
+        <div class="form-label" style="margin-top: 14px">订单标题</div>
+        <input v-model="title" class="form-input" maxlength="50" placeholder="一句话说清任务，例如：帮取两个快递送 6 号楼" />
         <div class="form-label" style="margin-top: 14px">任务描述</div>
         <textarea
           v-model="description"
@@ -166,18 +188,9 @@ async function onSubmit() {
           </div>
         </div>
         <div class="reward-hint">支付后冻结托管，完成后自动打给接单者；最低 10</div>
-        <div class="form-label" style="margin-top: 14px">限制时长</div>
-        <div class="form-chips">
-          <button
-            v-for="l in limits"
-            :key="l.value"
-            class="form-chip"
-            :class="{ active: timeLimit === l.value }"
-            @click="timeLimit = l.value"
-          >
-            {{ l.label }}
-          </button>
-        </div>
+        <div class="form-label" style="margin-top: 14px">截止时间</div>
+        <input v-model="deadline" class="form-input" type="datetime-local" />
+        <div class="reward-hint">到期自动下架并结算，也是接单者的完工时限；须在 15 分钟 ~ 7 天之后</div>
       </div>
 
       <div class="publish-actions">

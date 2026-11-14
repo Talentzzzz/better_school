@@ -14,7 +14,6 @@ public class VirtualWalletEntity {
     private BigDecimal balance;
     private BigDecimal frozenAmount;
     private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
 
     public static VirtualWalletEntity create(String userId, BigDecimal initialBalance) {
         VirtualWalletEntity walletEntity = new VirtualWalletEntity();

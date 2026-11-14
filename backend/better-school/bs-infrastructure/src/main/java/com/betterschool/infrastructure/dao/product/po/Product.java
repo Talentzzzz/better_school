@@ -21,6 +21,8 @@ public class Product {
     private String state;
     /** 查询投影列：浏览 UV 加速列（product_view_count 仓储批量回查填充，非 product 行列） */
     private Integer viewCount;
+    /** 查询冗余字段：剩余可售件数（product_inventory 台账仓储批量回查填充，非 product 行列；草稿/多件挂单展示用） */
+    private Integer remainingQuantity;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
     private LocalDateTime expireAt;

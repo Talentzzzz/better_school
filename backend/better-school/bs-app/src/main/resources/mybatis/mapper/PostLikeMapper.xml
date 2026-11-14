@@ -5,10 +5,10 @@
     <!-- 我点赞过的帖子：关系行主查（post_like 单表，按点赞时间倒序）；帖子行与可见性过滤
          （点赞后帖子可能被驳回/转入待审，仍向点赞者展示）由仓储两段查拼装 -->
     <select id="selectRelationLikedRows" resultType="com.betterschool.infrastructure.dao.post.po.PostRelationRow">
-        SELECT pl.post_id AS postId, pl.create_time AS sortTime
-        FROM post_like pl
-        WHERE pl.user_id = #{userId}
-        ORDER BY pl.create_time DESC, pl.post_id DESC
+        SELECT post_id
+        FROM post_like
+        WHERE user_id = #{userId}
+        ORDER BY create_time DESC, post_id DESC
     </select>
 
     <!-- 某用户赞过的帖子（作者主页「赞过」tab）：关系行主查与「我赞过的」共用 selectRelationLikedRows，

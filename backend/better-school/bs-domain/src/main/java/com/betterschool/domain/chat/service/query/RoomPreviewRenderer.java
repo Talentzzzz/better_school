@@ -1,8 +1,7 @@
 package com.betterschool.domain.chat.service.query;
 
-import com.betterschool.domain.chat.model.entity.MessageEntity;
 import com.betterschool.domain.chat.model.valobj.CardRefTypeVO;
-import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
+import com.betterschool.domain.chat.model.valobj.MessagePreviewVO;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
 
 /**
@@ -28,25 +27,25 @@ public final class RoomPreviewRenderer {
      * 把 message 真相渲染进列表项（lastMsgType + lastMsgPreview 一次填齐）。
      *
      * @param room    待装配的列表项
-     * @param messageEntity 会话最新一条消息（room.last_seq 点查所得；null = 会话尚无消息，预览为空）
+     * @param preview 会话最新一条消息的预览投影（room.last_seq 点查所得；null = 会话尚无消息，预览为空）
      */
-    public static void renderInto(RoomListItemVO room, MessageEntity messageEntity) {
-        room.setLastMsgType(messageEntity == null ? null : messageEntity.getMsgType());
-        room.setLastMsgPreview(render(messageEntity));
+    public static void renderInto(RoomListItemVO room, MessagePreviewVO preview) {
+        room.setLastMsgType(preview == null ? null : preview.getMsgType());
+        room.setLastMsgPreview(render(preview));
     }
 
-    /** 按 message 真相渲染预览文案（null message → null 预览） */
-    public static String render(MessageEntity messageEntity) {
-        if (messageEntity == null) {
+    /** 按 message 真相渲染预览文案（null → null 预览） */
+    public static String render(MessagePreviewVO preview) {
+        if (preview == null) {
             return null;
         }
-        if (messageEntity.isRecalled()) {
+        if (preview.isRecalled()) {
             return PREVIEW_RECALLED;
         }
-        return switch (messageEntity.getMsgType()) {
-            case TEXT -> truncate(messageEntity.getContent());
+        return switch (preview.getMsgType()) {
+            case TEXT -> truncate(preview.getContent());
             case IMAGE -> PREVIEW_IMAGE;
-            case CARD -> renderCard(messageEntity.getRefType());
+            case CARD -> renderCard(preview.getRefType());
         };
     }
 

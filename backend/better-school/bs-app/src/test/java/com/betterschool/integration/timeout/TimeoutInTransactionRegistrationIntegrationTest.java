@@ -1,7 +1,6 @@
 package com.betterschool.integration.timeout;
 
 import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
-import com.betterschool.domain.errand.model.valobj.ErrandTimeLimitVO;
 import com.betterschool.domain.errand.model.valobj.ErrandTypeVO;
 import com.betterschool.domain.timeout.adapter.repository.ITimeoutRepository;
 import com.betterschool.infrastructure.adapter.repository.errand.ErrandRepository;
@@ -187,8 +186,8 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
     // ---------- 用例夹具 ----------
 
     private static ErrandOrderEntity newErrandEntity(String publisherId) {
-        return ErrandOrderEntity.create(publisherId, ErrandTypeVO.EXPRESS_PICKUP, "帮忙取个快递",
-                "菜鸟驿站", "6号楼楼下", BigDecimal.TEN, List.of(), ErrandTimeLimitVO.HOURS_2);
+        return ErrandOrderEntity.create(publisherId, "帮忙取个快递", ErrandTypeVO.EXPRESS_PICKUP, "帮忙取个快递",
+                "菜鸟驿站", "6号楼楼下", BigDecimal.TEN, List.of(), LocalDateTime.now().plusHours(2));
     }
 
     /** 与真实业务 id 空间隔开的测试专用 UUID：同键断言不撞真实业务行 */
@@ -217,12 +216,13 @@ class TimeoutInTransactionRegistrationIntegrationTest extends CommunityApiTestBa
 
     private String createErrand(Session user, String description) {
         JsonNode response = postJson("/api/errand/orders", Map.ofEntries(
+                Map.entry("title", "帮忙取个快递"),
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", description),
                 Map.entry("pickupLocation", "菜鸟驿站"),
                 Map.entry("deliveryLocation", "6号楼楼下"),
                 Map.entry("reward", 10),
-                Map.entry("timeLimit", "HOURS_2")), user);
+                Map.entry("deadline", LocalDateTime.now().plusHours(2).toString())), user);
         assertSuccess(response, "发布跑腿");
         return response.path("data").asText();
     }

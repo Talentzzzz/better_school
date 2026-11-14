@@ -1,6 +1,7 @@
 package com.betterschool.infrastructure.dao.chat;
 
 import com.betterschool.infrastructure.dao.chat.po.Message;
+import com.betterschool.infrastructure.dao.chat.po.MessagePreview;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -16,6 +17,9 @@ public interface IMessageDao {
     int insertMessage(Message message);
 
     Message selectMessage(@Param("roomId") String roomId, @Param("seq") Long seq);
+
+    /** 会话列表预览点查：只取渲染要用的四列（msg_type/content/ref_type/state），不拉整条消息 */
+    MessagePreview selectMessagePreview(@Param("roomId") String roomId, @Param("seq") Long seq);
 
     Message selectMessageByClientMsgId(@Param("roomId") String roomId, @Param("clientMsgId") String clientMsgId);
 

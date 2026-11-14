@@ -255,7 +255,7 @@ onMounted(() => {
                 ¥{{ formatMoney(order.reward) }}
               </span>
             </div>
-            <div class="edesc ellipsis-3">{{ order.description }}</div>
+            <div class="edesc ellipsis-3">{{ order.title ?? order.description }}</div>
             <div class="route">
               <span class="ellipsis">{{ order.pickupLocation }}</span>
               <span class="arrow">→</span>

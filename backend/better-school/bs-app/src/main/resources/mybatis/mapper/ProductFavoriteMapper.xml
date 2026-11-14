@@ -29,10 +29,10 @@
     <!-- 我的收藏：收藏关系行主查（product_favorite 单表，物理 id DESC = 收藏先后倒序）；
          商品行与可见性过滤（state != 'DELETED'）由仓储两段查拼装 -->
     <select id="selectFavoriteProductIdsByUser" resultType="string">
-        SELECT f.product_id
-        FROM product_favorite f
-        WHERE f.user_id = #{userId}
-        ORDER BY f.id DESC
+        SELECT product_id
+        FROM product_favorite
+        WHERE user_id = #{userId}
+        ORDER BY id DESC
     </select>
 
 </mapper>

@@ -4,9 +4,9 @@
 
     <!-- 浏览 UV 加速列批量读：按 id 集单表 IN 查询，仓储补 0 拼装（详情单元素与列表共用） -->
     <select id="selectViewCountsByProductIds" resultType="com.betterschool.infrastructure.dao.product.po.Product">
-        SELECT c.product_id AS productId, c.view_count AS viewCount
-        FROM product_view_count c
-        WHERE c.product_id IN
+        SELECT product_id, view_count
+        FROM product_view_count
+        WHERE product_id IN
         <foreach collection="productIds" item="productId" open="(" separator="," close=")">#{productId}</foreach>
     </select>
 
@@ -24,17 +24,17 @@
     <delete id="deleteViewCountsMissingHistory">
         DELETE FROM product_view_count
          WHERE NOT EXISTS (SELECT 1
-                             FROM product_view_history h
-                            WHERE h.product_id = product_view_count.product_id)
+                             FROM product_view_history
+                            WHERE product_id = product_view_count.product_id)
     </delete>
 
     <!-- 重灌：product_view_count 重投影 = product_view_history 行数（ODKU：缺行补建、漂移值刷新、
          已对齐的行落回同值，幂等不动点） -->
     <insert id="recalibrateViewCounts">
         INSERT INTO product_view_count (product_id, view_count, create_time, update_time)
-        SELECT h.product_id, COUNT(*), NOW(), NOW()
-          FROM product_view_history h
-         GROUP BY h.product_id
+        SELECT product_id, COUNT(*), NOW(), NOW()
+          FROM product_view_history
+         GROUP BY product_id
         ON DUPLICATE KEY UPDATE
             view_count  = VALUES(view_count),
             update_time = NOW()

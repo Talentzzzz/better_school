@@ -207,8 +207,8 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
             // 时间在 Java 侧算好当普通 ? 传：`INTERVAL ?` 占位符会被 ShardingSphere 的 SQL 解析弄丢
             // （口径同 ErrandPayBeforeReviewIntegrationTest；票 08 全量回归抓出，票 05 残差）
             jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
-                            + "pickup_location, delivery_location, reward, time_limit_hours, deadline, state, "
-                            + "create_time, update_time) VALUES (?, ?, ?, '大厅游标夹具', '菜鸟驿站', '6号楼', ?, 2, "
+                            + "pickup_location, delivery_location, reward, deadline, state, "
+                            + "create_time, update_time) VALUES (?, ?, ?, '大厅游标夹具', '菜鸟驿站', '6号楼', ?, "
                             + "DATE_ADD(NOW(), INTERVAL 2 HOUR), 'PUBLISHED', "
                             + "?, NOW())",
                     orderId, publisher.userId(), type, reward, LocalDateTime.now().minusMinutes(i));

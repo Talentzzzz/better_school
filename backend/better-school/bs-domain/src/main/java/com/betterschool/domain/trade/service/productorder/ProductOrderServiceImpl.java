@@ -14,13 +14,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 商品托管订单服务：5 态状态机 + 商品锁（同域仓储，同事务），全部条件 UPDATE 防并发；
+ * 商品托管订单服务：5 态订单状态机 + 库存台账扣减/回补（multi-quantity-listing，同域仓储同事务），
+ * 全部条件 UPDATE 防并发（防超卖唯一闸门在台账 remaining 的条件扣减上）；
  * 跨域动作（资金冻结/解冻/入账）不在此执行——通过结果对象返回，由 case 层编排。
- * 跨两表的原子写（订单 + 商品锁 + 搜索同步 + 超时注册）收成 ITradeRepository 的原子用例，事务在仓储实现内
+ * 跨表原子写（订单 + 台账扣减 + 流水 + 搜索同步 + 超时注册）收成 ITradeRepository 的原子用例，事务在仓储实现内
  */
 @Slf4j
 @Service
@@ -29,17 +31,23 @@ public class ProductOrderServiceImpl implements IProductOrderService {
 
     private static final int PAY_TIMEOUT_MINUTES = 15;
 
+    /** 单笔订单件数上限（同款多件挂单的买入上限，防误操作巨量单） */
+    private static final int MAX_ORDER_QUANTITY = 999;
+
     private final ITradeRepository tradeRepository;
 
     @Override
-    public String createOrder(String buyerId, String productId) {
+    public String createOrder(String buyerId, String productId, int quantity) {
+        if (quantity < 1 || quantity > MAX_ORDER_QUANTITY) {
+            throw new BusinessException(ResponseCode.PARAM_ERROR, "购买件数须在 1.." + MAX_ORDER_QUANTITY + " 之间");
+        }
         ProductEntity productEntity = getAvailableProduct(productId);
         if (productEntity.isOwner(buyerId)) {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "不能购买自己发布的商品");
         }
-        ProductOrderEntity orderEntity = ProductOrderEntity.create(buyerId, productEntity);
-        // 域内事务（仓储内）：订单 + 商品锁 + 搜索同步 + 超时注册四写原子
-        return tradeRepository.createOrderWithLock(orderEntity, productId, PAY_TIMEOUT_MINUTES);
+        ProductOrderEntity orderEntity = ProductOrderEntity.create(buyerId, productEntity, quantity);
+        // 域内事务（仓储内）：订单 + 台账扣减 + 流水 + 售罄翻态 + 超时注册原子
+        return tradeRepository.createOrderWithInventory(orderEntity, productId, PAY_TIMEOUT_MINUTES);
     }
 
     @Override
@@ -52,12 +60,13 @@ public class ProductOrderServiceImpl implements IProductOrderService {
         if (orderEntity.getStatus() == ProductOrderStatusVO.PAID
                 || orderEntity.getStatus() == ProductOrderStatusVO.DELIVERED
                 || orderEntity.getStatus() == ProductOrderStatusVO.COMPLETED) {
-            return new ProductPayResult(orderEntity.getPrice());
+            return new ProductPayResult(totalAmount(orderEntity));
         }
-        if (!tradeRepository.payOrderWithSearchSync(orderId, buyerId)) {
+        // 支付只翻订单状态：库存已在下单时扣减（售罄已随行翻 SOLD），无商品状态联动与搜索同步
+        if (!tradeRepository.payOrderById(orderId, buyerId)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
         }
-        return new ProductPayResult(orderEntity.getPrice());
+        return new ProductPayResult(totalAmount(orderEntity));
     }
 
     @Override
@@ -79,15 +88,16 @@ public class ProductOrderServiceImpl implements IProductOrderService {
         }
         // 幂等判定：已完成视为上次确认已提交成功（重试场景），跳过直接返回
         if (orderEntity.getStatus() == ProductOrderStatusVO.COMPLETED) {
-            return new ProductConfirmResult(orderEntity.getBuyerId(), orderEntity.getSellerId(), orderEntity.getPrice());
+            return new ProductConfirmResult(orderEntity.getBuyerId(), orderEntity.getSellerId(), totalAmount(orderEntity));
         }
         if (orderEntity.getStatus() != ProductOrderStatusVO.DELIVERED) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "订单不存在或未交付");
         }
-        if (!tradeRepository.confirmOrderWithSearchSync(orderId, buyerId)) {
+        // 确认收货只翻订单状态：库存已扣、售罄已翻态，无商品状态联动与搜索同步
+        if (!tradeRepository.confirmOrderById(orderId, buyerId)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
         }
-        return new ProductConfirmResult(orderEntity.getBuyerId(), orderEntity.getSellerId(), orderEntity.getPrice());
+        return new ProductConfirmResult(orderEntity.getBuyerId(), orderEntity.getSellerId(), totalAmount(orderEntity));
     }
 
     @Override
@@ -99,7 +109,7 @@ public class ProductOrderServiceImpl implements IProductOrderService {
         // 幂等判定（重试场景）：已取消/已完成视为本次取消已提交成功
         if (orderEntity.getStatus() == ProductOrderStatusVO.CANCELLED
                 || orderEntity.getStatus() == ProductOrderStatusVO.COMPLETED) {
-            return new ProductCancelResult(false, orderEntity.getBuyerId(), orderEntity.getPrice());
+            return new ProductCancelResult(false, orderEntity.getBuyerId(), totalAmount(orderEntity));
         }
         if (orderEntity.getStatus() == ProductOrderStatusVO.DELIVERED) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "已交付后不可取消，请确认收货");
@@ -109,7 +119,7 @@ public class ProductOrderServiceImpl implements IProductOrderService {
         if (!tradeRepository.cancelOrderWithSearchSync(orderId, buyerId)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
         }
-        return new ProductCancelResult(needRefund, orderEntity.getBuyerId(), orderEntity.getPrice());
+        return new ProductCancelResult(needRefund, orderEntity.getBuyerId(), totalAmount(orderEntity));
     }
 
     @Override
@@ -155,6 +165,12 @@ public class ProductOrderServiceImpl implements IProductOrderService {
         // 域内事务（仓储内）：订单取消 + 商品释放 + 搜索同步
         tradeRepository.cancelPendingPaymentWithSearchSync(orderId);
         log.info("[ProductPayTimeout] 待支付订单超时取消 orderId={}", orderId);
+    }
+
+    /** 订单总金额 = 成交单价快照 × 成交件数（钱包冻结/解冻/入账统一按总额走） */
+    private static BigDecimal totalAmount(ProductOrderEntity orderEntity) {
+        int quantity = orderEntity.getQuantity() == null ? 1 : orderEntity.getQuantity();
+        return orderEntity.getPrice().multiply(BigDecimal.valueOf(quantity));
     }
 
     private ProductEntity getAvailableProduct(String productId) {

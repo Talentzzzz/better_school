@@ -6,6 +6,7 @@ import com.betterschool.api.dto.ChatMessageResponseDTO;
 import com.betterschool.api.dto.ChatRoomListResponseDTO;
 import com.betterschool.api.dto.ChatRoomResponseDTO;
 import com.betterschool.api.dto.ChatRoomListItemResponseDTO;
+import com.betterschool.api.dto.ChatTimelineResponseDTO;
 import com.betterschool.api.dto.CreateDirectRoomRequestDTO;
 import com.betterschool.api.dto.SendMessageRequestDTO;
 import com.betterschool.api.dto.WsTicketResponseDTO;
@@ -17,14 +18,14 @@ import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
 import com.betterschool.domain.chat.model.valobj.RoomMemberVO;
 import com.betterschool.domain.chat.model.valobj.RoomSourceEnum;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
-import com.betterschool.domain.chat.model.valobj.TimelineItemVO;
+import com.betterschool.domain.chat.model.valobj.TimelinePageVO;
 import com.betterschool.domain.chat.adapter.port.IWsTicketPort;
 import com.betterschool.domain.chat.service.query.IChatQueryService;
 import com.betterschool.domain.chat.service.recall.IChatRecallService;
 import com.betterschool.domain.chat.service.read.IChatReadService;
 import com.betterschool.domain.chat.service.send.IChatSendService;
 import com.betterschool.domain.user.adapter.repository.IUserRepository;
-import com.betterschool.domain.user.model.entity.UserEntity;
+import com.betterschool.domain.user.model.valobj.UserBriefVO;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
@@ -99,7 +100,8 @@ public class ChatController implements IChatService {
         ChatRoomListResponseDTO dto = new ChatRoomListResponseDTO();
         dto.setPage(effectivePage);
         dto.setPageSize(effectivePageSize);
-        dto.setTotal(chatQueryService.countRooms(SecurityUtils.currentUserId()));
+        // 会话列表不精确 COUNT（与 feed 索引路径同口径）：-1 = 未知，不为一个没人消费的数字多跑一次查询
+        dto.setTotal(-1L);
         dto.setList(rooms.stream().map(this::toRoomListItemResponseDTO).toList());
         return Response.ok(dto);
     }
@@ -119,14 +121,20 @@ public class ChatController implements IChatService {
 
     @Override
     @GetMapping("/timeline")
-    public Response<List<ChatMessageResponseDTO>> pullTimeline(@RequestParam(required = false) Long afterDeliverySeq,
-                                                               @RequestParam(required = false) Integer limit) {
-        List<TimelineItemVO> items = chatQueryService.pullTimeline(SecurityUtils.currentUserId(),
-                afterDeliverySeq, limit);
-        List<ChatMessageResponseDTO> dtos = items.stream()
+    public Response<ChatTimelineResponseDTO> pullTimeline(
+            // 对外参数名保持 afterDeliverySeq（既有契约），域内统一叫「投递序游标」
+            @RequestParam(name = "afterDeliverySeq", required = false) Long deliverySeqCursor,
+            @RequestParam(required = false) Integer limit) {
+        TimelinePageVO page = chatQueryService.pullTimeline(SecurityUtils.currentUserId(),
+                deliverySeqCursor, limit);
+        List<ChatMessageResponseDTO> dtos = page.getItems().stream()
                 .map(item -> toMessageResponseDTO(item.getMessage(), item.getDeliverySeq()))
                 .toList();
-        return Response.ok(fillSenderInfo(dtos));
+        ChatTimelineResponseDTO dto = new ChatTimelineResponseDTO();
+        dto.setList(fillSenderInfo(dtos));
+        dto.setNextCursor(page.getNextCursor());
+        dto.setHasMore(page.getHasMore());
+        return Response.ok(dto);
     }
 
     @Override
@@ -226,17 +234,19 @@ public class ChatController implements IChatService {
         return dto;
     }
 
-    /** 发送者昵称头像补齐：单条按 id 查，列表批查一次；SYSTEM 消息无发送者 */
+    /** 发送者昵称头像补齐：单条走批查同一口径（发送 200 只补一条发送者） */
     private ChatMessageResponseDTO fillSenderInfo(ChatMessageResponseDTO dto, String fromUserId) {
         if (fromUserId == null) {
             return dto;
         }
-        UserEntity senderEntity = userRepository.findById(fromUserId);
-        dto.setFromNickname(senderEntity == null ? null : senderEntity.getNickname());
-        dto.setFromAvatar(senderEntity == null ? null : senderEntity.getAvatar());
+        fillSenderInfo(List.of(dto));
         return dto;
     }
 
+    /**
+     * 发送者昵称头像批查：唯一消费方是展示字段（昵称/头像两列），故走窄投影 listBriefByIds，
+     * 不为一个昵称把 phone/credit_score 等敏感与无关列捞出库（见 UserMapper.briefColumns 口径）
+     */
     private List<ChatMessageResponseDTO> fillSenderInfo(List<ChatMessageResponseDTO> dtos) {
         List<String> senderIds = dtos.stream()
                 .map(ChatMessageResponseDTO::getFromUserId)
@@ -246,12 +256,12 @@ public class ChatController implements IChatService {
         if (senderIds.isEmpty()) {
             return dtos;
         }
-        Map<String, UserEntity> senders = userRepository.listByIds(senderIds).stream()
-                .collect(Collectors.toMap(UserEntity::getUserId, Function.identity()));
+        Map<String, UserBriefVO> senders = userRepository.listBriefByIds(senderIds).stream()
+                .collect(Collectors.toMap(UserBriefVO::getUserId, Function.identity()));
         for (ChatMessageResponseDTO dto : dtos) {
-            UserEntity senderEntity = senders.get(dto.getFromUserId());
-            dto.setFromNickname(senderEntity == null ? null : senderEntity.getNickname());
-            dto.setFromAvatar(senderEntity == null ? null : senderEntity.getAvatar());
+            UserBriefVO sender = senders.get(dto.getFromUserId());
+            dto.setFromNickname(sender == null ? null : sender.getNickname());
+            dto.setFromAvatar(sender == null ? null : sender.getAvatar());
         }
         return dtos;
     }

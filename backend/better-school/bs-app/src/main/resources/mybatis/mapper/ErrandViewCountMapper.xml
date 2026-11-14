@@ -5,9 +5,9 @@
     <!-- 浏览 UV 计数窄表批量读：按 id 集单表 IN 查询，仓储补 0 拼装（详情 UV 回填与列表展示共用，
          market-feed-uv 票 04 两路口径对齐） -->
     <select id="selectViewCountsByOrderIds" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
-        SELECT c.errand_order_id AS errandOrderId, c.view_count AS viewCount
-        FROM errand_view_count c
-        WHERE c.errand_order_id IN
+        SELECT errand_order_id, view_count
+        FROM errand_view_count
+        WHERE errand_order_id IN
         <foreach collection="orderIds" item="orderId" open="(" separator="," close=")">#{orderId}</foreach>
     </select>
 
@@ -32,17 +32,17 @@
     <delete id="deleteViewCountsMissingHistory">
         DELETE FROM errand_view_count
          WHERE NOT EXISTS (SELECT 1
-                             FROM errand_view_history h
-                            WHERE h.errand_order_id = errand_view_count.errand_order_id)
+                             FROM errand_view_history
+                            WHERE errand_order_id = errand_view_count.errand_order_id)
     </delete>
 
     <!-- 重灌：errand_view_count 重投影 = errand_view_history 行数（ODKU：缺行补建、漂移值刷新、
          已对齐的行落回同值，幂等不动点） -->
     <insert id="recalibrateViewCounts">
         INSERT INTO errand_view_count (errand_order_id, view_count, create_time, update_time)
-        SELECT h.errand_order_id, COUNT(*), NOW(), NOW()
-          FROM errand_view_history h
-         GROUP BY h.errand_order_id
+        SELECT errand_order_id, COUNT(*), NOW(), NOW()
+          FROM errand_view_history
+         GROUP BY errand_order_id
         ON DUPLICATE KEY UPDATE
             view_count  = VALUES(view_count),
             update_time = NOW()

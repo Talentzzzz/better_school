@@ -1,10 +1,20 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { ErrandOrder } from '@/types/api'
-import { formatCount, formatMoney, formatTime } from '@/utils/format'
+import { formatCount, formatMoney, formatRemaining, formatTime } from '@/utils/format'
 import { errandTypeText } from '@/utils/errand'
 import AppAvatar from '@/components/AppAvatar.vue'
 
-defineProps<{ order: ErrandOrder }>()
+const props = defineProps<{ order: ErrandOrder }>()
+
+// 剩余时间只对「还在等人/进行中」的单子有意义（完成/取消/草稿不展示）；不足 1 小时视为紧急标红
+const ACTIVE_STATUSES = ['PUBLISHED', 'LOCKED', 'CONFIRMED', 'PICKED_UP']
+const remaining = computed(() => {
+  if (!ACTIVE_STATUSES.includes(props.order.status)) return null
+  const text = formatRemaining(props.order.deadline)
+  if (!text) return null
+  return { text, urgent: text === '已截止' || (!text.includes('小时') && !text.includes('天')) }
+})
 </script>
 
 <template>
@@ -15,8 +25,9 @@ defineProps<{ order: ErrandOrder }>()
         ¥{{ formatMoney(order.reward) }}
       </span>
     </div>
+    <div class="errand-title ellipsis">{{ order.title ?? order.description }}</div>
     <div class="errand-desc">
-      <span class="ellipsis-4">{{ order.description }}</span>
+      <span class="ellipsis-2">{{ order.description }}</span>
     </div>
     <div class="errand-loc">
       <span class="ellipsis">{{ order.pickupLocation }}</span>
@@ -29,6 +40,7 @@ defineProps<{ order: ErrandOrder }>()
       <!-- 浏览量 = 热度排序键（market-feed-uv 票 05）；与闲置卡片同一文案，两域口径对齐。
            0 不展示：ES 搜索结果不投影 UV（0 是占位不是真值），宁可不显示也不给错数 -->
       <span class="errand-meta-right">
+        <span v-if="remaining" :class="{ urgent: remaining.urgent }">{{ remaining.text }}</span>
         <span v-if="order.viewCount > 0">浏览 {{ formatCount(order.viewCount) }}</span>
         <span>{{ formatTime(order.createdAt) }}</span>
       </span>
@@ -66,8 +78,16 @@ defineProps<{ order: ErrandOrder }>()
   white-space: nowrap;
 }
 
-.errand-desc {
+.errand-title {
   margin-top: 6px;
+  padding: 0 2px;
+  font-size: 14px;
+  font-weight: 600;
+  color: $text-1;
+}
+
+.errand-desc {
+  margin-top: 4px;
   padding: 0 2px;
   font-size: 12px;
   line-height: 1.55;
@@ -111,5 +131,10 @@ defineProps<{ order: ErrandOrder }>()
   margin-left: auto;
   flex-shrink: 0;
   white-space: nowrap;
+
+  .urgent {
+    color: $primary;
+    font-weight: 600;
+  }
 }
 </style>

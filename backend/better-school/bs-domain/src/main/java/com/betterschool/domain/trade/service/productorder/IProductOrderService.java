@@ -14,21 +14,22 @@ import java.util.List;
 public interface IProductOrderService {
 
     /**
-     * 下单：自购校验 → 生成 PENDING_PAYMENT 订单 + 商品 ON_SALE→LOCKED + 落 15min 延迟消息（域内事务；
+     * 下单：自购校验 → 生成 PENDING_PAYMENT 订单（含件数）+ 库存台账条件 UPDATE 扣减
+     * （remaining >= quantity，0 行即库存不足回滚；扣到 0 售罄随行翻 SOLD）+ 超时注册（域内事务；
      * 信用分门槛由 case 层前置校验）
      */
-    String createOrder(String buyerId, String productId);
+    String createOrder(String buyerId, String productId, int quantity);
 
-    /** 支付确认：PENDING_PAYMENT → PAID（幂等：已支付静默返回），返回冻结金额 */
+    /** 支付确认：PENDING_PAYMENT → PAID（幂等：已支付静默返回），返回需冻结金额（单价 × 件数） */
     ProductPayResult payOrder(String orderId, String buyerId);
 
     /** 卖家标记交付：PAID → DELIVERED */
     void markDelivered(String orderId, String sellerId);
 
-    /** 买家确认收货：DELIVERED → COMPLETED + 商品 LOCKED→SOLD（域内事务），返回解冻/入账需求 */
+    /** 买家确认收货：DELIVERED → COMPLETED（域内事务），返回解冻/入账需求（单价 × 件数） */
     ProductConfirmResult confirmReceived(String orderId, String buyerId);
 
-    /** 买家取消：PENDING_PAYMENT/PAID → CANCELLED + 商品 LOCKED→ON_SALE（域内事务），返回退款需求 */
+    /** 买家取消：PENDING_PAYMENT/PAID → CANCELLED + 库存台账回补（域内事务），返回退款需求（单价 × 件数） */
     ProductCancelResult cancelOrder(String orderId, String buyerId);
 
     ProductOrderEntity orderDetail(String orderId, String currentUserId);

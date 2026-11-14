@@ -9,7 +9,7 @@
     </insert>
 
     <select id="selectByUserId" resultType="com.betterschool.infrastructure.dao.wallet.po.VirtualWallet">
-        SELECT id, wallet_id, user_id, balance, frozen_amount, create_time, update_time
+        SELECT id, wallet_id, user_id, balance, frozen_amount, create_time
         FROM virtual_wallet
         WHERE user_id = #{userId}
     </select>

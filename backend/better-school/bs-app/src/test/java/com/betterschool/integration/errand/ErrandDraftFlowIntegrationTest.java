@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.StreamSupport;
@@ -66,6 +67,7 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
     void 草稿可编辑全部内容字段_不改状态与作者() {
         Session author = registerAndLogin("13800003003", "草稿用户2");
         String orderId = saveDraft(author, Map.of("description", "占位"));
+        LocalDateTime updateDeadline = LocalDateTime.now().plusHours(4);
 
         JsonNode update = putJson("/api/errand/orders/" + orderId + "/draft", Map.ofEntries(
                 Map.entry("type", "BUY"),
@@ -73,7 +75,7 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
                 Map.entry("pickupLocation", "一食堂"),
                 Map.entry("deliveryLocation", "6号楼302"),
                 Map.entry("reward", 15),
-                Map.entry("timeLimit", "HOURS_4"),
+                Map.entry("deadline", updateDeadline.toString()),
                 Map.entry("images", List.of("http://minio/bs-files/it/d1.jpg", "http://minio/bs-files/it/d2.jpg"))
         ), author);
         assertSuccess(update, "编辑跑腿草稿");
@@ -87,9 +89,9 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
         assertThat(data.path("images")).hasSize(2);
         assertThat(data.path("status").asText()).as("编辑不产生状态迁移").isEqualTo("DRAFT");
 
-        // publisherId 与状态位不可改：落库侧核对作者不变、时限已刷新
+        // publisherId 与状态位不可改：落库侧核对作者不变、截止时间已刷新
         assertThat(publisherIdOf(orderId)).as("作者不可改").isEqualTo(author.userId());
-        assertThat(timeLimitHoursOf(orderId)).as("时限落库").isEqualTo(4);
+        assertThat(deadlineOf(orderId)).as("截止时间落库").isEqualTo(updateDeadline.toString());
     }
 
     // ---------- 删除：软删 DELETED（仅作者、仅 DRAFT），全口径消失 ----------
@@ -225,23 +227,25 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
     /** 编辑成一份"必填齐全"的草稿（描述可变，用于校验/初筛双路径） */
     private void editCompleteDraft(Session author, String orderId, String description) {
         JsonNode update = putJson("/api/errand/orders/" + orderId + "/draft", Map.ofEntries(
+                Map.entry("title", "帮忙取个快递"),
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", description),
                 Map.entry("pickupLocation", "菜鸟驿站"),
                 Map.entry("deliveryLocation", "6号楼楼下"),
                 Map.entry("reward", 10),
-                Map.entry("timeLimit", "HOURS_2")), author);
+                Map.entry("deadline", LocalDateTime.now().plusHours(2).toString())), author);
         assertSuccess(update, "编辑跑腿草稿");
     }
 
     private String createDirectOrder(Session author, String description) {
         JsonNode response = postJson("/api/errand/orders", Map.ofEntries(
+                Map.entry("title", "帮忙取个快递"),
                 Map.entry("type", "EXPRESS_PICKUP"),
                 Map.entry("description", description),
                 Map.entry("pickupLocation", "菜鸟驿站"),
                 Map.entry("deliveryLocation", "6号楼楼下"),
                 Map.entry("reward", 10),
-                Map.entry("timeLimit", "HOURS_2")), author);
+                Map.entry("deadline", LocalDateTime.now().plusHours(2).toString())), author);
         assertSuccess(response, "发布跑腿");
         String orderId = response.path("data").asText();
         assertUuidId(orderId);
@@ -265,9 +269,9 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
         return publisherId == null ? null : publisherId;
     }
 
-    private Integer timeLimitHoursOf(String orderId) {
+    private LocalDateTime deadlineOf(String orderId) {
         return jdbcTemplate.queryForObject(
-                "SELECT time_limit_hours FROM errand_order WHERE errand_order_id = ?", Integer.class, orderId);
+                "SELECT deadline FROM errand_order WHERE errand_order_id = ?", LocalDateTime.class, orderId);
     }
 
     /** 该订单在 timeout_task 里的支付超时任务行数（草稿态应为 0，提交后为 1；同事务直插，见票 03） */

@@ -986,7 +986,6 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
         postEntity.setCommentCount(post.getCommentCount() == null ? 0 : post.getCommentCount());
         postEntity.setViewCount(post.getViewCount() == null ? 0 : post.getViewCount());
         postEntity.setCreatedAt(post.getCreateTime());
-        postEntity.setExpireAt(post.getExpireAt());
         postEntity.setAuthorNickname(post.getAuthorNickname());
         postEntity.setAuthorAvatar(post.getAuthorAvatar());
         return postEntity;

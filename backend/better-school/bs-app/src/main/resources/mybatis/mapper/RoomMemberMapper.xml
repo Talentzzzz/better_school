@@ -13,8 +13,10 @@
         </foreach>
     </insert>
 
+    <!-- 名册读路径只消费成员 user_id（成员页展示 + 扇出成员集），行内其余列不读：
+         join_seq 是入群水位（1v1 恒 0，仅群聊才用）、create_time 无人消费，均不出库 -->
     <select id="listRoomMembers" resultType="com.betterschool.infrastructure.dao.chat.po.RoomMember">
-        SELECT id, room_id, user_id, join_seq AS joinSeq, create_time AS createTime, update_time
+        SELECT user_id
         FROM room_member
         WHERE room_id = #{roomId}
         ORDER BY id
@@ -29,11 +31,11 @@
     <!-- 会话列表三段查之③：本批会话的对家名册行（名册表回查替代旧「成员表 user_id != 我」过滤；
          1v1 恒两行名册，每会话恰出一行对家） -->
     <select id="selectPeerMembers" resultType="com.betterschool.infrastructure.dao.chat.po.RoomPeerRow">
-        SELECT rm.room_id AS roomId, rm.user_id AS userId
-        FROM room_member rm
-        WHERE rm.room_id IN
+        SELECT room_id, user_id
+        FROM room_member
+        WHERE room_id IN
         <foreach collection="roomIds" item="roomId" open="(" separator="," close=")">#{roomId}</foreach>
-          AND rm.user_id != #{userId}
+          AND user_id != #{userId}
     </select>
 
 </mapper>

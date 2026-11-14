@@ -36,7 +36,11 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
 历史消息（`?beforeSeq=&limit=`，limit 默认 50 硬顶 500）。`beforeSeq` 省略取最新一页；游标倒退取页（上滑加载更早），**页内 seq 升序**。已撤回消息脱敏「已撤回」空壳：`status=RECALLED`，`content/refType/refId` 不出服务端。非成员 403。（落库列名为 `message.state`，响应字段仍叫 `status`。）
 
 ### GET /timeline
-增量补拉（`?afterDeliverySeq=&limit=`，默认 200 硬顶 500）。按 per-user 投递序号升序，游标 0（新设备/首次）= 全量；返回条数 < limit 即追平，否则循环拉；timeline 永不删除，游标永远有效。每条含消息全量 + `roomId/seq/deliverySeq`（多会话按投递序全局归并）。消息体与历史/发送 200 同构。
+增量补拉（`?afterDeliverySeq=&limit=`，默认 200 硬顶 500）。按 per-user 投递序号升序，游标 0（新设备/首次）= 全量；timeline 永不删除，游标永远有效。返回 `{list, nextCursor, hasMore}`：
+
+- `list`：每条消息全量 + `roomId/seq/deliverySeq`（多会话按投递序全局归并），与历史/发送 200 同构
+- `nextCursor`：下次补拉的游标，取**本次扫描边界**（本页最后一行的 `delivery_seq`）而非「最后一条成功条目」——扫描窗内若有 `timeline` 行在而 `message` 行缺失的漂移行被跳过，游标照样越过它，不会被钉在原地；空页时原样回传入参
+- `hasMore`：`true` = 本次填满一页，可能还有，继续拉；`false` = 追平。**不再用「返回条数 < limit」推断追平**——那个推断在有过滤（漂移行、未来的清理/黑名单）时会失真，导致游标停滞、漏掉后续消息
 
 ### POST /rooms/messages
 发送消息。Body: `roomId`（目标会话，必填）、`clientMsgId`（客户端 UUID，≤36）、`msgType`（TEXT/IMAGE/CARD）、`content?`、`refType?`、`refId?`。

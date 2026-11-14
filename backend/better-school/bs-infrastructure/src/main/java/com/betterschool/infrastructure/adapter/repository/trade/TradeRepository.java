@@ -31,6 +31,10 @@ import com.betterschool.infrastructure.dao.product.IProductFavoriteDao;
 import com.betterschool.infrastructure.dao.product.IProductFeedIndexDao;
 import com.betterschool.infrastructure.dao.product.IProductViewCountDao;
 import com.betterschool.infrastructure.dao.product.IProductViewHistoryDao;
+import com.betterschool.infrastructure.dao.productinventory.IProductInventoryDao;
+import com.betterschool.infrastructure.dao.productinventory.IProductStockEventDao;
+import com.betterschool.infrastructure.dao.productinventory.po.ProductInventory;
+import com.betterschool.infrastructure.dao.productinventory.po.ProductStockEvent;
 import com.betterschool.infrastructure.dao.productorder.IProductOrderEventDao;
 import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.infrastructure.dao.user.po.User;
@@ -89,6 +93,8 @@ public class TradeRepository implements ITradeRepository {
     private final IProductViewHistoryDao productViewHistoryDao;
     /** 订单状态流转事件表（product_order_event 单表，原 IProductOrderDao 拆分） */
     private final IProductOrderEventDao productOrderEventDao;
+    private final IProductInventoryDao productInventoryDao;
+    private final IProductStockEventDao productStockEventDao;
     private final ObjectMapper objectMapper;
     private final OutboxMessageStore outboxMessageStore;
     private final ITimeoutRepository timeoutRepository;
@@ -107,6 +113,15 @@ public class TradeRepository implements ITradeRepository {
             productEntity.setProductId(UUID.randomUUID().toString());
             Product product = toPO(productEntity);
             productDao.insert(product);
+            // 库存台账行同事务诞生（multi-quantity-listing）：quantity 取入参（null = 1），INIT 流水建账
+            int quantity = productEntity.getQuantity() == null ? 1 : productEntity.getQuantity();
+            ProductInventory inventory = new ProductInventory();
+            inventory.setProductId(productEntity.getProductId());
+            inventory.setQuantity(quantity);
+            inventory.setRemaining(quantity);
+            productInventoryDao.insert(inventory);
+            saveStockEvent(productEntity.getProductId(), "INIT", quantity, quantity,
+                    null, productEntity.getUserId(), "SELLER");
             if (productEntity.getStatus() == ProductStatusVO.ON_SALE) {
                 // 发布即可见：feed 索引行诞生 + 搜索同步消息，与落库同一事务
                 productFeedIndexDao.upsertFeedIndexOnApprove(productEntity.getProductId());
@@ -138,6 +153,12 @@ public class TradeRepository implements ITradeRepository {
     public void markSold(String productId) {
         transactionTemplate.execute(status -> {
             if (productDao.markSold(productId) > 0) {
+                // 标记已出 = 售罄：台账剩余清零 + ADJUST 流水（delta 按清零前剩余记账）
+                ProductInventory before = productInventoryDao.selectByProductId(productId);
+                if (before != null && before.getRemaining() > 0
+                        && productInventoryDao.clearRemainingReturnDelta(productId) > 0) {
+                    saveStockEvent(productId, "ADJUST", -before.getRemaining(), 0, null, null, "SELLER");
+                }
                 syncFeedIndexState(productId, ProductStatusVO.SOLD);
             }
             return null;
@@ -145,15 +166,37 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public void relist(String productId) {
-        transactionTemplate.execute(status -> {
+    public boolean relist(String productId) {
+        Boolean relisted = transactionTemplate.execute(status -> {
+            ProductInventory inventory = productInventoryDao.selectByProductId(productId);
+            if (inventory == null || inventory.getRemaining() == 0) {
+                // 真卖完（remaining = 0）：无货不可重上架
+                return false;
+            }
             if (productDao.relist(productId) == 0) {
-                return null; // 条件 UPDATE 0 行由上层终态判定
+                return false; // 条件 UPDATE 0 行 = 状态已变化
             }
             // 索引行同事务翻回可见（行必存在：SOLD 前必经过 ON_SALE）
             syncFeedIndexState(productId, ProductStatusVO.ON_SALE);
             // 重新对外可见，落搜索同步消息（消费方按状态 upsert）
             saveSearchSyncMessage(productId);
+            return true;
+        });
+        return Boolean.TRUE.equals(relisted);
+    }
+
+    @Override
+    public void restock(String productId, int quantity, String actorId) {
+        transactionTemplate.execute(status -> {
+            Product productRow = productDao.selectById(productId);
+            if (productRow == null || !ProductStatusVO.ON_SALE.name().equals(productRow.getState())) {
+                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅在售商品可加货");
+            }
+            if (productInventoryDao.restock(productId, quantity) == 0) {
+                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "库存台账行缺失，请联系管理员");
+            }
+            ProductInventory inventory = productInventoryDao.selectByProductId(productId);
+            saveStockEvent(productId, "RESTOCK", quantity, inventory.getRemaining(), null, actorId, "SELLER");
             return null;
         });
     }
@@ -161,6 +204,10 @@ public class TradeRepository implements ITradeRepository {
     @Override
     public void updateDraft(ProductEntity productEntity) {
         productDao.updateDraft(toPO(productEntity));
+        // 草稿改件数：台账 quantity/remaining 一并覆盖（草稿期无订单可扣，无回补越界问题）
+        if (productEntity.getQuantity() != null) {
+            productInventoryDao.updateDraftQuantity(productEntity.getProductId(), productEntity.getQuantity());
+        }
     }
 
     @Override
@@ -230,41 +277,6 @@ public class TradeRepository implements ITradeRepository {
                 }
             }
             return updated;
-        }));
-    }
-
-    @Override
-    public boolean lock(String productId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            boolean locked = productDao.lock(productId) > 0;
-            if (locked) {
-                syncFeedIndexState(productId, ProductStatusVO.LOCKED);
-            }
-            return locked;
-        }));
-    }
-
-    @Override
-    public boolean release(String productId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            boolean released = productDao.release(productId) > 0;
-            if (released) {
-                // 取消订单释放回在售：索引行同事务翻回 ON_SALE（0 行不动索引——商品可能已被软删，
-                // 无条件翻回会让已删商品在 feed 复活）
-                syncFeedIndexState(productId, ProductStatusVO.ON_SALE);
-            }
-            return released;
-        }));
-    }
-
-    @Override
-    public boolean lockToSold(String productId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            boolean sold = productDao.lockToSold(productId) > 0;
-            if (sold) {
-                syncFeedIndexState(productId, ProductStatusVO.SOLD);
-            }
-            return sold;
         }));
     }
 
@@ -620,17 +632,26 @@ public class TradeRepository implements ITradeRepository {
                 Constants.PRODUCT_ORDER_PAY_TIMEOUT, orderId, delaySeconds));
     }
 
-    // ---------- 跨商品与订单的原子用例 ----------
+    // ---------- 跨商品、库存与订单的原子用例 ----------
 
     @Override
-    public String createOrderWithLock(ProductOrderEntity orderEntity, String productId, int payTimeoutMinutes) {
+    public String createOrderWithInventory(ProductOrderEntity orderEntity, String productId, int payTimeoutMinutes) {
         transactionTemplate.execute(status -> {
             saveOrder(orderEntity);
-            if (!lock(productId)) {
-                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "商品已被交易，快去逛逛别的吧");
+            // 台账条件 UPDATE 扣减（multi-quantity-listing）：remaining >= 扣减量才生效，
+            // 并发下单在台账行锁上排队、条件不过即 0 行——防超卖唯一闸门，0 行即抛并回滚整单
+            int quantity = orderEntity.getQuantity() == null ? 1 : orderEntity.getQuantity();
+            if (productInventoryDao.deduct(productId, quantity) == 0) {
+                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "库存不足，快去逛逛别的吧");
             }
-            // 锁定后商品退出搜索，落同步消息（消费方反查 LOCKED 删文档）
-            saveSearchSyncMessage(productId);
+            ProductInventory inventory = productInventoryDao.selectByProductId(productId);
+            saveStockEvent(productId, "DEDUCT", -quantity, inventory.getRemaining(),
+                    orderEntity.getOrderId(), orderEntity.getBuyerId(), "BUYER");
+            if (inventory.getRemaining() == 0 && productDao.markSold(productId) > 0) {
+                // 售罄：商品退出可见态，索引行同事务翻 SOLD + 搜索同步消息（消费方删文档）
+                syncFeedIndexState(productId, ProductStatusVO.SOLD);
+                saveSearchSyncMessage(productId);
+            }
             // "15 分钟未支付"超时任务与下单同事务直插 timeout_task（内嵌超时中心）：
             // Java 只传时长，到期时刻由 SQL 侧 TIMESTAMPADD 按数据库时钟落库
             schedulePayTimeout(orderEntity.getOrderId(), payTimeoutMinutes * 60L);
@@ -640,44 +661,16 @@ public class TradeRepository implements ITradeRepository {
     }
 
     @Override
-    public boolean payOrderWithSearchSync(String orderId, String buyerId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            if (!payOrderById(orderId, buyerId)) {
-                return false;
-            }
-            // 支付后商品 LOCKED → SOLD，落搜索同步消息（保持文档不存在）
-            saveSearchSyncMessage(findOrderById(orderId).getProductId());
-            return true;
-        }));
-    }
-
-    @Override
-    public boolean confirmOrderWithSearchSync(String orderId, String buyerId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            if (!confirmOrderById(orderId, buyerId)) {
-                return false;
-            }
-            // 确认收货即交易完成：商品 LOCKED → SOLD（幂等，0 行无妨），落搜索同步消息保持文档不存在
-            String productId = findOrderById(orderId).getProductId();
-            lockToSold(productId);
-            saveSearchSyncMessage(productId);
-            return true;
-        }));
-    }
-
-    @Override
     public boolean cancelOrderWithSearchSync(String orderId, String buyerId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (!cancelOrderById(orderId, buyerId)) {
                 return false;
             }
-            String productId = findOrderById(orderId).getProductId();
-            // 商品锁定释放回在售，落搜索同步消息（重新可搜）
-            if (!release(productId)) {
-                // 商品已被卖家软删/其他终态：release 0 行无妨，同步消息兜底删除/幂等
-                log.warn("[ProductOrder] 取消订单释放商品失败，可能已被删除 productId={}", productId);
-            }
-            saveSearchSyncMessage(productId);
+            ProductOrder order = productOrderDao.selectById(orderId);
+            // 台账回补（按订单 quantity），回补后 remaining > 0 且商品 SOLD 时翻回 ON_SALE
+            restoreStockWithEvent(order.getProductId(), order.getQuantity(), orderId, buyerId, "BUYER");
+            // 搜索同步消息幂等（消费方按状态 upsert）：翻回在售则重新可搜，未翻则无副作用
+            saveSearchSyncMessage(order.getProductId());
             return true;
         }));
     }
@@ -688,11 +681,32 @@ public class TradeRepository implements ITradeRepository {
             if (!cancelPendingPaymentOrder(orderId)) {
                 return false;
             }
-            String productId = findOrderById(orderId).getProductId();
-            release(productId);
-            saveSearchSyncMessage(productId);
+            ProductOrder order = productOrderDao.selectById(orderId);
+            restoreStockWithEvent(order.getProductId(), order.getQuantity(), orderId, null, "SYSTEM");
+            saveSearchSyncMessage(order.getProductId());
             return true;
         }));
+    }
+
+    /**
+     * 关单回补共用路径：台账 remaining 回补（LEAST 钳在 quantity，防重复回补越界）+ RELEASE 流水
+     * + 回补后售罄商品翻回 ON_SALE（索引行随行翻回；0 行 = 商品仍是 ON_SALE/已被软删，无妨）
+     */
+    private void restoreStockWithEvent(String productId, Integer quantity, String orderId,
+                                       String actorId, String actorRole) {
+        int quantityToRestore = quantity == null ? 1 : quantity;
+        ProductInventory before = productInventoryDao.selectByProductId(productId);
+        if (productInventoryDao.restore(productId, quantityToRestore) == 0) {
+            // 台账行缺失（存量异常）：不落流水，交重建/人工处理
+            log.warn("[ProductOrder] 关单回补落 0 行：库存台账行缺失 productId={} orderId={}", productId, orderId);
+            return;
+        }
+        ProductInventory after = productInventoryDao.selectByProductId(productId);
+        int delta = after.getRemaining() - (before == null ? 0 : before.getRemaining());
+        saveStockEvent(productId, "RELEASE", delta, after.getRemaining(), orderId, actorId, actorRole);
+        if (delta > 0 && productDao.restoreFromSold(productId) > 0) {
+            syncFeedIndexState(productId, ProductStatusVO.ON_SALE);
+        }
     }
 
     // ---------- 商品状态变更 + 搜索同步 ----------
@@ -749,8 +763,8 @@ public class TradeRepository implements ITradeRepository {
     private static final int REBUILD_INSERT_BATCH = 500;
 
     /**
-     * 商品行补齐浏览 UV 加速列 + 卖家昵称头像：product_view_count 一次 IN 批量回查、bs_user 一次 IN 批量回查。
-     * 缺行补 0 / 补 null（与原 LEFT JOIN 合成口径一致）；列表与详情共用
+     * 商品行补齐浏览 UV 加速列 + 库存台账剩余件数 + 卖家昵称头像：product_view_count / product_inventory /
+     * bs_user 各一次 IN 批量回查。缺行补 0 / 补 null（与原 LEFT JOIN 合成口径一致）；列表与详情共用
      */
     private void fillProductExtras(List<Product> productList) {
         if (productList.isEmpty()) {
@@ -758,11 +772,16 @@ public class TradeRepository implements ITradeRepository {
         }
         Map<String, Product> viewRows = viewCountRowsById(
                 productViewCountDao.selectViewCountsByProductIds(productList.stream().map(Product::getProductId).toList()));
+        Map<String, ProductInventory> inventoryRows = productInventoryDao
+                .selectByProductIds(productList.stream().map(Product::getProductId).toList()).stream()
+                .collect(Collectors.toMap(ProductInventory::getProductId, row -> row, (a, b) -> a));
         List<String> userIdList = productList.stream().map(Product::getUserId).filter(Objects::nonNull).distinct().toList();
         Map<String, User> users = userIdList.isEmpty() ? Map.of() : userDao.selectByIds(userIdList).stream()
                 .collect(Collectors.toMap(User::getUserId, user -> user, (a, b) -> a));
         for (Product row : productList) {
             row.setViewCount(viewCountOf(viewRows, row.getProductId()));
+            ProductInventory inventory = inventoryRows.get(row.getProductId());
+            row.setRemainingQuantity(inventory == null ? null : inventory.getRemaining());
             User user = users.get(row.getUserId());
             if (user != null) {
                 row.setSellerNickname(user.getNickname());
@@ -841,8 +860,8 @@ public class TradeRepository implements ITradeRepository {
         productEntity.setCategory(product.getCategory() == null ? null : ProductCategoryVO.valueOf(product.getCategory()));
         productEntity.setStatus(ProductStatusVO.valueOf(product.getState()));
         productEntity.setViewCount(product.getViewCount());
+        productEntity.setRemainingQuantity(product.getRemainingQuantity());
         productEntity.setCreatedAt(product.getCreateTime());
-        productEntity.setExpireAt(product.getExpireAt());
         productEntity.setSellerNickname(product.getSellerNickname());
         productEntity.setSellerAvatar(product.getSellerAvatar());
         return productEntity;
@@ -855,6 +874,7 @@ public class TradeRepository implements ITradeRepository {
         order.setSellerId(orderEntity.getSellerId());
         order.setProductId(orderEntity.getProductId());
         order.setPrice(orderEntity.getPrice());
+        order.setQuantity(orderEntity.getQuantity());
         order.setProductTitle(orderEntity.getProductTitle());
         order.setProductDescription(orderEntity.getProductDescription());
         order.setProductImages(toOrderImagesJson(orderEntity.getProductImages()));
@@ -874,6 +894,7 @@ public class TradeRepository implements ITradeRepository {
         orderEntity.setSellerId(order.getSellerId());
         orderEntity.setProductId(order.getProductId());
         orderEntity.setPrice(order.getPrice());
+        orderEntity.setQuantity(order.getQuantity());
         orderEntity.setProductTitle(order.getProductTitle());
         orderEntity.setProductDescription(order.getProductDescription());
         orderEntity.setProductImages(toOrderImagesList(order.getProductImages()));
@@ -881,7 +902,6 @@ public class TradeRepository implements ITradeRepository {
         orderEntity.setProductCategory(order.getProductCategory() == null ? null : ProductCategoryVO.valueOf(order.getProductCategory()));
         orderEntity.setStatus(ProductOrderStatusVO.valueOf(order.getState()));
         orderEntity.setCreatedAt(order.getCreateTime());
-        orderEntity.setUpdatedAt(order.getUpdateTime());
         orderEntity.setBuyerNickname(order.getBuyerNickname());
         orderEntity.setBuyerAvatar(order.getBuyerAvatar());
         orderEntity.setSellerNickname(order.getSellerNickname());
@@ -954,5 +974,19 @@ public class TradeRepository implements ITradeRepository {
         event.setActorRole(actorRole);
         event.setReasonType(reasonType);
         productOrderEventDao.insertOrderEvent(event);
+    }
+
+    /** 库存流水落表（multi-quantity-listing：与台账变更同事务双写，只插入；after_remaining 是对账锚点） */
+    private void saveStockEvent(String productId, String eventType, int delta, int afterRemaining,
+                                String orderId, String actorId, String actorRole) {
+        ProductStockEvent event = new ProductStockEvent();
+        event.setProductId(productId);
+        event.setEventType(eventType);
+        event.setDelta(delta);
+        event.setAfterRemaining(afterRemaining);
+        event.setOrderId(orderId);
+        event.setActorId(actorId);
+        event.setActorRole(actorRole);
+        productStockEventDao.insertStockEvent(event);
     }
 }

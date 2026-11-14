@@ -44,7 +44,7 @@ class ErrandFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
         String paidId = insertOrder("PENDING_PAYMENT", "8.50");
 
         LocalDateTime payStartedAt = LocalDateTime.now();
-        assertThat(errandRepository.payById(paidId, PUBLISHER_ID, 4)).as("待支付订单支付").isTrue();
+        assertThat(errandRepository.payById(paidId, PUBLISHER_ID)).as("待支付订单支付").isTrue();
 
         Map<String, Object> row = feedRow(paidId);
         assertThat(row).as("支付后索引行诞生（唯一诞生点）").isNotNull();
@@ -87,7 +87,7 @@ class ErrandFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
         String takerCancelId = insertOrder("PUBLISHED", "5.00");
         assertThat(errandRepository.grab(takerCancelId, TAKER_ID)).isTrue();
         assertThat(errandRepository.acceptLockedById(takerCancelId, TAKER_ID)).isTrue();
-        assertThat(errandRepository.cancelByTaker(takerCancelId, TAKER_ID)).isTrue();
+        assertThat(errandRepository.cancelByTaker(takerCancelId, TAKER_ID, "taker-cancel-req-1")).isTrue();
         assertThat(feedState(takerCancelId)).as("接单方取消 → 翻回 PUBLISHED").isEqualTo("PUBLISHED");
 
         // 发布方取消（大厅可见期）：→ CANCELLED
@@ -166,9 +166,9 @@ class ErrandFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     private String insertOrder(String state, String reward) {
         String orderId = UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
-                        + "pickup_location, delivery_location, reward, time_limit_hours, state, deadline, "
+                        + "pickup_location, delivery_location, reward, state, deadline, "
                         + "create_time, update_time) "
-                        + "VALUES (?, ?, 'EXPRESS_PICKUP', '索引同步夹具', '驿站', '南门', ?, 4, ?, "
+                        + "VALUES (?, ?, 'EXPRESS_PICKUP', '索引同步夹具', '驿站', '南门', ?, ?, "
                         + "DATE_ADD(NOW(), INTERVAL 1 DAY), NOW(), NOW())",
                 orderId, PUBLISHER_ID, reward, state);
         if ("PUBLISHED".equals(state)) {

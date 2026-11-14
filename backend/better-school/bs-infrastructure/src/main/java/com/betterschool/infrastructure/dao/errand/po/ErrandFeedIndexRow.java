@@ -18,8 +18,8 @@ public class ErrandFeedIndexRow {
     private LocalDateTime createTime;
     /** 仓储组装：feed_time = createTime */
     private LocalDateTime feedTime;
-    /** price = reward 快照（彼时的悬赏，与 upsertFeedIndexOnApprove 同口径） */
-    private BigDecimal price;
+    /** errand_order.reward 快照（索引列 price 的取值源，与 upsertFeedIndexOnApprove 同口径）；字段随列名 */
+    private BigDecimal reward;
     /** 从计数窄表抄入（无行 = 0） */
     private Integer viewCount;
 }

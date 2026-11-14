@@ -19,5 +19,4 @@ public class WalletDetailEntity {
     private String orderId;
     private int bizRound;
     private LocalDateTime createTime;
-    private LocalDateTime updateTime;
 }

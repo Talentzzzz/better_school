@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.productinventory.IProductStockEventDao">
+
+    <!-- 商品库存流水（product_stock_event 单表，只插入不修改）：与 product_inventory 变更同事务双写；
+         after_remaining 串起来可对账，漂移按流水重建 remaining（同 view_count 重建 job 套路） -->
+    <insert id="insertStockEvent" parameterType="com.betterschool.infrastructure.dao.productinventory.po.ProductStockEvent">
+        INSERT INTO product_stock_event (product_id, event_type, delta, after_remaining,
+                                         order_id, actor_id, actor_role, create_time, update_time)
+        VALUES (#{productId}, #{eventType}, #{delta}, #{afterRemaining},
+                #{orderId}, #{actorId}, #{actorRole}, NOW(), NOW())
+    </insert>
+
+</mapper>

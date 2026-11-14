@@ -1,6 +1,7 @@
 package com.betterschool.domain.user.adapter.repository;
 
 import com.betterschool.domain.user.model.entity.UserEntity;
+import com.betterschool.domain.user.model.valobj.UserBriefVO;
 import com.betterschool.domain.user.model.valobj.UserRoleVO;
 
 import java.util.List;
@@ -55,4 +56,10 @@ public interface IUserRepository {
 
     /** 按 id 列表查询（搜索同步/搜索命中反查用；返回顺序与入参无关，调用方按 id 重排） */
     List<UserEntity> listByIds(List<String> userIdList);
+
+    /**
+     * 按 id 列表查展示信息（昵称/头像，窄投影）：会话列表对家、消息发送者等纯展示场景用。
+     * 与 listByIds 分开是刻意的——展示路径不该把 phone 等敏感列读进内存
+     */
+    List<UserBriefVO> listBriefByIds(List<String> userIdList);
 }

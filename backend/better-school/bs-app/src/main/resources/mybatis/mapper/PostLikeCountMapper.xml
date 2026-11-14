@@ -6,9 +6,9 @@
          每次读都查、在仓储拼回——缓存命中路径的数也恒等于库值（acceptance C5）。
          缺行 = 计数 0（COALESCE 在仓储做），与原 LEFT JOIN 合成口径一致 -->
     <select id="selectLikeCountsByPostIds" resultType="com.betterschool.infrastructure.dao.post.po.Post">
-        SELECT c.post_id AS postId, c.like_count AS likeCount
-        FROM post_like_count c
-        WHERE c.post_id IN
+        SELECT post_id, like_count
+        FROM post_like_count
+        WHERE post_id IN
         <foreach collection="postIds" item="postId" open="(" separator="," close=")">#{postId}</foreach>
     </select>
 

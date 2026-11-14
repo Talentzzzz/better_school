@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -45,9 +46,9 @@ public class ErrandController implements IErrandService {
     @Override
     @PostMapping("/orders")
     public Response<String> createOrder(@Valid @RequestBody ErrandOrderPublishRequestDTO request) {
-        String orderId = errandOrderCase.createOrder(SecurityUtils.currentUserId(), request.getType(),
+        String orderId = errandOrderCase.createOrder(SecurityUtils.currentUserId(), request.getTitle(), request.getType(),
                 request.getDescription(), request.getPickupLocation(), request.getDeliveryLocation(),
-                request.getReward(), request.getImages(), request.getTimeLimit());
+                request.getReward(), request.getImages(), request.getDeadline());
         return Response.ok(orderId);
     }
 
@@ -61,9 +62,9 @@ public class ErrandController implements IErrandService {
     @Override
     @PostMapping("/orders/draft")
     public Response<String> saveDraft(@Valid @RequestBody ErrandDraftSaveRequestDTO request) {
-        String orderId = errandOrderCase.createDraft(SecurityUtils.currentUserId(), request.getType(),
+        String orderId = errandOrderCase.createDraft(SecurityUtils.currentUserId(), request.getTitle(), request.getType(),
                 request.getDescription(), request.getPickupLocation(), request.getDeliveryLocation(),
-                request.getReward(), request.getImages(), request.getTimeLimit());
+                request.getReward(), request.getImages(), request.getDeadline());
         return Response.ok(orderId);
     }
 
@@ -71,9 +72,9 @@ public class ErrandController implements IErrandService {
     @PutMapping("/orders/{orderId}/draft")
     public Response<Void> updateDraft(@PathVariable String orderId,
                                       @Valid @RequestBody ErrandDraftSaveRequestDTO request) {
-        errandOrderCase.updateDraft(orderId, SecurityUtils.currentUserId(), request.getType(),
+        errandOrderCase.updateDraft(orderId, SecurityUtils.currentUserId(), request.getTitle(), request.getType(),
                 request.getDescription(), request.getPickupLocation(), request.getDeliveryLocation(),
-                request.getReward(), request.getImages(), request.getTimeLimit());
+                request.getReward(), request.getImages(), request.getDeadline());
         return Response.ok(null);
     }
 
@@ -166,8 +167,9 @@ public class ErrandController implements IErrandService {
 
     @Override
     @PostMapping("/orders/{orderId}/cancel")
-    public Response<Void> cancelOrder(@PathVariable String orderId) {
-        errandOrderCase.cancelOrder(orderId, SecurityUtils.currentUserId());
+    public Response<Void> cancelOrder(@PathVariable String orderId,
+                                      @RequestParam(value = "requestId", required = false) String requestId) {
+        errandOrderCase.cancelOrder(orderId, SecurityUtils.currentUserId(), requestId);
         return Response.ok(null);
     }
 
@@ -234,6 +236,7 @@ public class ErrandController implements IErrandService {
         dto.setTakerNickname(orderEntity.getTakerNickname());
         dto.setTakerAvatar(orderEntity.getTakerAvatar());
         dto.setType(orderEntity.getType() == null ? null : orderEntity.getType().name());
+        dto.setTitle(orderEntity.getTitle());
         dto.setDescription(orderEntity.getDescription());
         dto.setPickupLocation(orderEntity.getPickupLocation());
         dto.setDeliveryLocation(orderEntity.getDeliveryLocation());

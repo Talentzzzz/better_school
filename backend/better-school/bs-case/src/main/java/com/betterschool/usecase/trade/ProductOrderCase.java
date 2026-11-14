@@ -25,14 +25,14 @@ public class ProductOrderCase {
     private final ICreditAccountService creditAccountService;
     private final IWalletAccountService walletAccountService;
 
-    public String createOrder(String buyerId, String productId) {
+    public String createOrder(String buyerId, String productId, int quantity) {
         creditAccountService.ensureOperable(buyerId);
-        return productOrderService.createOrder(buyerId, productId);
+        return productOrderService.createOrder(buyerId, productId, quantity);
     }
 
     public void payOrder(String orderId, String buyerId) {
         ProductPayResult payResult = productOrderService.payOrder(orderId, buyerId);
-        walletAccountService.freeze(buyerId, payResult.getPrice(), orderId, WalletDetailTypeVO.PRODUCT_FROZEN);
+        walletAccountService.freeze(buyerId, payResult.getAmount(), orderId, WalletDetailTypeVO.PRODUCT_FROZEN);
     }
 
     public void markDelivered(String orderId, String sellerId) {
@@ -41,16 +41,16 @@ public class ProductOrderCase {
 
     public void confirmReceived(String orderId, String buyerId) {
         ProductConfirmResult confirmResult = productOrderService.confirmReceived(orderId, buyerId);
-        walletAccountService.unfreeze(confirmResult.getBuyerId(), confirmResult.getPrice(), orderId,
+        walletAccountService.unfreeze(confirmResult.getBuyerId(), confirmResult.getAmount(), orderId,
                 WalletDetailTypeVO.PRODUCT_UNFROZEN);
-        walletAccountService.income(confirmResult.getSellerId(), confirmResult.getPrice(), orderId,
+        walletAccountService.income(confirmResult.getSellerId(), confirmResult.getAmount(), orderId,
                 WalletDetailTypeVO.PRODUCT_INCOME);
     }
 
     public void cancelOrder(String orderId, String buyerId) {
         ProductCancelResult cancelResult = productOrderService.cancelOrder(orderId, buyerId);
         if (cancelResult.isNeedRefund()) {
-            walletAccountService.unfreeze(cancelResult.getBuyerId(), cancelResult.getPrice(), orderId,
+            walletAccountService.unfreeze(cancelResult.getBuyerId(), cancelResult.getAmount(), orderId,
                     WalletDetailTypeVO.PRODUCT_UNFROZEN);
         }
     }

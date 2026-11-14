@@ -16,7 +16,10 @@ public class ProductOrderEntity {
     private String buyerId;
     private String sellerId;
     private String productId;
+    /** 成交单价快照（订单总金额 = price × quantity） */
     private BigDecimal price;
+    /** 成交件数（1..N，下单时原子扣减台账 remaining） */
+    private Integer quantity;
     /** 商品信息全部为下单时快照（此后不可变）：展示不回 JOIN product（商品行可被编辑/软删，订单详情必须稳定） */
     private String productTitle;
     private String productDescription;
@@ -25,7 +28,6 @@ public class ProductOrderEntity {
     private ProductCategoryVO productCategory;
     private ProductOrderStatusVO status;
     private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
 
     /** 查询冗余字段：买卖双方昵称头像（列表 JOIN 填充） */
     private String buyerNickname;
@@ -34,12 +36,13 @@ public class ProductOrderEntity {
     private String sellerAvatar;
     private String productImage;
 
-    public static ProductOrderEntity create(String buyerId, ProductEntity product) {
+    public static ProductOrderEntity create(String buyerId, ProductEntity product, int quantity) {
         ProductOrderEntity orderEntity = new ProductOrderEntity();
         orderEntity.buyerId = buyerId;
         orderEntity.sellerId = product.getUserId();
         orderEntity.productId = product.getProductId();
         orderEntity.price = product.getPrice();
+        orderEntity.quantity = quantity;
         orderEntity.productTitle = product.getTitle();
         orderEntity.productDescription = product.getDescription();
         orderEntity.productImages = product.getImages();

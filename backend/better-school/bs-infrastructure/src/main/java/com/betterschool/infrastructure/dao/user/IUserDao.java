@@ -1,6 +1,7 @@
 package com.betterschool.infrastructure.dao.user;
 
 import com.betterschool.infrastructure.dao.user.po.User;
+import com.betterschool.infrastructure.dao.user.po.UserBrief;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -39,6 +40,9 @@ public interface IUserDao {
 
     /** 按 id 列表查询（搜索同步反查/搜索结果组装用） */
     List<User> selectByIds(@Param("ids") List<String> userIdList);
+
+    /** 窄投影：只取 user_id/nickname/avatar（会话列表、消息发送者等纯展示场景） */
+    List<UserBrief> selectBriefByIds(@Param("ids") List<String> userIdList);
 
     int existsUser(@Param("userId") String userId);
 

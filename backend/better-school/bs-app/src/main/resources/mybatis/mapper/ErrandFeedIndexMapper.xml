@@ -8,8 +8,8 @@
          (state, feed_time, errand_order_id) 正向/反向扫描、价格升降 (state, price, errand_order_id)；
          续页谓词与排序方向同构（降序 &lt;、升序 &gt;）才能走 range scan。排序键与热度快照随行带出 -->
     <select id="selectFeedIndex" resultType="com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO">
-        <!-- 业务键列名按 VO 口径别名：errand_order_id 直落会映射成 errandOrderId（下划线转驼峰），不在 VO 字段上 -->
-        SELECT errand_order_id AS order_id, feed_time, create_time, price, view_count
+        <!-- 列名直落：errand_order_id 经下划线转驼峰落 VO 的 errandOrderId，不在这里起别名迁就 VO 字段名 -->
+        SELECT errand_order_id, feed_time, create_time, price, view_count
         FROM errand_feed_index
         WHERE state = 'PUBLISHED'
         <if test="cursor != null and !cursor.isFirstPage()">
@@ -56,9 +56,9 @@
          UUID 无序、不能再拿它当「创建先后」的代理） -->
     <update id="upsertFeedIndexOnApprove">
         INSERT INTO errand_feed_index (errand_order_id, state, feed_time, create_time, price, view_count, update_time)
-        SELECT e.errand_order_id, 'PUBLISHED', NOW(), e.create_time, e.reward, 0, NOW()
-        FROM errand_order e
-        WHERE e.errand_order_id = #{orderId}
+        SELECT errand_order_id, 'PUBLISHED', NOW(), create_time, reward, 0, NOW()
+        FROM errand_order
+        WHERE errand_order_id = #{orderId}
         ON DUPLICATE KEY UPDATE
             state       = 'PUBLISHED',
             update_time = NOW()
@@ -92,7 +92,7 @@
         INSERT INTO errand_feed_index (errand_order_id, state, feed_time, create_time, price, view_count, update_time)
         VALUES
         <foreach collection="rows" item="row" separator=",">
-            (#{row.errandOrderId}, #{row.state}, #{row.feedTime}, #{row.createTime}, #{row.price}, #{row.viewCount}, NOW())
+            (#{row.errandOrderId}, #{row.state}, #{row.feedTime}, #{row.createTime}, #{row.reward}, #{row.viewCount}, NOW())
         </foreach>
     </insert>
 

@@ -5,8 +5,8 @@
     <!-- 消息表列口径（sql.md）：id 物理自增，msg_id 业务 ID（UUID 字符串，应用层 insert 前发号；跨表引用与对外暴露用它）；
          state/recalled_at/recalled_by 承载撤回，create_time/update_time 收尾 -->
     <sql id="messageColumns">
-        m.id, m.msg_id, m.room_id, m.seq, m.from_user_id, m.msg_type, m.content, m.client_msg_id,
-        m.ref_type, m.ref_id, m.state, m.recalled_at, m.recalled_by, m.create_time, m.update_time
+        id, msg_id, room_id, seq, from_user_id, msg_type, content, client_msg_id,
+        ref_type, ref_id, state, recalled_at, recalled_by, create_time
     </sql>
 
     <!-- ===== message ===== -->
@@ -20,14 +20,27 @@
 
     <select id="selectMessage" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
         SELECT <include refid="messageColumns"/>
-        FROM message m
-        WHERE m.room_id = #{roomId} AND m.seq = #{seq}
+        FROM message
+        WHERE room_id = #{roomId} AND seq = #{seq}
+    </select>
+
+    <!-- 会话列表预览投影列口径（票 02 预览去副本）：渲染只认类型/文案/引用类型/撤回态四项；
+         seq 由点查锚点给出，msg_id/from_user_id 列表页不用，不随行带出 -->
+    <sql id="previewColumns">
+        msg_type, content, ref_type, state
+    </sql>
+
+    <!-- 会话列表四段查之④：预览真源点查（room_id + room.last_seq 走 uk_room_seq 唯一索引） -->
+    <select id="selectMessagePreview" resultType="com.betterschool.infrastructure.dao.chat.po.MessagePreview">
+        SELECT <include refid="previewColumns"/>
+        FROM message
+        WHERE room_id = #{roomId} AND seq = #{seq}
     </select>
 
     <select id="selectMessageByClientMsgId" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
         SELECT <include refid="messageColumns"/>
-        FROM message m
-        WHERE m.room_id = #{roomId} AND m.client_msg_id = #{clientMsgId}
+        FROM message
+        WHERE room_id = #{roomId} AND client_msg_id = #{clientMsgId}
     </select>
 
     <!-- 撤回占 seq 不回退、不动水位线，content 库内保留取证（读路径脱敏为「已撤回」空壳）；
@@ -46,27 +59,27 @@
     <!-- 举报回查/强制撤回入口：按业务 ID（msg_id）取消息 -->
     <select id="selectMessageById" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
         SELECT <include refid="messageColumns"/>
-        FROM message m
-        WHERE m.msg_id = #{messageId}
+        FROM message
+        WHERE msg_id = #{messageId}
     </select>
 
     <!-- 历史分页（uk_room_seq 主路径）：beforeSeq 为 NULL 取最新一页，页内 seq 倒序 -->
     <select id="selectMessagesBefore" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
         SELECT <include refid="messageColumns"/>
-        FROM message m
-        WHERE m.room_id = #{roomId}
+        FROM message
+        WHERE room_id = #{roomId}
         <if test="beforeSeq != null">
-          AND m.seq &lt; #{beforeSeq}
+          AND seq &lt; #{beforeSeq}
         </if>
-        ORDER BY m.seq DESC
+        ORDER BY seq DESC
         LIMIT #{limit}
     </select>
 
     <!-- 增量补拉两段查之②：按 msg_id 集批量回查消息全量 -->
     <select id="selectMessagesByIds" resultType="com.betterschool.infrastructure.dao.chat.po.Message">
         SELECT <include refid="messageColumns"/>
-        FROM message m
-        WHERE m.msg_id IN
+        FROM message
+        WHERE msg_id IN
         <foreach collection="msgIds" item="msgId" open="(" separator="," close=")">#{msgId}</foreach>
     </select>
 

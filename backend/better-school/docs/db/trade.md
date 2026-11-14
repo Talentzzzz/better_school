@@ -1,12 +1,14 @@
 # 二手交易表
 
-> 业务：闲置商品 + 商品托管订单（卖家发货、买家确认）+ 订单状态流转留痕；归属模块：trade
+> 业务：闲置商品 + 商品托管订单（卖家发货、买家确认）+ 订单状态流转留痕 + 库存台账/流水；归属模块：trade
 
 |表名|说明|
 |----|----|
 |product|二手商品主表（发布即可见的状态机）|
+|product_inventory|商品库存台账（1:1 随商品行诞生，remaining 防超卖唯一真源）|
+|product_stock_event|商品库存流水（只插不改，与台账变更同事务双写，审计/对账用）|
 |product_favorite|商品收藏（uk_user_product 防重）|
-|product_order|商品托管订单（下单时对商品做快照）|
+|product_order|商品托管订单（下单时对商品做快照，含成交件数 quantity）|
 |product_order_event|订单状态流转记录（只插不改，纠纷溯源事实源）|
 
 **主键口径（uuid-biz-id 起）**：`id` 是纯内部物理自增，业务 ID 为 `product_id` / `product_order_id`；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`UUID.randomUUID()` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
@@ -28,7 +30,7 @@
 |price|decimal(10,2)|NULL|价格（草稿允许为空，提交时必填）|
 |trade_location|varchar(100)|NULL|交易地点（校区+场所）（草稿允许为空，提交时必填）|
 |category|varchar(20)|NULL|分类 DIGITAL/BOOKS/DAILY/SPORTS/TICKETS/OTHER（草稿允许为空，提交时必填）|
-|state|varchar(20)|NOT NULL, DEFAULT 'ON_SALE'|DRAFT(草稿)/ON_SALE/LOCKED(交易中)/SOLD/DELETED；发布即对外可见：提交/草稿提交落库即 ON_SALE，未发布进 DRAFT（原 `status` 列改名，原 `OFF_SHELF` 终态已并入 DRAFT）|
+|state|varchar(20)|NOT NULL, DEFAULT 'ON_SALE'|DRAFT(草稿)/ON_SALE/SOLD/DELETED（`LOCKED` 为历史遗留值仅存量行可见，订单流已停写——multi-quantity-listing 起"交易中"由库存台账 remaining 表达，一件挂单的 LOCKED 表达不了"3 件锁了 1 件"）。发布即对外可见：提交/草稿提交落库即 ON_SALE，未发布进 DRAFT|
 |expire_at|datetime|NULL|到期下架时间（发布时刷新满 30 天，XXL-Job 扫描汇入草稿箱 DRAFT，可重提）|
 |create_time|datetime|NOT NULL|创建时间|
 |update_time|datetime|NOT NULL|更新时间|
@@ -44,7 +46,47 @@
 - **商品状况描述维度已整体下线**：本表及全库都没有对应列，请求体/出参/断言的相关字段一并删除，不要再补
 - 对外查询只放行 ON_SALE（列表 SQL 写死）；详情可见性在 domain `productDetail` 判定（DRAFT/DELETED 仅本人）
 - 状态流转一律条件 UPDATE（`WHERE product_id = ? AND state = ?`）；上架落库即落搜索同步消息（bs-search-sync），软删同样要落
-- 交易链 ON_SALE→LOCKED→SOLD，SOLD 重新上架回 ON_SALE；在售编辑内容即时生效（状态不变）
+- 交易链（multi-quantity-listing）：下单事务内台账 `product_inventory.remaining` 条件扣减，扣到 0 同事务 ON_SALE→SOLD；取消/支付超时回补，回补后 remaining > 0 时同事务翻回 ON_SALE；SOLD 重上架受库存闸门约束（remaining = 0 拒绝）。旧 LOCKED 中间态停写；在售编辑内容即时生效（状态不变）
+
+# product_inventory
+
+> 业务：商品库存台账（multi-quantity-listing：同款多件挂单，1:1 行随发布/存草稿诞生）；归属模块：trade
+
+|字段|类型|约束|说明|
+|----|----|----|----|
+|product_id|varchar(36)|PK|商品业务 ID（= product.product_id）|
+|quantity|int|NOT NULL, DEFAULT 1|挂单总件数（发布时定，草稿可改，上架后仅能经加货上调）|
+|remaining|int|NOT NULL, DEFAULT 1|剩余可售件数（下单扣减、关单回补；恒 <= quantity）|
+|create_time|datetime|NOT NULL|创建时间|
+|update_time|datetime|NOT NULL|更新时间|
+
+## 注意
+- **remaining 是防超卖唯一真源**：下单事务内条件 UPDATE（`remaining >= 扣减量`）原子扣减，affected rows = 0 即库存不足整单回滚；禁止"先 SELECT 再判断再 UPDATE"的两步扣法
+- 关单回补用 `LEAST(quantity, remaining + N)` 钳顶，重复回补不越界
+- 与 `product_stock_event` 同事务双写：台账变更必落流水；漂移按流水重建（after_remaining 串成对账链）
+- 卖家"标记已出"：product 翻 SOLD 同事务清零 remaining 并落 ADJUST 流水
+
+# product_stock_event
+
+> 业务：商品库存流水（只插入不修改，与台账变更同事务双写）；归属模块：trade
+
+|字段|类型|约束|说明|
+|----|----|----|----|
+|id|bigint|PK, AUTO_INCREMENT|内部物理主键，同商品内递增即流水顺序|
+|product_id|varchar(36)|NOT NULL, INDEX(idx_product 首列)|商品业务 ID|
+|event_type|varchar(20)|NOT NULL|INIT 发布建账 / DEDUCT 下单占用 / RELEASE 关单回补 / RESTOCK 卖家加货 / ADJUST 校正（含标记已出清零）|
+|delta|int|NOT NULL|remaining 变动量（扣减为负、回补/加货为正、清零为负）|
+|after_remaining|int|NOT NULL|事件后 remaining 快照（对账锚点）|
+|order_id|varchar(36)|NULL|关联订单业务 ID（DEDUCT/RELEASE 必填，其余 NULL）|
+|actor_id|varchar(36)|NULL|操作人用户 ID（SYSTEM 事件可 NULL）|
+|actor_role|varchar(20)|NOT NULL|操作方 BUYER/SELLER/SYSTEM/ADMIN|
+|create_time|datetime|NOT NULL|创建时间|
+|update_time|datetime|NOT NULL|固定等于写入时间，无更新业务|
+
+## 注意
+- **只插不改**：append-only，同商品按 `id` 升序即流水顺序
+- 明细是审计面，不是并发裁决面：防超卖只看台账 remaining 的条件 UPDATE，本表不做任何判断
+- **不参与用户时间线**：库存流水是账务审计（含 SYSTEM 关单、清零等内部动作），用户可见的"谁下单了"走 product_order_event 拼装
 
 # product_favorite
 
@@ -73,7 +115,8 @@
 |buyer_id|varchar(36)|NOT NULL, INDEX(idx_buyer)|买家用户 ID|
 |seller_id|varchar(36)|NOT NULL, INDEX(idx_seller)|卖家用户 ID|
 |product_id|varchar(36)|NOT NULL, INDEX(idx_product)|商品业务 ID（引用：跳转/反查/对账用）|
-|price|decimal(10,2)|NOT NULL|成交价快照|
+|price|decimal(10,2)|NOT NULL|成交单价快照（订单总金额 = price × quantity）|
+|quantity|int|NOT NULL, DEFAULT 1|成交件数（1..N，下单时原子扣减台账 remaining；回补按此列）|
 |product_title|varchar(30)|NULL|商品标题快照（下单时写入，此后不可变）|
 |product_description|varchar(500)|NULL|商品描述快照（下单时写入，此后不可变）|
 |product_images|varchar(1000)|NULL|商品图片 URL 列表快照（JSON 数组，下单时写入，此后不可变）|

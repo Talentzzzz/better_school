@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -103,12 +104,13 @@ class ErrandFullChainIntegrationTest extends CommunityApiTestBase {
 
     private Map<String, Object> errandBody(String description, List<String> images) {
         Map<String, Object> body = new HashMap<>();
+        body.put("title", "帮忙取个快递");
         body.put("type", "EXPRESS_PICKUP");
         body.put("description", description);
         body.put("pickupLocation", "菜鸟驿站");
         body.put("deliveryLocation", "6号楼楼下");
         body.put("reward", 10);
-        body.put("timeLimit", "HOURS_2");
+        body.put("deadline", LocalDateTime.now().plusHours(2).toString());
         if (images != null) {
             body.put("images", images);
         }

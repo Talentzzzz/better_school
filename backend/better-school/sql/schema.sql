@@ -101,6 +101,36 @@ CREATE TABLE IF NOT EXISTS product (
 -- 加速列 product_view_count；存量 PV 随票 01 的一次性清零脚本废弃，清零脚本与列一同退役）。
 -- 存量库不迁移（uuid-biz-id：删库重建），历史删列脚本已随 uuid-biz-id 票 08 退役。
 
+-- 库存模型（multi-quantity-listing）：同款多件挂单 = 台账 + 流水双层。remaining 是防超卖唯一真源，
+-- 下单事务内条件 UPDATE（remaining >= 扣减量）原子扣减，扣到 0 同事务打 product.state = SOLD（feed/搜索同步随行）；
+-- 取消/支付超时关单回补，回补后 remaining > 0 且 state = SOLD 时同事务翻回 ON_SALE。
+-- 订单流不再使用 LOCKED（一件挂单的"交易中"表达不了"3 件锁了 1 件"），旧态保留仅兼容存量行。
+CREATE TABLE IF NOT EXISTS product_inventory (
+    product_id  VARCHAR(36) NOT NULL COMMENT '商品业务 ID（product.product_id，1:1 行随发布/存草稿诞生）',
+    quantity    INT         NOT NULL DEFAULT 1 COMMENT '挂单总件数（发布时定，草稿可改，上架后仅能经加货上调）',
+    remaining   INT         NOT NULL DEFAULT 1 COMMENT '剩余可售件数（下单扣减、关单回补；恒 <= quantity）',
+    create_time DATETIME    NOT NULL COMMENT '创建时间',
+    update_time DATETIME    NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (product_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商品库存台账（remaining 是防超卖唯一真源；流水见 product_stock_event）';
+
+-- 库存流水（multi-quantity-listing）：只插入不修改，与台账变更同事务双写；after_remaining 串起来可对账，
+-- 漂移时按流水重建 remaining（同 view_count 重建 job 套路）。订单驱动的扣减/回补带 order_id，加货/校正为 NULL。
+CREATE TABLE IF NOT EXISTS product_stock_event (
+    id              BIGINT       NOT NULL AUTO_INCREMENT,
+    product_id      VARCHAR(36)  NOT NULL COMMENT '商品业务 ID',
+    event_type      VARCHAR(20)  NOT NULL COMMENT 'INIT 发布建账 / DEDUCT 下单占用 / RELEASE 关单回补 / RESTOCK 卖家加货 / ADJUST 校正（含标记已出清零）',
+    delta           INT          NOT NULL COMMENT 'remaining 变动量（扣减为负、回补/加货为正、清零为负）',
+    after_remaining INT          NOT NULL COMMENT '事件后 remaining 快照（对账锚点）',
+    order_id        VARCHAR(36)  NULL     COMMENT '关联订单业务 ID（DEDUCT/RELEASE 必填，其余 NULL）',
+    actor_id        VARCHAR(36)  NULL     COMMENT '操作人用户 ID（SYSTEM 事件可 NULL）',
+    actor_role      VARCHAR(20)  NOT NULL COMMENT '操作方 BUYER/SELLER/SYSTEM/ADMIN',
+    create_time     DATETIME     NOT NULL COMMENT '创建时间',
+    update_time     DATETIME     NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    KEY idx_product (product_id, id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商品库存流水（只插入不修改；与 product_inventory 变更同事务双写，审计/对账用，不参与用户时间线）';
+
 CREATE TABLE IF NOT EXISTS product_favorite (
     id         BIGINT   NOT NULL AUTO_INCREMENT,
     user_id    VARCHAR(36)   NOT NULL COMMENT '收藏用户 ID',
@@ -729,17 +759,16 @@ CREATE TABLE IF NOT EXISTS errand_order (
     publisher_id      VARCHAR(36)         NOT NULL COMMENT '下单方用户 ID',
     taker_id          VARCHAR(36)         NULL COMMENT '接单方用户 ID（抢单后填充，接单方取消后清空）',
     lock_seq          INT            NOT NULL DEFAULT 0 COMMENT '锁单轮次（每次抢单 +1；超时中心复合 bizId={orderId}:{lock_seq} 的轮次与回调守卫比对值）',
+    event_seq         INT            NOT NULL DEFAULT 0 COMMENT '事件序号计数器：事件表取号用——事件写入事务内 UPDATE event_seq=event_seq+1 后读回（先动订单行持行锁，同订单串行发号）；同订单内递增即事件先后顺序（业务含义只认 event_seq，自增 id 无业务含义）',
+    title             VARCHAR(50)    NULL COMMENT '订单标题（草稿允许为空，提交时必填）',
     type              VARCHAR(20)    NULL COMMENT '类型 EXPRESS_PICKUP/BUY/DELIVER/OTHER（草稿允许为空，提交时必填）',
     description       VARCHAR(200)   NULL COMMENT '任务描述（同步初筛覆盖；草稿允许为空，提交时必填）',
     pickup_location   VARCHAR(100)   NULL COMMENT '取件地点（草稿允许为空，提交时必填）',
     delivery_location VARCHAR(100)   NULL COMMENT '送达地点（草稿允许为空，提交时必填）',
     reward            DECIMAL(10,2)  NULL COMMENT '悬赏（校园币，支付时冻结；草稿允许为空，提交时必填）',
-    time_limit_hours  INT            NULL COMMENT '时限（2/4/12/24 小时，支付时起算；草稿允许为空，提交时必填）',
     images            VARCHAR(1000)  NULL COMMENT '配图 URL 列表（JSON 数组，最多 6 张，MinIO）',
-    deadline          DATETIME       NULL COMMENT '超时时间（支付时间 + 时限）',
+    deadline          DATETIME       NULL COMMENT '截止时间（用户指定的绝对时刻，合法区间为数据库时钟 now+15min~now+7d，SQL 侧校验；到期自动下架与接单方完工时限共用）',
     state             VARCHAR(20)    NOT NULL DEFAULT 'PENDING_PAYMENT' COMMENT '状态 DRAFT(草稿)/PENDING_PAYMENT/PUBLISHED/LOCKED(锁单中)/CONFIRMED(已确认)/PICKED_UP/DELIVERED/COMPLETED/CANCELLED/DISPUTED/DELETED(软删，仅草稿可达)（先付后发：支付完成即发布进大厅）',
-    taker_canceled    TINYINT(1)     NOT NULL DEFAULT 0 COMMENT '接单方取消幂等位（取消过为 1，重试判定用，防重复扣分）',
-    version           BIGINT         NOT NULL DEFAULT 0 COMMENT '乐观锁版本（预留）',
     create_time       DATETIME       NOT NULL COMMENT '创建时间',
     update_time       DATETIME       NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -752,6 +781,7 @@ CREATE TABLE IF NOT EXISTS errand_order (
 CREATE TABLE IF NOT EXISTS errand_order_event (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
     order_id    VARCHAR(36)  NOT NULL COMMENT '跑腿订单业务 ID',
+    event_seq   INT          NOT NULL COMMENT '事件序号（业务顺序）：写入时从 errand_order.event_seq 计数器同事务取号，同订单内递增即状态变更顺序；id 仅内部键，无业务含义',
     event_type  VARCHAR(30)  NOT NULL COMMENT '事件类型',
     from_state  VARCHAR(20)  NULL     COMMENT '变更前状态（NULL 仅限创建事件）',
     to_state    VARCHAR(20)  NOT NULL COMMENT '变更后状态',
@@ -760,13 +790,14 @@ CREATE TABLE IF NOT EXISTS errand_order_event (
     reason_type VARCHAR(50)  NULL     COMMENT '原因类型（仅取消/退出/争议/仲裁类事件写入）',
     reason      VARCHAR(200) NULL     COMMENT '原因补充说明（用户输入，提交时先过同步初筛；SYSTEM 事件恒 NULL）',
     images      VARCHAR(1000) NULL    COMMENT '随附凭证图 URL 列表（JSON 数组，MinIO，INSERT 时定型不可改）',
+    request_id  VARCHAR(64)  NULL     COMMENT '触发本事件的请求编号（客户端每次点击生成、重试沿用；请求级幂等判定用，SYSTEM 事件为 NULL）',
     create_time DATETIME     NOT NULL COMMENT '创建时间',
     update_time DATETIME     NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
-    KEY idx_order (order_id),
+    KEY idx_order_seq (order_id, event_seq),
     -- 防占单（票 05）：Redis 降级时按 actor_id + event_type + 近 24h 计主动放弃，是事实源侧唯一查询路径
     KEY idx_actor_type_time (actor_id, event_type, create_time)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '跑腿订单状态流转记录（只插入不修改；同订单内 id 递增即状态变更顺序，纠纷溯源事实源）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '跑腿订单状态流转记录（只插入不修改；同订单内 event_seq 递增即状态变更顺序，纠纷溯源事实源）';
 
 CREATE TABLE IF NOT EXISTS product_order (
     id                     BIGINT        NOT NULL AUTO_INCREMENT,
@@ -774,7 +805,8 @@ CREATE TABLE IF NOT EXISTS product_order (
     buyer_id               VARCHAR(36)        NOT NULL COMMENT '买家用户 ID',
     seller_id              VARCHAR(36)        NOT NULL COMMENT '卖家用户 ID',
     product_id             VARCHAR(36)   NOT NULL COMMENT '商品业务 ID（引用：跳转/反查/对账用）',
-    price                  DECIMAL(10,2) NOT NULL COMMENT '成交价快照',
+    price                  DECIMAL(10,2) NOT NULL COMMENT '成交单价快照（订单总金额 = price × quantity）',
+    quantity               INT           NOT NULL DEFAULT 1 COMMENT '成交件数（1..N，下单时原子扣减台账 remaining；回补按此列）',
     product_title          VARCHAR(30)   NULL COMMENT '商品标题快照（下单时写入，此后不可变）',
     product_description    VARCHAR(500)  NULL COMMENT '商品描述快照（下单时写入，此后不可变）',
     product_images         VARCHAR(1000) NULL COMMENT '商品图片 URL 列表快照（JSON 数组，下单时写入，此后不可变）',

@@ -3,7 +3,7 @@ package com.betterschool.domain.chat.service.query;
 import com.betterschool.domain.chat.model.entity.MessageEntity;
 import com.betterschool.domain.chat.model.valobj.RoomMemberVO;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
-import com.betterschool.domain.chat.model.valobj.TimelineItemVO;
+import com.betterschool.domain.chat.model.valobj.TimelinePageVO;
 
 import java.util.List;
 
@@ -18,9 +18,6 @@ public interface IChatQueryService {
      */
     List<RoomListItemVO> listRooms(String userId, int page, int pageSize);
 
-    /** 当前会话数（列表分页 total，排除隐藏口径同 {@link #listRooms}） */
-    long countRooms(String userId);
-
     /**
      * 历史消息：seq 倒序分页（上滑加载更早），页内按 seq 升序返回；
      * 已撤回消息脱敏「已撤回」空壳（content/ref 不出服务端）
@@ -28,9 +25,11 @@ public interface IChatQueryService {
     List<MessageEntity> listMessages(String roomId, String userId, Long beforeSeq, Integer limit);
 
     /**
-     * 增量补拉：delivery_seq 升序取条，返回条数 &lt; limit 即追平；afterDeliverySeq=0 = 全量
+     * 增量补拉：按投递序升序取游标之后的消息，deliverySeqCursor=0 = 全量。
+     * 返回一页 = 条目 + nextCursor（扫描边界，非最后一条成功条目）+ hasMore（是否填满一页）：
+     * 追平与否由 hasMore 显式表达，不再由「返回条数 &lt; limit」推断
      */
-    List<TimelineItemVO> pullTimeline(String userId, Long afterDeliverySeq, Integer limit);
+    TimelinePageVO pullTimeline(String userId, Long deliverySeqCursor, Integer limit);
 
     /**
      * 成员列表：含 read_seq（详情页已读头像推导 + 成员页同源，user_room 行回查拼装）；

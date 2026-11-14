@@ -10,6 +10,7 @@ import com.betterschool.domain.chat.model.valobj.RoomMemberVO;
 import com.betterschool.domain.chat.model.valobj.RoomPeerRoleVO;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
 import com.betterschool.domain.chat.model.valobj.TimelineItemVO;
+import com.betterschool.domain.chat.model.valobj.TimelinePageVO;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -60,7 +61,7 @@ public class ChatQueryServiceImpl implements IChatQueryService {
             room.setPeerAvatar(peer == null ? null : peer.getAvatar());
             room.setPeerRole(peerRoleOf(room, userId));
             // 预览读时现算（票 02 预览去副本）：渲染规则单点收敛在 RoomPreviewRenderer，message 是唯一真相
-            RoomPreviewRenderer.renderInto(room, room.getLastMessage());
+            RoomPreviewRenderer.renderInto(room, room.getLastPreview());
         }
         return rooms;
     }
@@ -83,11 +84,6 @@ public class ChatQueryServiceImpl implements IChatQueryService {
     }
 
     @Override
-    public long countRooms(String userId) {
-        return chatRepository.countRoomsForUser(userId);
-    }
-
-    @Override
     public List<MessageEntity> listMessages(String roomId, String userId, Long beforeSeq, Integer limit) {
         requireMembership(roomId, userId);
         int effectiveLimit = clamp(limit, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT);
@@ -107,19 +103,20 @@ public class ChatQueryServiceImpl implements IChatQueryService {
     }
 
     @Override
-    public List<TimelineItemVO> pullTimeline(String userId, Long afterDeliverySeq, Integer limit) {
-        long cursor = afterDeliverySeq == null ? 0L : afterDeliverySeq;
+    public TimelinePageVO pullTimeline(String userId, Long deliverySeqCursor, Integer limit) {
+        // 游标 = 已拉到的投递序号（不含），空值按 0 处理 = 全量
+        long cursor = deliverySeqCursor == null ? 0L : deliverySeqCursor;
         int effectiveLimit = clamp(limit, DEFAULT_TIMELINE_LIMIT, MAX_TIMELINE_LIMIT);
-        List<TimelineItemVO> items = chatRepository.listTimelineAfter(userId, cursor, effectiveLimit);
+        TimelinePageVO page = chatRepository.listTimelineAfter(userId, cursor, effectiveLimit);
         // 下发与读路径同口径：撤回消息脱敏空壳（spec §1），content 库内保留取证不出服务端
-        for (TimelineItemVO item : items) {
+        for (TimelineItemVO item : page.getItems()) {
             if (item.getMessage().isRecalled()) {
                 item.getMessage().setContent(null);
                 item.getMessage().setRefType(null);
                 item.getMessage().setRefId(null);
             }
         }
-        return items;
+        return page;
     }
 
     @Override

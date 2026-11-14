@@ -11,6 +11,7 @@ import com.betterschool.domain.errand.model.valobj.ErrandPayResult;
 import com.betterschool.domain.errand.model.valobj.ErrandTimeoutResult;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -20,25 +21,26 @@ import java.util.List;
 public interface IErrandOrderService {
 
     /**
-     * 创建订单（先付后审：同步初筛由 case 层前置，命中即业务异常不落库，通过则 PENDING_PAYMENT；
-     * 信用分门槛由 case 层前置校验）。reward 为悬赏，支付时冻结
+     * 创建订单（先付后发：同步初筛由 case 层前置，命中即业务异常不落库，通过则 PENDING_PAYMENT；
+     * 信用分门槛由 case 层前置校验）。reward 为悬赏，支付时冻结；
+     * deadline 为用户指定的绝对时刻（合法性由仓储对照数据库时钟校验）
      */
-    String createOrder(String userId, String type, String description, String pickupLocation,
+    String createOrder(String userId, String title, String type, String description, String pickupLocation,
                      String deliveryLocation, BigDecimal reward, List<String> images,
-                     String timeLimit);
+                     LocalDateTime deadline);
 
     /**
      * 创建草稿（草稿入口）：落 DRAFT，不付款、不对外、不注册支付超时；
      * 不做同步初筛与信用分门槛（提交时才校验），字段可缺省
      */
-    String createDraft(String userId, String type, String description, String pickupLocation,
+    String createDraft(String userId, String title, String type, String description, String pickupLocation,
                      String deliveryLocation, BigDecimal reward, List<String> images,
-                     String timeLimit);
+                     LocalDateTime deadline);
 
     /** 编辑草稿（仅作者、仅 DRAFT）：全量覆盖内容字段，publisherId 与状态位不改、不产生状态迁移 */
-    void updateDraft(String orderId, String userId, String type, String description, String pickupLocation,
+    void updateDraft(String orderId, String userId, String title, String type, String description, String pickupLocation,
                      String deliveryLocation, BigDecimal reward, List<String> images,
-                     String timeLimit);
+                     LocalDateTime deadline);
 
     /** 加载本人草稿（存在 + 作者 + DRAFT 三重守卫），提交前必填校验/同步初筛的输入源 */
     ErrandOrderEntity getOwnedDraft(String orderId, String userId);
@@ -83,7 +85,7 @@ public interface IErrandOrderService {
     /** 确认接单（锁单→已确认，仅持单人）：抢到手后核对信息再点；不改 lock_seq */
     void acceptLockedOrder(String orderId, String userId);
 
-    /** 放弃（锁单→已发布，仅持单人）：清 taker_id；不扣信用分、不动 taker_canceled、不改 lock_seq */
+    /** 放弃（锁单→已发布，仅持单人）：清 taker_id；不扣信用分、不落 TAKER_CANCELLED 事件、不改 lock_seq */
     void abandonLockedOrder(String orderId, String userId);
 
     /** 取货：限接单方 */
@@ -95,8 +97,13 @@ public interface IErrandOrderService {
     /** 确认完成（发布方，验收制，无事务）：confirmById，返回解冻总额 + 入账需求 */
     ErrandConfirmResult confirmOrder(String orderId, String userId);
 
-    /** 取消（无事务）：发布方（取货前，终态）/ 接单方（仅已确认，回已发布），返回退款/扣分需求 */
-    ErrandCancelResult cancelOrder(String orderId, String userId);
+    /**
+     * 取消（无事务）：发布方（取货前，终态）/ 接单方（仅已确认，回已发布），返回退款/扣分需求。
+     * {@code requestId} 为客户端每次点击生成、重试沿用的请求编号，可空——
+     * 非空且该订单已存在「本人 + TAKER_CANCELLED + 同编号」事件时视为同一次点击的重放，
+     * 直接回放成功结果、业务零执行（防「取消后重抢再确认」窗口期的旧重试误伤新一轮）
+     */
+    ErrandCancelResult cancelOrder(String orderId, String userId, String requestId);
 
     /** 发起仲裁（CONFIRMED/PICKED_UP/DELIVERED，任一方） */
     void disputeOrder(String orderId, String userId);

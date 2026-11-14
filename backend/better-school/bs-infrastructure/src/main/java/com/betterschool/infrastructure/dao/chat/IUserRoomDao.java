@@ -23,8 +23,6 @@ public interface IUserRoomDao {
     List<RoomListItem> selectUserRoomPage(@Param("userId") String userId,
                                             @Param("offset") int offset, @Param("limit") int limit);
 
-    long countRoomsForUser(@Param("userId") String userId);
-
     int insertUserRooms(@Param("userRooms") List<UserRoom> userRoomList);
 
     UserRoom selectUserRoom(@Param("roomId") String roomId, @Param("userId") String userId);

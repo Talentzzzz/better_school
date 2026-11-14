@@ -246,9 +246,9 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
     private String insertErrand(String publisherId, String status, String description, String takerId) {
         String orderId = java.util.UUID.randomUUID().toString();
         jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, taker_id, type, description, "
-                        + "pickup_location, delivery_location, reward, time_limit_hours, state, taker_canceled, "
+                        + "pickup_location, delivery_location, reward, state, "
                         + "create_time, update_time) "
-                        + "VALUES (?, ?, ?, 'EXPRESS_PICKUP', ?, '菜鸟驿站', '三号宿舍楼', 10.00, 2, ?, 0, NOW(), NOW())",
+                        + "VALUES (?, ?, ?, 'EXPRESS_PICKUP', ?, '菜鸟驿站', '三号宿舍楼', 10.00, ?, NOW(), NOW())",
                 orderId, publisherId, takerId, description, status);
         return orderId;
     }

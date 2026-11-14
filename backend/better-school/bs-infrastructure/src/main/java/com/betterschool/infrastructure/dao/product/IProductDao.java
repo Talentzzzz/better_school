@@ -52,14 +52,8 @@ public interface IProductDao {
     /** 上架后仅改价：价格立即生效，状态不变 */
     int updateOnSalePrice(@Param("productId") String productId, @Param("price") BigDecimal price);
 
-    /** 下单锁定：ON_SALE → LOCKED（0 行 = 已被交易/已下架） */
-    int lock(@Param("productId") String productId);
-
-    /** 解锁释放（下单取消/支付超时）：LOCKED → ON_SALE */
-    int release(@Param("productId") String productId);
-
-    /** 支付完成：LOCKED → SOLD */
-    int lockToSold(@Param("productId") String productId);
+    /** 售罄翻回在售（关单回补后 remaining > 0 时调用，不刷 expire_at）：SOLD → ON_SALE */
+    int restoreFromSold(@Param("productId") String productId);
 
     /** 旧直查降级路径 price/time 四档：ON_SALE SQL 分页（hot 档走 {@link #selectOnSaleRows} 内存排序） */
     List<Product> selectPage(@Param("category") String category,

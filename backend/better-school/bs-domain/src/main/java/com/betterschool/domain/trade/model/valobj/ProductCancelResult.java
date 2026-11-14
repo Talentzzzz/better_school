@@ -12,5 +12,6 @@ public class ProductCancelResult {
     /** 已支付需解冻退回 */
     private boolean needRefund;
     private String buyerId;
-    private BigDecimal price;
+    /** 需解冻金额（成交单价 × 件数） */
+    private BigDecimal amount;
 }

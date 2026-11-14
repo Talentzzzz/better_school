@@ -4,7 +4,6 @@ import type {
   PageResult,
   ErrandOrder,
   ErrandType,
-  ErrandTimeLimit,
   ErrandStatus
 } from '@/types/api'
 
@@ -23,12 +22,14 @@ export function listErrandOrders(params: ErrandListParams) {
 }
 
 export interface ErrandCreateBody {
+  title: string
   type: ErrandType
   description: string
   pickupLocation: string
   deliveryLocation: string
   reward: number
-  timeLimit: ErrandTimeLimit
+  /** 截止时间（ISO 绝对时刻；到期自动下架与接单方完工时限共用） */
+  deadline: string
   images: string[]
 }
 
@@ -38,12 +39,14 @@ export function createErrandOrder(body: ErrandCreateBody) {
 
 /** 跑腿草稿保存请求：全字段可缺省（草稿可留空），提交时才校验必填 */
 export interface ErrandDraftBody {
+  title?: string
   type?: ErrandType
   description?: string
   pickupLocation?: string
   deliveryLocation?: string
   reward?: number
-  timeLimit?: ErrandTimeLimit
+  /** 截止时间（可缺省，提交时必填） */
+  deadline?: string
   images?: string[]
 }
 

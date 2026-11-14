@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.productinventory.IProductInventoryDao">
+
+    <!-- 商品库存台账（product_inventory 单表）：remaining 是防超卖唯一真源，扣减/回补全走条件 UPDATE；
+         流水在 ProductStockEventMapper.xml，调用方与台账变更同事务双写 -->
+    <sql id="baseColumns">
+        product_id, quantity, remaining, create_time
+    </sql>
+
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.productinventory.po.ProductInventory">
+        INSERT INTO product_inventory (product_id, quantity, remaining, create_time, update_time)
+        VALUES (#{productId}, #{quantity}, #{remaining}, NOW(), NOW())
+    </insert>
+
+    <select id="selectByProductId" resultType="com.betterschool.infrastructure.dao.productinventory.po.ProductInventory">
+        SELECT <include refid="baseColumns"/>
+        FROM product_inventory
+        WHERE product_id = #{productId}
+    </select>
+
+    <select id="selectByProductIds" resultType="com.betterschool.infrastructure.dao.productinventory.po.ProductInventory">
+        SELECT <include refid="baseColumns"/>
+        FROM product_inventory
+        WHERE product_id IN
+        <foreach collection="productIds" item="productId" open="(" separator="," close=")">
+            #{productId}
+        </foreach>
+    </select>
+
+    <!-- 下单扣减：remaining >= 扣减量才生效（防超卖唯一闸门），并发下单在行锁上排队、条件不过即 0 行 -->
+    <update id="deduct">
+        UPDATE product_inventory
+        SET remaining   = remaining - #{quantity},
+            update_time = NOW()
+        WHERE product_id = #{productId}
+          AND remaining >= #{quantity}
+    </update>
+
+    <!-- 关单回补：LEAST 钳在 quantity（重复回补不越界），不足 quantity 只回补到顶 -->
+    <update id="restore">
+        UPDATE product_inventory
+        SET remaining   = LEAST(quantity, remaining + #{quantity}),
+            update_time = NOW()
+        WHERE product_id = #{productId}
+    </update>
+
+    <!-- 卖家加货：总件数与剩余同涨（新货立即可售） -->
+    <update id="restock">
+        UPDATE product_inventory
+        SET quantity    = quantity + #{quantity},
+            remaining   = remaining + #{quantity},
+            update_time = NOW()
+        WHERE product_id = #{productId}
+    </update>
+
+    <!-- 清零剩余（卖家"标记已出"）：以 UPDATE 后回查不到旧值，改用先 SELECT 后 UPDATE 的方式在仓储内组装，
+         本语句只做清零；delta 由调用方按清零前 SELECT 的 remaining 记账 -->
+    <update id="clearRemainingReturnDelta">
+        UPDATE product_inventory
+        SET remaining   = 0,
+            update_time = NOW()
+        WHERE product_id = #{productId}
+    </update>
+
+    <!-- 草稿改件数：草稿期无订单可扣，quantity 与 remaining 一并覆盖 -->
+    <update id="updateDraftQuantity">
+        UPDATE product_inventory
+        SET quantity    = #{quantity},
+            remaining   = #{quantity},
+            update_time = NOW()
+        WHERE product_id = #{productId}
+    </update>
+
+</mapper>

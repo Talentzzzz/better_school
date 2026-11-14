@@ -21,6 +21,8 @@ public class ProductResponseDTO {
     private String category;
     private String status;
     private long viewCount;
+    /** 剩余可售件数（product_inventory 台账回查填充；多件挂单展示"还剩 N 件"） */
+    private Integer remainingQuantity;
     private long favoriteCount;
     private boolean favorited;
     /**

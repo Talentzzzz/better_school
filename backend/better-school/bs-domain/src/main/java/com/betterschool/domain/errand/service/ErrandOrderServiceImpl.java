@@ -12,9 +12,9 @@ import com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedPageVO;
 import com.betterschool.domain.errand.model.valobj.ErrandIncomeVO;
 import com.betterschool.domain.errand.model.valobj.ErrandLockTimeoutResult;
+import com.betterschool.domain.errand.model.valobj.ErrandOrderEventVO;
 import com.betterschool.domain.errand.model.valobj.ErrandPayResult;
 import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
-import com.betterschool.domain.errand.model.valobj.ErrandTimeLimitVO;
 import com.betterschool.domain.errand.model.valobj.ErrandTimeoutResult;
 import com.betterschool.domain.errand.model.valobj.ErrandTypeVO;
 import com.betterschool.types.enums.ResponseCode;
@@ -50,6 +50,9 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     private static final int AUTO_COMPLETE_HOURS = 24;
     private static final int SCAN_BATCH_SIZE = 100;
 
+    /** 事件类型字面量（与仓储写入侧同口径）：接单方取消——重试幂等判定只认「最新事件 = 本人的 TAKER_CANCELLED」 */
+    private static final String EVENT_TAKER_CANCELLED = "TAKER_CANCELLED";
+
     /** 防占单：滑动窗口时长（小时）——非自然日，避免「23:59 放弃 3 次 + 00:01 放弃 3 次」跨零点刷新逃逸 */
     private static final int GRAB_ABUSE_WINDOW_HOURS = 24;
     /** 防占单：窗口内「主动放弃」达此次数 → 触发冷却（超时未确认不计——不可控，惩罚不公） */
@@ -63,35 +66,34 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     private final IErrandGrabAbusePort errandGrabAbusePort;
 
     @Override
-    public String createOrder(String userId, String type, String description, String pickupLocation,
+    public String createOrder(String userId, String title, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward,
-                            List<String> images, String timeLimit) {
+                            List<String> images, LocalDateTime deadline) {
         ErrandTypeVO typeVO = ErrandTypeVO.from(type);
-        ErrandTimeLimitVO timeLimitVO = ErrandTimeLimitVO.from(timeLimit);
-        ErrandOrderEntity orderEntity = ErrandOrderEntity.create(userId, typeVO, description,
-                pickupLocation, deliveryLocation, reward, images, timeLimitVO);
+        ErrandOrderEntity orderEntity = ErrandOrderEntity.create(userId, title, typeVO, description,
+                pickupLocation, deliveryLocation, reward, images, deadline);
         // 落库 + "15 分钟未支付"超时注册同属一个仓储原子用例（提交后即时注册到超时中心）
         errandRepository.createWithPayTimeout(orderEntity, PAY_TIMEOUT_MINUTES);
         return orderEntity.getOrderId();
     }
 
     @Override
-    public String createDraft(String userId, String type, String description, String pickupLocation,
+    public String createDraft(String userId, String title, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward,
-                            List<String> images, String timeLimit) {
+                            List<String> images, LocalDateTime deadline) {
         // 草稿为私有停靠内容：字段可缺省、不做初筛（提交时才做），落 DRAFT 且不注册支付超时
-        ErrandOrderEntity orderEntity = ErrandOrderEntity.createDraft(userId, toTypeOrNull(type), description,
-                pickupLocation, deliveryLocation, reward, toTimeLimitHours(timeLimit), images);
+        ErrandOrderEntity orderEntity = ErrandOrderEntity.createDraft(userId, title, toTypeOrNull(type), description,
+                pickupLocation, deliveryLocation, reward, deadline, images);
         errandRepository.saveDraft(orderEntity);
         return orderEntity.getOrderId();
     }
 
     @Override
-    public void updateDraft(String orderId, String userId, String type, String description, String pickupLocation,
-                            String deliveryLocation, BigDecimal reward, List<String> images, String timeLimit) {
+    public void updateDraft(String orderId, String userId, String title, String type, String description, String pickupLocation,
+                            String deliveryLocation, BigDecimal reward, List<String> images, LocalDateTime deadline) {
         ErrandOrderEntity orderEntity = getOwnedDraft(orderId, userId);
-        orderEntity.applyDraftContent(toTypeOrNull(type), description, pickupLocation, deliveryLocation,
-                reward, toTimeLimitHours(timeLimit), images);
+        orderEntity.applyDraftContent(title, toTypeOrNull(type), description, pickupLocation, deliveryLocation,
+                reward, deadline, images);
         errandRepository.updateDraft(orderEntity);
     }
 
@@ -148,10 +150,10 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (orderEntity.getStatus() != ErrandStatusVO.PENDING_PAYMENT) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "订单不存在或不可支付");
         }
-        ErrandTimeLimitVO timeLimitVO = ErrandTimeLimitVO.fromHours(orderEntity.getTimeLimitHours());
         // 状态迁移跟着钱走：支付事务内转 PUBLISHED（冻结悬赏、即对外可见进入大厅），
-        // bs-errand-paid outbox 消息只承担"支付成功"通知，不承载状态迁移
-        errandRepository.payWithPaidMessage(orderId, userId, timeLimitVO.getHours());
+        // bs-errand-paid outbox 消息只承担"支付成功"通知，不承载状态迁移；
+        // deadline 已随单落库（payById WHERE deadline > NOW() 拒绝已过期单）
+        errandRepository.payWithPaidMessage(orderId, userId);
         return new ErrandPayResult(orderEntity.getTotalReward());
     }
 
@@ -197,13 +199,13 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (hasMore) {
             rows = rows.subList(0, pageSize);
         }
-        List<String> orderIds = rows.stream().map(ErrandFeedIndexItemVO::getOrderId).toList();
+        List<String> orderIds = rows.stream().map(ErrandFeedIndexItemVO::getErrandOrderId).toList();
         Map<String, ErrandOrderEntity> byId = errandRepository.listByIds(orderIds).stream()
                 .collect(Collectors.toMap(ErrandOrderEntity::getOrderId, Function.identity(), (a, b) -> a, HashMap::new));
         // 索引行缺订单行（存量异常，重建 job 修）只跳过不补位：游标锚在扫描序上，补位会引入重复
         List<ErrandOrderEntity> orders = new ArrayList<>(orderIds.size());
         for (ErrandFeedIndexItemVO row : rows) {
-            ErrandOrderEntity orderEntity = byId.get(row.getOrderId());
+            ErrandOrderEntity orderEntity = byId.get(row.getErrandOrderId());
             if (orderEntity == null) {
                 continue;
             }
@@ -288,7 +290,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         requireLockedTaker(orderId, userId);
         // member 取本轮锁单轮次（锁单期 lock_seq 不变，读在放弃之前）：同单重抢是不同轮次、各自计一次
         int lockSeq = errandRepository.lockSeqOf(orderId);
-        // 放弃是设计内的正常动作：不扣信用分、不置 taker_canceled（不落在「接单取消扣分」路径上）。
+        // 放弃是设计内的正常动作：不扣信用分、不落 TAKER_CANCELLED 事件（扣分只认该事件）。
         // ⚠️ 此方法按仓内同形约定无显式事务（条件 UPDATE 即提交）——「主效应成功后」即「提交后」；
         // 若未来给 abandonLockedById 包上事务，下面的计数必须挪进提交后钩子（afterCommit），否则回滚会留脏计数
         if (!errandRepository.abandonLockedById(orderId, userId)) {
@@ -379,21 +381,34 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     }
 
     @Override
-    public ErrandCancelResult cancelOrder(String orderId, String userId) {
+    public ErrandCancelResult cancelOrder(String orderId, String userId, String requestId) {
         ErrandOrderEntity orderEntity = getOrder(orderId);
+        // 请求级幂等（request id）：同订单上已存在「本人 + 接单取消 + 同编号」事件 = 同一次点击的重放，
+        // 直接回放成功结果、业务零执行。该判定必须先于角色路由——重放可能落在「已重抢并再确认」的
+        // 新一轮上，此时请求人是当前接单人，不挡住就会把新一轮误取消（事件链判定挡不住这窗口）
+        if (requestId != null && errandRepository.hasTakerCancelEvent(orderId, userId, requestId)) {
+            return new ErrandCancelResult(false, orderEntity.getPublisherId(), orderEntity.getTotalReward(),
+                    true, userId);
+        }
         if (orderEntity.isOwner(userId)) {
             return cancelByPublisher(orderEntity);
         }
         if (orderEntity.isTaker(userId)) {
-            return cancelByTaker(orderEntity);
+            return cancelByTaker(orderEntity, requestId);
         }
-        // 幂等判定（重试场景：订单已不在双方可见）：已取消（终态）或接单方已取消过（taker_canceled 幂等位）→ 视为成功
+        // 幂等判定（重试场景：接单人字段已被清空，订单行无法辨认请求人身份）：
+        // 已取消（终态）→ 视为发布方取消成功；最新事件是本人 TAKER_CANCELLED 且订单回 PUBLISHED →
+        // 视为本人取消成功（takerId 取事件操作人；重试触发的扣分入账由 credit 流水 uk_user_reason_ref 去重）
         if (orderEntity.getStatus() == ErrandStatusVO.CANCELLED) {
             return new ErrandCancelResult(false, orderEntity.getPublisherId(), orderEntity.getTotalReward(), false, null);
         }
-        if (orderEntity.isTakerCanceled() && orderEntity.getStatus() == ErrandStatusVO.PUBLISHED) {
+        ErrandOrderEventVO latestEvent = errandRepository.latestEventOf(orderId);
+        if (orderEntity.getStatus() == ErrandStatusVO.PUBLISHED
+                && latestEvent != null
+                && EVENT_TAKER_CANCELLED.equals(latestEvent.getEventType())
+                && userId.equals(latestEvent.getActorId())) {
             return new ErrandCancelResult(false, orderEntity.getPublisherId(), orderEntity.getTotalReward(),
-                    true, orderEntity.getTakerId());
+                    true, latestEvent.getActorId());
         }
         throw new BusinessException(ResponseCode.FORBIDDEN, "只有订单双方可以取消");
     }
@@ -412,11 +427,11 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
                 false, null);
     }
 
-    private ErrandCancelResult cancelByTaker(ErrandOrderEntity orderEntity) {
+    private ErrandCancelResult cancelByTaker(ErrandOrderEntity orderEntity, String requestId) {
         if (orderEntity.getStatus() != ErrandStatusVO.CONFIRMED) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅已确认未取货时允许接单方取消");
         }
-        if (!errandRepository.cancelByTaker(orderEntity.getOrderId(), orderEntity.getTakerId())) {
+        if (!errandRepository.cancelByTaker(orderEntity.getOrderId(), orderEntity.getTakerId(), requestId)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
         }
         // 接单后取消扣信用分（credit 域），订单回已发布重新可抢
@@ -642,11 +657,6 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     /** 草稿可缺省类型：非空才校验枚举（提交时必填由 case 层守卫） */
     private ErrandTypeVO toTypeOrNull(String type) {
         return type == null || type.isBlank() ? null : ErrandTypeVO.from(type);
-    }
-
-    /** 草稿可缺省时限：非空才校验枚举，落库为小时数（提交时必填由 case 层守卫） */
-    private Integer toTimeLimitHours(String timeLimit) {
-        return timeLimit == null || timeLimit.isBlank() ? null : ErrandTimeLimitVO.from(timeLimit).getHours();
     }
 
     private String toStatusName(String status) {

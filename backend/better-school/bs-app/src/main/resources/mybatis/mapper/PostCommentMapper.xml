@@ -4,7 +4,7 @@
 
     <sql id="baseColumns">
         id, comment_id, post_id, user_id, content, state, root_id, parent_id, reply_count,
-        create_time, update_time
+        create_time
     </sql>
 
     <!-- 各语句统一纯 post_comment 单表列清单：作者昵称（bs_user）、
@@ -25,11 +25,11 @@
          （见 IPostCommentFeedIndexDao.selectRootFeedCommentIds），顺序来自索引 -->
     <select id="selectRootPageByPostId" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
-        FROM post_comment c
-        WHERE c.post_id = #{postId}
-          AND c.root_id = '0'
-          AND c.state = 'NORMAL'
-        ORDER BY c.create_time, c.comment_id
+        FROM post_comment
+        WHERE post_id = #{postId}
+          AND root_id = '0'
+          AND state = 'NORMAL'
+        ORDER BY create_time, comment_id
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -38,11 +38,11 @@
          漂移（索引行未随软删退场）时缺行由调用方跳过，不补位 -->
     <select id="selectNormalRootsByIds" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
-        FROM post_comment c
-        WHERE c.comment_id IN
+        FROM post_comment
+        WHERE comment_id IN
         <foreach collection="commentIds" item="commentId" open="(" separator="," close=")">#{commentId}</foreach>
-          AND c.root_id = '0'
-          AND c.state = 'NORMAL'
+          AND root_id = '0'
+          AND state = 'NORMAL'
     </select>
 
     <!-- 根评论真实总数：他人可见口径（仅 NORMAL 根评论，不含任何待审） -->
@@ -61,10 +61,10 @@
          reply_count 只对根评论有意义，楼内不取 -->
     <select id="selectRepliesByRootId" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
-        FROM post_comment c
-        WHERE c.root_id = #{rootId}
-          AND c.state = 'NORMAL'
-        ORDER BY c.create_time, c.comment_id
+        FROM post_comment
+        WHERE root_id = #{rootId}
+          AND state = 'NORMAL'
+        ORDER BY create_time, comment_id
         LIMIT #{offset}, #{limit}
     </select>
 
@@ -96,37 +96,37 @@
          like_count 不在列清单里（票 02，真源在 post_comment_like_count，仓储批量回查填充） -->
     <select id="selectNormalRowsByUser" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
-        FROM post_comment c
-        WHERE c.user_id = #{userId}
-          AND c.state = 'NORMAL'
-        ORDER BY c.create_time DESC, c.comment_id DESC
+        FROM post_comment
+        WHERE user_id = #{userId}
+          AND state = 'NORMAL'
+        ORDER BY create_time DESC, comment_id DESC
     </select>
 
     <!-- 单条评论（点赞前置检查、详情组装）。like_count 不在列清单里（票 02）：
          真源在 post_comment_like_count，仓储按单元素 id 集同一条回查通路填充 -->
     <select id="selectById" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
-        FROM post_comment c
-        WHERE c.comment_id = #{commentId}
+        FROM post_comment
+        WHERE comment_id = #{commentId}
     </select>
 
     <!-- 按 id 集批量回查（不分状态：楼内指向评论回查要忽略父行状态） -->
     <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.comment.po.PostComment">
         SELECT <include refid="baseColumns"/>
-        FROM post_comment c
-        WHERE c.comment_id IN
+        FROM post_comment
+        WHERE comment_id IN
         <foreach collection="ids" item="commentId" open="(" separator="," close=")">#{commentId}</foreach>
     </select>
 
     <!-- 我评论过的帖子（PostMapper 迁入）：去重 + 最近评论时间倒序（单表 GROUP BY，ONLY_FULL_GROUP_BY 安全）；
          帖子行与可见性过滤由仓储两段查拼装 -->
     <select id="selectRelationCommentedRows" resultType="com.betterschool.infrastructure.dao.post.po.PostRelationRow">
-        SELECT post_id AS postId, MAX(create_time) AS sortTime
+        SELECT post_id
         FROM post_comment
         WHERE user_id = #{userId}
           AND state = 'NORMAL'
         GROUP BY post_id
-        ORDER BY sortTime DESC, post_id DESC
+        ORDER BY MAX(create_time) DESC, post_id DESC
     </select>
 
     <!-- 统一软删：用户删除与举报下架同轨，状态转 DELETED、行保留（物理 DELETE 已废弃）。
@@ -155,10 +155,10 @@
          ② like_count 从计数窄表抄入（无行 = 0，与运行期「窄表无行即计数 0」同口径）；
          组装后走 IPostCommentFeedIndexDao.insertFeedIndexRows 批量写回。update_time 每次重建刷 NOW()：技术时间戳、非排序键 -->
     <select id="selectRebuildRows" resultType="com.betterschool.infrastructure.dao.comment.po.CommentFeedIndexRow">
-        SELECT c.comment_id AS commentId, c.post_id AS postId, c.create_time AS createTime
-        FROM post_comment c
-        WHERE c.root_id = '0'
-          AND c.state = 'NORMAL'
+        SELECT comment_id, post_id, create_time
+        FROM post_comment
+        WHERE root_id = '0'
+          AND state = 'NORMAL'
     </select>
 
 </mapper>

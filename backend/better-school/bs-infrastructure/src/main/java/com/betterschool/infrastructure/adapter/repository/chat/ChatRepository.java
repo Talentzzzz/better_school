@@ -11,12 +11,14 @@ import com.betterschool.domain.chat.model.valobj.DirectRoomPairVO;
 import com.betterschool.domain.chat.model.valobj.ChatMessagePushEvent;
 import com.betterschool.domain.chat.model.valobj.ChatReadPushEvent;
 import com.betterschool.domain.chat.model.valobj.ChatRecallPushEvent;
+import com.betterschool.domain.chat.model.valobj.MessagePreviewVO;
 import com.betterschool.domain.chat.model.valobj.MsgStatusVO;
 import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
 import com.betterschool.domain.chat.model.valobj.RecallByVO;
 import com.betterschool.domain.chat.model.valobj.RoomSourceEnum;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
 import com.betterschool.domain.chat.model.valobj.TimelineItemVO;
+import com.betterschool.domain.chat.model.valobj.TimelinePageVO;
 import com.betterschool.infrastructure.dao.chat.IMessageDao;
 import com.betterschool.infrastructure.dao.chat.IRoomDao;
 import com.betterschool.infrastructure.dao.chat.IRoomMemberDao;
@@ -26,6 +28,7 @@ import com.betterschool.infrastructure.dao.chat.IUserRoomDao;
 import com.betterschool.infrastructure.dao.chat.IUserSeqDao;
 import com.betterschool.infrastructure.dao.chat.po.UserPairRoom;
 import com.betterschool.infrastructure.dao.chat.po.Message;
+import com.betterschool.infrastructure.dao.chat.po.MessagePreview;
 import com.betterschool.infrastructure.dao.chat.po.Room;
 import com.betterschool.infrastructure.dao.chat.po.RoomListItem;
 import com.betterschool.infrastructure.dao.chat.po.RoomMember;
@@ -261,20 +264,16 @@ public class ChatRepository implements IChatRepository {
             row.setPeerUserId(peerUserId);
             RoomListItemVO item = toRoomListItemVO(row);
             if (room.getLastSeq() != null && room.getLastSeq() > 0) {
-                // 四段查之④ 预览真源：按 (room_id, room.last_seq) 逐会话点查最新一条消息
+                // 四段查之④ 预览真源：按 (room_id, room.last_seq) 逐会话点查最新一条消息的预览四列
                 //（last_seq=0 尚无消息不查；§9.7 批量回查的例外：锚点是 (room_id, seq) 复合键，
                 // msg_id 要点查后才知，无法先集后查——逐会话走 uk_room_seq 点查原语，
                 // 上限 = 页大小（controller MAX_PAGE_SIZE=200），非无界 N+1）
-                item.setLastMessage(toMessageEntity(chatMessageDao.selectMessage(row.getRoomId(), room.getLastSeq())));
+                item.setLastPreview(toMessagePreviewVO(
+                        chatMessageDao.selectMessagePreview(row.getRoomId(), room.getLastSeq())));
             }
             roomListItemVOList.add(item);
         }
         return roomListItemVOList;
-    }
-
-    @Override
-    public long countRoomsForUser(String userId) {
-        return chatUserRoomDao.countRoomsForUser(userId);
     }
 
     // ===== room_member（会话维度名册：「这个会话有谁」） =====
@@ -421,12 +420,13 @@ public class ChatRepository implements IChatRepository {
     }
 
     @Override
-    public List<TimelineItemVO> listTimelineAfter(String userId, long afterDeliverySeq, int limit) {
+    public TimelinePageVO listTimelineAfter(String userId, long deliverySeqCursor, int limit) {
         // 增量补拉两段查（SQL 层零 JOIN）：timeline 投递行扫描 → msg_id 集批量回查消息全量，
         // 按投递序拼装。消息行缺失 = 原 INNER JOIN 语义（timeline 行在而消息行缺失属漂移），跳过
-        List<TimelineDeliveryRow> timelineDeliveryRowList = chatTimelineDao.selectTimelineRows(userId, afterDeliverySeq, limit);
+        List<TimelineDeliveryRow> timelineDeliveryRowList = chatTimelineDao.selectTimelineRows(userId, deliverySeqCursor, limit);
         if (timelineDeliveryRowList.isEmpty()) {
-            return List.of();
+            // 空页不动游标：原样回传入参，hasMore=false 即追平
+            return new TimelinePageVO(List.of(), deliverySeqCursor, Boolean.FALSE);
         }
         Map<String, Message> messagesById = chatMessageDao.selectMessagesByIds(
                 timelineDeliveryRowList.stream().map(TimelineDeliveryRow::getMsgId).toList()).stream()
@@ -439,7 +439,11 @@ public class ChatRepository implements IChatRepository {
             }
             timelineItemVOList.add(new TimelineItemVO(toMessageEntity(message), row.getDeliverySeq()));
         }
-        return timelineItemVOList;
+        // 游标 = 扫描边界（本页最后一行），不是「最后一条拼装成功的条目」：漂移行只少返回一条，
+        // 不会让游标停在它前面（否则连续 ≥ limit 行漂移就把游标永久钉死）
+        long nextCursor = timelineDeliveryRowList.get(timelineDeliveryRowList.size() - 1).getDeliverySeq();
+        // 填满一页即「可能还有」：交界处多一次空请求，换游标严格单调
+        return new TimelinePageVO(timelineItemVOList, nextCursor, timelineDeliveryRowList.size() >= limit);
     }
 
     // ===== user_seq =====
@@ -543,5 +547,19 @@ public class ChatRepository implements IChatRepository {
         messageEntity.setRecalledBy(message.getRecalledBy() == null ? null : RecallByVO.valueOf(message.getRecalledBy()));
         messageEntity.setCreatedAt(message.getCreateTime());
         return messageEntity;
+    }
+
+    /** 预览投影：state 在出库处收敛成 recalled 布尔，渲染器不碰消息状态机 */
+    private MessagePreviewVO toMessagePreviewVO(MessagePreview messagePreview) {
+        if (messagePreview == null) {
+            return null;
+        }
+        MessagePreviewVO previewVO = new MessagePreviewVO();
+        previewVO.setMsgType(MsgTypeVO.valueOf(messagePreview.getMsgType()));
+        previewVO.setContent(messagePreview.getContent());
+        previewVO.setRefType(messagePreview.getRefType() == null
+                ? null : CardRefTypeVO.valueOf(messagePreview.getRefType()));
+        previewVO.setRecalled(MsgStatusVO.RECALLED.name().equals(messagePreview.getState()));
+        return previewVO;
     }
 }

@@ -22,12 +22,15 @@ public interface ITradeRepository {
 
     // ---------- 商品 ----------
 
-    /** 落一行商品（uuid-biz-id 票 05：发号在实现内落库前完成，业务 id 随行写入并回填入参实体） */
+    /**
+     * 落一行商品（uuid-biz-id 票 05：发号在实现内落库前完成，业务 id 随行写入并回填入参实体）；
+     * 同事务建库存台账行（product_inventory，quantity 取实体入参，null = 1）并落 INIT 流水
+     */
     void save(ProductEntity productEntity);
 
     ProductEntity findById(String productId);
 
-    /** 覆盖草稿内容（仅 DRAFT 行生效） */
+    /** 覆盖草稿内容（仅 DRAFT 行生效；quantity 非 null 时同事务覆盖台账件数） */
     void updateDraft(ProductEntity productEntity);
 
     /** 提交草稿：DRAFT -> ON_SALE，返回 false = 状态已变化 */
@@ -48,20 +51,19 @@ public interface ITradeRepository {
     /** 软删：status -> DELETED */
     void deleteById(String productId);
 
-    /** 标记已出：ON_SALE -> SOLD */
+    /**
+     * 标记已出：ON_SALE -> SOLD（同事务清零台账 remaining + 落 ADJUST 流水 + 索引行翻 SOLD）
+     */
     void markSold(String productId);
 
-    /** 重新上架：SOLD -> ON_SALE（同事务索引行翻回 + 搜索同步消息） */
-    void relist(String productId);
+    /**
+     * 重新上架：SOLD -> ON_SALE（同事务索引行翻回 + 搜索同步消息）。
+     * 台账 remaining = 0（真卖完）或台账行缺失返回 false，调用方报"无库存不可重上架"
+     */
+    boolean relist(String productId);
 
-    /** 下单锁定：ON_SALE -> LOCKED（条件 UPDATE，0 行 = 已被交易） */
-    boolean lock(String productId);
-
-    /** 解锁释放（下单后取消/支付超时）：LOCKED -> ON_SALE */
-    boolean release(String productId);
-
-    /** 支付完成转已出：LOCKED -> SOLD */
-    boolean lockToSold(String productId);
+    /** 卖家加货：台账 quantity/remaining 同涨 + RESTOCK 流水，同一事务；仅 ON_SALE 可加货（0 行/状态不符抛错） */
+    void restock(String productId, int quantity, String actorId);
 
     List<ProductEntity> pageList(ProductCategoryVO category, BigDecimal minPrice, BigDecimal maxPrice,
                                  String sort, int offset, int limit);
@@ -151,36 +153,26 @@ public interface ITradeRepository {
      */
     void schedulePayTimeout(String orderId, long delaySeconds);
 
-    // ---------- 跨商品与订单的原子用例（实现内编程式事务，REQUIRED） ----------
+    // ---------- 跨商品、库存与订单的原子用例（实现内编程式事务，REQUIRED） ----------
 
     /**
-     * 下单四写原子：订单落库 + 商品锁定（条件 UPDATE，0 行即抛 BUSINESS_ERROR 并回滚）
-     * + 搜索同步消息（锁定后商品退出搜索）+ 支付超时注册（到期时刻在事务内按 payTimeoutMinutes 算）。
-     * 返回订单 id
+     * 下单原子（multi-quantity-listing，替代原 createOrderWithLock）：订单落库（含 quantity）
+     * + 台账条件 UPDATE 扣减（remaining >= quantity，0 行即抛 BUSINESS_ERROR 回滚——防超卖唯一闸门）
+     * + DEDUCT 库存流水 + 扣到 0 时商品 ON_SALE → SOLD（索引行翻 SOLD + 搜索同步消息随行）
+     * + 支付超时注册。全部一个事务，返回订单 id
      */
-    String createOrderWithLock(ProductOrderEntity orderEntity, String productId, int payTimeoutMinutes);
+    String createOrderWithInventory(ProductOrderEntity orderEntity, String productId, int payTimeoutMinutes);
 
     /**
-     * 支付：订单 PAID + 搜索同步消息（保持文档不存在），同一事务；返回 false = 0 行（状态已变化）；
-     * 商品 id 在实现内按 orderId 反查（与改造前 payAndSync 同口径）
-     */
-    boolean payOrderWithSearchSync(String orderId, String buyerId);
-
-    /**
-     * 确认收货：订单 DELIVERED → COMPLETED + 商品 LOCKED → SOLD（幂等，0 行无妨）
-     * + 搜索同步消息，同一事务；返回 false = 0 行（状态已变化）
-     */
-    boolean confirmOrderWithSearchSync(String orderId, String buyerId);
-
-    /**
-     * 买家取消：订单条件 UPDATE（PENDING_PAYMENT/PAID → CANCELLED）+ 商品释放回在售
+     * 买家取消：订单条件 UPDATE（PENDING_PAYMENT/PAID → CANCELLED）+ 台账回补（按订单 quantity）
+     * + RELEASE 库存流水 + 回补后 remaining > 0 且商品 SOLD 时翻回 ON_SALE（索引行随行）
      * + 搜索同步消息，同一事务；返回 false = 0 行（状态已变化）
      */
     boolean cancelOrderWithSearchSync(String orderId, String buyerId);
 
     /**
-     * 待支付超时取消：订单条件 UPDATE（PENDING_PAYMENT → CANCELLED）+ 商品释放
-     * + 搜索同步消息，同一事务；返回 false = 0 行（已支付/已取消，幂等跳过）
+     * 待支付超时取消：订单条件 UPDATE（PENDING_PAYMENT → CANCELLED）+ 台账回补 + RELEASE 流水
+     * + 回补翻态 + 搜索同步消息，同一事务；返回 false = 0 行（已支付/已取消，幂等跳过）
      */
     boolean cancelPendingPaymentWithSearchSync(String orderId);
 

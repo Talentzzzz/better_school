@@ -153,6 +153,7 @@ public class SearchController implements ISearchService {
         dto.setTakerNickname(orderEntity.getTakerNickname());
         dto.setTakerAvatar(orderEntity.getTakerAvatar());
         dto.setType(orderEntity.getType().name());
+        dto.setTitle(orderEntity.getTitle());
         dto.setDescription(orderEntity.getDescription());
         dto.setPickupLocation(orderEntity.getPickupLocation());
         dto.setDeliveryLocation(orderEntity.getDeliveryLocation());

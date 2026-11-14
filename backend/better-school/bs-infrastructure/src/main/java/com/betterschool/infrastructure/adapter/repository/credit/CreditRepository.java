@@ -153,7 +153,6 @@ public class CreditRepository implements ICreditRepository {
         creditDetailEntity.setReasonType(creditDetail.getReasonType());
         creditDetailEntity.setRefId(creditDetail.getRefId());
         creditDetailEntity.setCreateTime(creditDetail.getCreateTime());
-        creditDetailEntity.setUpdateTime(creditDetail.getUpdateTime());
         return creditDetailEntity;
     }
 }
