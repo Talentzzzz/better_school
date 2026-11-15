@@ -105,19 +105,19 @@ xxl:
       log-path: ./logs/xxl-job-marketing
       log-retention-days: 30
 
-# 库存合并器（spec §2.4：与计数侧同一套窗口 / 批 / 超时，分片与线程更小；全部未经扫参）。
-# 上线后只按 MergeMetrics 的 flushed ÷ batches（合并比）、timedOut、rejectedFull 调，调参不改代码结构。
-# flush-threads 的硬上限是「连接池 - 2」，由 marketing-app/config/QuotaMergeConfig 启动时校验并把两个数打进日志。
+# 库存合并器（spec §2.4：与计数侧同一套窗口 / 批 / 超时；全部未经扫参）。
+# 调参看日志里的分片积压与 flush 批大小，调参不改代码结构。
+# shard-count 的硬上限是「连接池 - 2」（per-shard 常驻 flush 线程模型，flush 并发 = shard-count），
+# 由 marketing-app/config/QuotaMergeConfig 启动时校验并把两个数打进日志。
 # shardCapacity 比计数侧小是刻意的：库存资金敏感 ⇒ 满了立刻降级为同步单条扣减，队列别长。
 merge:
   inventory:
-    shard-count: 64         # 2 的幂；库存热点是「一次活动 1~3 个 invId」，64 个缓冲够
-    window-ms: 5            # 合并窗口：分片首个请求排定 5ms 后 flush，攒满可提前触发
+    shard-count: 8          # 2 的幂；分片本职是路由桶，8 片够摊平 offer 争抢；per-shard 线程 ⇒ 必须 <= 连接池上限 - 2（池 10 ⇒ 上限 8）
+    max-flush-delay-millis: 5            # 合并窗口：分片首个请求起算 5ms 后 flush，攒满可提前触发
     max-batch: 200          # 200 行 ≈ 8ms 落库；再大 wait-timeout-ms 就吃紧
-    wait-timeout-ms: 100    # 必须 > window-ms：5ms 窗口 + 8ms 落库 + 抖动；超时 = TIMEOUT_UNKNOWN
+    wait-timeout-ms: 100    # 必须 > max-flush-delay-millis：5ms 窗口 + 8ms 落库 + 抖动；超时 = TIMEOUT_UNKNOWN
     shard-capacity: 2000    # 只当「降级触发点 + 内存上界」，满了就拒（调用方同步降级），不扩容
-    flush-threads: 2        # 必须 <= 连接池上限 - 2（池 10 ⇒ 上限 8）
-    drain-timeout-ms: 5000  # 停机排空（停收 → 排空 → 关池）的等待上限
+    drain-timeout-ms: 5000  # 停机排空（停收 → 排空 → signal + join）的等待上限
 
 logging:
   level:

@@ -145,11 +145,13 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
     }
 
     /**
-     * 库存预扣（inv_id='0' = 不限量，跳过）：实物走带兜底的配额预扣（票 12 的 port），
-     * 虚拟走权益池预扣；扣不出切兜底奖品位，兜底也扣不出 → RAFFLE_ISSUE_FAILED。
+     * 库存预扣（award-inventory 两层模型）：预扣锚在奖品位 id（奖品库存账户按 award_id 1:1，
+     * 投放池只被「分配」转移，抽奖永远不碰池）。奖品位投放池配置 {@code inv_id='0'}/null = 不限量哨兵，
+     * 跳过预扣。实物走带兜底的预扣（票 12 的 port），虚拟走虚拟账户预扣；扣不出切兜底奖品位，
+     * 兜底也扣不出 → RAFFLE_ISSUE_FAILED。
      * <p>
-     * 预扣带 {@code recordId}（票 03）：库存明细以 {@code (biz_type, biz_id = recordId)} 为业务唯一键，
-     * 同 token 并发双击时第二笔撞键 → 库存侧回补本次 Redis 扣减并按「已扣」回放，净扣减只有一份。
+     * 预扣带 {@code recordId}（票 03）：库存明细以 {@code (award_id, biz_type, biz_id = recordId)}
+     * 为业务唯一键，同 token 并发双击时第二笔撞键 → 库存侧按「已扣」回放，净扣减只有一份。
      */
     private DrawStrategyAwardEntity issueWithFallback(DrawStrategyAwardEntity award, String strategyId,
                                                       Map<String, DrawStrategyAwardEntity> awardMap, String recordId) {
@@ -158,12 +160,12 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
         }
         DrawStrategyAwardEntity fallbackAward = findFallbackAward(strategyId, awardMap);
         if ("PHYSICAL".equals(award.getAwardType())) {
-            String fallbackInvId = fallbackAward != null && fallbackAward.getInvId() != null
-                    && !"0".equals(fallbackAward.getInvId()) ? fallbackAward.getInvId() : null;
+            String fallbackAwardId = fallbackAward != null && fallbackAward.getInvId() != null
+                    && !"0".equals(fallbackAward.getInvId()) ? fallbackAward.getAwardId() : null;
             IInventoryDeductPort.Outcome outcome = inventoryDeductPort
-                    .preDeductPhysicalWithFallback(award.getInvId(), fallbackInvId, 1, recordId);
+                    .preDeductPhysicalWithFallback(award.getAwardId(), fallbackAwardId, 1, recordId);
             if (outcome == IInventoryDeductPort.Outcome.FALLBACK) {
-                log.info("[RaffleDraw] 实物配额不足，切兜底奖品 awardId={} fallbackAwardId={}",
+                log.info("[RaffleDraw] 实物库存不足，切兜底奖品 awardId={} fallbackAwardId={}",
                         award.getAwardId(), fallbackAward.getAwardId());
                 return requireFallback(fallbackAward);
             }
@@ -176,15 +178,15 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
             }
             return award;
         }
-        if (inventoryDeductPort.preDeductVirtual(award.getInvId(), 1, recordId)) {
+        if (inventoryDeductPort.preDeductVirtual(award.getAwardId(), 1, recordId)) {
             return award;
         }
-        log.info("[RaffleDraw] 虚拟权益不足，切兜底奖品 awardId={}", award.getAwardId());
+        log.info("[RaffleDraw] 虚拟奖品不足，切兜底奖品 awardId={}", award.getAwardId());
         if (fallbackAward == null) {
             throw new AppException(ResponseCode.RAFFLE_ISSUE_FAILED);
         }
         if (fallbackAward.getInvId() != null && !"0".equals(fallbackAward.getInvId())
-                && !inventoryDeductPort.preDeductVirtual(fallbackAward.getInvId(), 1, recordId)) {
+                && !inventoryDeductPort.preDeductVirtual(fallbackAward.getAwardId(), 1, recordId)) {
             throw new AppException(ResponseCode.RAFFLE_ISSUE_FAILED);
         }
         return fallbackAward;
@@ -207,7 +209,7 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
 
     private DrawStrategyAwardEntity requireFallback(DrawStrategyAwardEntity fallbackAward) {
         if (fallbackAward == null) {
-            // 配额扣成功于兜底库存、奖品位却缺失 = 配置错，预扣侧已落明细留给对账
+            // 兜底库存扣成功、奖品位却缺失 = 配置错，预扣侧已落明细留给对账
             log.error("[RaffleDraw] 兜底奖品位缺失，无法落库");
             throw new AppException(ResponseCode.RAFFLE_ISSUE_FAILED);
         }
@@ -227,7 +229,8 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
         record.setAwardDesc(award.getAwardDesc());
         record.setAwardType(award.getAwardType());
         record.setLevel(award.getLevel());
-        record.setInvId(award.getInvId() == null || "0".equals(award.getInvId()) ? null : award.getInvId());
+        // inv_id 快照 = 奖品库存账户维度（award_id，award-inventory 两层模型；不限量哨兵 inv_id='0'/null 落 NULL）
+        record.setInvId(award.getInvId() == null || "0".equals(award.getInvId()) ? null : award.getAwardId());
         // THANKS 落库即已完成（sql.md 口径，不走兑换/发货）；其余从待兑换起步，推进归票 14
         record.setState("THANKS".equals(award.getAwardType())
                 ? DrawRecordActionVO.COMPLETE.getTargetState()
@@ -263,7 +266,7 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
     /**
      * 中奖事件（topic {@code bs-lottery-drawn}）与业务写同事务落 outbox —— 见 {@code DrawRecordAggregate}。
      * 谢谢参与不发事件（积分域与单体都不该收到「谢谢参与」）；
-     * {@code pointsAmount} 只在虚拟积分档现算（读 {@code virtual_inventory_quota.value}），实物 / 次数档留空。
+     * {@code pointsAmount} 只在虚拟积分档现算（经奖品位读 type=POINTS 池的面额配置），实物 / 次数档留空。
      */
     private LotteryDrawnMessage drawnEvent(DrawRecordEntity record) {
         if (!"THANKS".equals(record.getAwardType())) {
@@ -275,7 +278,7 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
 
     private Integer pointsAmountOf(DrawRecordEntity record) {
         return "VIRTUAL".equals(record.getAwardType()) && record.getInvId() != null
-                ? raffleRepository.queryPointsValueByInvId(record.getInvId())
+                ? raffleRepository.queryPointsValueByAwardId(record.getInvId())
                 : null;
     }
 

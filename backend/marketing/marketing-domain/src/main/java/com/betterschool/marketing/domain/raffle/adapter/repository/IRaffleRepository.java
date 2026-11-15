@@ -81,13 +81,20 @@ public interface IRaffleRepository {
     /** 按记录业务 ID 查（幂等重放 / 并发去重 / 状态机判定起点）；不存在返回 null */
     DrawRecordEntity queryRecordByRecordId(String recordId);
 
-    /** 积分面额：virtual_inventory_quota.value（仅 type=POINTS 行），无匹配返回 null */
-    Integer queryPointsValueByInvId(String invId);
+    /** 积分面额：奖品位对应虚拟池的 value（仅 type=POINTS 池；award_id → inv_id → 池两步），无匹配返回 null */
+    Integer queryPointsValueByAwardId(String awardId);
+
+    /** 奖品位是否存在（管理/投放侧分配 usecase 的入参校验用） */
+    boolean existsAward(String awardId);
 
     /** 今日已抽数 = draw_record 该用户当日行数 */
     int countTodayDrawn(String userId);
 
-    /** 奖品目录视图：奖品位 + 两段库存台账批量回查的展示口径（remaining/total），inv_id=0 = 不限量 */
+    /**
+     * 奖品目录视图（award-inventory 两层模型）：奖品位 + 奖品库存账户批量回查的展示口径
+     * （remaining/total 读账户，池 surplus 已被分配转走）；积分面额仍读池配置
+     * （award_id → inv_id → type=POINTS 池的 value），账户/池行缺失或 surplus&lt;0 = 不限量落 null。
+     */
     List<PrizeCatalogVO> queryPrizeCatalog(String strategyId);
 
     /** 我的中奖记录：恒过滤 THANKS，create_time DESC */

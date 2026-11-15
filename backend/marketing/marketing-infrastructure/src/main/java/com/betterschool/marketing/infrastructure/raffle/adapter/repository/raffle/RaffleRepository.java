@@ -13,8 +13,9 @@ import com.betterschool.marketing.domain.raffle.model.valobj.DrawRecordVO;
 import com.betterschool.marketing.domain.raffle.model.valobj.PrizeCatalogVO;
 import com.betterschool.marketing.domain.raffle.model.valobj.UserPrizeVO;
 import com.betterschool.marketing.infrastructure.common.outbox.OutboxMessageStore;
-import com.betterschool.marketing.infrastructure.inventory.dao.IPhysicalQuotaDao;
+import com.betterschool.marketing.infrastructure.inventory.dao.IAwardInventoryDao;
 import com.betterschool.marketing.infrastructure.inventory.dao.IVirtualInventoryQuotaDao;
+import com.betterschool.marketing.infrastructure.inventory.dao.po.AwardInventoryPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawActivityDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawRecordDetailDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawStrategyAwardDao;
@@ -30,7 +31,6 @@ import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyWeightPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawUserPrizeViewPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.ExchangeDetailRowPO;
-import com.betterschool.marketing.infrastructure.raffle.dao.po.PhysicalQuotaRowPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.VirtualQuotaRowPO;
 import com.betterschool.marketing.types.common.Constants;
 import lombok.RequiredArgsConstructor;
@@ -51,8 +51,8 @@ import java.util.stream.Collectors;
 
 /**
  * 抽奖域唯一仓储实现：四张面（决策侧配置读 + 决策数据 Redis 读写、读侧翻页视图、落库写面、
- * 发货状态机写面）原样合成，数据访问按表分落各 DAO（一表一 DAO；台账批量回查直接注入
- * 库存域的 {@code IVirtualInventoryQuotaDao} / {@code IPhysicalQuotaDao}）；只有跨表 /
+ * 发货状态机写面）原样合成，数据访问按表分落各 DAO（一表一 DAO；读侧批量回查直接注入
+ * 库存域的 {@code IAwardInventoryDao} / {@code IVirtualInventoryQuotaDao}）；只有跨表 /
  * 带 outbox 的写面用 {@code TransactionTemplate}（REQUIRED，可并入调用方事务）。
  */
 @Repository
@@ -66,7 +66,7 @@ public class RaffleRepository implements IRaffleRepository {
     private final IDrawStrategyWeightDao drawStrategyWeightDao;
     private final IDrawRecordDetailDao drawRecordDetailDao;
     private final IVirtualInventoryQuotaDao virtualInventoryQuotaDao;
-    private final IPhysicalQuotaDao physicalQuotaDao;
+    private final IAwardInventoryDao awardInventoryDao;
     private final RedissonClient redissonClient;
     private final TransactionTemplate transactionTemplate;
     private final OutboxMessageStore outboxMessageStore;
@@ -189,8 +189,16 @@ public class RaffleRepository implements IRaffleRepository {
     }
 
     @Override
-    public Integer queryPointsValueByInvId(String invId) {
-        return virtualInventoryQuotaDao.selectPointsValueByInvId(invId);
+    public Integer queryPointsValueByAwardId(String awardId) {
+        // 两步查（SQL 层零 JOIN）：award_id → 奖品位投放池配置（inv_id）→ type=POINTS 池的面额。
+        // award-inventory 两层模型下账户只存 value_qty 数值，POINTS/DRAW_COUNT 的区分留在池配置里
+        String invId = drawStrategyAwardDao.selectInvIdByAwardId(awardId);
+        return invId == null ? null : virtualInventoryQuotaDao.selectPointsValueByInvId(invId);
+    }
+
+    @Override
+    public boolean existsAward(String awardId) {
+        return drawStrategyAwardDao.existsByAwardId(awardId);
     }
 
     @Override
@@ -200,23 +208,24 @@ public class RaffleRepository implements IRaffleRepository {
 
     @Override
     public List<PrizeCatalogVO> queryPrizeCatalog(String strategyId) {
-        // 三段查拼装（原奖品行 LEFT JOIN 两段台账一步投影，SQL 层零 JOIN）：①奖品行（同 sort,id 排序）；
-        // ②虚拟台账 ③实物台账按 inv_id 集批量回查；CASE 语义在 Java 收口——
-        // remaining = 台账 surplus_qty、total = 虚拟 surplus+issued / 实物 surplus+waiting+issued，
-        // inv_id='0'（不限量哨兵）或 surplus < 0 落 null 由 unlimited 表达；台账行缺失 = 原 LEFT JOIN 空行，同样落 null
+        // 三段查拼装（SQL 层零 JOIN）：①奖品行（同 sort,id 排序）；②奖品库存账户按 award_id 集批量回查
+        // （remaining/total 的真相——award-inventory 两层模型，池 surplus 已被分配转走，不能再读池）；
+        // ③虚拟池按 inv_id 集批量回查（只取 type=POINTS 的面额配置）。CASE 语义在 Java 收口——
+        // remaining = 账户 surplus_qty、total = 虚拟 surplus+issued / 实物 surplus+waiting+issued，
+        // surplus < 0（不限量）或账户行缺失（未投放）落 null 由 unlimited 表达
         List<DrawStrategyAwardPO> awards = drawStrategyAwardDao.selectAwardListByStrategyId(strategyId);
         if (awards.isEmpty()) {
             return List.of();
         }
+        List<String> awardIds = awards.stream().map(DrawStrategyAwardPO::getAwardId).distinct().toList();
+        Map<String, AwardInventoryPO> inventoryByAward = awardInventoryDao.selectByAwardIds(awardIds).stream()
+                .collect(Collectors.toMap(AwardInventoryPO::getAwardId, row -> row, (a, b) -> a));
         List<String> invIds = awards.stream().map(DrawStrategyAwardPO::getInvId)
                 .filter(invId -> invId != null && !"0".equals(invId))
                 .distinct().toList();
         Map<String, VirtualQuotaRowPO> virtualByInv = invIds.isEmpty() ? Map.of()
                 : virtualInventoryQuotaDao.selectVirtualQuotasByInvIds(invIds).stream()
                         .collect(Collectors.toMap(VirtualQuotaRowPO::getInvId, row -> row, (a, b) -> a));
-        Map<String, PhysicalQuotaRowPO> physicalByInv = invIds.isEmpty() ? Map.of()
-                : physicalQuotaDao.selectPhysicalQuotasByInvIds(invIds).stream()
-                        .collect(Collectors.toMap(PhysicalQuotaRowPO::getInvId, row -> row, (a, b) -> a));
         List<PrizeCatalogVO> prizes = new ArrayList<>(awards.size());
         for (DrawStrategyAwardPO award : awards) {
             PrizeCatalogVO vo = new PrizeCatalogVO();
@@ -225,19 +234,17 @@ public class RaffleRepository implements IRaffleRepository {
             vo.setAwardType(award.getAwardType());
             vo.setLevel(award.getLevel());
             VirtualQuotaRowPO virtual = virtualByInv.get(award.getInvId());
-            // 积分档面额（VIRTUAL + 库存 type=POINTS），其余为 null
+            // 积分档面额（VIRTUAL + 池 type=POINTS，面额配置的真相仍在池），其余为 null
             vo.setPointsAmount("VIRTUAL".equals(award.getAwardType())
                     && virtual != null && "POINTS".equals(virtual.getType()) ? virtual.getValue() : null);
             Long remaining = null;
             Long total = null;
-            if (virtual != null) {
-                remaining = virtual.getSurplusQty() < 0 ? null : virtual.getSurplusQty();
-                total = virtual.getSurplusQty() < 0 ? null : virtual.getSurplusQty() + virtual.getIssuedQty();
-            } else if (physicalByInv.get(award.getInvId()) != null) {
-                PhysicalQuotaRowPO physical = physicalByInv.get(award.getInvId());
-                remaining = physical.getSurplusQty() < 0 ? null : physical.getSurplusQty();
-                total = physical.getSurplusQty() < 0 ? null
-                        : physical.getSurplusQty() + physical.getWaitingQty() + physical.getIssuedQty();
+            AwardInventoryPO inventory = inventoryByAward.get(award.getAwardId());
+            if (inventory != null && inventory.getSurplusQty() >= 0) {
+                remaining = inventory.getSurplusQty();
+                total = "PHYSICAL".equals(inventory.getType())
+                        ? inventory.getSurplusQty() + inventory.getWaitingQty() + inventory.getIssuedQty()
+                        : inventory.getSurplusQty() + inventory.getIssuedQty();
             }
             vo.setRemaining(remaining);
             vo.setTotal(total);
@@ -254,21 +261,30 @@ public class RaffleRepository implements IRaffleRepository {
 
     @Override
     public List<DrawRecordVO> listDrawRecords(String userId, int offset, int limit) {
-        // 两段查拼装（原 draw_record LEFT JOIN 积分台账，SQL 层零 JOIN）：记录行单表分页 + 按 inv_id 集
-        // 批量回查 type=POINTS 面额；缺行 = null（原 LEFT JOIN 空行口径）
+        // 三段查拼装（SQL 层零 JOIN）：记录行单表分页 + 按 award_id（draw_record.inv_id 快照 = 奖品库存
+        // 账户维度）集回查奖品位投放池配置 + 按 inv_id 集回查 type=POINTS 面额；
+        // 缺行 = null（原 LEFT JOIN 空行口径）
         List<DrawRecordViewPO> rows = raffleDao.selectDrawRecordRows(userId, offset, limit);
         if (rows.isEmpty()) {
             return List.of();
         }
-        List<String> invIds = rows.stream().map(DrawRecordViewPO::getInvId)
-                .filter(invId -> invId != null && !"0".equals(invId))
+        List<String> awardIds = rows.stream().map(DrawRecordViewPO::getInvId)
+                .filter(invId -> invId != null)
                 .distinct().toList();
+        Map<String, String> invIdByAward = awardIds.isEmpty() ? Map.of()
+                : drawStrategyAwardDao.selectAwardsByAwardIds(awardIds).stream()
+                        .collect(Collectors.toMap(DrawStrategyAwardPO::getAwardId, DrawStrategyAwardPO::getInvId, (a, b) -> a));
+        List<String> invIds = List.copyOf(invIdByAward.values());
         Map<String, Integer> pointValues = invIds.isEmpty() ? Map.of()
                 : virtualInventoryQuotaDao.selectPointValuesByInvIds(invIds).stream()
                         .filter(row -> row.getValue() != null)
                         .collect(Collectors.toMap(VirtualQuotaRowPO::getInvId, VirtualQuotaRowPO::getValue, (a, b) -> a));
-        return rows.stream().map(po -> new DrawRecordVO(po.getRecordId(), po.getAwardId(), po.getAwardName(),
-                po.getAwardType(), po.getLevel(), pointValues.get(po.getInvId()), po.getCreateTime())).toList();
+        return rows.stream().map(po -> {
+            String invId = po.getInvId() == null ? null : invIdByAward.get(po.getInvId());
+            return new DrawRecordVO(po.getRecordId(), po.getAwardId(), po.getAwardName(),
+                    po.getAwardType(), po.getLevel(), invId == null ? null : pointValues.get(invId),
+                    po.getCreateTime());
+        }).toList();
     }
 
     @Override

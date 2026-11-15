@@ -1,27 +1,23 @@
 package com.betterschool.marketing.config;
 
-import com.betterschool.marketing.infrastructure.inventory.merge.IQuotaMergeFlushHandler;
-import com.betterschool.marketing.infrastructure.inventory.merge.MergeConfig;
-import com.betterschool.marketing.infrastructure.inventory.merge.QuotaMergeBuffer;
+import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
+import com.betterschool.marketing.domain.inventory.service.merge.MergeConfig;
+import com.betterschool.marketing.domain.inventory.service.merge.QuotaMergeBuffer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
 /**
- * 库存合并器的参数装配与「线程数 × 连接池」校验（spec §2.4）。
+ * 库存合并器的参数装配与「分片数 × 连接池」校验。
  *
- * <p><b>为什么 {@code flushThreads <= 池 − 2} 不在 {@link MergeConfig} 里校验</b>：
- * 连接池大小属于应用装配层，引擎不认识 Hikari。参考工程是只做扣减的独立服务（池 20），
- * 搬成「flush 线程 = 池」在本仓库会出事——这里是<b>共享的 {@code hikari.maximum-pool-size}
- * + 虚拟线程</b>，连接池就是真并发上限，flush 占满连接后普通查询会在
- * {@code connection-timeout: 3000} 上排队。所以引擎只校验 {@code >= 1}，上限在启动这里卡死。
+ * <p>为什么 {@code shardCount <= 池 − 2} 不在 {@link MergeConfig} 里校验：连接池属于应用装配层，
+ * 引擎不认识 Hikari。这里是共享的 {@code hikari.maximum-pool-size} + 虚拟线程，连接池就是真并发上限，
+ * flush 占满连接后普通查询会在 {@code connection-timeout} 上排队——所以引擎只校验 2 的幂等自身约束，
+ * 并发上限在启动这里卡死。
  *
- * <p>两个数一起打进启动日志：调参时先看这两个数，再看 {@code MergeMetrics} 的
- * {@code flushed ÷ batches}。
- *
- * <p><b>库存侧与计数侧的参数差异只有值</b>（{@code 64 / 5ms / 200 / 100ms / 2000 / 2 线程}）：
- * 库存热点是「一次活动 1~3 个 invId」，不需要 256 个缓冲；资金敏感 ⇒ 容量更小、更早降级为同步单条。
+ * <p>per-shard 常驻线程模型（每分片一条 {@code quota-merge-flush-*}）下 flush 并发 = shardCount，
+ * 不变量「flush 并发 <= 池 − 2」的校验对象从旧的 flushThreads 换成 shardCount（wayfinder charting-log Q7）。
  */
 @Slf4j
 @Configuration
@@ -35,43 +31,44 @@ public class QuotaMergeConfig {
 
     /**
      * 库存侧合并参数。未配置的项落 {@link MergeConfig#quotaDefaults()}
-     * （64 / 5ms / 200 / 100ms / 2000 / 2 线程 / 5s）。
+     * （8 / 5ms / 200 / 100ms / 2000 / 5s）。
      */
     @Bean
     public MergeConfig quotaMergeConfig(Environment environment) {
         MergeConfig defaults = MergeConfig.quotaDefaults();
         MergeConfig config = new MergeConfig(
                 environment.getProperty("merge.inventory.shard-count", Integer.class, defaults.shardCount()),
-                environment.getProperty("merge.inventory.window-ms", Integer.class, defaults.windowMs()),
+                environment.getProperty("merge.inventory.max-flush-delay-millis", Integer.class, defaults.maxFlushDelayMillis()),
                 environment.getProperty("merge.inventory.max-batch", Integer.class, defaults.maxBatch()),
                 environment.getProperty("merge.inventory.wait-timeout-ms", Integer.class, defaults.waitTimeoutMs()),
                 environment.getProperty("merge.inventory.shard-capacity", Integer.class, defaults.shardCapacity()),
-                environment.getProperty("merge.inventory.flush-threads", Integer.class, defaults.flushThreads()),
                 environment.getProperty("merge.inventory.drain-timeout-ms", Long.class, defaults.drainTimeoutMs()));
 
         int poolSize = environment.getProperty("spring.datasource.hikari.maximum-pool-size",
                 Integer.class, DEFAULT_POOL_SIZE);
-        int maxFlushThreads = poolSize - RESERVED_POOL_CONNECTIONS;
-        if (config.flushThreads() > maxFlushThreads) {
+        int maxShardCount = poolSize - RESERVED_POOL_CONNECTIONS;
+        if (config.shardCount() > maxShardCount) {
             throw new IllegalStateException(String.format(
-                    "[配置错误] merge.inventory.flush-threads(%s) 必须 <= 连接池上限 - %s（当前池 %s，上限 %s）："
-                            + "flush 占满连接后普通查询会在 connection-timeout 上排队",
-                    config.flushThreads(), RESERVED_POOL_CONNECTIONS, poolSize, maxFlushThreads));
+                    "[配置错误] merge.inventory.shard-count(%s) 必须 <= 连接池上限 - %s（当前池 %s，上限 %s）："
+                            + "per-shard 常驻线程模型下 flush 并发 = shardCount，flush 占满连接后普通查询"
+                            + "会在 connection-timeout 上排队",
+                    config.shardCount(), RESERVED_POOL_CONNECTIONS, poolSize, maxShardCount));
         }
 
-        log.info("库存合并器装配：merge.inventory.flush-threads={}，连接池上限(hikari.maximum-pool-size)={}，"
-                        + "校验口径 flush-threads <= 池 - {}（上限 {}）",
-                config.flushThreads(), poolSize, RESERVED_POOL_CONNECTIONS, maxFlushThreads);
+        log.info("库存合并器装配：merge.inventory.shard-count={}（= flush 常驻线程数），"
+                        + "连接池上限(hikari.maximum-pool-size)={}，校验口径 shard-count <= 池 - {}（上限 {}）",
+                config.shardCount(), poolSize, RESERVED_POOL_CONNECTIONS, maxShardCount);
         return config;
     }
 
     /**
-     * 库存合并器实例：落库出口是 {@code InventoryRepository}（它实现 {@link IQuotaMergeFlushHandler}；
-     * 预扣的一组票 06 接线，确认的一组票 07 接线——预扣与确认共用同一实例与分片，
-     * 两个组方法各自一个事务）。{@code @PreDestroy} 的优雅停机（停收 → 排空 → 关池）作为 bean 生效。
+     * 库存合并器实例（domain 层纯 Java 引擎）：落库出口注入领域端口 {@link IInventoryRepository}
+     * （真身 {@code InventoryRepository} → {@code InventoryQuotaFlushService}，一组一个事务；
+     * 预扣的一组票 06 接线，确认的一组票 07 接线）。{@code close()} 由 {@code @Bean} 的
+     * destroyMethod 推断在停机时调用（停收 → 排空 → signal + join）。
      */
     @Bean
-    public QuotaMergeBuffer quotaMergeBuffer(MergeConfig mergeConfig, IQuotaMergeFlushHandler flushHandler) {
-        return new QuotaMergeBuffer(mergeConfig, flushHandler);
+    public QuotaMergeBuffer quotaMergeBuffer(MergeConfig mergeConfig, IInventoryRepository inventoryRepository) {
+        return new QuotaMergeBuffer(mergeConfig, inventoryRepository);
     }
 }

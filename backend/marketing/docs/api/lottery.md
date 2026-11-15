@@ -32,14 +32,17 @@
 
 - 成功: `[{ prizeId, tier, name, type, pointsAmount, remaining, total, unlimited }]`
 - `type ∈ VIRTUAL · PHYSICAL · THANKS`（**旧值 `POINTS` 归入 `VIRTUAL`**）
-- **库存只暴露台账口径**（两段 quota 模型）：
-  - `remaining` = 台账 `surplus_qty`（虚拟 `virtual_inventory_quota` / 实物 `physical_marketing_quota`）
+- **库存只暴露奖品库存账户口径**（award-inventory 两层模型，池 surplus 已被分配转走）：
+  - `remaining` = 奖品库存账户 `surplus_qty`（`draw_strategy_award_inventory`，按 award_id 1:1）
   - `total` = 投放总量：虚拟 `surplus_qty + issued_qty`；实物 `surplus_qty + waiting_qty + issued_qty`
-  - **不读 Redis**——库存域已无桶；台账是唯一真相，目录只读台账
-- 不限量档（`inv_id = 0`，或台账 `surplus_qty = -1`）给 `unlimited: true`、`remaining` 与 `total` 都为 `null`
-- `pointsAmount` = 单次发放面额（虚拟积分池的 `virtual_inventory_quota.value`），非积分档为 `null`
-- 流程图：Controller → `IRaffleQueryService.listPrizes` → `selectPrizeCatalog`
-  （`draw_strategy_award` LEFT JOIN 虚拟 / 实物两段台账，按 `sort, id` 升序）
+  - **不读 Redis**——库存域已无桶；账户台账是唯一真相，目录只读账户
+- 不限量档（`draw_strategy_award.inv_id = 0`，或账户 `surplus_qty = -1` / 账户行缺失）给 `unlimited: true`、
+  `remaining` 与 `total` 都为 `null`
+- `pointsAmount` = 单次发放面额（虚拟积分池的 `virtual_inventory_quota.value`，经 award_id → inv_id → 池配置；
+  POINTS/DRAW_COUNT 的区分留在池配置，开放点②），非积分档为 `null`
+- 流程图：Controller → `IRaffleQueryService.listPrizes` → 三段查拼装（SQL 层零 JOIN）：
+  ①奖品行（`draw_strategy_award`，按 `sort, id` 升序）②奖品库存账户按 award_id 集批量回查
+  ③虚拟池按 inv_id 集批量回查（面额配置）
 
 ## GET /draw-chances
 
@@ -70,11 +73,14 @@
 4. **责任链出奖**（票 11）：黑名单 → 权重保底 → 默认（全量 `normal` 档概率表）；
    预热缺失（`4311`）**降级为 DB 直算**（`normal` 档 `award_rate ×10000` 归一化后随机）
 5. **库存预扣**（库存域的 port，走进程内合并 `QuotaMergeBuffer.submitAndWait`：等 5ms 窗口后
-   明细 + 台账一组一个事务，**返回即已提交、台账已动**；ADR-0013，无桶、无合并消息）：
-   - `inv_id = 0`（不限量）→ 跳过
-   - `PHYSICAL` → `preDeductPhysicalWithFallback`：`FALLBACK` → 切兜底奖品位；
+   明细 + 台账一组一个事务，**返回即已提交、台账已动**；ADR-0013，无桶、无合并消息。
+   award-inventory 两层模型：预扣锚在**奖品位 id**（奖品库存账户按 award_id 1:1），
+   池只被「分配」转移，抽奖不碰池）：
+   - `inv_id = 0`（不限量哨兵，奖位品的投放池配置）→ 跳过
+   - `PHYSICAL` → `preDeductPhysicalWithFallback`（主档 = 奖品库存账户 PHYSICAL）：`FALLBACK` → 切兜底奖品位；
      `FAILED` → 兜底奖品位若 `inv_id = 0`（不限量）仍发，否则 `4313 RAFFLE_ISSUE_FAILED`
-   - 虚拟 → `preDeductVirtual`，`false` → 切兜底奖品位（兜底有 `inv_id` 则再预扣一次，再 `false` → `4313`）
+   - 虚拟 → `preDeductVirtual`（扣兜底奖品位自己的账户），`false` → 切兜底奖品位
+     （兜底有 `inv_id` 则再预扣一次，再 `false` → `4313`）
 6. **落库（一个 MySQL 事务，事务在仓储方法里）**：`draw_record` + `draw_record_detail(DRAW)` + **中奖事件 outbox 行**；
    撞 `uk_record_id`（`DuplicateKeyException`）判定为并发同 token 重放，回放那一份
    - `state`：`THANKS` 直接 **已完成**（不走兑换/发货）；其余从 **待兑换** 起步，推进归发货闭环（票 14）
@@ -104,7 +110,8 @@
 - 参数: `page` / `pageSize`
 - 成功: `PageResult<{ recordId, prizeId, tier, name, prizeType, pointsAmount, createdAt }>`，`create_time DESC`
 - **过滤 `award_type = THANKS`**（「中奖记录」里不该出现没中奖的行）
-- `pointsAmount` 同 schema LEFT JOIN `virtual_inventory_quota` 取面额（跨 schema 才禁止 join）
+- `pointsAmount` 三段查拼装（跨 schema 才禁止 join）：记录行的 `inv_id` 快照（= 奖品位 id，开放点①）
+  → `draw_strategy_award` 的投放池配置 → `virtual_inventory_quota`（type=POINTS）取面额
 
 ## GET /my-prizes
 

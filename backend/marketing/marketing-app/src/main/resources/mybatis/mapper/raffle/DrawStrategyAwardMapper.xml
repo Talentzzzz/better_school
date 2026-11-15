@@ -20,4 +20,27 @@
         LIMIT 1
     </select>
 
+    <!-- 奖品位行的投放池配置（award-inventory 两层模型下 inv_id 只作分配来源与「不限量」哨兵） -->
+    <select id="selectInvIdByAwardId" resultType="java.lang.String">
+        SELECT inv_id
+        FROM draw_strategy_award
+        WHERE award_id = #{awardId}
+        LIMIT 1
+    </select>
+
+    <!-- 按 award_id 集批量回查（读侧 award_id → inv_id 映射的拼装源） -->
+    <select id="selectAwardsByAwardIds"
+            resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyAwardPO">
+        SELECT id, strategy_id, award_id, award_name, award_desc, award_type, award_rate, level, inv_id, type, sort,
+               create_time, update_time
+        FROM draw_strategy_award
+        WHERE award_id IN
+        <foreach collection="awardIds" item="awardId" open="(" separator="," close=")">#{awardId}</foreach>
+    </select>
+
+    <!-- 奖品位是否存在（分配 usecase 的入参校验用） -->
+    <select id="existsByAwardId" resultType="boolean">
+        SELECT EXISTS(SELECT 1 FROM draw_strategy_award WHERE award_id = #{awardId})
+    </select>
+
 </mapper>

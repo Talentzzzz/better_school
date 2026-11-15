@@ -1,7 +1,7 @@
 package com.betterschool.marketing.domain.inventory.model.valobj;
 
 /**
- * 预扣（{@code submitAndWait(invId, InventoryDeductRequestVO)}）的出口——<b>三条业务出口 + 三种引擎态</b>，
+ * 预扣（{@code submitAndWait(InventoryDeductRequestVO)}）的出口——<b>三条业务出口 + 三种引擎态</b>，
  * 全部由同一个返回值表达，调用方一次 {@code switch} 决定「继续 / 切兜底 / 抛可重试 / 同步降级」。
  *
  * <h2>三条业务出口（票 05 §5，本枚举的前三个）</h2>

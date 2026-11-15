@@ -213,7 +213,7 @@ CREATE TABLE IF NOT EXISTS virtual_inventory_quota (
     UNIQUE KEY uk_inv_id (inv_id),
     KEY idx_state (state),
     CONSTRAINT chk_virtual_inventory_quota CHECK (surplus_qty >= -1 AND value >= 0)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '虚拟库存配额（积分/抽奖次数权益池）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '外界投放配额池（虚拟）：只被「分配」操作转出 surplus（award-inventory 两层模型，见 draw_strategy_award_inventory），抽奖不再直接扣减';
 
 CREATE TABLE IF NOT EXISTS virtual_inventory_quota_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
@@ -242,7 +242,7 @@ CREATE TABLE IF NOT EXISTS physical_marketing_quota (
     UNIQUE KEY uk_inv_id (inv_id),
     KEY idx_state (state),
     CONSTRAINT chk_quota_surplus CHECK (surplus_qty >= -1)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '实物营销配额（预扣 → 占用的两段式库存）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '外界投放配额池（实物）：只被「分配」操作转出 surplus（award-inventory 两层模型，见 draw_strategy_award_inventory），抽奖不再直接扣减';
 
 CREATE TABLE IF NOT EXISTS physical_marketing_quota_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
@@ -256,6 +256,55 @@ CREATE TABLE IF NOT EXISTS physical_marketing_quota_detail (
     PRIMARY KEY (id),
     UNIQUE KEY uk_biz_type (type, biz_type, biz_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '实物营销配额流转明细（预扣结转 / 兑换确认两类，进程内合并的台账；uk_biz_type 是唯一幂等裁决者）';
+
+-- ─────────────────────────────── award-inventory 两层模型（抽奖只扣奖品库存账户） ───────────────────────────────
+-- 两层模型：上层「配额池」（上面两张 *_quota 台账，外界投放）只被「分配」转移；
+-- 下层「奖品库存账户」（本表，按奖品位 1:1）是抽奖预扣/确认唯一扣减的台账。
+
+CREATE TABLE IF NOT EXISTS draw_strategy_award_inventory (
+    id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    award_id    VARCHAR(36)  NOT NULL COMMENT '奖品位 id（draw_strategy_award.award_id），1 奖品位 1 库存账户',
+    type        VARCHAR(16)  NOT NULL COMMENT 'PHYSICAL 实物（两段式）/ VIRTUAL 虚拟（waiting 恒 0）',
+    surplus_qty BIGINT       NOT NULL DEFAULT 0 COMMENT '可扣余量；-1 = 不限量（虚拟档沿用）',
+    waiting_qty BIGINT       NOT NULL DEFAULT 0 COMMENT '已预占未确认（仅 PHYSICAL 使用，VIRTUAL 恒 0）',
+    issued_qty  BIGINT       NOT NULL DEFAULT 0 COMMENT '已发放',
+    value_qty   BIGINT       NULL COMMENT '单次发放面额（仅 VIRTUAL：POINTS 积分 / DRAW_COUNT 次数；实物 NULL）',
+    state       TINYINT      NOT NULL DEFAULT 0 COMMENT '0 open / 1 exhausted / 2 closed（沿用原台账语义）',
+    create_time DATETIME     NOT NULL COMMENT '由应用写入',
+    update_time DATETIME     NOT NULL COMMENT '由应用写入',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_award_id (award_id),
+    KEY idx_type (type)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '奖品库存统一台账（抽奖直接扣减的账户，由配额池分配而来）';
+
+CREATE TABLE IF NOT EXISTS draw_strategy_award_inventory_detail (
+    id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    award_id    VARCHAR(36)  NOT NULL COMMENT '奖品位 id（= 台账行），幂等键前缀',
+    flow_type   TINYINT      NOT NULL COMMENT '0 分配转入 / 1 预扣（PHYSICAL 进 waiting，VIRTUAL 直接发放）/ 2 兑换确认（仅 PHYSICAL）',
+    quantity    BIGINT       NOT NULL COMMENT '本行份数',
+    biz_type    VARCHAR(30)  NOT NULL COMMENT '业务身份：LOTTERY_DRAW / LOTTERY_CLAIM / AWARD_ALLOCATE',
+    biz_id      VARCHAR(36)  NOT NULL COMMENT '幂等锚点：抽奖记录 id / 抽奖记录 id / 分配单号',
+    create_time DATETIME     NOT NULL COMMENT '插入时间（DB NOW()）',
+    update_time DATETIME     NOT NULL COMMENT '更新时间（DB NOW()）',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_award_biz (award_id, biz_type, biz_id),
+    KEY idx_award (award_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '奖品库存统一流转明细（预扣/确认/分配转入；INSERT IGNORE + 唯一键裁决幂等）';
+
+CREATE TABLE IF NOT EXISTS inventory_allocation_flow (
+    id           BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+    pool_segment VARCHAR(16) NOT NULL COMMENT '来源池段：QUOTA(实物营销配额) / VIRTUAL(虚拟库存配额)',
+    pool_inv_id  VARCHAR(36) NOT NULL COMMENT '来源池台账业务 ID（physical_marketing_quota / virtual_inventory_quota.inv_id）',
+    award_id     VARCHAR(36) NOT NULL COMMENT '目标奖品位 id（draw_strategy_award_inventory.award_id）',
+    quantity     BIGINT      NOT NULL COMMENT '本次分配份数',
+    alloc_biz_id VARCHAR(36) NOT NULL COMMENT '分配单号（幂等锚点：撞 uk_alloc_biz = 本单已执行，按成功回放）',
+    create_time  DATETIME    NOT NULL COMMENT '插入时间（DB NOW()）',
+    update_time  DATETIME    NOT NULL COMMENT '更新时间（DB NOW()）',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_alloc_biz (alloc_biz_id),
+    KEY idx_pool (pool_inv_id),
+    KEY idx_award (award_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '配额池分配流水（池侧转出流水：池 surplus 转出量 = SUM(quantity)；不限量池 surplus 不减、流水照记）';
 
 CREATE TABLE IF NOT EXISTS outbox_message (
     id          BIGINT      NOT NULL AUTO_INCREMENT,

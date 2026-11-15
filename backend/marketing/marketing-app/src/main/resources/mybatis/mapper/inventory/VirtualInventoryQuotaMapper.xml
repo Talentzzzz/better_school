@@ -2,7 +2,7 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.betterschool.marketing.infrastructure.inventory.dao.IVirtualInventoryQuotaDao">
 
-    <!-- ============ 台账 ============ -->
+    <!-- ============ 台账（外界投放配额池：只被「分配」转出，抽奖不直接扣减） ============ -->
 
     <!-- 库存行（不限 state；open 与否则由域服务校验） -->
     <select id="selectInventory" resultType="com.betterschool.marketing.infrastructure.inventory.dao.po.VirtualInventoryQuotaPO">
@@ -11,24 +11,18 @@
         WHERE inv_id = #{invId}
     </select>
 
-    <!-- 预扣「探一次再切」的剩余量来源（spec §4.2）：-1 = 不限量 -->
-    <select id="selectSurplus" resultType="java.lang.Long">
-        SELECT surplus_qty
-        FROM virtual_inventory_quota
-        WHERE inv_id = #{invId}
-    </select>
-
-    <!-- 台账扣减（一条 UPDATE）：surplus → issued，带余量守卫（0 行 = 余量不够，调用方探一次再切）。
-         -1=不限量：不守卫、不动 surplus。surplus 恰好扣空由 open 置 exhausted；
-         state 的 IF 必须放在 surplus_qty 赋值之前（MySQL 的 SET 从左到右用新值），口径 = 旧值恰好扣空 -->
-    <update id="deductLedger">
+    <!-- 分配扣减（池侧守卫转出，InventoryRepository#allocate 的事务步）：
+         state='open' 且 (surplus < 0 OR surplus >= N) 守卫下转出；-1=不限量：放行、不动 surplus。
+         注意 surplus 不置 exhausted 也不写池明细（分配不产生 issued 流转，守恒靠分配流水表） -->
+    <update id="deductForAllocate">
         UPDATE virtual_inventory_quota
-        SET state = IF(surplus_qty &gt;= 0 AND surplus_qty = #{quantity} AND state = 'open', 'exhausted', state),
-            issued_qty = issued_qty + #{quantity},
-            surplus_qty = IF(surplus_qty &lt; 0, surplus_qty, surplus_qty - #{quantity}),
+        SET surplus_qty = IF(surplus_qty &lt; 0, surplus_qty, surplus_qty - #{quantity}),
             update_time = NOW()
-        WHERE inv_id = #{invId} AND (surplus_qty &lt; 0 OR surplus_qty &gt;= #{quantity})
+        WHERE inv_id = #{invId} AND state = 'open'
+          AND (surplus_qty &lt; 0 OR surplus_qty &gt;= #{quantity})
     </update>
+
+    <!-- ============ 预热 ============ -->
 
     <!-- 预热入口：全部 open 的虚拟库存 -->
     <select id="selectOpenInventories" resultType="com.betterschool.marketing.infrastructure.inventory.dao.po.VirtualInventoryQuotaPO">
@@ -39,7 +33,9 @@
 
     <!-- ============ 奖品目录 / 中奖记录读侧（票 13，语句自 RaffleMapper 按主表归属迁入） ============ -->
 
-    <!-- 面额只对积分台账有意义（DRAW_COUNT 型库存不放这个字段） -->
+    <!-- 面额只对积分台账有意义（DRAW_COUNT 型库存不放这个字段）；
+         award-inventory 两层模型起池仍是「面额配置」的真相所在（奖品库存账户只存 value_qty 数值，
+         不冗余 POINTS/DRAW_COUNT 区分），目录/记录视图的 pointsAmount 仍从这里拼 -->
     <select id="selectPointsValueByInvId" resultType="java.lang.Integer">
         SELECT value
         FROM virtual_inventory_quota
@@ -47,11 +43,9 @@
     </select>
 
     <!--
-        目录的库存展示口径：真相在 DB 台账（票 12），不读 Redis 桶（在途预扣会让「剩余」抖动）。
-        remaining = 台账 surplus_qty；total = 投放总量（虚拟 surplus+issued，实物 surplus+waiting+issued）。
-        surplus_qty = -1 是「不限量」，remaining/total 落 null 由 unlimited 表达。
-        原三表 LEFT JOIN 一步投影改为三段查拼装（SQL 层零 JOIN）：①奖品行 selectAwardListByStrategyId
-        （同 sort,id 排序）；②虚拟台账 ③实物台账按 inv_id 集批量回查，CASE 语义在仓储 Java 收口。
+        虚拟台账批量读（invId → type/value）：award-inventory 两层模型起 remaining/total 改读
+        奖品库存账户（draw_strategy_award_inventory），本查询只剩 pointsAmount 的面额配置拼装源
+        （type=POINTS 的池才有积分面额）。
     -->
     <select id="selectVirtualQuotasByInvIds" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.VirtualQuotaRowPO">
         SELECT inv_id AS invId, type, value, surplus_qty AS surplusQty, issued_qty AS issuedQty

@@ -1,7 +1,7 @@
 package com.betterschool.marketing.domain.inventory.model.valobj;
 
 /**
- * 兑换确认（{@code submitAndWait(invId, ClaimItem)}）的出口。
+ * 兑换确认（{@code submitAndWait(InventoryClaimRequestVO)}）的出口。
  *
  * <p><b>只有两条业务出口</b>：成功（含「撞 {@code uk_biz_type} = 已确认过 = 按成功回放」）与可重试。
  * 没有 {@code INSUFFICIENT} —— 确认路径上「{@code waiting} 不够」不是业务失败，是<b>不变量破坏</b>：

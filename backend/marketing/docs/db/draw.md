@@ -9,7 +9,7 @@
 |----|----|
 |draw_activity|抽奖活动（活动 → 策略 1:1，uk_strategy_id；state create/open/close）|
 |draw_strategy|抽奖策略；`rule` 列 = 责任链节点码逗号序列（如 rule_blacklist,rule_weight），ChainFactory 按它动态组链|
-|draw_strategy_award|奖品位配置；概率口径 award_rate（DECIMAL(6,4)，×10000 即槽位）；type = normal（进概率池）/ fallback（库存兜底）/ blacklist（黑名单强制奖）|
+|draw_strategy_award|奖品位配置；概率口径 award_rate（DECIMAL(6,4)，×10000 即槽位）；type = normal（进概率池）/ fallback（库存兜底）/ blacklist（黑名单强制奖）；库存账户 1:1 见 draw_strategy_award_inventory（[inventory.md](inventory.md)）|
 |draw_strategy_weight|权重档（票 11 自设计稿 strategy_weight 规范化：并入 draw_* 命名、去时间戳默认值、加 COMMENT；weights 随 uuid-biz-id 票 07 award_id UUID 化放宽到 varchar(512)）|
 |draw_record|抽奖记录（中奖事实 + 奖品快照；写入方 = 票 13 主链路）|
 |draw_record_detail|动作明细（只插入：DRAW/EXCHANGE/SHIP/COMPLETE，uk_record_type 幂等；票 13/14 用）|
@@ -47,7 +47,10 @@
   - 回放**必校验归属**（`user_id` 不符按系统错拒绝）：防 hash 碰撞把他人记录顶出来
 - **`state` 初值**：`award_type = THANKS` 直接落 **已完成**（不走兑换/发货）；
   其余落 **待兑换**，推进归票 14 状态机。明细**只插 `DRAW` 一条**，其余三个动作由状态机落。
-- **`inv_id`**：不限量档（配置哨兵 `inv_id = '0'`，字符串）落库时置 `NULL`（「无库存来源」比哨兵更好判）。
+- **`inv_id`**：award-inventory 两层模型（开放点①拍板）：记**奖品库存账户的 award_id**（奖品位 id，
+  1 奖品位 1 账户，账户见 [inventory.md](inventory.md) `draw_strategy_award_inventory`），不再是池 inv_id。
+  不限量档（配置哨兵 `draw_strategy_award.inv_id = '0'`，字符串）落库时置 `NULL`（「无库存来源」比哨兵更好判）；
+  来源池不落快照列——从分配流水表（`inventory_allocation_flow`，award_id → pool_inv_id）反查。
 
 ## 发货状态机口径（票 14 定）
 
@@ -58,7 +61,7 @@
 | （落库） | `DRAW` | 待兑换 | 主链路 | THANKS 直接 已完成，无后续动作 |
 | 待兑换 | `EXCHANGE` | 已兑换 | 收到 `bs-lottery-drawn`（虚拟 / 次数档） | — |
 | 已兑换 | `COMPLETE` | 已完成 | 同上，**同一事务**连续两步 | 与积分域入账各自独立（该域按 `(userId, LOTTERY_WIN, recordId)` 幂等） |
-| 待兑换 | `SHIP` | 已发货 | 收到 `bs-lottery-drawn`（实物档） | case 层**先**调实物配额 `confirmIssued`（进合并器，返回即 `waiting → issued` 已提交），再推进 |
+| 待兑换 | `SHIP` | 已发货 | 收到 `bs-lottery-drawn`（实物档） | case 层**先**调实物奖品库存 `confirmIssued`（进合并器，返回即 `waiting → issued` 已提交），再推进 |
 | 已发货 | `COMPLETE` | 已完成 | `POST /my-prizes/{id}/receive` | — |
 
 - **每一步的幂等**：`UPDATE draw_record SET state = ? WHERE record_id = ? AND state = ?`（守卫 = 起点）
@@ -79,7 +82,8 @@
    库存被白扣一份。对账读数瘦成台账三列直读后（hot-row-merge-l2w256），这条**没有自动暴露口**——
    能自愈的靠同 token 重试撞明细唯一键回放；用户放弃的部分永久挂账，只能跑 inventory.md 里那条
    「两张明细表 LEFT JOIN `draw_record` 找 `record_id IS NULL` 的 `type = 1` 行」人工 SQL（不建 job、不建巡检）。
-2. **确认不分活动**（库存域的有意口径）：合并器只认分片键 `invId`，确认与预扣都按 `invId` 路由落库，
+2. **确认不分活动**（库存域的有意口径）：合并器只认分片键（奖品库存账户 awardId），确认与预扣都按
+   `awardId` 路由落库，
    不查活动是否还在运行——好处是停用库存的遗留确认也能收敛；
    活动维度的限定由**本票的预扣入口**控制（活动不 open 就不产生新预扣）。
 
