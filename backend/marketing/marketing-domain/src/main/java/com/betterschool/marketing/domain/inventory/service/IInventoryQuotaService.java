@@ -12,7 +12,7 @@ import com.betterschool.marketing.types.inventory.AwardInventoryType;
  * 抽奖不再直接扣配额池：池（外界投放）只被「分配」转移到奖品库存账户（见
  * {@code IInventoryAllocationService}），预扣/确认只打统一台账。
  * <p>
- * 预扣：进进程内合并器（{@code QuotaMergeBuffer}，同在 domain 层，域服务直接注入入队），
+ * 预扣：进进程内合并器（{@code InventoryMerger}，同在 domain 层，域服务直接注入入队），
  * 请求等 {@code maxFlushDelayMillis} 后一组一事务落库——明细 {@code INSERT IGNORE} + 台账一条 {@code UPDATE}，
  * **成功 = 已提交**（返回时 {@code surplus} 已减、实物账户 {@code waiting} 已增 /
  * 虚拟账户 {@code issued} 已增）。没有第二步：不落 outbox、不等合并、没有 Redis 桶
@@ -57,7 +57,7 @@ public interface IInventoryQuotaService {
     DeductOutcomeVO preDeductWithFallback(InventoryDeductRequestVO primary, InventoryDeductRequestVO fallback);
 
     /**
-     * 兑换确认（仅实物账户，同步合并）：进与预扣同一个 {@code QuotaMergeBuffer}（同分片）的
+     * 兑换确认（仅实物账户，同步合并）：进与预扣同一个 {@code InventoryMerger}（同分片）的
      * 确认重载，一组一个事务——{@code flow_type = 2} 明细逐行 {@code INSERT IGNORE} + 台账一条
      * {@code UPDATE}（{@code waiting -= c, issued += c}，转移量 = 新增行数）。
      * **成功 = 转移已提交**：返回时落账已生效，没有第二步、没有合并消息。

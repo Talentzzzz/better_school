@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -24,7 +25,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * <pre>
  *   submitAndWait(postId, event)
  *     ├─ 按 shardOf(postId) 路由到分片
- *     ├─ 塞进该分片缓冲区（首个请求排定 windowMs 后的 flush；攒满 maxBatch 提前触发）
+ *     ├─ 塞进该分片缓冲区（首个请求排定 maxFlushDelayMillis 后的 flush；攒满 maxBatch 提前触发）
  *     └─ park 在自己的 future 上，最多等 waitTimeoutMs
  *                    ↓（定时器到点，由执行池线程接管）
  *   flush：锁内整块摘批 → 锁外按「动作 × 行主键」二次分组 → 一组一个事务落库 → 回填 → 有积压则续排
@@ -113,9 +114,9 @@ public class CountMerger {
             shards[i] = new ShardBuffer(i, config, scheduler, this::flushBatch, this::signalIdle);
         }
 
-        log.info("计数合并器启动：shardCount={}(mask={}), windowMs={}, maxBatch={}, waitTimeoutMs={}, "
+        log.info("计数合并器启动：shardCount={}(mask={}), maxFlushDelayMillis={}, maxBatch={}, waitTimeoutMs={}, "
                         + "shardCapacity={}, flushThreads={}, drainTimeoutMs={}",
-                config.shardCount(), config.mask(), config.windowMs(), config.maxBatch(),
+                config.shardCount(), config.mask(), config.maxFlushDelayMillis(), config.maxBatch(),
                 config.waitTimeoutMs(), config.shardCapacity(), config.flushThreads(), config.drainTimeoutMs());
     }
 
@@ -189,8 +190,11 @@ public class CountMerger {
         }
         return outcome;
     }
-    /** 当前缓冲件数（全分片求和，无锁镜像） */
-    public int pending() {
+    /**
+     * 当前缓冲件数（全分片求和，无锁镜像）。只供 {@link #metrics()}、停机日志与同包测试做
+     * 排空/背压断言用——近似读数，不做任何正确性决策，故不对外暴露。
+     */
+    int pending() {
         int total = 0;
         for (ShardBuffer shard : shards) {
             total += shard.pendingSize();
@@ -360,6 +364,40 @@ public class CountMerger {
     }
 
     /** 二次分组的键：动作 × 行主键 */
-    private record GroupKey(CountAction action, String shardKey) {
+    private static final class GroupKey {
+
+        private final CountAction action;
+        private final String shardKey;
+
+        private GroupKey(CountAction action, String shardKey) {
+            this.action = action;
+            this.shardKey = shardKey;
+        }
+
+        public CountAction action() {
+            return action;
+        }
+
+        public String shardKey() {
+            return shardKey;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof GroupKey other)) return false;
+            return Objects.equals(action, other.action)
+                    && Objects.equals(shardKey, other.shardKey);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(action, shardKey);
+        }
+
+        @Override
+        public String toString() {
+            return "GroupKey[action=" + action + ", shardKey=" + shardKey + "]";
+        }
     }
 }

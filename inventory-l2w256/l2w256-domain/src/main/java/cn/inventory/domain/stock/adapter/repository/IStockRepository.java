@@ -1,33 +1,35 @@
 package cn.inventory.domain.stock.adapter.repository;
 
 import cn.inventory.domain.stock.model.entity.StockEntity;
-import cn.inventory.domain.stock.model.valobj.DeductRequestVO;
-import cn.inventory.domain.stock.model.valobj.MergedDeductResult;
+import cn.inventory.domain.stock.service.merge.MergeTask;
 
 import java.util.List;
 
 /**
  * 库存仓储（一域一仓储，读写同一接口）
  *
- * <p><b>事务落位在实现里</b>：{@link #deductMerged} 的「流水先行插入 + 条件扣减」
+ * <p>合并引擎把整批待落库请求直接交给 {@link #deductBatch}，SKU 分组、失败二分拆批、
+ * 售罄短路、唯一键幂等裁决与事务落库全部在实现内完成——域侧不自持事务边界、
+ * 也不注入 TransactionTemplate。
+ *
+ * <p><b>事务落位在实现里</b>：合并落库的「流水先行插入 + 条件扣减」
  * 必须收在一个本地事务里，由实现用编程式事务（传播恒 REQUIRED）保证。
- * 域服务只调一次仓储方法，不自持事务边界、也不注入 TransactionTemplate。
  */
 public interface IStockRepository {
 
     /**
-     * 合并落库：一个事务内完成「批量写流水（唯一键幂等）+ 一条 UPDATE 扣 N 件」。
+     * 合并落库一批（可能混多个 SKU），并把结果回填到每个任务的 future。
      *
-     * @param skuId 本批全部请求同属一个 SKU（调用方已按 SKU 分组）
-     * @param batch 按到达顺序排列的请求
-     * @return {@code deducted=false} 表示库存不足、整批未动（事务已回滚，流水一并消失）
+     * <p>同一 SKU 的整批压成一次事务：批量写流水（唯一键幂等）+ 一条 UPDATE 扣 N 件。
+     * 批内混多个 SKU（分片哈希碰撞）时先按 SKU 分组，保证一次事务只碰一行；
+     * 整批扣不动时二分拆批、先到先得，库存连批内最小请求量都不够则整批判死。
+     *
+     * @param batch 按到达顺序排列的待落库请求（取自同一分片缓冲区）
      */
-    MergedDeductResult deductMerged(long skuId, List<DeductRequestVO> batch);
+    void deductBatch(List<MergeTask> batch);
 
     /**
-     * 只读查库存实体（售罄短路 + 库存查询共用），事务外读、不加锁。
-     * <p>批量 UPDATE 影响 0 行时，用它区分「整批都不够」和「批里几条不够」：
-     * 前者整批判失败，省掉二分拆批的 399 次事务。
+     * 只读查库存实体（库存查询用；售罄短路在实现内部调用 {@code query}），事务外读、不加锁。
      *
      * @return 库存实体；库存行不存在时 {@code qty} 为 null（不返回 null，免得调用方到处判空）
      */

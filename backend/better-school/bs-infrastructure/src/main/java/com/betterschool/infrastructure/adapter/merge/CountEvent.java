@@ -1,5 +1,7 @@
 package com.betterschool.infrastructure.adapter.merge;
 
+import java.util.Objects;
+
 /**
  * 一件计数写事件：动作 + 目标行 + 谁干的。
  *
@@ -15,5 +17,46 @@ package com.betterschool.infrastructure.adapter.merge;
  * @param targetId 目标行业务主键（postId / commentId / productId / errandOrderId）
  * @param userId   操作人；浏览类必须给（UV 口径）
  */
-public record CountEvent(CountAction action, String targetId, String userId) {
+public final class CountEvent {
+
+    private final CountAction action;
+    private final String targetId;
+    private final String userId;
+
+    public CountEvent(CountAction action, String targetId, String userId) {
+        this.action = action;
+        this.targetId = targetId;
+        this.userId = userId;
+    }
+
+    public CountAction action() {
+        return action;
+    }
+
+    public String targetId() {
+        return targetId;
+    }
+
+    public String userId() {
+        return userId;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof CountEvent other)) return false;
+        return Objects.equals(action, other.action)
+                && Objects.equals(targetId, other.targetId)
+                && Objects.equals(userId, other.userId);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(action, targetId, userId);
+    }
+
+    @Override
+    public String toString() {
+        return "CountEvent[action=" + action + ", targetId=" + targetId + ", userId=" + userId + "]";
+    }
 }

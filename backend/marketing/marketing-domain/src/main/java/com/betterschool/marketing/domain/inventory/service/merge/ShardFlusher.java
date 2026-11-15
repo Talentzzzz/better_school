@@ -78,7 +78,7 @@ final class ShardFlusher {
         this.flushDoneSignal = flushDoneSignal;
         this.flushThread = Thread.ofPlatform()
                 .daemon(true)
-                .name("quota-merge-flush-" + shardNo)
+                .name("inventory-merge-flush-" + shardNo)
                 .start(this::flushLoop);
     }
 
@@ -149,7 +149,7 @@ final class ShardFlusher {
 
     /**
      * 是否已排空：缓冲区空。在途的那一批不在 {@code pending} 里（已摘批、尚未回填），
-     * 这个空档由 {@code QuotaMergeBuffer#close} 的 join 兜底等完——线程只在
+     * 这个空档由 {@code InventoryMerger#close} 的 join 兜底等完——线程只在
      * {@code closed} 且缓冲空时退出，join 返回即代表在途 flush 已收尾。
      */
     boolean isIdle() {
@@ -180,7 +180,7 @@ final class ShardFlusher {
      */
     private void flushLoop() {
         // 当前合并窗口的截止时刻（System.nanoTime 口径）；0 = 没有在数的窗口
-        long windowEndNanos = 0L;
+        long batchDeadlineNanos = 0L;
         // 上一批摘批时缓冲里留有超出 maxBatch 的积压：这批收尾后背靠背立即续跑，不重新开窗
         boolean carryOver = false;
 
@@ -195,24 +195,24 @@ final class ShardFlusher {
                     }
                     if (pending.isEmpty()) {
                         // 闲置：等首件（offer signal）或停机（failRemaining signal）
-                        windowEndNanos = 0;
-                        awaitQuietly();
+                        batchDeadlineNanos = 0;
+                        awaitSignal();
                         continue;
                     }
                     long now = System.nanoTime();
-                    if (windowEndNanos == 0) {
+                    if (batchDeadlineNanos == 0) {
                         // 两条进门路：摘批剩下的积压（背靠背）立即续跑；闲置后的首件开新窗口
-                        windowEndNanos = carryOver ? now : now + maxFlushDelayNanos;
+                        batchDeadlineNanos = carryOver ? now : now + maxFlushDelayNanos;
                     }
-                    if (pending.size() >= maxBatch || now >= windowEndNanos) {
+                    if (pending.size() >= maxBatch || now >= batchDeadlineNanos) {
                         batch = takeBatch();
                         carryOver = !pending.isEmpty();
-                        windowEndNanos = 0;
+                        batchDeadlineNanos = 0;
                         break;
                     }
                     // 窗口未到且未攒满：等到截止时刻。攒满/停机的 signal 会提前唤醒——
                     // 用 awaitNanos 表达 awaitUntil(deadline)，标准条件等待协议免疫丢失唤醒
-                    awaitQuietly(windowEndNanos - now);
+                    awaitBatchDeadline(batchDeadlineNanos - now);
                 }
             } finally {
                 lock.unlock();
@@ -230,8 +230,8 @@ final class ShardFlusher {
         }
     }
 
-    /** 无限期等待：首件 / 停机 signal 唤醒。吃掉外来中断——线程生命周期只由 closed 控制 */
-    private void awaitQuietly() {
+    /** 闲置等待：等首件 / 停机 signal 唤醒。吃掉外来中断——线程生命周期只由 closed 控制 */
+    private void awaitSignal() {
         try {
             batchReady.await();
         } catch (InterruptedException ignored) {
@@ -239,8 +239,8 @@ final class ShardFlusher {
         }
     }
 
-    /** 带截止时刻的等待（awaitNanos(剩余时间) ≡ awaitUntil(deadline)）：超时或 signal 返回 */
-    private void awaitQuietly(long remainNanos) {
+    /** 睡到攒批截止（awaitNanos(剩余时间) ≡ awaitUntil(deadline)）：到点返回，或被攒满/停机 signal 提前叫醒 */
+    private void awaitBatchDeadline(long remainNanos) {
         try {
             batchReady.awaitNanos(remainNanos);
         } catch (InterruptedException ignored) {

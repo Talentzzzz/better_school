@@ -254,7 +254,7 @@ HINT 强制路由**。照 `better-school/bs-app/src/main/resources/sharding.yaml
 
 曾经列在这里的两个库存 job —— 每秒的 `inventoryMerge` 与 60 秒的 `inventoryMergeBackstop` 兜底
 ——**都已删除**（hot-row-merge-l2w256，ADR-0013）：库存合并进了**进程内合并器**
-（`QuotaMergeBuffer`，请求等 5ms 窗口后一组一个事务），不再有扫描 job、合并消息与兜底，
+（`InventoryMerger`，请求等 5ms 窗口后一组一个事务），不再有扫描 job、合并消息与兜底，
 也就没有「该不该改成超时任务」的问题——它本来就不是 deadline（曾是结算流水线），
 改成超时任务只会把 O(批) 的合并退化成 O(行) 的回调。与超时中心的「同事务登记 + 到点回调」
 仍是两回事（它没有重试 / 退避 / 死信 / 管理面，也不需要）。

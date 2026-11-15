@@ -10,7 +10,7 @@ import lombok.ToString;
  * {@code waitTimeoutMs > maxFlushDelayMillis}（否则每笔都先超时后落库）；
  * {@code shardCapacity >= maxBatch}（否则永远攒不满一批就被拒）。
  * {@code shardCount} 同时是 flush 并发（per-shard 常驻线程模型，线程数 = 分片数），
- * 真正的上限「连接池 − 2」在装配层（QuotaMergeConfig）校验——连接池属于应用装配层，引擎不认识 Hikari。
+ * 真正的上限「连接池 − 2」在装配层（InventoryMergeConfig）校验——连接池属于应用装配层，引擎不认识 Hikari。
  *
  * @param shardCount     分片数（= 缓冲区个数 = 常驻 flush 线程数），2 的幂
  * @param maxFlushDelayMillis       合并窗口：分片首个请求起算 maxFlushDelayMillis 后 flush，攒满可提前触发
@@ -72,7 +72,7 @@ public final class MergeConfig {
     }
 
     /** 库存侧默认参数（{@code 8 / 5ms / 200 / 100ms / 2000 / 5s}） */
-    public static MergeConfig quotaDefaults() {
+    public static MergeConfig inventoryDefaults() {
         return new MergeConfig(DEFAULT_SHARD_COUNT, DEFAULT_WINDOW_MS, DEFAULT_MAX_BATCH,
                 DEFAULT_WAIT_TIMEOUT_MS, DEFAULT_SHARD_CAPACITY, DEFAULT_DRAIN_TIMEOUT_MS);
     }

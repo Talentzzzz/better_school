@@ -1,6 +1,6 @@
 package com.betterschool.marketing.unit.config;
 
-import com.betterschool.marketing.config.QuotaMergeConfig;
+import com.betterschool.marketing.config.InventoryMergeConfig;
 import com.betterschool.marketing.domain.inventory.service.merge.MergeConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,16 +17,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * <p>纯单元测试（{@link MockEnvironment}，不起 Spring、不连库）：这条规则是装配层的，
  * 不该为了它把整个应用上下文拉起来。用例与计数侧那份（{@code CountMergeConfigTest}）同形。
  */
-class QuotaMergeConfigTest {
+class InventoryMergeConfigTest {
 
-    private final QuotaMergeConfig config = new QuotaMergeConfig();
+    private final InventoryMergeConfig config = new InventoryMergeConfig();
 
     @Test
     @DisplayName("什么都没配：落库存侧默认值（8 / 5ms / 200 / 100ms / 2000 / 5s）")
     void fallsBackToSpecDefaults() {
-        MergeConfig mergeConfig = config.quotaMergeConfig(new MockEnvironment());
+        MergeConfig mergeConfig = config.inventoryMergeConfig(new MockEnvironment());
 
-        assertEquals(MergeConfig.quotaDefaults(), mergeConfig);
+        assertEquals(MergeConfig.inventoryDefaults(), mergeConfig);
         assertEquals(8, mergeConfig.shardCount());
     }
 
@@ -42,7 +42,7 @@ class QuotaMergeConfigTest {
                 .withProperty("merge.inventory.drain-timeout-ms", "3000")
                 .withProperty("spring.datasource.hikari.maximum-pool-size", "512");
 
-        MergeConfig mergeConfig = config.quotaMergeConfig(environment);
+        MergeConfig mergeConfig = config.inventoryMergeConfig(environment);
 
         assertEquals(256, mergeConfig.shardCount());
         assertEquals(3, mergeConfig.maxFlushDelayMillis());
@@ -59,7 +59,7 @@ class QuotaMergeConfigTest {
                 .withProperty("spring.datasource.hikari.maximum-pool-size", "10")
                 .withProperty("merge.inventory.shard-count", "8");
 
-        assertEquals(8, config.quotaMergeConfig(environment).shardCount());
+        assertEquals(8, config.inventoryMergeConfig(environment).shardCount());
     }
 
     @Test
@@ -70,7 +70,7 @@ class QuotaMergeConfigTest {
                 .withProperty("spring.datasource.hikari.maximum-pool-size", "10")
                 .withProperty("merge.inventory.shard-count", "16");
 
-        assertThrows(IllegalStateException.class, () -> config.quotaMergeConfig(environment));
+        assertThrows(IllegalStateException.class, () -> config.inventoryMergeConfig(environment));
     }
 
     @Test
@@ -79,6 +79,6 @@ class QuotaMergeConfigTest {
         MockEnvironment environment = new MockEnvironment()
                 .withProperty("merge.inventory.shard-count", "100");
 
-        assertThrows(IllegalArgumentException.class, () -> config.quotaMergeConfig(environment));
+        assertThrows(IllegalArgumentException.class, () -> config.inventoryMergeConfig(environment));
     }
 }

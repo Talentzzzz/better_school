@@ -1037,7 +1037,7 @@ CREATE TABLE IF NOT EXISTS virtual_inventory_quota_detail (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '虚拟库存配额扣减明细（进程内合并的台账；撞 uk = 已落过，按成功回放）';
 ```
 
-说明（合并落库，两段同一套）：预扣与兑换确认走进程内合并器 `QuotaMergeBuffer`（hot-row-merge-l2w256，ADR-0013 取代 0011/0012），请求等 5ms 窗口后**一组一个事务**：明细 `INSERT IGNORE` + 一条台账 `UPDATE`，`INSERT` 后台账同事务可见——不再有 Redis 桶、合并消息、`state` 列与 60 秒兜底。撞 `uk_biz` = 已落过，按成功回放。uuid-biz-id 票 07 起 `inv_id`/`biz_id` 为 UUID 字符串，合并分片键 `MergeConfig.shardOf(String)` 按字符串 hashCode 高低位折叠（shardCount 仍 2 的幂）。
+说明（合并落库，两段同一套）：预扣与兑换确认走进程内合并器 `InventoryMerger`（hot-row-merge-l2w256，ADR-0013 取代 0011/0012），请求等 5ms 窗口后**一组一个事务**：明细 `INSERT IGNORE` + 一条台账 `UPDATE`，`INSERT` 后台账同事务可见——不再有 Redis 桶、合并消息、`state` 列与 60 秒兜底。撞 `uk_biz` = 已落过，按成功回放。uuid-biz-id 票 07 起 `inv_id`/`biz_id` 为 UUID 字符串，合并分片键 `MergeConfig.shardOf(String)` 按字符串 hashCode 高低位折叠（shardCount 仍 2 的幂）。
 
 ### physical_marketing_quota
 

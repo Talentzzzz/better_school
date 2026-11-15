@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <p>结果类型统一为 {@code Object}（{@code DeductResult} / {@code ClaimOutcome} 是两个独立的枚举，
  * 没有公共父类型）：分流之后的每条落库路径只会回填自己的结果类型，
- * 强转只出现在 {@code QuotaMergeBuffer} 的两个 {@code await} 出口，各一处且必然成立。
+ * 强转只出现在 {@code InventoryMerger} 的两个 {@code await} 出口，各一处且必然成立。
  */
 final class Pending {
 

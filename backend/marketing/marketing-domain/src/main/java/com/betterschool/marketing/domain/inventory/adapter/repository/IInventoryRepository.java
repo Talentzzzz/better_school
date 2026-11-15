@@ -28,7 +28,7 @@ import java.util.List;
  * {@link #flushDeductGroup} / {@link #flushClaimGroup} 委托给它——合并器内 flush
  * 与降级路径复用同一套 SQL（spec §2.6）。
  * <p>
- * 进程内合并器（{@code QuotaMergeBuffer}）也在 domain 层，直接依赖本端口回调落库，
+ * 进程内合并器（{@code InventoryMerger}）也在 domain 层，直接依赖本端口回调落库，
  * 依赖单向：域服务 → 合并器 → 本端口 ← 实现类。**入队不在本端口**——域服务直接注入合并器
  * （{@code submitAndWait}），本端口只呈现存储操作，仓储因此不认识合并器，无循环依赖。
  */

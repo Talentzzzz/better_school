@@ -72,7 +72,7 @@
    扣不出 → 先查记录（并发同 token 的败者在此回放）→ 真没次数才是 `4303 NO_CHANCE`。**此时零副作用**
 4. **责任链出奖**（票 11）：黑名单 → 权重保底 → 默认（全量 `normal` 档概率表）；
    预热缺失（`4311`）**降级为 DB 直算**（`normal` 档 `award_rate ×10000` 归一化后随机）
-5. **库存预扣**（库存域的 port，走进程内合并 `QuotaMergeBuffer.submitAndWait`：等 5ms 窗口后
+5. **库存预扣**（库存域的 port，走进程内合并 `InventoryMerger.submitAndWait`：等 5ms 窗口后
    明细 + 台账一组一个事务，**返回即已提交、台账已动**；ADR-0013，无桶、无合并消息。
    award-inventory 两层模型：预扣锚在**奖品位 id**（奖品库存账户按 award_id 1:1），
    池只被「分配」转移，抽奖不碰池）：

@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Base64;
+import java.util.Objects;
 
 /**
  * 商品 feed 游标（market-feed-uv 票 04；uuid-biz-id 票 05 起热度档带时间收敛键）：keyset 分页的续页锚点，
@@ -26,8 +27,71 @@ import java.util.Base64;
  * 游标 / 跨域复用（跑腿游标） / 篡改内容都会在解码时报 PARAM_ERROR，而不是静默错位。游标失效
  * （排序键值已漂移）不报错——keyset 语义下最多边界附近的行有出入，不重不漏由尾段唯一锚点保证。
  */
-public record ProductFeedCursorVO(String sortType, LocalDateTime feedTime, BigDecimal price, Long viewCount,
-                                  LocalDateTime createTime, String productId) {
+public final class ProductFeedCursorVO {
+
+    private final String sortType;
+    private final LocalDateTime feedTime;
+    private final BigDecimal price;
+    private final Long viewCount;
+    private final LocalDateTime createTime;
+    private final String productId;
+
+    public ProductFeedCursorVO(String sortType, LocalDateTime feedTime, BigDecimal price, Long viewCount,
+                               LocalDateTime createTime, String productId) {
+        this.sortType = sortType;
+        this.feedTime = feedTime;
+        this.price = price;
+        this.viewCount = viewCount;
+        this.createTime = createTime;
+        this.productId = productId;
+    }
+
+    public String sortType() {
+        return sortType;
+    }
+
+    public LocalDateTime feedTime() {
+        return feedTime;
+    }
+
+    public BigDecimal price() {
+        return price;
+    }
+
+    public Long viewCount() {
+        return viewCount;
+    }
+
+    public LocalDateTime createTime() {
+        return createTime;
+    }
+
+    public String productId() {
+        return productId;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof ProductFeedCursorVO other)) return false;
+        return Objects.equals(sortType, other.sortType)
+                && Objects.equals(feedTime, other.feedTime)
+                && Objects.equals(price, other.price)
+                && Objects.equals(viewCount, other.viewCount)
+                && Objects.equals(createTime, other.createTime)
+                && Objects.equals(productId, other.productId);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(sortType, feedTime, price, viewCount, createTime, productId);
+    }
+
+    @Override
+    public String toString() {
+        return "ProductFeedCursorVO[sortType=" + sortType + ", feedTime=" + feedTime + ", price=" + price
+                + ", viewCount=" + viewCount + ", createTime=" + createTime + ", productId=" + productId + "]";
+    }
 
     /** 热度（浏览 UV 数降序） */
     public static final String SORT_HOT = "hot";

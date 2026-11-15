@@ -34,7 +34,7 @@ class CountMergeConfigTest {
     void readsEveryProperty() {
         MockEnvironment environment = new MockEnvironment()
                 .withProperty("merge.count.shard-count", "64")
-                .withProperty("merge.count.window-ms", "3")
+                .withProperty("merge.count.max-flush-delay-millis", "3")
                 .withProperty("merge.count.max-batch", "100")
                 .withProperty("merge.count.wait-timeout-ms", "80")
                 .withProperty("merge.count.shard-capacity", "2000")
@@ -45,7 +45,7 @@ class CountMergeConfigTest {
         MergeConfig mergeConfig = config.mergeConfig(environment);
 
         assertEquals(64, mergeConfig.shardCount());
-        assertEquals(3, mergeConfig.windowMs());
+        assertEquals(3, mergeConfig.maxFlushDelayMillis());
         assertEquals(100, mergeConfig.maxBatch());
         assertEquals(80, mergeConfig.waitTimeoutMs());
         assertEquals(2000, mergeConfig.shardCapacity());

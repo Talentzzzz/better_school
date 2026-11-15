@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -47,10 +48,51 @@ final class RecordingFlushHandler implements ICountFlushHandler {
     private final AtomicInteger fillBudget = new AtomicInteger();
 
     /** 一组落库的形状 */
-    record Group(CountAction action, String shardKey, List<CountEvent> events) {
+    static final class Group {
+
+        private final CountAction action;
+        private final String shardKey;
+        private final List<CountEvent> events;
+
+        Group(CountAction action, String shardKey, List<CountEvent> events) {
+            this.action = action;
+            this.shardKey = shardKey;
+            this.events = events;
+        }
+
+        public CountAction action() {
+            return action;
+        }
+
+        public String shardKey() {
+            return shardKey;
+        }
+
+        public List<CountEvent> events() {
+            return events;
+        }
 
         int size() {
             return events.size();
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof Group other)) return false;
+            return Objects.equals(action, other.action)
+                    && Objects.equals(shardKey, other.shardKey)
+                    && Objects.equals(events, other.events);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(action, shardKey, events);
+        }
+
+        @Override
+        public String toString() {
+            return "Group[action=" + action + ", shardKey=" + shardKey + ", events=" + events + "]";
         }
     }
 

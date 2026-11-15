@@ -17,16 +17,19 @@ import java.util.concurrent.CompletableFuture;
  *
  * <p>future 只由 flush 线程完成一次；调用方可能已经超时返回，此时 completion 是空操作，
  * 请求仍在缓冲区里照常落库（这正是 TIMEOUT_UNKNOWN 的含义）。
+ *
+ * <p>public 是因为仓储实现（infrastructure）要在落库完成后回填 future——
+ * 合并引擎把整批任务直接交给 {@code IStockRepository#deductBatch}，任务信封跨层传递。
  */
 @Getter
 @ToString
-final class MergeTask {
+public final class MergeTask {
 
     private final DeductRequestVO request;
 
     private final CompletableFuture<DeductResultVO> future;
 
-    MergeTask(DeductRequestVO request, CompletableFuture<DeductResultVO> future) {
+    public MergeTask(DeductRequestVO request, CompletableFuture<DeductResultVO> future) {
         this.request = request;
         this.future = future;
     }

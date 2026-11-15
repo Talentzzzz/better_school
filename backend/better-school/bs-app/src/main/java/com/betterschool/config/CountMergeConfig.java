@@ -42,7 +42,7 @@ public class CountMergeConfig {
         MergeConfig defaults = MergeConfig.countDefaults();
         MergeConfig config = new MergeConfig(
                 environment.getProperty("merge.count.shard-count", Integer.class, defaults.shardCount()),
-                environment.getProperty("merge.count.window-ms", Integer.class, defaults.windowMs()),
+                environment.getProperty("merge.count.max-flush-delay-millis", Integer.class, defaults.maxFlushDelayMillis()),
                 environment.getProperty("merge.count.max-batch", Integer.class, defaults.maxBatch()),
                 environment.getProperty("merge.count.wait-timeout-ms", Integer.class, defaults.waitTimeoutMs()),
                 environment.getProperty("merge.count.shard-capacity", Integer.class, defaults.shardCapacity()),

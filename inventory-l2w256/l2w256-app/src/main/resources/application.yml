@@ -43,7 +43,7 @@ stock:
     # 分片数：2 的幂，≈ 峰值并发热点数（256 片在 512 热点时每片 2 个 SKU）
     shard-count: ${MERGE_SHARD_COUNT:256}
     # 合并窗口：首个请求排定 5ms 后 flush，攒满 200 可提前
-    window-ms: ${MERGE_WINDOW_MS:5}
+    max-flush-delay-millis: ${MERGE_WINDOW_MS:5}
     max-batch: ${MERGE_MAX_BATCH:200}
     # 等待上限：100ms；调到 200 可把高并发下的超时率砍半，代价是 p99 到 200ms
     wait-timeout-ms: ${MERGE_WAIT_TIMEOUT_MS:100}

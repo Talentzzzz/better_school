@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Base64;
+import java.util.Objects;
 
 /**
  * 跑腿大厅游标（market-feed-uv 票 04；uuid-biz-id 票 05 起热度档带 create_time 收敛键）：
@@ -27,8 +28,71 @@ import java.util.Base64;
  * 都会在解码时报 PARAM_ERROR，而不是静默错位。游标失效（排序键值已漂移）不报错——keyset 语义下
  * 最多边界附近的行有出入，不重不漏由 {@code errand_order_id} 唯一锚点保证。
  */
-public record ErrandFeedCursorVO(String sortType, LocalDateTime feedTime, LocalDateTime createTime,
-                                 BigDecimal price, Long viewCount, String orderId) {
+public final class ErrandFeedCursorVO {
+
+    private final String sortType;
+    private final LocalDateTime feedTime;
+    private final LocalDateTime createTime;
+    private final BigDecimal price;
+    private final Long viewCount;
+    private final String orderId;
+
+    public ErrandFeedCursorVO(String sortType, LocalDateTime feedTime, LocalDateTime createTime,
+                              BigDecimal price, Long viewCount, String orderId) {
+        this.sortType = sortType;
+        this.feedTime = feedTime;
+        this.createTime = createTime;
+        this.price = price;
+        this.viewCount = viewCount;
+        this.orderId = orderId;
+    }
+
+    public String sortType() {
+        return sortType;
+    }
+
+    public LocalDateTime feedTime() {
+        return feedTime;
+    }
+
+    public LocalDateTime createTime() {
+        return createTime;
+    }
+
+    public BigDecimal price() {
+        return price;
+    }
+
+    public Long viewCount() {
+        return viewCount;
+    }
+
+    public String orderId() {
+        return orderId;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof ErrandFeedCursorVO other)) return false;
+        return Objects.equals(sortType, other.sortType)
+                && Objects.equals(feedTime, other.feedTime)
+                && Objects.equals(createTime, other.createTime)
+                && Objects.equals(price, other.price)
+                && Objects.equals(viewCount, other.viewCount)
+                && Objects.equals(orderId, other.orderId);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(sortType, feedTime, createTime, price, viewCount, orderId);
+    }
+
+    @Override
+    public String toString() {
+        return "ErrandFeedCursorVO[sortType=" + sortType + ", feedTime=" + feedTime + ", createTime=" + createTime
+                + ", price=" + price + ", viewCount=" + viewCount + ", orderId=" + orderId + "]";
+    }
 
     /** 热度（浏览 UV 数降序） */
     public static final String SORT_HOT = "hot";

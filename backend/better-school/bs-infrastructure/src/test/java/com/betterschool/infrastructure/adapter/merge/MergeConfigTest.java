@@ -24,7 +24,7 @@ class MergeConfigTest {
         MergeConfig config = MergeConfig.countDefaults();
 
         assertEquals(256, config.shardCount());
-        assertEquals(5, config.windowMs());
+        assertEquals(5, config.maxFlushDelayMillis());
         assertEquals(200, config.maxBatch());
         assertEquals(100, config.waitTimeoutMs());
         assertEquals(5000, config.shardCapacity());
@@ -43,7 +43,7 @@ class MergeConfigTest {
     }
 
     @Test
-    @DisplayName("waitTimeoutMs <= windowMs：构造即失败（否则必然先超时后落库）")
+    @DisplayName("waitTimeoutMs <= maxFlushDelayMillis：构造即失败（否则必然先超时后落库）")
     void rejectsWaitTimeoutNotGreaterThanWindow() {
         assertThrows(IllegalArgumentException.class,
                 () -> new MergeConfig(256, 100, 200, 100, 5000, 4, 5000));

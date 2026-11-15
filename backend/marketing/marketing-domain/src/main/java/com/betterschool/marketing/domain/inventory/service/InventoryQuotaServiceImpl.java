@@ -1,7 +1,7 @@
 package com.betterschool.marketing.domain.inventory.service;
 
 import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
-import com.betterschool.marketing.domain.inventory.service.merge.QuotaMergeBuffer;
+import com.betterschool.marketing.domain.inventory.service.merge.InventoryMerger;
 import com.betterschool.marketing.domain.inventory.model.valobj.InventoryClaimRequestVO;
 import com.betterschool.marketing.domain.inventory.model.valobj.ClaimOutcome;
 import com.betterschool.marketing.domain.inventory.model.valobj.DeductOutcomeVO;
@@ -46,7 +46,7 @@ import java.util.List;
 public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
 
     private final IInventoryRepository inventoryRepository;
-    private final QuotaMergeBuffer quotaMergeBuffer;
+    private final InventoryMerger inventoryMerger;
 
     @Override
     public boolean preDeduct(AwardInventoryType type, String awardId, long quantity, String bizType, String bizId) {
@@ -60,7 +60,7 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
             return alreadyDeducted(awardId, bizType, bizId);
         }
         InventoryDeductRequestVO request = new InventoryDeductRequestVO(type, awardId, quantity, bizType, bizId);
-        DeductResult result = quotaMergeBuffer.submitAndWait(request);
+        DeductResult result = inventoryMerger.submitAndWait(request);
         return switch (result) {
             case DEDUCTED -> {
                 log.info("奖品库存预扣已提交 type={} awardId={} quantity={} bizType={} bizId={}",
@@ -114,7 +114,7 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
     }
 
     /**
-     * 兑换确认（同步合并，spec §4.5）：进与预扣同一个 {@code QuotaMergeBuffer}（同分片）的
+     * 兑换确认（同步合并，spec §4.5）：进与预扣同一个 {@code InventoryMerger}（同分片）的
      * 确认重载，落库是「{@code flow_type = 2} 明细逐行 {@code INSERT IGNORE} + {@code waiting → issued}
      * 一条 {@code UPDATE}」的另一组（与预扣不合成一条三列 {@code UPDATE}——两个失败域不能混在一句里）。
      * 返回即 {@code waiting -= c, issued += c} 已提交，**没有第二步**。
@@ -137,7 +137,7 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
             return;
         }
         InventoryClaimRequestVO request = new InventoryClaimRequestVO(awardId, bizType, bizId, quantity);
-        ClaimOutcome outcome = quotaMergeBuffer.submitAndWait(request);
+        ClaimOutcome outcome = inventoryMerger.submitAndWait(request);
         switch (outcome) {
             case CONFIRMED -> log.info("兑换确认已提交（waiting -= c, issued += c 随返回生效）"
                     + " awardId={} bizType={} bizId={} quantity={}", awardId, bizType, bizId, quantity);

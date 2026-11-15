@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -202,7 +203,55 @@ class ViewMergeWriterTest {
         /** true = 整组抛异常（模拟 UPDATE 失败） */
         volatile boolean throwOnFlush;
 
-        record Call(CountAction action, String shardKey, int size, String thread) {
+        static final class Call {
+
+            private final CountAction action;
+            private final String shardKey;
+            private final int size;
+            private final String thread;
+
+            Call(CountAction action, String shardKey, int size, String thread) {
+                this.action = action;
+                this.shardKey = shardKey;
+                this.size = size;
+                this.thread = thread;
+            }
+
+            public CountAction action() {
+                return action;
+            }
+
+            public String shardKey() {
+                return shardKey;
+            }
+
+            public int size() {
+                return size;
+            }
+
+            public String thread() {
+                return thread;
+            }
+
+            @Override
+            public boolean equals(Object o) {
+                if (this == o) return true;
+                if (!(o instanceof Call other)) return false;
+                return size == other.size
+                        && Objects.equals(action, other.action)
+                        && Objects.equals(shardKey, other.shardKey)
+                        && Objects.equals(thread, other.thread);
+            }
+
+            @Override
+            public int hashCode() {
+                return Objects.hash(action, shardKey, size, thread);
+            }
+
+            @Override
+            public String toString() {
+                return "Call[action=" + action + ", shardKey=" + shardKey + ", size=" + size + ", thread=" + thread + "]";
+            }
         }
 
         @Override

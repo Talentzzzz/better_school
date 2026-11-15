@@ -27,12 +27,12 @@ import static org.junit.jupiter.api.Assertions.fail;
  * 引擎的五条不变量 + 两条附加断言（批上限、同分片保序）。
  * 全部是纯内存测试：落库是 {@link RecordingQuotaFlushHandler}，不起 Spring、不连库。
  */
-class QuotaMergeBufferTest {
+class InventoryMergerTest {
 
     private static final String INV_ID = "9_001";
     private static final AwardInventoryType TYPE = AwardInventoryType.PHYSICAL;
 
-    private QuotaMergeBuffer engine;
+    private InventoryMerger engine;
 
     @AfterEach
     void tearDown() {
@@ -42,8 +42,8 @@ class QuotaMergeBufferTest {
         }
     }
 
-    private QuotaMergeBuffer start(MergeConfig config, IInventoryRepository handler) {
-        engine = new QuotaMergeBuffer(config, handler);
+    private InventoryMerger start(MergeConfig config, IInventoryRepository handler) {
+        engine = new InventoryMerger(config, handler);
         return engine;
     }
 
@@ -124,7 +124,7 @@ class QuotaMergeBufferTest {
         int threads = 8;
         int perThread = 50;
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
-        QuotaMergeBuffer buffer = start(hotConfig(20), handler);
+        InventoryMerger buffer = start(hotConfig(20), handler);
 
         List<DeductResult> results = Collections.synchronizedList(new ArrayList<>());
         runConcurrently(threads, threadNo -> {
@@ -153,7 +153,7 @@ class QuotaMergeBufferTest {
     void missingBackfillIsCompletedAsFailed() throws Exception {
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
         handler.fillOnlyTotal = 1;
-        QuotaMergeBuffer buffer = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 2_000), handler);
+        InventoryMerger buffer = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 2_000), handler);
 
         List<DeductResult> results = submitBurst(buffer, 5);
 
@@ -167,7 +167,7 @@ class QuotaMergeBufferTest {
     void flushFailureMarksWholeGroupFailed() throws Exception {
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
         handler.throwOnFlush = true;
-        QuotaMergeBuffer buffer = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 2_000), handler);
+        InventoryMerger buffer = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 2_000), handler);
 
         List<DeductResult> results = submitBurst(buffer, 3);
 
@@ -180,7 +180,7 @@ class QuotaMergeBufferTest {
      * 线程在同一道闸门后起跑，落库前一定都已在缓冲区里——这样「一组 N 件」是确定性的，
      * 不靠「谁先被调度」的运气。
      */
-    private List<DeductResult> submitBurst(QuotaMergeBuffer buffer, int count) throws Exception {
+    private List<DeductResult> submitBurst(InventoryMerger buffer, int count) throws Exception {
         List<DeductResult> results = Collections.synchronizedList(new ArrayList<>(count));
         runConcurrently(count, threadNo -> results.add(buffer.submitAndWait(deduct(threadNo))));
         assertEquals(count, results.size(), "每个等待者都必须拿到终态");
@@ -200,7 +200,7 @@ class QuotaMergeBufferTest {
         int maxBatch = 10;
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
         handler.delayMs = 5;
-        QuotaMergeBuffer buffer = start(hotConfig(maxBatch), handler);
+        InventoryMerger buffer = start(hotConfig(maxBatch), handler);
 
         List<DeductResult> results = Collections.synchronizedList(new ArrayList<>());
         runConcurrently(threads, threadNo -> {
@@ -226,7 +226,7 @@ class QuotaMergeBufferTest {
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
         handler.entered = new CountDownLatch(1);
         handler.hold = new CountDownLatch(1);
-        QuotaMergeBuffer buffer = start(hotConfig(10), handler);
+        InventoryMerger buffer = start(hotConfig(10), handler);
 
         List<DeductResult> results = Collections.synchronizedList(new ArrayList<>());
         submitDeductInBackground(deduct(1), results);
@@ -254,7 +254,7 @@ class QuotaMergeBufferTest {
     void closeStillDrainsBufferedItems() throws Exception {
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
         // 窗口 1000ms 远超「攒件」所需：close() 之前不会有任何 flush 发生
-        QuotaMergeBuffer buffer = start(new MergeConfig(8, 1_000, 200, 5_000, 2_000, 3_000), handler);
+        InventoryMerger buffer = start(new MergeConfig(8, 1_000, 200, 5_000, 2_000, 3_000), handler);
 
         int total = 20;
         List<DeductResult> results = Collections.synchronizedList(new ArrayList<>());
@@ -276,7 +276,7 @@ class QuotaMergeBufferTest {
     @DisplayName("A4 停收：close() 之后提交拿 CLOSED，且件从未入队")
     void closeRejectsNewSubmissions() {
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
-        QuotaMergeBuffer buffer = start(hotConfig(200), handler);
+        InventoryMerger buffer = start(hotConfig(200), handler);
         buffer.close();
 
         assertEquals(DeductResult.CLOSED, buffer.submitAndWait(deduct(1)));
@@ -289,7 +289,7 @@ class QuotaMergeBufferTest {
     void drainFailureBackfillsFailed() throws Exception {
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
         // 窗口 1000ms 远超排空预算 20ms：close() 时件一定还在缓冲里
-        QuotaMergeBuffer buffer = start(new MergeConfig(8, 1_000, 200, 5_000, 2_000, 20), handler);
+        InventoryMerger buffer = start(new MergeConfig(8, 1_000, 200, 5_000, 2_000, 20), handler);
 
         int total = 3;
         List<DeductResult> results = Collections.synchronizedList(new ArrayList<>());
@@ -317,7 +317,7 @@ class QuotaMergeBufferTest {
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
         handler.entered = new CountDownLatch(1);
         handler.hold = new CountDownLatch(1);
-        QuotaMergeBuffer buffer = start(new MergeConfig(8, 5, 8, 500, 8, 2_000), handler);
+        InventoryMerger buffer = start(new MergeConfig(8, 5, 8, 500, 8, 2_000), handler);
 
         // 先让一条 flush 卡在落库上，后面的件就都只能待在缓冲里
         List<DeductResult> results = Collections.synchronizedList(new ArrayList<>());
@@ -349,7 +349,7 @@ class QuotaMergeBufferTest {
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
         handler.entered = new CountDownLatch(1);
         handler.hold = new CountDownLatch(1);
-        QuotaMergeBuffer buffer = start(new MergeConfig(8, 5, 8, 500, 8, 2_000), handler);
+        InventoryMerger buffer = start(new MergeConfig(8, 5, 8, 500, 8, 2_000), handler);
 
         List<DeductResult> results = Collections.synchronizedList(new ArrayList<>());
         submitDeductInBackground(deduct(0), results);
@@ -390,7 +390,7 @@ class QuotaMergeBufferTest {
         int maxBatch = 15;
         int threads = 40;
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
-        QuotaMergeBuffer buffer = start(new MergeConfig(8, 1, maxBatch, 5_000, 2_000, 2_000), handler);
+        InventoryMerger buffer = start(new MergeConfig(8, 1, maxBatch, 5_000, 2_000, 2_000), handler);
 
         List<DeductResult> results = Collections.synchronizedList(new ArrayList<>());
         runConcurrently(threads, threadNo -> results.add(buffer.submitAndWait(deduct(threadNo))));
@@ -407,7 +407,7 @@ class QuotaMergeBufferTest {
         int total = 20;
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
         // 窗口给足，让 20 件在同一个窗口里排队
-        QuotaMergeBuffer buffer = start(new MergeConfig(8, 1_000, 200, 5_000, 2_000, 6_000), handler);
+        InventoryMerger buffer = start(new MergeConfig(8, 1_000, 200, 5_000, 2_000, 6_000), handler);
 
         List<DeductResult> results = Collections.synchronizedList(new ArrayList<>());
         for (int i = 1; i <= total; i++) {
@@ -433,7 +433,7 @@ class QuotaMergeBufferTest {
     @DisplayName("预扣与确认同分片、同窗口，但落在两个组里（两个失败域不合成一条 SQL）")
     void deductAndClaimNeverShareAGroup() throws Exception {
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
-        QuotaMergeBuffer buffer = start(new MergeConfig(8, 200, 200, 5_000, 2_000, 2_000), handler);
+        InventoryMerger buffer = start(new MergeConfig(8, 200, 200, 5_000, 2_000, 2_000), handler);
 
         List<DeductResult> deductResults = Collections.synchronizedList(new ArrayList<>());
         List<ClaimOutcome> claimResults = Collections.synchronizedList(new ArrayList<>());
@@ -456,7 +456,7 @@ class QuotaMergeBufferTest {
     void insufficientIsABusinessResultNotALoss() throws Exception {
         RecordingQuotaFlushHandler handler = new RecordingQuotaFlushHandler();
         handler.insufficientOnFlush = true;
-        QuotaMergeBuffer buffer = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 2_000), handler);
+        InventoryMerger buffer = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 2_000), handler);
 
         List<DeductResult> results = submitBurst(buffer, 3);
 
@@ -471,7 +471,7 @@ class QuotaMergeBufferTest {
         handler.entered = new CountDownLatch(1);
         handler.hold = new CountDownLatch(1);
         // 等待预算 50ms 远小于闸门被按住的时间：一定先超时
-        QuotaMergeBuffer buffer = start(new MergeConfig(8, 1, 10, 50, 2_000, 2_000), handler);
+        InventoryMerger buffer = start(new MergeConfig(8, 1, 10, 50, 2_000, 2_000), handler);
 
         List<DeductResult> results = Collections.synchronizedList(new ArrayList<>());
         Thread caller = submitDeductInBackground(deduct(1), results);

@@ -15,7 +15,7 @@ import lombok.ToString;
  *   <li><b>flushThreads 必须等于连接池大小</b>：大于池 → 线程抢连接排队（256 线程抢 20 连接时
  *       多热点直接掉到 7.4k）；小于池 → 连接闲置，天花板 = 线程数 ÷ 单次 flush 耗时
  *       （8 线程实测卡在 12.4k，正好 100% 跑满）。这条在启动层配合池大小一起校验；</li>
- *   <li><b>waitTimeoutMs 必须大于 windowMs</b>：否则请求必然「先超时、后落库」，
+ *   <li><b>waitTimeoutMs 必须大于 maxFlushDelayMillis</b>：否则请求必然「先超时、后落库」，
  *       TIMEOUT 计数失去意义，用户还会重复下单。</li>
  * </ol>
  */
@@ -26,8 +26,8 @@ public class MergeConfigVO {
     /** 分片数（= 缓冲区个数），必须 2 的幂；建议 ≈ 峰值并发热点数 */
     private final int shardCount;
 
-    /** 合并窗口：分片首个请求排定 windowMs 后 flush，攒满可提前触发 */
-    private final int windowMs;
+    /** 合并窗口：分片首个请求排定 maxFlushDelayMillis 后 flush，攒满可提前触发 */
+    private final int maxFlushDelayMillis;
 
     /** 单次 flush 最多取走的请求数 */
     private final int maxBatch;
@@ -48,7 +48,7 @@ public class MergeConfigVO {
     private final long drainTimeoutMs;
 
     public MergeConfigVO(int shardCount,
-                         int windowMs,
+                         int maxFlushDelayMillis,
                          int maxBatch,
                          int waitTimeoutMs,
                          int shardCapacity,
@@ -58,17 +58,17 @@ public class MergeConfigVO {
         require(shardCount > 0, "merge.shard-count 必须 > 0（当前 %s）", shardCount);
         require(Integer.bitCount(shardCount) == 1,
                 "merge.shard-count(%s) 必须是 2 的幂：分片路由用 skuId & (n-1)，非 2 的幂会算出越界下标", shardCount);
-        require(windowMs >= 0, "merge.window-ms 必须 >= 0（当前 %s）", windowMs);
+        require(maxFlushDelayMillis >= 0, "merge.max-flush-delay-millis 必须 >= 0（当前 %s）", maxFlushDelayMillis);
         require(maxBatch > 0, "merge.max-batch 必须 > 0（当前 %s）", maxBatch);
-        require(waitTimeoutMs > windowMs,
-                "merge.wait-timeout-ms(%s) 必须 > merge.window-ms(%s)，否则请求必然先超时后落库", waitTimeoutMs, windowMs);
+        require(waitTimeoutMs > maxFlushDelayMillis,
+                "merge.wait-timeout-ms(%s) 必须 > merge.max-flush-delay-millis(%s)，否则请求必然先超时后落库", waitTimeoutMs, maxFlushDelayMillis);
         require(shardCapacity >= maxBatch,
                 "merge.shard-capacity(%s) 必须 >= merge.max-batch(%s)，否则永远攒不满一批就被拒绝", shardCapacity, maxBatch);
         require(flushThreads > 0, "merge.flush-threads 必须 > 0（当前 %s）", flushThreads);
         require(drainTimeoutMs > 0, "merge.drain-timeout-ms 必须 > 0（当前 %s）", drainTimeoutMs);
 
         this.shardCount = shardCount;
-        this.windowMs = windowMs;
+        this.maxFlushDelayMillis = maxFlushDelayMillis;
         this.maxBatch = maxBatch;
         this.waitTimeoutMs = waitTimeoutMs;
         this.shardCapacity = shardCapacity;

@@ -90,8 +90,8 @@ public class StockProperties {
         /** 分片数，必须 2 的幂；建议 ≈ 峰值并发热点数 */
         private int shardCount = 256;
 
-        /** 合并窗口（毫秒）：分片首个请求排定 windowMs 后 flush */
-        private int windowMs = 5;
+        /** 合并窗口（毫秒）：分片首个请求排定 maxFlushDelayMillis 后 flush */
+        private int maxFlushDelayMillis = 5;
 
         /** 单次 flush 最多取走的请求数 */
         private int maxBatch = 200;

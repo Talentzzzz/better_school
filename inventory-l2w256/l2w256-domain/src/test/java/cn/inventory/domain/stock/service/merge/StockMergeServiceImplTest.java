@@ -36,7 +36,7 @@ class StockMergeServiceImplTest {
     }
 
     private StockMergeServiceImpl start(FakeStockRepository repository, MergeConfigVO config) {
-        mergeService = new StockMergeServiceImpl(new MergedDeductExecutor(repository, config), config);
+        mergeService = new StockMergeServiceImpl(repository, config);
         return mergeService;
     }
 
@@ -76,7 +76,7 @@ class StockMergeServiceImplTest {
         assertEquals(threads * perThread, results.stream().filter(DeductResultVO::isSuccess).count(),
                 "全部成功：等待上限给到 5s，不该出现超时");
         assertEquals(threads * perThread, repository.deductedTotal.get(), "扣减总量必须精确等于请求总量");
-        assertTrue(repository.maxGroupSize.get() <= 20, "单批不能超过 maxBatch");
+        assertTrue(repository.maxBatchSize.get() <= 20, "单批不能超过 maxBatch");
         assertTrue(service.awaitIdle(2_000));
         assertEquals(0, service.pendingCount());
     }

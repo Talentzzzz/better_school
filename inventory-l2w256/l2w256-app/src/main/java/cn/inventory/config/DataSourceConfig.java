@@ -81,7 +81,7 @@ public class DataSourceConfig {
         }
         return new MergeConfigVO(
                 merge.getShardCount(),
-                merge.getWindowMs(),
+                merge.getMaxFlushDelayMillis(),
                 merge.getMaxBatch(),
                 merge.getWaitTimeoutMs(),
                 merge.getShardCapacity(),

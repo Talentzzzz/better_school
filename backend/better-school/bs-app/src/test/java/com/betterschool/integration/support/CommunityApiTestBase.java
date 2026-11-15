@@ -141,7 +141,41 @@ public abstract class CommunityApiTestBase {
     private String rawDbPassword;
 
     /** 登录态：token + userId */
-    public record Session(String token, String userId) {
+    public static final class Session {
+
+        private final String token;
+        private final String userId;
+
+        public Session(String token, String userId) {
+            this.token = token;
+            this.userId = userId;
+        }
+
+        public String token() {
+            return token;
+        }
+
+        public String userId() {
+            return userId;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof Session other)) return false;
+            return java.util.Objects.equals(token, other.token)
+                    && java.util.Objects.equals(userId, other.userId);
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Objects.hash(token, userId);
+        }
+
+        @Override
+        public String toString() {
+            return "Session[token=" + token + ", userId=" + userId + "]";
+        }
     }
 
     /** 表隔离：清业务表 */

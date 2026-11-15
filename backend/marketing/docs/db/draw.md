@@ -67,7 +67,7 @@
 - **每一步的幂等**：`UPDATE draw_record SET state = ? WHERE record_id = ? AND state = ?`（守卫 = 起点）
   + `INSERT IGNORE draw_record_detail`（`uk_record_type`）。守卫落空 = 重复投递，整笔回滚不推进。
 - **兑换确认排在推进之前（顺序保留，但不再承重）**：确认已是一次**本地写**——进合并器
-  （`QuotaMergeBuffer` 确认重载），返回即 `waiting_qty → issued_qty` 已提交（明细 + 转移一个事务），
+  （`InventoryMerger` 确认重载），返回即 `waiting_qty → issued_qty` 已提交（明细 + 转移一个事务），
   不再抛 `4312`（`waiting` 不足是不变量破坏：整组回滚 + 抛可重试 ⇒ 死信）。
   所以它不会因为「事件先到」而失败，重投的剧情随之消失。
   状态机仍拆成**只读计划**（`planShipAfterDraw`）与**推进**（`advanceShipAfterDraw`）两步、跨域确认插在中间：

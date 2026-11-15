@@ -1,5 +1,6 @@
 package cn.inventory.domain.stock.service.merge;
 
+import cn.inventory.domain.stock.adapter.repository.IStockRepository;
 import cn.inventory.domain.stock.model.valobj.DeductRequestVO;
 import cn.inventory.domain.stock.model.valobj.DeductResultVO;
 import cn.inventory.domain.stock.model.valobj.MergeConfigVO;
@@ -24,7 +25,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * <pre>
  *   submit()
  *     ├─ 按 skuId & mask 路由到分片
- *     ├─ 塞进该分片缓冲区（首个请求排定 windowMs 后的 flush；攒满 200 提前触发）
+ *     ├─ 塞进该分片缓冲区（首个请求排定 maxFlushDelayMillis 后的 flush；攒满 200 提前触发）
  *     └─ park 在自己的 future 上，最多等 waitTimeoutMs
  *                    ↓（定时器到点，由执行池线程接管）
  *   flush：整块摘走缓冲区 → 同 SKU 一条 UPDATE 扣 N 件 → 回填 future → 有积压则续排
@@ -58,7 +59,7 @@ public class StockMergeServiceImpl implements IStockMergeService, DisposableBean
     /** 是否接收新请求：停机第一步置 false，入口立刻开始拒绝（不再往缓冲区里塞） */
     private volatile boolean accepting = true;
 
-    public StockMergeServiceImpl(MergedDeductExecutor executor, MergeConfigVO mergeConfig) {
+    public StockMergeServiceImpl(IStockRepository stockRepository, MergeConfigVO mergeConfig) {
         this.config = mergeConfig;
         this.scheduler = new ScheduledThreadPoolExecutor(
                 mergeConfig.getFlushThreads(),
@@ -72,12 +73,12 @@ public class StockMergeServiceImpl implements IStockMergeService, DisposableBean
         int shardCount = mergeConfig.getShardCount();
         this.shards = new ShardBuffer[shardCount];
         for (int i = 0; i < shardCount; i++) {
-            this.shards[i] = new ShardBuffer(i, mergeConfig, scheduler, executor::flushBatch, this::signalIdle);
+            this.shards[i] = new ShardBuffer(i, mergeConfig, scheduler, stockRepository::deductBatch, this::signalIdle);
         }
 
-        log.info("L2W256 合并扣减器启动：shardCount={}(mask={}), windowMs={}, maxBatch={}, waitTimeoutMs={}, "
+        log.info("L2W256 合并扣减器启动：shardCount={}(mask={}), maxFlushDelayMillis={}, maxBatch={}, waitTimeoutMs={}, "
                         + "shardCapacity={}, flushThreads={}, soldoutShortcut={}, drainTimeoutMs={}",
-                shardCount, mergeConfig.mask(), mergeConfig.getWindowMs(), mergeConfig.getMaxBatch(),
+                shardCount, mergeConfig.mask(), mergeConfig.getMaxFlushDelayMillis(), mergeConfig.getMaxBatch(),
                 mergeConfig.getWaitTimeoutMs(), mergeConfig.getShardCapacity(), mergeConfig.getFlushThreads(),
                 mergeConfig.isSoldoutShortcut(), mergeConfig.getDrainTimeoutMs());
     }

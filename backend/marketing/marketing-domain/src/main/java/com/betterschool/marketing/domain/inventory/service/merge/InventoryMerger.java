@@ -38,14 +38,14 @@ import java.util.concurrent.locks.ReentrantLock;
  * 每分片恰一条 flush 线程上）、锁不跨 DB、停机三步（停收 → 排空 → signal + join）。
  * 落库出口是 {@link IInventoryRepository}
  * （真身 {@code InventoryQuotaFlushService}，经 {@code InventoryRepository} 委托）；
- * 实例由 {@code QuotaMergeConfig} 以 {@code @Bean} 装配，
+ * 实例由 {@code InventoryMergeConfig} 以 {@code @Bean} 装配，
  * {@link #close()} 由 Spring 的 {@code @Bean} destroyMethod 推断在停机时调用。
  *
  * <p>本类在 domain 层：它是纯 Java 并发编排（不碰 SQL、不碰框架），
  * 域服务直接注入入队，落库经端口回调——依赖单向，仓储不认识本类。
  */
 @Slf4j
-public class QuotaMergeBuffer {
+public class InventoryMerger {
 
     /** 排空等待的兜底探测间隔：正常由 flush 完成信号唤醒，这里只防信号丢失 */
     private static final long IDLE_PROBE_MS = 5;
@@ -61,7 +61,7 @@ public class QuotaMergeBuffer {
     /** 是否接收新件：停机第一步置 false，入口立刻开始拒绝（不再往缓冲区里塞） */
     private volatile boolean accepting = true;
 
-    public QuotaMergeBuffer(MergeConfig config, IInventoryRepository flushHandler) {
+    public InventoryMerger(MergeConfig config, IInventoryRepository flushHandler) {
         if (flushHandler == null) {
             throw new IllegalArgumentException(
                     "[配置错误] IInventoryRepository 不能为 null：合并器没有出口等于丢弃所有扣减");
@@ -69,8 +69,8 @@ public class QuotaMergeBuffer {
         this.config = config;
         this.flushHandler = flushHandler;
 
-        // 每分片一条常驻 daemon 线程（quota-merge-flush-<shardNo>），构造即开跑；
-        // flush 并发 = shardCount，其与连接池的不变量由装配层（QuotaMergeConfig）启动时校验
+        // 每分片一条常驻 daemon 线程（inventory-merge-flush-<shardNo>），构造即开跑；
+        // flush 并发 = shardCount，其与连接池的不变量由装配层（InventoryMergeConfig）启动时校验
         this.shards = new ShardFlusher[config.shardCount()];
         for (int i = 0; i < config.shardCount(); i++) {
             shards[i] = new ShardFlusher(i, config, this::flushBatch, this::signalIdle);

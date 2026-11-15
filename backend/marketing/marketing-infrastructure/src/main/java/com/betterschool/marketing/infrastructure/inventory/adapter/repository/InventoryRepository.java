@@ -39,7 +39,7 @@ import java.util.List;
  * 批量落库（预扣 / 确认「一组一个事务」的 SQL）已拆到 {@link InventoryQuotaFlushService}：
  * 本类的 {@link #flushDeductGroup} / {@link #flushClaimGroup} 只是委托——
  * 域服务的降级路径（合并器缓冲满 / 停机时同步落库）与合并器内的 flush 复用同一套 SQL。
- * 本类不认识合并器：合并器（domain 层 {@code QuotaMergeBuffer}）经领域端口回调落库，
+ * 本类不认识合并器：合并器（domain 层 {@code InventoryMerger}）经领域端口回调落库，
  * 入队由域服务直接注入引擎——依赖单向（域服务 → 引擎 → 端口 ← 本类），无循环依赖。
  * <p>
  * 分配（{@link #allocate}）：低频运营操作，不进合并器——本类用 {@code TransactionTemplate}（REQUIRED）

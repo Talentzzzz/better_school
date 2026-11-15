@@ -25,7 +25,30 @@ public final class ConfirmProbe2 {
 
     static int pass = 0, fail = 0;
 
-    record Variant(String label, String schema, String yaml) { }
+    static final class Variant {
+
+        private final String label;
+        private final String schema;
+        private final String yaml;
+
+        Variant(String label, String schema, String yaml) {
+            this.label = label;
+            this.schema = schema;
+            this.yaml = yaml;
+        }
+
+        public String label() {
+            return label;
+        }
+
+        public String schema() {
+            return schema;
+        }
+
+        public String yaml() {
+            return yaml;
+        }
+    }
 
     static final List<Variant> VARIANTS = List.of(
             new Variant("C repo-shape-verbatim   (no !SINGLE)", "ss_c", "probe-r-c.yaml"),

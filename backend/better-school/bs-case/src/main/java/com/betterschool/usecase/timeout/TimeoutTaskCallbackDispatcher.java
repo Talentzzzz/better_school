@@ -9,6 +9,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.Objects;
+
 /**
  * 回调端口的进程内实现（超时中心内嵌化票 04）：按 {@code taskType} 分发到各域既有的到期动作。
  * <p>
@@ -55,7 +57,40 @@ public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
     }
 
     /** 复合 bizId：{id}:{seq}（锁单超时 = orderId:lockSeq，审核租约超时 = taskId:claimSeq；两段 id 均为 UUID 字符串，uuid-biz-id 票 05/06，UUID 无冒号不影响拆分） */
-    private record CompositeBizId(String id, int seq) {
+    private static final class CompositeBizId {
+
+        private final String id;
+        private final int seq;
+
+        private CompositeBizId(String id, int seq) {
+            this.id = id;
+            this.seq = seq;
+        }
+
+        public String id() {
+            return id;
+        }
+
+        public int seq() {
+            return seq;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof CompositeBizId other)) return false;
+            return seq == other.seq && Objects.equals(id, other.id);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(id, seq);
+        }
+
+        @Override
+        public String toString() {
+            return "CompositeBizId[id=" + id + ", seq=" + seq + "]";
+        }
     }
 
     /** 形状不对同样是编程错误：抛出去按失败重投，不静默当成功（uuid-biz-id 票 05：id 段直传不解析） */

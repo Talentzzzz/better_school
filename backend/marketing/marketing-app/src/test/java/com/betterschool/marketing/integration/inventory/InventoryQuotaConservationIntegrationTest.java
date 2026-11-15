@@ -3,7 +3,7 @@ package com.betterschool.marketing.integration.inventory;
 import com.betterschool.marketing.domain.inventory.model.valobj.DeductResult;
 import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductRequestVO;
 import com.betterschool.marketing.domain.inventory.service.IInventoryQuotaService;
-import com.betterschool.marketing.domain.inventory.service.merge.QuotaMergeBuffer;
+import com.betterschool.marketing.domain.inventory.service.merge.InventoryMerger;
 import com.betterschool.marketing.infrastructure.inventory.adapter.repository.InventoryRepository;
 import com.betterschool.marketing.integration.support.TestingEnvironment;
 import com.betterschool.marketing.types.common.AppException;
@@ -74,7 +74,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
     @Autowired
     private InventoryRepository inventoryRepository;
     @Autowired
-    private QuotaMergeBuffer quotaMergeBuffer;
+    private InventoryMerger inventoryMerger;
 
     @BeforeEach
     void resetFixtures() {
@@ -275,9 +275,9 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
                     InventoryBizTypes.LOTTERY_DRAW, String.valueOf(RECORD_SEQ.incrementAndGet()));
         }
         // 读数前等合并器排空：B2 / B3 是台账断言，不能带在途 flush
-        assertThat(quotaMergeBuffer.awaitIdle(5000))
+        assertThat(inventoryMerger.awaitIdle(5000))
                 .as("合并器已排空").isTrue();
-        assertThat(quotaMergeBuffer.pending()).isZero();
+        assertThat(inventoryMerger.pending()).isZero();
 
         long surplus = surplusOf(PHYSICAL_AWARD_ID);
         long waiting = waitingOf(PHYSICAL_AWARD_ID);

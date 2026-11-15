@@ -2,7 +2,7 @@ package com.betterschool.marketing.config;
 
 import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
 import com.betterschool.marketing.domain.inventory.service.merge.MergeConfig;
-import com.betterschool.marketing.domain.inventory.service.merge.QuotaMergeBuffer;
+import com.betterschool.marketing.domain.inventory.service.merge.InventoryMerger;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,12 +16,12 @@ import org.springframework.core.env.Environment;
  * flush 占满连接后普通查询会在 {@code connection-timeout} 上排队——所以引擎只校验 2 的幂等自身约束，
  * 并发上限在启动这里卡死。
  *
- * <p>per-shard 常驻线程模型（每分片一条 {@code quota-merge-flush-*}）下 flush 并发 = shardCount，
+ * <p>per-shard 常驻线程模型（每分片一条 {@code inventory-merge-flush-*}）下 flush 并发 = shardCount，
  * 不变量「flush 并发 <= 池 − 2」的校验对象从旧的 flushThreads 换成 shardCount（wayfinder charting-log Q7）。
  */
 @Slf4j
 @Configuration
-public class QuotaMergeConfig {
+public class InventoryMergeConfig {
 
     /** 连接池默认值与 application.yml 的 {@code spring.datasource.hikari.maximum-pool-size} 对齐 */
     private static final int DEFAULT_POOL_SIZE = 10;
@@ -30,12 +30,12 @@ public class QuotaMergeConfig {
     private static final int RESERVED_POOL_CONNECTIONS = 2;
 
     /**
-     * 库存侧合并参数。未配置的项落 {@link MergeConfig#quotaDefaults()}
+     * 库存侧合并参数。未配置的项落 {@link MergeConfig#inventoryDefaults()}
      * （8 / 5ms / 200 / 100ms / 2000 / 5s）。
      */
     @Bean
-    public MergeConfig quotaMergeConfig(Environment environment) {
-        MergeConfig defaults = MergeConfig.quotaDefaults();
+    public MergeConfig inventoryMergeConfig(Environment environment) {
+        MergeConfig defaults = MergeConfig.inventoryDefaults();
         MergeConfig config = new MergeConfig(
                 environment.getProperty("merge.inventory.shard-count", Integer.class, defaults.shardCount()),
                 environment.getProperty("merge.inventory.max-flush-delay-millis", Integer.class, defaults.maxFlushDelayMillis()),
@@ -68,7 +68,7 @@ public class QuotaMergeConfig {
      * destroyMethod 推断在停机时调用（停收 → 排空 → signal + join）。
      */
     @Bean
-    public QuotaMergeBuffer quotaMergeBuffer(MergeConfig mergeConfig, IInventoryRepository inventoryRepository) {
-        return new QuotaMergeBuffer(mergeConfig, inventoryRepository);
+    public InventoryMerger inventoryMerger(MergeConfig mergeConfig, IInventoryRepository inventoryRepository) {
+        return new InventoryMerger(mergeConfig, inventoryRepository);
     }
 }

@@ -22,7 +22,7 @@ class MergeConfigTest {
     @Test
     @DisplayName("默认值：8 / 5ms / 200 / 100ms / 2000 / 5s（per-shard 线程模型下 flush 并发 = shardCount，默认取「池 − 2」下限）")
     void defaultsMatchSpec() {
-        MergeConfig config = MergeConfig.quotaDefaults();
+        MergeConfig config = MergeConfig.inventoryDefaults();
 
         assertEquals(8, config.shardCount());
         assertEquals(5, config.maxFlushDelayMillis());
@@ -68,7 +68,7 @@ class MergeConfigTest {
     @Test
     @DisplayName("路由：同一 key 恒落同一片，且不同 invId 散开多片（hashCode 折叠后不会全挤 0 号片）")
     void spreadsDistinctKeysAcrossShards() {
-        MergeConfig config = MergeConfig.quotaDefaults();
+        MergeConfig config = MergeConfig.inventoryDefaults();
 
         // uuid-biz-id 票 07：inv_id 已 UUID 字符串化，路由输入从 long 改字符串 hashCode 折叠。
         // 64 个互异 key 至少散进一半以上分片（hashCode 均匀性下 64 个全同片的概率可忽略），

@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
+import java.util.Objects;
 
 /**
  * 时间格合并引擎：一次只合「一个桶 + 一个秒格」。
@@ -47,9 +48,49 @@ public class MergeEngine {
         return new MergeOutcome(true, stat.rows(), stat.qty());
     }
 
-    public record MergeOutcome(boolean merged, long rows, long qty) {
+    public static final class MergeOutcome {
+
+        private final boolean merged;
+        private final long rows;
+        private final long qty;
+
+        private MergeOutcome(boolean merged, long rows, long qty) {
+            this.merged = merged;
+            this.rows = rows;
+            this.qty = qty;
+        }
+
         public static MergeOutcome none() {
             return new MergeOutcome(false, 0, 0);
+        }
+
+        public boolean merged() {
+            return merged;
+        }
+
+        public long rows() {
+            return rows;
+        }
+
+        public long qty() {
+            return qty;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof MergeOutcome other)) return false;
+            return merged == other.merged && rows == other.rows && qty == other.qty;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(merged, rows, qty);
+        }
+
+        @Override
+        public String toString() {
+            return "MergeOutcome[merged=" + merged + ", rows=" + rows + ", qty=" + qty + "]";
         }
     }
 

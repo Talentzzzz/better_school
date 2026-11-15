@@ -427,7 +427,23 @@ public class ChatWsIntegrationTest extends CommunityApiTestBase {
         }
     }
 
-    private record WsClient(WebSocketSession session, CollectingHandler handler) {
+    private static final class WsClient {
+
+        private final WebSocketSession session;
+        private final CollectingHandler handler;
+
+        private WsClient(WebSocketSession session, CollectingHandler handler) {
+            this.session = session;
+            this.handler = handler;
+        }
+
+        public WebSocketSession session() {
+            return session;
+        }
+
+        public CollectingHandler handler() {
+            return handler;
+        }
 
         boolean isOpen() {
             return session.isOpen();

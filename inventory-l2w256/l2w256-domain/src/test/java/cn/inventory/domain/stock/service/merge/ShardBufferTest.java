@@ -43,10 +43,10 @@ class ShardBufferTest {
         scheduler.shutdownNow();
     }
 
-    private static MergeConfigVO config(int windowMs, int maxBatch, int capacity) {
+    private static MergeConfigVO config(int maxFlushDelayMillis, int maxBatch, int capacity) {
         // 容量必须 >= 批上限（配置本身的硬约束），这里顺手兜一下，免得每个用例都写一遍
         // 等待上限给足（>= 1s）：单测关心的是触发时机，不希望请求先超时
-        return new MergeConfigVO(8, windowMs, maxBatch, Math.max(1_000, windowMs * 2),
+        return new MergeConfigVO(8, maxFlushDelayMillis, maxBatch, Math.max(1_000, maxFlushDelayMillis * 2),
                 Math.max(capacity, maxBatch), 2, true, 2_000);
     }
 

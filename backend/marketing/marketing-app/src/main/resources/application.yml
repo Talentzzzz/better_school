@@ -108,7 +108,7 @@ xxl:
 # 库存合并器（spec §2.4：与计数侧同一套窗口 / 批 / 超时；全部未经扫参）。
 # 调参看日志里的分片积压与 flush 批大小，调参不改代码结构。
 # shard-count 的硬上限是「连接池 - 2」（per-shard 常驻 flush 线程模型，flush 并发 = shard-count），
-# 由 marketing-app/config/QuotaMergeConfig 启动时校验并把两个数打进日志。
+# 由 marketing-app/config/InventoryMergeConfig 启动时校验并把两个数打进日志。
 # shardCapacity 比计数侧小是刻意的：库存资金敏感 ⇒ 满了立刻降级为同步单条扣减，队列别长。
 merge:
   inventory:

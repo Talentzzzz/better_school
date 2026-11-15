@@ -57,7 +57,7 @@ final class ShardBuffer {
     private final int shardNo;
     private final int maxBatch;
     private final int capacity;
-    private final long windowMs;
+    private final long maxFlushDelayMillis;
     private final ScheduledExecutorService scheduler;
     /** 摘批后的落库回调：整批交给引擎，由引擎做「动作 × 行主键」二次分组（锁外执行） */
     private final Consumer<List<Pending>> flushCallback;
@@ -89,7 +89,7 @@ final class ShardBuffer {
         this.shardNo = shardNo;
         this.maxBatch = config.maxBatch();
         this.capacity = config.shardCapacity();
-        this.windowMs = config.windowMs();
+        this.maxFlushDelayMillis = config.maxFlushDelayMillis();
         this.scheduler = scheduler;
         this.flushCallback = flushCallback;
         this.flushDoneSignal = flushDoneSignal;
@@ -113,9 +113,9 @@ final class ShardBuffer {
             size = pending.size();
 
             if (!scheduled) {
-                // 分片首个请求：排定 windowMs 后的 flush，后续请求只入缓冲区、等同一个窗口
+                // 分片首个请求：排定 maxFlushDelayMillis 后的 flush，后续请求只入缓冲区、等同一个窗口
                 scheduled = true;
-                return scheduleNext(windowMs) ? SubmitOutcome.ACCEPTED : SubmitOutcome.CLOSED;
+                return scheduleNext(maxFlushDelayMillis) ? SubmitOutcome.ACCEPTED : SubmitOutcome.CLOSED;
             }
             if (pending.size() >= maxBatch) {
                 // 攒满：取消窗口等待、改排立即 flush（正在落库时什么也不做，见 bringForward）
@@ -197,7 +197,7 @@ final class ShardBuffer {
                     flight = null;
                 } else if (!closed) {
                     // flush 期间又来了新件：攒满则立即续跑（背靠背），否则再等一个窗口
-                    scheduleNext(pending.size() >= maxBatch ? 0 : windowMs);
+                    scheduleNext(pending.size() >= maxBatch ? 0 : maxFlushDelayMillis);
                 }
             } finally {
                 lock.unlock();

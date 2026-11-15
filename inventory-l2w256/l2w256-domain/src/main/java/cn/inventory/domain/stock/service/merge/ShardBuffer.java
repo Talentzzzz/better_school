@@ -57,7 +57,7 @@ final class ShardBuffer {
     private final int shardNo;
     private final int maxBatch;
     private final int capacity;
-    private final long windowMs;
+    private final long maxFlushDelayMillis;
     private final ScheduledExecutorService scheduler;
     private final Consumer<List<MergeTask>> flushAction;
     private final Runnable flushDoneSignal;
@@ -87,7 +87,7 @@ final class ShardBuffer {
         this.shardNo = shardNo;
         this.maxBatch = config.getMaxBatch();
         this.capacity = config.getShardCapacity();
-        this.windowMs = config.getWindowMs();
+        this.maxFlushDelayMillis = config.getMaxFlushDelayMillis();
         this.scheduler = scheduler;
         this.flushAction = flushAction;
         this.flushDoneSignal = flushDoneSignal;
@@ -113,7 +113,7 @@ final class ShardBuffer {
             if (!scheduled) {
                 // 分片首个请求：排定一个窗口后的 flush，后续请求只入缓冲区、等同一个窗口
                 scheduled = true;
-                return scheduleNext(windowMs);
+                return scheduleNext(maxFlushDelayMillis);
             }
             if (pending.size() >= maxBatch) {
                 // 攒满：取消窗口等待、改排立即 flush
@@ -192,7 +192,7 @@ final class ShardBuffer {
                     flight = null;
                 } else if (!closed) {
                     // flush 期间又来了新请求：攒满则立即续跑（背靠背），否则再等一个窗口
-                    scheduleNext(pending.size() >= maxBatch ? 0 : windowMs);
+                    scheduleNext(pending.size() >= maxBatch ? 0 : maxFlushDelayMillis);
                 }
             } finally {
                 lock.unlock();

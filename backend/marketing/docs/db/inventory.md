@@ -95,7 +95,7 @@ UPDATE draw_strategy_award_inventory                                  -- upsert�
 
 ## 落库：进程内合并，一组一个事务（口径不变，目标表换成统一台账）
 
-预扣与兑换确认都走 `QuotaMergeBuffer.submitAndWait`（两个重载，**不合成一个方法**——两个失败域的语义不同）：
+预扣与兑换确认都走 `InventoryMerger.submitAndWait`（两个重载，**不合成一个方法**——两个失败域的语义不同）：
 
 ```sql
 -- 预扣（PHYSICAL 行；VIRTUAL 行 surplus → issued，无 waiting）
@@ -150,6 +150,6 @@ SELECT d.award_id, d.biz_id, d.quantity, d.create_time
 虚拟 `preDeduct`），**预扣锚在奖品位 id（奖品库存账户）**；奖品位配置 `draw_strategy_award.inv_id`
 收窄为「投放池配置」：它是分配的转出来源，也是 `inv_id = '0'` 的不限量哨兵。预扣返回即账户台账已动
 （`surplus → waiting` / `issued`），目录查询（`GET /prizes` 的 `remaining` / `total`）读奖品库存账户，
-积分面额读池配置。兑换确认由发货消费驱动（`IQuotaConfirmPort` → `QuotaMergeBuffer` 确认重载），
+积分面额读池配置。兑换确认由发货消费驱动（`IQuotaConfirmPort` → `InventoryMerger` 确认重载），
 返回即 `waiting → issued` 已提交。预扣成功而 `draw_record` 没落库的窗口**不补偿**：明细在库、台账已扣，
 靠「孤儿预扣」人工 SQL 暴露。

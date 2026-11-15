@@ -75,15 +75,15 @@ domain/stock/
 ├── model/valobj/     DeductRequestVO / DeductResultVO / MergedDeductResult / MergeConfigVO
 ├── service/
 │   ├── merge/        IStockMergeService + StockMergeServiceImpl（引擎）
-│   │                 ShardBuffer（单分片缓冲区，核心）+ MergeTask + MergedDeductExecutor（落库）
+│   │                 ShardBuffer（单分片缓冲区，核心）+ MergeTask
 │   └── inventory/    IStockInventoryService（查询 / 复位，非热点路径）
 └── adapter/repository/IStockRepository      ← infrastructure 实现
 ```
 
-**三层职责边界**（换业务时最该守住的东西）：
+**两层职责边界**（换业务时最该守住的东西）：
 
 - `ShardBuffer` 只管攒批与单飞，不知道 SQL 长什么样；
-- `MergedDeductExecutor` 只管「一批 → 几次事务」，不知道缓冲区；
+- `StockRepository`（infrastructure）只管「一批 → 几次事务」（分组 / 二分 / 售罄短路 / 幂等），不知道缓冲区；
 - 两者用一个 `Consumer<List<MergeTask>>` 解耦，所以攒批策略与落库策略可以各自替换。
 
 ---
@@ -237,9 +237,9 @@ curl -s localhost:8080/api/v1/stock/metrics
 
 | 想做的事 | 改哪里 | 不用动 |
 |---|---|---|
-| 换成自己的业务（订单/优惠券/额度） | `domain/xxx/` 全部 + `IStockRepository` + mapper XML | `ShardBuffer` / `StockMergeServiceImpl` / `MergedDeductExecutor`（把「扣库存」换成一次回调即可） |
+| 换成自己的业务（订单/优惠券/额度） | `domain/xxx/` 全部 + `IStockRepository` + mapper XML | `ShardBuffer` / `StockMergeServiceImpl`（把「扣库存」换成一次回调即可） |
 | 换攒批策略（队列式 / 出口驱动） | 只换 `ShardBuffer` 的实现 | 落库、幂等、外部 API |
-| 换落库策略（先探库存 / 不拆批 / 异步刷盘） | 只改 `MergedDeductExecutor` | 缓冲区与触发模型 |
+| 换落库策略（先探库存 / 不拆批 / 异步刷盘） | 只改 infrastructure 的 `StockRepository` | 缓冲区与触发模型 |
 | 拆微服务暴露 dubbo | `l2w256-trigger` 加 `rpc/XxxDubboService implements IStockService` | `api` 层 DTO 一行不改 |
 | 接 MQ 消费 | `l2w256-trigger` 加 `listener/` | 编排与领域逻辑 |
 

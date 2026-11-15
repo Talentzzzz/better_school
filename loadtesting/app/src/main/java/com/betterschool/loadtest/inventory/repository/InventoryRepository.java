@@ -206,20 +206,204 @@ public class InventoryRepository {
         return n == null ? 0 : n;
     }
 
-    // ---------------------------------------------------------------- record
+    // ---------------------------------------------------------------- 值对象
 
-    public record LedgerRow(long total, long surplus, long waiting, long issued) {
+    public static final class LedgerRow {
+
+        private final long total;
+        private final long surplus;
+        private final long waiting;
+        private final long issued;
+
+        public LedgerRow(long total, long surplus, long waiting, long issued) {
+            this.total = total;
+            this.surplus = surplus;
+            this.waiting = waiting;
+            this.issued = issued;
+        }
+
+        public long total() {
+            return total;
+        }
+
+        public long surplus() {
+            return surplus;
+        }
+
+        public long waiting() {
+            return waiting;
+        }
+
+        public long issued() {
+            return issued;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof LedgerRow other)) return false;
+            return total == other.total && surplus == other.surplus
+                    && waiting == other.waiting && issued == other.issued;
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Objects.hash(total, surplus, waiting, issued);
+        }
+
+        @Override
+        public String toString() {
+            return "LedgerRow[total=" + total + ", surplus=" + surplus + ", waiting=" + waiting + ", issued=" + issued + "]";
+        }
     }
 
-    public record BucketRow(int bucketId, long redisQty) {
+    public static final class BucketRow {
+
+        private final int bucketId;
+        private final long redisQty;
+
+        public BucketRow(int bucketId, long redisQty) {
+            this.bucketId = bucketId;
+            this.redisQty = redisQty;
+        }
+
+        public int bucketId() {
+            return bucketId;
+        }
+
+        public long redisQty() {
+            return redisQty;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof BucketRow other)) return false;
+            return bucketId == other.bucketId && redisQty == other.redisQty;
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Objects.hash(bucketId, redisQty);
+        }
+
+        @Override
+        public String toString() {
+            return "BucketRow[bucketId=" + bucketId + ", redisQty=" + redisQty + "]";
+        }
     }
 
-    public record CellStat(long rows, long qty, long maxId) {
+    public static final class CellStat {
+
+        private final long rows;
+        private final long qty;
+        private final long maxId;
+
+        public CellStat(long rows, long qty, long maxId) {
+            this.rows = rows;
+            this.qty = qty;
+            this.maxId = maxId;
+        }
+
+        public long rows() {
+            return rows;
+        }
+
+        public long qty() {
+            return qty;
+        }
+
+        public long maxId() {
+            return maxId;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof CellStat other)) return false;
+            return rows == other.rows && qty == other.qty && maxId == other.maxId;
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Objects.hash(rows, qty, maxId);
+        }
+
+        @Override
+        public String toString() {
+            return "CellStat[rows=" + rows + ", qty=" + qty + ", maxId=" + maxId + "]";
+        }
     }
 
-    public record BucketRef(long skuId, int bucketId) {
+    public static final class BucketRef {
+
+        private final long skuId;
+        private final int bucketId;
+
+        public BucketRef(long skuId, int bucketId) {
+            this.skuId = skuId;
+            this.bucketId = bucketId;
+        }
+
+        public long skuId() {
+            return skuId;
+        }
+
+        public int bucketId() {
+            return bucketId;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof BucketRef other)) return false;
+            return skuId == other.skuId && bucketId == other.bucketId;
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Objects.hash(skuId, bucketId);
+        }
+
+        @Override
+        public String toString() {
+            return "BucketRef[skuId=" + skuId + ", bucketId=" + bucketId + "]";
+        }
     }
 
-    public record PendingStat(long rows, long qty) {
+    public static final class PendingStat {
+
+        private final long rows;
+        private final long qty;
+
+        public PendingStat(long rows, long qty) {
+            this.rows = rows;
+            this.qty = qty;
+        }
+
+        public long rows() {
+            return rows;
+        }
+
+        public long qty() {
+            return qty;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof PendingStat other)) return false;
+            return rows == other.rows && qty == other.qty;
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Objects.hash(rows, qty);
+        }
+
+        @Override
+        public String toString() {
+            return "PendingStat[rows=" + rows + ", qty=" + qty + "]";
+        }
     }
 }

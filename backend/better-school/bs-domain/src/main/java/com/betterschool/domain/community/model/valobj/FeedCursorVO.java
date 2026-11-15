@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Base64;
+import java.util.Objects;
 
 /**
  * feed 游标（feed-index-uv 票 04；uuid-biz-id 票 03 起带时间收敛键）：keyset 分页的续页锚点，封装
@@ -21,7 +22,56 @@ import java.util.Base64;
  * 报 PARAM_ERROR，而不是静默错位。游标失效（排序键值已漂移）不报错——keyset 语义下最多
  * 边界附近的行有出入，不重不漏由 (feed_time, post_id) 唯一锚点保证。
  */
-public record FeedCursorVO(String sortType, LocalDateTime feedTime, Long likeCount, String postId) {
+public final class FeedCursorVO {
+
+    private final String sortType;
+    private final LocalDateTime feedTime;
+    private final Long likeCount;
+    private final String postId;
+
+    public FeedCursorVO(String sortType, LocalDateTime feedTime, Long likeCount, String postId) {
+        this.sortType = sortType;
+        this.feedTime = feedTime;
+        this.likeCount = likeCount;
+        this.postId = postId;
+    }
+
+    public String sortType() {
+        return sortType;
+    }
+
+    public LocalDateTime feedTime() {
+        return feedTime;
+    }
+
+    public Long likeCount() {
+        return likeCount;
+    }
+
+    public String postId() {
+        return postId;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof FeedCursorVO other)) return false;
+        return Objects.equals(sortType, other.sortType)
+                && Objects.equals(feedTime, other.feedTime)
+                && Objects.equals(likeCount, other.likeCount)
+                && Objects.equals(postId, other.postId);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(sortType, feedTime, likeCount, postId);
+    }
+
+    @Override
+    public String toString() {
+        return "FeedCursorVO[sortType=" + sortType + ", feedTime=" + feedTime + ", likeCount=" + likeCount
+                + ", postId=" + postId + "]";
+    }
 
     private static final DateTimeFormatter FEED_TIME_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
     private static final String SEPARATOR = "|";

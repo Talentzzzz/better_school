@@ -7,6 +7,7 @@ import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketSession;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -92,6 +93,47 @@ public abstract class AbstractHeartbeatSessionRegistry {
     protected abstract String sweepThreadName();
 
     /** key = 容器原始 session；decorated 为并发写保护包装，推送与注销一律用它 */
-    protected record TrackedSession(String userId, WebSocketSession decorated, long lastInboundAt) {
+    protected static final class TrackedSession {
+
+        private final String userId;
+        private final WebSocketSession decorated;
+        private final long lastInboundAt;
+
+        protected TrackedSession(String userId, WebSocketSession decorated, long lastInboundAt) {
+            this.userId = userId;
+            this.decorated = decorated;
+            this.lastInboundAt = lastInboundAt;
+        }
+
+        public String userId() {
+            return userId;
+        }
+
+        public WebSocketSession decorated() {
+            return decorated;
+        }
+
+        public long lastInboundAt() {
+            return lastInboundAt;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof TrackedSession other)) return false;
+            return lastInboundAt == other.lastInboundAt
+                    && Objects.equals(userId, other.userId)
+                    && Objects.equals(decorated, other.decorated);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(userId, decorated, lastInboundAt);
+        }
+
+        @Override
+        public String toString() {
+            return "TrackedSession[userId=" + userId + ", decorated=" + decorated + ", lastInboundAt=" + lastInboundAt + "]";
+        }
     }
 }

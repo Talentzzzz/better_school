@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 浏览没有关系行、没有真相表可对账——<b>它自己就是唯一记录</b>，所以语义是「异步 +1，允许丢」
  * （spec §1.2）。既然允许丢，就没有任何理由让请求线程等那 5ms 窗口：{@code submitAsync} 连
  * future 都不分配，10k/s 的浏览不会每秒造一万个 {@code CompletableFuture} + park/unpark。
- * 这条链路的 HTTP 时延因此与 {@code windowMs} 无关。
+ * 这条链路的 HTTP 时延因此与 {@code maxFlushDelayMillis} 无关。
  *
  * <h2>降级：说「没接住」的那两句话，各对应一次独立落库（组大小 1）</h2>
  * 合并器的异步入口只回 {@code ACCEPTED / BUFFER_FULL / CLOSED}（没有 {@code TIMEOUT}——不等的人

@@ -5,6 +5,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Objects;
 
 /**
  * 当前轮次 id 的本地缓存（200ms）。
@@ -50,6 +51,40 @@ public class RunIdResolver {
         cache.remove(skuId);
     }
 
-    private record Cached(String value, long until) {
+    private static final class Cached {
+
+        private final String value;
+        private final long until;
+
+        private Cached(String value, long until) {
+            this.value = value;
+            this.until = until;
+        }
+
+        public String value() {
+            return value;
+        }
+
+        public long until() {
+            return until;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof Cached other)) return false;
+            return until == other.until && Objects.equals(value, other.value);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(value, until);
+        }
+
+        @Override
+        public String toString() {
+            return "Cached[value=" + value + ", until=" + until + "]";
+        }
     }
+}
 }
