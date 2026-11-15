@@ -140,7 +140,8 @@ class QuotaMergeBufferTest {
                 "等待预算 5s 足够，不该出现超时/失败");
         assertTrue(buffer.awaitIdle(5_000), "缓冲必须排空");
         assertEquals(0, buffer.pending());
-        // I2 的推论：scheduled == false（且无在途 flush）⟹ 缓冲必空
+        // I2 的推论（per-shard 线程模型）：提交线程全部返回 ⟹ 每件都已回填 ⟹ 所在批已摘走，
+        // 且不再有新提交 ⟹ size 镜像必为 0，缓冲必空
         assertTrue(buffer.awaitIdle(0), "排空后必须立刻判定为空闲（没有在途 flush 链）");
 
         assertEquals(threads * perThread, handler.seenCount(), "入队的件数 == 落库看到的件数");

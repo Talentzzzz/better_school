@@ -27,3 +27,5 @@
 遗留（评审判断项，非阻塞）：`MergeConfig` 六个位置参数的 Data Clumps / Shotgun Surgery、`flushDeductGroup`/`flushClaimGroup` 同构，建议另起 effort 收敛；yml Redis 段「Lua 原子预扣」注释是票 12 之前的陈旧话术，属库存域旧账未动。
 
 验收注记：本机无 Maven 环境，用户指示跳过跑测试；并发正确性以人工走查 + 双轴评审代偿（Spec 轴确认主循环 / Condition 协议 / 停机三步 / isIdle-by-join 均成立，未发现丢件或自旋风险）。bs-infrastructure 孪生副本（CountMerger）按 charting-log 范围决策未动。
+
+后续验证（票 003，2026-11-16）：测试侧走查通过——16 个 `QuotaMergeBufferTest` 用例 + `MergeConfigTest` / `QuotaMergeConfigTest` + inventory 集成测试均在新模型下成立，无时序脆弱用例、无行为回归（时序同步点全是 latch/轮询，不依赖调度器节拍）；仅修正 A1 一处引用已删 `scheduled` 标志的陈旧注释，断言零改动。明细见 ticket 003 的 Resolution。
