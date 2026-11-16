@@ -11,8 +11,6 @@ public class Constants {
 
     public final static String USER_REGISTER_TOPIC = "bs-user-register";
 
-    public final static String ERRAND_PAY_TIMEOUT_TOPIC = "bs-errand-pay-timeout";
-
     public final static String ERRAND_PAID_TOPIC = "bs-errand-paid";
 
     public final static String NOTIFICATION_BROADCAST_TOPIC = "bs-notification-broadcast";
@@ -34,6 +32,24 @@ public class Constants {
 
     public final static String POINTS_CHANGED_TOPIC = "bs-points-changed";
 
+    /**
+     * 系统助手账号（系统消息通道发送者）：固定 user_id，schema.sql 种子行（phone 占位不参与登录）。
+     * 订单动态/信用分等 CHAT 通道通知由它经 chat 发送管线落入用户的「系统助手」1v1 会话
+     */
+    public final static String SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001";
+
+    /** 通知事件 topic：业务事务内写 outbox，通知域消费者统一落 notification + 按通道投递（事件驱动改造） */
+    public final static String NOTIFY_EVENT_TOPIC = "bs-notify-event";
+
+    /** 通知 CHAT 通道投递 topic：通知落库事务内 outbox 写入，消费后经 chat 发送管线落系统消息 */
+    public final static String NOTIFY_CHAT_TOPIC = "bs-notify-chat";
+
+    /** 通知 BANNER 通道推送 topic：通知落库事务内 outbox 写入，消费后经 WS 推 NOTIF 帧（在线者，漏推由前端 seq 水位补拉兜底） */
+    public final static String NOTIFY_PUSH_TOPIC = "bs-notify-push";
+
+    /** 跑腿订单状态推送 topic：状态迁移成功后写 outbox，消费后经 WS 推 ORDER 帧（订单双方在线者） */
+    public final static String ORDER_PUSH_TOPIC = "bs-order-push";
+
     /** 超时中心 taskType（业务域前缀命名，spec §7.4；取值记于 spec §8）：商品订单 15 分钟支付超时 */
     public final static String PRODUCT_ORDER_PAY_TIMEOUT = "PRODUCT_ORDER_PAY_TIMEOUT";
 
@@ -48,12 +64,36 @@ public class Constants {
     public final static String ERRAND_LOCK_TIMEOUT = "ERRAND_LOCK_TIMEOUT";
 
     /**
+     * 超时中心 taskType：跑腿订单 deadline 到期取消（悬赏/履约时限，到点单还在
+     * PUBLISHED/LOCKED/CONFIRMED/PICKED_UP 即取消并解冻退款）。
+     * 计时起点 = 创建/提交时刻，到期时刻 = 用户自选的 deadline（合法性区间 15min~7d）——
+     * 注册传 {@code deadline - now} 的时长，deadline 落库后不可变（仅草稿态可编辑），
+     * 故「在途同键不改期」的幂等分支不会吃掉新 deadline。
+     */
+    public final static String ERRAND_ORDER_TIMEOUT = "ERRAND_ORDER_TIMEOUT";
+
+    /**
+     * 超时中心 taskType：跑腿送达 24h 未确认自动完成（发布方不点确认防白嫖）。
+     * 计时起点 = **送达时刻**（PICKED_UP → DELIVERED 条件 UPDATE 命中后注册）。
+     */
+    public final static String ERRAND_AUTO_COMPLETE = "ERRAND_AUTO_COMPLETE";
+
+    /**
      * WS 连接票据 Redis key 前缀（60s 一次性，握手原子取删）。chat WS 端点握手用。
      */
     public final static String WS_TICKET_KEY = "bs:ws-ticket:";
 
     /** WS 连接票据有效期（秒） */
     public final static long WS_TICKET_TTL_SECONDS = 60;
+
+    /**
+     * WS 连接路由表 Redis key 前缀（多实例推送路由）：value = {@code 转发端点|sessionId}。
+     * 握手注册、心跳续期、断连 CAS 注销；推送侧查它做 HTTP 转发（漏推仍由补拉兜底）
+     */
+    public final static String WS_ROUTE_KEY = "bs:ws-route:";
+
+    /** WS 路由条目 TTL（秒）：客户端心跳 25s、60s 判死，90s 容忍丢两次心跳 */
+    public final static long WS_ROUTE_TTL_SECONDS = 90;
 
     /**
      * 跑腿防占单：主动放弃的滑动窗口计数 Redis ZSET key 前缀（票 05）。

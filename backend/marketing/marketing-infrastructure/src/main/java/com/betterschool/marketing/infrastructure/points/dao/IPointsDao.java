@@ -1,6 +1,8 @@
 package com.betterschool.marketing.infrastructure.points.dao;
 
 import com.betterschool.marketing.infrastructure.points.dao.po.PointsBucketPO;
+import com.betterschool.marketing.infrastructure.points.dao.po.PointsExpiredGroupPO;
+import com.betterschool.marketing.infrastructure.points.dao.po.PointsMergeGroupPO;
 import com.betterschool.marketing.infrastructure.points.dao.po.PointsTransactionPO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -36,9 +38,27 @@ public interface IPointsDao {
     /** 过期桶置零（不删行、留审计），返回清理行数 */
     int expireBuckets();
 
+    /**
+     * 过期桶的加锁分组读：按用户聚合「已过期且仍有余量」的桶（{@code GROUP BY user_id FOR UPDATE}）。
+     * FOR UPDATE 锁住扫描到的桶行——两个并发任务在这里串行，后到者拿锁重读时余量已被先到者置 0、
+     * 分组为空。过期清零目前单条 UPDATE 即可（见 {@link #expireBuckets}），本方法与
+     * {@code selectSmallBucketsForUpdate} 同构，供分组读模式的批量任务参考/复用。
+     */
+    List<PointsExpiredGroupPO> selectExpiredRemainGroups();
+
     List<PointsTransactionPO> selectTransactions(@Param("userId") String userId,
                                                  @Param("offset") int offset,
                                                  @Param("limit") int limit);
+
+    /**
+     * 桶合并候选用户批（points-compaction 票）：按用户聚合「有效小额桶」（remain > 0、未过期、
+     * remain &le; 阈值），HAVING 数量 &ge; 最少桶数。普通快照读不加锁，加锁重读归
+     * {@link #selectSmallBucketsForUpdate}。
+     */
+    List<PointsMergeGroupPO> selectMergeCandidateGroups(@Param("limit") int limit);
+
+    /** 桶合并的加锁重读：单用户全部有效小额桶，FIFO（expire_at, id）加行锁 */
+    List<PointsBucketPO> selectSmallBucketsForUpdate(@Param("userId") String userId);
 
     long countTransactions(@Param("userId") String userId);
 }

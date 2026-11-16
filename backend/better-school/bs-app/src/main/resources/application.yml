@@ -87,6 +87,15 @@ minio:
   bucket: bs-files
   public-url: http://localhost:9000 # 图片访问前缀（浏览器直连，默认同 endpoint）
 
+# WS 多实例推送路由（Redis 路由表 + HTTP 转发）：self-endpoint 留空 = 单机形态，
+# 路由不注册、推送只走本地（测试与单实例部署零感知）；多实例部署各实例配自己的对内可达端点，
+# internal-token 必须一起配（内部转发接口 fail-closed，未配置一律 403）。漏推由增量补拉兜底
+better-school:
+  ws:
+    route:
+      self-endpoint: ""            # 如 http://10.0.0.5:8080（对内可达，实例间互访）
+      internal-token: ""           # 实例间共享密钥，与 self-endpoint 一起启用
+
 # 内嵌超时中心（票 04）：扫描并行度与重试退避口径（与原独立中心同值，域服务按 @Value 默认值兜底）
 timeout:
   scan:
@@ -111,18 +120,18 @@ xxl:
       log-path: ./logs/xxl-job
       log-retention-days: 30
 
-# 计数合并器（spec §2.4：一套参数，全部未经扫参）：窗口 / 批 / 分片 / 线程都是模型推导，
+# 计数合并器（per-shard 常驻线程模型，与 marketing 侧同构）：窗口 / 批 / 分片都是模型推导，
 # 上线后只按 MergeMetrics 的 flushed ÷ batches（合并比）、timedOut、rejectedFull 调，调参不改代码结构。
-# flush-threads 的硬上限是「连接池 - 2」，由 bs-app/config/CountMergeConfig 启动时校验并把两个数打进日志。
+# shard-count 既是分片数也是 flush 常驻线程数，硬上限是「连接池 - 2」，
+# 由 bs-app/config/CountMergeConfig 启动时校验并把两个数打进日志。
 merge:
   count:
-    shard-count: 256        # 2 的幂；只买「批纯度」（一批只碰一行），并行度由 flush-threads 定
-    max-flush-delay-millis: 5            # 合并窗口：分片首个请求排定 5ms 后 flush，攒满可提前触发
+    shard-count: 8         # 2 的幂；= flush 常驻线程数，必须 <= 连接池上限 - 2（池 10 ⇒ 上限 8）
+    max-flush-delay-millis: 5            # 合并窗口：分片首件起算 5ms 后 flush，攒满可提前触发
     max-batch: 200          # 200 行 ≈ 8ms 落库；再大 wait-timeout-ms 就吃紧
     wait-timeout-ms: 100    # 必须 > max-flush-delay-millis：5ms 窗口 + 8ms 落库 + 抖动
-    shard-capacity: 5000    # 只当「降级触发点 + 内存上界」，满了就拒，不扩容
-    flush-threads: 4        # 必须 <= 连接池上限 - 2（池 10 ⇒ 上限 8）
-    drain-timeout-ms: 5000  # 停机排空（停收 → 排空 → 关池）的等待上限
+    shard-capacity: 2000    # 只当「降级触发点 + 内存上界」，满了就拒，不扩容
+    drain-timeout-ms: 5000  # 停机排空（停收 → 排空 → signal + join）的等待上限
 
 mybatis:
   mapper-locations: classpath:/mybatis/mapper/*.xml

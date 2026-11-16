@@ -1,8 +1,8 @@
 package com.betterschool.integration.errand;
 
 import com.betterschool.integration.support.CommunityApiTestBase;
-import com.betterschool.trigger.job.ErrandTimeoutScanJob;
 import com.betterschool.types.common.Constants;
+import com.betterschool.usecase.timeout.TimeoutTaskScanCase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
 
     @Autowired
-    private ErrandTimeoutScanJob errandTimeoutScanJob;
+    private TimeoutTaskScanCase timeoutTaskScanCase;
 
     // ---------- 创建：草稿落 DRAFT、不注册支付超时、仅本人可见 ----------
 
@@ -186,19 +186,19 @@ class ErrandDraftFlowIntegrationTest extends CommunityApiTestBase {
     // ---------- 回归：早创建晚提交的草稿，支付钟自提交起算 ----------
 
     @Test
-    void 早创建晚提交的草稿不被待支付兜底扫描误杀() {
+    void 早创建晚提交的草稿不被超时扫描误杀() {
         Session author = registerAndLogin("13800003009", "草稿用户7");
         String draftId = saveDraft(author, Map.of("description", "压了几天的草稿"));
         editCompleteDraft(author, draftId, "帮我取快递");
-        // 草稿是几天前存的：创建时间回拨；支付钟只在提交后起算，兜底扫描不得按创建时刻判定
+        // 草稿是几天前存的：创建时间回拨；支付钟只在提交后起算，超时扫描不得按创建时刻判定
         jdbcTemplate.update(
                 "UPDATE errand_order SET create_time = DATE_SUB(NOW(), INTERVAL 3 DAY) WHERE errand_order_id = ?", draftId);
 
         assertSuccess(postJson("/api/errand/orders/" + draftId + "/submit", null, author), "提交隔夜草稿");
         assertThat(stateOf(draftId)).isEqualTo("PENDING_PAYMENT");
 
-        errandTimeoutScanJob.scan(null);
-        assertThat(stateOf(draftId)).as("兜底扫描按进入待支付时刻（提交时刻）判定，刚提交不应被取消")
+        timeoutTaskScanCase.scan(0, 1);
+        assertThat(stateOf(draftId)).as("超时扫描按任务到期时刻（提交时刻 + 15min）判定，刚提交不应被取消")
                 .isEqualTo("PENDING_PAYMENT");
         assertThat(payTimeoutRegistrations(draftId)).isEqualTo(1);
     }

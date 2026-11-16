@@ -103,15 +103,6 @@ public interface IErrandRepository {
     /** 待支付超时取消：PENDING_PAYMENT → CANCELLED（未冻结无退款） */
     boolean cancelPendingPayment(String orderId);
 
-    /** 待支付超时订单 id 列表（PENDING_PAYMENT 且进入待支付早于 before，XXL-Job 兜底扫描用） */
-    List<String> listPayTimeoutOrderIds(LocalDateTime before, int limit);
-
-    /** 订单超时 id 列表（PUBLISHED/LOCKED/CONFIRMED/PICKED_UP 且 deadline 已过，XXL-Job 兜底扫描用） */
-    List<String> listTimeoutOrderIds(int limit);
-
-    /** 送达超时订单 id 列表（DELIVERED 且送达后超 24h 未确认，每批 100，自动完成扫描用） */
-    List<String> listAutoCompleteOrderIds(LocalDateTime before, int limit);
-
     /** 送达后自动完成：DELIVERED → COMPLETED（发布方 24h 未确认，防白嫖） */
     boolean autoCompleteById(String orderId);
 
@@ -129,11 +120,11 @@ public interface IErrandRepository {
     long countMyTaken(String userId, String status);
 
 
-    /** 创建订单后登记"15 分钟未支付"超时任务（同事务写注册 outbox，提交后即时注册、扫描兜底） */
+    /** 创建/提交订单后登记"15 分钟未支付"超时任务（业务事务内直插 timeout_task 分表） */
     void schedulePayTimeout(String orderId, long delaySeconds);
 
     /**
-     * 抢单后登记"5 分钟锁单超时"任务（同事务写注册 outbox，提交后即时注册）。
+     * 抢单后登记"5 分钟锁单超时"任务（业务事务内直插 timeout_task 分表）。
      * bizId 是复合键 {@code {orderId}:{lockSeq}}——每次锁单一个独立键，中心侧不再撞 {@code uk(type,biz_id)}、
      * 也不会把新锁的到期时刻幂等复位成旧锁的（陈旧任务只影响旧键）。
      */
@@ -143,8 +134,8 @@ public interface IErrandRepository {
     // 0 行口径：条件 UPDATE 未命中且属「状态已被别处改掉 → 本次必须失败」的，方法内抛 BUSINESS_ERROR；
     // 属「重试 / 已被其他路径处理」可重入的，返回 false（或 void 直接返回），由域内按幂等语义收口。
 
-    /** 下单 + 登记支付超时任务（到期时刻在事务内算，与改造前同口径） */
-    void createWithPayTimeout(ErrandOrderEntity orderEntity, int payTimeoutMinutes);
+    /** 下单 + 同事务登记"15 分钟未支付"与"deadline 到期取消"两个超时任务 */
+    void createWithTimeouts(ErrandOrderEntity orderEntity, int payTimeoutMinutes);
 
     /**
      * 抢单 + 登记 5 分钟锁单超时任务（同属一个仓储原子用例）。
@@ -162,9 +153,9 @@ public interface IErrandRepository {
 
     /**
      * 提交草稿：DRAFT → PENDING_PAYMENT（条件 UPDATE，带作者守卫，0 行抛 BUSINESS_ERROR）
-     * + SUBMITTED 事件 + 同事务注册"15 分钟未支付"超时
+     * + SUBMITTED 事件 + 同事务注册"15 分钟未支付"与"deadline 到期取消"两个超时
      */
-    void submitDraftWithPayTimeout(String orderId, String publisherId, int payTimeoutMinutes);
+    void submitDraftWithTimeouts(String orderId, String publisherId, int payTimeoutMinutes);
 
     /** 软删草稿：DRAFT → DELETED（条件 UPDATE，带作者守卫）+ DELETED 事件同事务；返回是否本次生效 */
     boolean softDeleteDraft(String orderId, String publisherId);
@@ -172,8 +163,8 @@ public interface IErrandRepository {
     /** 支付转 PUBLISHED（冻结悬赏、进入大厅）+ feed 索引行诞生 + 落 bs-errand-paid 事件（条件 UPDATE 0 行抛 BUSINESS_ERROR） */
     void payWithPaidMessage(String orderId, String userId);
 
-    /** 送达（条件 UPDATE 0 行抛 BUSINESS_ERROR） */
-    void deliverByIdOrThrow(String orderId, String takerId);
+    /** 送达（条件 UPDATE 0 行抛 BUSINESS_ERROR）+ 同事务登记"送达 24h 未确认自动完成"超时任务 */
+    void deliverWithAutoComplete(String orderId, String takerId, int autoCompleteHours);
 
     /** 发布方确认完成 + 搜索同步（条件 UPDATE 0 行抛 BUSINESS_ERROR） */
     void confirmWithSearchSync(String orderId, String publisherId);
@@ -207,6 +198,13 @@ public interface IErrandRepository {
 
     /** 落一条"支付成功进入待审"待发送消息（topic bs-errand-paid，必须与支付状态变更同事务调用） */
     void saveErrandPaidMessage(String orderId);
+
+    /**
+     * 落一条"订单状态变化"WS 推送事件（topic bs-order-push，实现层写 outbox 表）：状态迁移成功后由
+     * 域服务调用，消费后推 ORDER 帧给订单双方在线者（详情页实时刷新）。推送是加速路径——独立小事务
+     * （迁移方法本身恒已提交），极端时序漏推无害：详情页下次拉取/通知中心兜底
+     */
+    void saveOrderPushEvent(String orderId, ErrandStatusVO status);
 
     /**
      * 跑腿订单浏览打点（UV 口径，market-feed-uv 票 02）：fire-and-forget，入队即返回，窗口过后一组一个

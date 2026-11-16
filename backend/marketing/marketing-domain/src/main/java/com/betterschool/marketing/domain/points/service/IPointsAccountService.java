@@ -42,4 +42,12 @@ public interface IPointsAccountService {
 
     /** 懒过期落账清理（xxl-job 调度）：只置零、不删行、不发事件 */
     int expireBuckets();
+
+    /**
+     * 桶合并（points-compaction 票，xxl-job 调度）：把同用户的「有效小额桶」（remain &le; 阈值且
+     * 数量 &ge; 2）并成一桶，过期时间取合并集合最大值、旧桶归零留审计，SUM(remain) 守恒、用户无感。
+     *
+     * @return 本轮实际合并（清零）的旧桶总数
+     */
+    int compactSmallBuckets();
 }

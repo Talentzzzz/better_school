@@ -49,7 +49,7 @@ class CountMergerTest {
 
     /** 单热点、窄窗口、够大的等待预算：A1/A2/A6 用 */
     private static MergeConfig hotConfig(int maxBatch) {
-        return new MergeConfig(8, 1, maxBatch, 5_000, 5_000, 4, 2_000);
+        return new MergeConfig(8, 1, maxBatch, 5_000, 5_000, 2_000);
     }
 
     private static CountEvent like(String userId) {
@@ -111,8 +111,8 @@ class CountMergerTest {
                 "等待预算 5s 足够，不该出现超时/失败");
         assertTrue(engine.awaitIdle(5_000), "缓冲必须排空");
         assertEquals(0, engine.pending());
-        // I2 的推论：scheduled == false（且无在途 flush）⟹ 缓冲必空
-        assertTrue(engine.awaitIdle(0), "排空后必须立刻判定为空闲（没有在途 flush 链）");
+        // 排空判据：全分片缓冲空（在途批由 close 的 join 兜底，测试里件已全部回填）
+        assertTrue(engine.awaitIdle(0), "排空后必须立刻判定为空闲");
 
         assertEquals(threads * perThread, handler.seenCount(), "ACCEPTED 的件数 == 落库看到的件数");
         assertEquals(0, handler.duplicateCount(), "每件至多回填一次（Pending.complete 幂等）");
@@ -132,7 +132,7 @@ class CountMergerTest {
     void missingBackfillIsCompletedAsFailed() throws Exception {
         RecordingFlushHandler handler = new RecordingFlushHandler();
         handler.fillOnlyTotal = 1;
-        CountMerger engine = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 4, 2_000), handler);
+        CountMerger engine = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 2_000), handler);
 
         List<MergeOutcome<LikeState>> outcomes = submitBurst(engine, 5);
 
@@ -153,7 +153,7 @@ class CountMergerTest {
     void flushFailureMarksWholeGroupFailed() throws Exception {
         RecordingFlushHandler handler = new RecordingFlushHandler();
         handler.throwOnFlush = true;
-        CountMerger engine = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 4, 2_000), handler);
+        CountMerger engine = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 2_000), handler);
 
         List<MergeOutcome<LikeState>> outcomes = submitBurst(engine, 3);
 
@@ -233,7 +233,7 @@ class CountMergerTest {
     @DisplayName("A4 停机先排空：close() 时缓冲区里的件照样落库，一件不丢")
     void closeStillDrainsBufferedItems() {
         RecordingFlushHandler handler = new RecordingFlushHandler();
-        CountMerger engine = start(new MergeConfig(8, 20, 200, 500, 2_000, 4, 3_000), handler);
+        CountMerger engine = start(new MergeConfig(8, 20, 200, 500, 2_000, 3_000), handler);
 
         int total = 50;
         for (int i = 0; i < total; i++) {
@@ -272,7 +272,7 @@ class CountMergerTest {
     void drainFailureIsCounted() throws Exception {
         RecordingFlushHandler handler = new RecordingFlushHandler();
         // 窗口 100ms 远超排空预算 20ms：close() 时件一定还在缓冲里
-        CountMerger engine = start(new MergeConfig(8, 100, 200, 500, 2_000, 4, 20), handler);
+        CountMerger engine = start(new MergeConfig(8, 100, 200, 500, 2_000, 20), handler);
 
         int total = 3;
         for (int i = 0; i < total; i++) {
@@ -285,7 +285,7 @@ class CountMergerTest {
         assertEquals(0, engine.metrics().flushed());
         assertEquals(0, handler.seenCount(), "回填不等于落库：这些件从未进入事务");
         assertEquals(0, engine.pending());
-        // 关池之后，那条 100ms 的定时任务不该再跑出来
+        // 停机收尾之后，那条 100ms 的窗口不该再把件送进落库（线程已随 closed 退出）
         Thread.sleep(150);
         assertEquals(0, handler.seenCount());
     }
@@ -298,7 +298,7 @@ class CountMergerTest {
         RecordingFlushHandler handler = new RecordingFlushHandler();
         handler.entered = new CountDownLatch(1);
         handler.hold = new CountDownLatch(1);
-        CountMerger engine = start(new MergeConfig(8, 5, 8, 500, 8, 4, 2_000), handler);
+        CountMerger engine = start(new MergeConfig(8, 5, 8, 500, 8, 2_000), handler);
 
         // 先让一条 flush 卡在落库上，后面的件就都只能待在缓冲里
         assertEquals(SubmitOutcome.ACCEPTED, engine.submitAsync(POST_ID, view(POST_ID, "0")));
@@ -331,7 +331,7 @@ class CountMergerTest {
         RecordingFlushHandler handler = new RecordingFlushHandler();
         handler.entered = new CountDownLatch(1);
         handler.hold = new CountDownLatch(1);
-        CountMerger engine = start(new MergeConfig(8, 5, 8, 500, 8, 4, 2_000), handler);
+        CountMerger engine = start(new MergeConfig(8, 5, 8, 500, 8, 2_000), handler);
 
         assertEquals(SubmitOutcome.ACCEPTED, engine.submitAsync(POST_ID, view(POST_ID, "0")));
         assertTrue(handler.entered.await(5, TimeUnit.SECONDS));
@@ -373,7 +373,7 @@ class CountMergerTest {
         int threads = 4;
         int perThread = 50;
         RecordingFlushHandler handler = new RecordingFlushHandler();
-        CountMerger engine = start(new MergeConfig(8, 1, maxBatch, 5_000, 2_000, 4, 2_000), handler);
+        CountMerger engine = start(new MergeConfig(8, 1, maxBatch, 5_000, 2_000, 2_000), handler);
 
         runConcurrently(threads, threadNo -> {
             String shardKey = "post-" + (2_000 + threadNo);
@@ -415,7 +415,7 @@ class CountMergerTest {
     @DisplayName("读数快照：accepted / flushed / batches 能算出合并比，maxFlushNanos 有值")
     void metricsExposeMergeRatio() {
         RecordingFlushHandler handler = new RecordingFlushHandler();
-        CountMerger engine = start(new MergeConfig(8, 1, 50, 5_000, 2_000, 2, 2_000), handler);
+        CountMerger engine = start(new MergeConfig(8, 1, 50, 5_000, 2_000, 2_000), handler);
 
         for (int i = 0; i < 120; i++) {
             assertEquals(SubmitOutcome.ACCEPTED, engine.submitAsync(POST_ID, view(POST_ID, String.valueOf(i))));

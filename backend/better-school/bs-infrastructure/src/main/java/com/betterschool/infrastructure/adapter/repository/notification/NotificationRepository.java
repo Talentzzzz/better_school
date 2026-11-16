@@ -4,6 +4,7 @@ import com.betterschool.domain.notification.adapter.port.IBroadcastRecipientPort
 import com.betterschool.domain.notification.adapter.repository.INotificationRepository;
 import com.betterschool.domain.notification.model.entity.NotificationEntity;
 import com.betterschool.domain.notification.model.valobj.NotificationBroadcastMessage;
+import com.betterschool.domain.notification.model.valobj.NotificationEventMessage;
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.infrastructure.dao.notification.INotificationDao;
@@ -11,6 +12,8 @@ import com.betterschool.infrastructure.dao.notification.INotificationReadDao;
 import com.betterschool.infrastructure.dao.notification.INotificationSeqDao;
 import com.betterschool.infrastructure.dao.notification.po.Notification;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
+import com.betterschool.domain.notification.model.valobj.NotifyChatMessage;
+import com.betterschool.domain.notification.model.valobj.NotifyPushMessage;
 import com.betterschool.types.common.Constants;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
@@ -85,9 +88,32 @@ public class NotificationRepository implements INotificationRepository {
     }
 
     @Override
-    public void insertOne(NotificationEntity notificationEntity) {
+    public boolean saveEvent(NotificationEventMessage event) {
+        // OutboxMessageStore 用 TransactionSynchronization 在提交后投递，必须有活事务；
+        // 这里只写 outbox 一行，事务传播恒 REQUIRED（调用方已有事务则并入，无则本行自成一个事务）。
+        // 返回值语义：outbox 写恒成功即 true（落库幂等由消费端按 notificationId + dedupKey 收敛）
+        transactionTemplate.executeWithoutResult(status ->
+                outboxMessageStore.save(Constants.NOTIFY_EVENT_TOPIC, event));
+        return true;
+    }
+
+    @Override
+    public void saveChatDelivery(NotifyChatMessage message) {
+        transactionTemplate.executeWithoutResult(status ->
+                outboxMessageStore.save(Constants.NOTIFY_CHAT_TOPIC, message));
+    }
+
+    @Override
+    public void savePushDelivery(NotifyPushMessage message) {
+        transactionTemplate.executeWithoutResult(status ->
+                outboxMessageStore.save(Constants.NOTIFY_PUSH_TOPIC, message));
+    }
+
+    @Override
+    public boolean insertOne(NotificationEntity notificationEntity) {
         // 取号 + 落库必须同一事务（取号行锁到提交 ⇒ 取号序 = 提交序）；调用方已有事务则并入
-        transactionTemplate.executeWithoutResult(status -> doInsertOne(notificationEntity));
+        Boolean inserted = transactionTemplate.execute(status -> doInsertOne(notificationEntity));
+        return Boolean.TRUE.equals(inserted);
     }
 
     @Override
@@ -108,12 +134,18 @@ public class NotificationRepository implements INotificationRepository {
         });
     }
 
-    /** 取号 + 落库（不含事务边界）：只允许在上面两个自带事务的方法内调用 */
-    private void doInsertOne(NotificationEntity notificationEntity) {
+    /** 取号 + 落库（不含事务边界，返回是否真正插入）：只允许在上面两个自带事务的方法内调用 */
+    private boolean doInsertOne(NotificationEntity notificationEntity) {
         if (notificationEntity.getDedupKey() != null
                 && notificationDao.existsDedupKey(notificationEntity.getDedupKey()) > 0) {
             // 先查后插：重复消费/重复扫描不白耗 seq 号段；并发窗口内仍由 uk_dedup + insertIgnore 兜底
-            return;
+            return false;
+        }
+        if (notificationEntity.getNotificationId() != null
+                && notificationDao.existsNotificationId(notificationEntity.getNotificationId()) > 0) {
+            // 幂等第一锚点：事件驱动消费方重投同一 notificationId 时静默忽略
+            // （无 dedupKey 的事件重试走普通 insert，撞 uk_notification_id 会抛异常而非忽略，必须前置检查）
+            return false;
         }
         String scope = notificationEntity.getScope().name();
         notificationSeqDao.upsertIncreaseSeq(notificationEntity.getUserId(), scope);
@@ -123,12 +155,14 @@ public class NotificationRepository implements INotificationRepository {
             // 业务 ID 随 insert 一次写入（uuid-biz-id 票 06）；撞 uk_dedup 被 IGNORE 时本行未落库，发号作废无害
             notification.setNotificationId(UUID.randomUUID().toString());
         }
+        boolean inserted;
         if (notificationEntity.getDedupKey() != null) {
-            notificationDao.insertIgnore(notification);
+            inserted = notificationDao.insertIgnore(notification) > 0;
         } else {
-            notificationDao.insert(notification);
+            inserted = notificationDao.insert(notification) > 0;
         }
         notificationEntity.setNotificationId(notification.getNotificationId());
+        return inserted;
     }
 
     private Notification toPO(NotificationEntity notificationEntity) {

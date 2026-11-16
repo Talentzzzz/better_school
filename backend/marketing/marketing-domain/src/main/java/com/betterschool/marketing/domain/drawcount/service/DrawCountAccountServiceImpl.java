@@ -14,6 +14,8 @@ import org.springframework.stereotype.Service;
  * 桶模型抽奖次数账户（与积分域同构）：入账 = 插一行带过期时间的桶；
  * 扣次 = 按 FIFO 扣各桶 remain、每扣 1 次落一行明细（无 amount 列，行即 1 次）。
  * <p>
+ * 余额读口径：剩余次数 = 未过期且未扣完的桶 remain 之和（SUM 读，没有余额列，与积分侧同构）。
+ * <p>
  * 事务：一次入账 / 一次扣次的原子边界在仓储方法里（{@code creditBucket} / {@code deductForDraw}），
  * 本类只做入参校验与业务口径判断，不注入 {@code TransactionTemplate}。
  * 有效期天数与返利规则是配置域的表（draw_count_config / action_rebate_config），
@@ -50,6 +52,7 @@ public class DrawCountAccountServiceImpl implements IDrawCountAccountService {
 
     @Override
     public int getBalance(String userId) {
+        // 剩余次数 = 未过期且未扣完的桶 remain 之和（读路径懒过期：过期桶被 expire_at > NOW() 滤掉）
         return drawCountRepository.sumAvailableRemain(userId);
     }
 

@@ -15,6 +15,7 @@ import com.betterschool.marketing.infrastructure.points.dao.IPointsDao;
 import com.betterschool.marketing.infrastructure.points.dao.IPointsDetailDao;
 import com.betterschool.marketing.infrastructure.points.dao.po.PointsBucketPO;
 import com.betterschool.marketing.infrastructure.points.dao.po.PointsDetailPO;
+import com.betterschool.marketing.infrastructure.points.dao.po.PointsMergeGroupPO;
 import com.betterschool.marketing.infrastructure.points.dao.po.PointsTransactionPO;
 import com.betterschool.marketing.types.common.Constants;
 import com.betterschool.marketing.types.common.ResponseCode;
@@ -36,6 +37,8 @@ import java.util.List;
  * {@link #writePlan} 再把这份方案照原样落库——**至多三条语句**（一条多值写全部明细、一条清零扣光的桶、
  * 一条扣那张部分扣的桶），落库语句数与桶数无关。「流水先行」照仓库惯例——先 INSERT IGNORE 明细
  * （撞 uk = 已处理过），再动余量；这个顺序同时是并发重复兑换的唯一互斥点，理由见 {@link #existsConsume}。
+ * <p>
+ * 关键不变量：余额永远是未过期且未扣完的桶 remain 之和，读路径一律带 {@code expire_at > NOW()}。
  * <p>
  * 端口（{@link IPointsRepository}）上只留「一次入账」「一次消费」这样的完整动作：幂等预检、加锁读桶、
  * 写明细、改余量、发变动事件都是这两个用例的内部步骤，不对外暴露。
@@ -110,6 +113,68 @@ public class PointsRepository implements IPointsRepository {
     @Override
     public int expireBuckets() {
         return pointsDao.expireBuckets();
+    }
+
+    @Override
+    public int compactSmallBuckets() {
+        // 第一步（无事务）：扫全表拿候选用户批（普通快照读，不加锁）；
+        // 真正的互斥在第二步——加锁重读小桶时桶行锁上串行，双跑/并发合并天然安全
+        List<PointsMergeGroupPO> candidates = pointsDao.selectMergeCandidateGroups(
+                com.betterschool.marketing.types.points.Constants.COMPACTION_BATCH_LIMIT);
+        int mergedBuckets = 0;
+        // 逐用户一事务：一个用户的合并失败不拖累其他用户，下一轮任务会重扫补上
+        for (PointsMergeGroupPO candidate : candidates) {
+            mergedBuckets += transactionTemplate.execute(status ->
+                    compactOneUser(candidate.getUserId()));
+        }
+        return mergedBuckets;
+    }
+
+    /**
+     * 单用户合并（一个事务）：加锁重读该用户的小额桶 → 少于 2 张跳过 → 插一桶新桶（amount = remain =
+     * SUM，expire_at = max——把小桶有效期延长到其中最晚到期，产品口径）→ 旧桶全部置 0（不删行，
+     * 桶表兼做发放流水，原始入账记录留审计）。
+     * <p>
+     * 守恒：SUM(remain) 合并前后不变（0+0+…+S = S），余额读不受影响；新桶 expire_at = max 天然排在
+     * FIFO 扣减顺序最后，先到期先扣的次序不变。并发双跑靠桶行锁串行：后到者拿锁重读时旧桶已清零、
+     * 不再满足条件，自然跳过。
+     *
+     * @return 本用户实际清零（=合并）的旧桶数；0 = 加锁重读后不足 2 张（并发先到者已合并过）
+     */
+    private int compactOneUser(String userId) {
+        List<PointsBucketPO> smallBuckets = pointsDao.selectSmallBucketsForUpdate(userId);
+        if (smallBuckets.size() < com.betterschool.marketing.types.points.Constants.MERGE_MIN_BUCKETS) {
+            return 0;
+        }
+        int total = smallBuckets.stream().mapToInt(PointsBucketPO::getRemain).sum();
+        LocalDateTime maxExpireAt = smallBuckets.stream()
+                .map(PointsBucketPO::getExpireAt)
+                .max(LocalDateTime::compareTo)
+                .orElseThrow();
+        LocalDateTime now = LocalDateTime.now();
+        // 合并产生的是一笔新的资产形态：新插一桶（reason_type = COMPACTION，ref_id = 合并批次号），
+        // 旧行是发放流水（amount/ref_id 记着原始入账来源），不能被改写、只能归零
+        PointsBucketEntity mergedBucket = new PointsBucketEntity();
+        mergedBucket.setBucketId(idGenerator.nextId());
+        mergedBucket.setUserId(userId);
+        mergedBucket.setAmount(total);
+        mergedBucket.setRemain(total);
+        mergedBucket.setExpireAt(maxExpireAt);
+        mergedBucket.setReasonType(PointsReasonType.COMPACTION);
+        mergedBucket.setRefId(idGenerator.nextId());
+        mergedBucket.setCreateTime(now);
+        mergedBucket.setUpdateTime(now);
+        if (!insertBucket(mergedBucket)) {
+            throw new IllegalStateException("合并桶插入失败（uk_user_reason_ref 撞键不该发生：ref_id 是合并批次号），"
+                    + "整笔回滚 userId=" + userId);
+        }
+        List<String> oldBucketIds = smallBuckets.stream().map(PointsBucketPO::getBucketId).toList();
+        int drainedRows = pointsDao.drainBuckets(userId, oldBucketIds);
+        if (drainedRows != oldBucketIds.size()) {
+            throw new IllegalStateException("合并清零旧桶影响 " + drainedRows + " 行，与加锁重读的 "
+                    + oldBucketIds.size() + " 张不一致，整笔回滚 userId=" + userId);
+        }
+        return drainedRows;
     }
 
     @Override

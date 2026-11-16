@@ -14,6 +14,7 @@ import com.betterschool.domain.chat.model.valobj.RoomSourceEnum;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
 import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
 import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
+import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -51,6 +52,11 @@ public class ChatSendServiceImpl implements IChatSendService {
         if (targetUserId == null || targetUserId.equals(userId)) {
             throw new BusinessException(ResponseCode.PARAM_ERROR, "不能与自己建立会话");
         }
+        // 系统助手会话只能由系统侧发起（通知投递）：用户不能主动与系统账号建会话
+        if ((targetUserId.equals(Constants.SYSTEM_USER_ID) || userId.equals(Constants.SYSTEM_USER_ID))
+                && !userId.equals(Constants.SYSTEM_USER_ID)) {
+            throw new BusinessException(ResponseCode.FORBIDDEN, "系统会话不可由用户发起");
+        }
         if (userQueryPort.findById(targetUserId) == null) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "用户不存在");
         }
@@ -84,6 +90,12 @@ public class ChatSendServiceImpl implements IChatSendService {
         }
         if (chatRepository.findUserRoom(roomId, userId) == null) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "非会话成员");
+        }
+        // 系统助手会话不可回复：非系统账号向系统会话发消息一律拒绝（通知投递走 SYSTEM 类型，仅系统侧可发）
+        if (!userId.equals(Constants.SYSTEM_USER_ID)
+                && chatRepository.listRoomMembers(roomId).stream()
+                .anyMatch(memberEntity -> Constants.SYSTEM_USER_ID.equals(memberEntity.getUserId()))) {
+            throw new BusinessException(ResponseCode.FORBIDDEN, "系统会话不可回复");
         }
 
         // 幂等快路径：同 client_msg_id 已落库（超时重发/双击），收敛原消息——
@@ -135,6 +147,25 @@ public class ChatSendServiceImpl implements IChatSendService {
             }
             case IMAGE -> validateImageContent(content);
             case CARD -> validateCardContent(content, refType, refId);
+            case SYSTEM -> validateSystemContent(content);
+        }
+    }
+
+    /** SYSTEM 载荷 = JSON{notificationId, title, content, refType?, refId?}：仅系统侧发送（发送方守卫在 sendMessage） */
+    private void validateSystemContent(String content) {
+        if (content == null || content.isBlank()) {
+            throw new BusinessException(ResponseCode.PARAM_ERROR, "系统消息载荷不能为空");
+        }
+        JsonNode node;
+        try {
+            node = objectMapper.readTree(content);
+        } catch (Exception e) {
+            throw new BusinessException(ResponseCode.PARAM_ERROR, "系统消息载荷须为 JSON");
+        }
+        if (node.path("notificationId").asText("").isBlank()
+                || node.path("title").asText("").isBlank()
+                || node.path("content").asText("").isBlank()) {
+            throw new BusinessException(ResponseCode.PARAM_ERROR, "系统消息载荷不完整");
         }
     }
 

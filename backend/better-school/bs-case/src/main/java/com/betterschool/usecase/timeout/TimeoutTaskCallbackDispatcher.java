@@ -38,7 +38,7 @@ public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
 
     /**
      * {@code taskType → 到期动作}。{@code bizId} 的形状**按 taskType 各自解析**：
-     * 支付超时是 UUID 字符串订单业务 id（直传，uuid-biz-id 票 05），
+     * 支付超时/订单 deadline 超时/送达自动完成都是 UUID 字符串订单业务 id（直传，uuid-biz-id 票 05），
      * 锁单超时是复合键 {@code {uuid}:{seq}}（锁单）。
      */
     @Override
@@ -50,6 +50,8 @@ public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
                 CompositeBizId lockBizId = parseCompositeBizId(taskEntity, "{orderId}:{lockSeq}");
                 errandOrderCase.handleLockTimeout(lockBizId.id(), lockBizId.seq());
             }
+            case Constants.ERRAND_ORDER_TIMEOUT -> errandOrderCase.handleOrderTimeout(taskEntity.getBizId());
+            case Constants.ERRAND_AUTO_COMPLETE -> errandOrderCase.handleAutoComplete(taskEntity.getBizId());
             // 业务侧不认识这个 taskType = 注册与消费的代码不一致（如改了 Constants 取值），
             // 按失败重投直到进死信，在管理面显式暴露，不静默吞掉
             default -> throw new IllegalStateException("未接入的 taskType：" + taskEntity.getTaskType());

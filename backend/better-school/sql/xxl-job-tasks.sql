@@ -35,19 +35,6 @@ INSERT INTO xxl_job_info
  executor_handler, executor_param, executor_block_strategy, executor_timeout,
  executor_fail_retry_count, glue_type, glue_source, glue_remark, glue_updatetime,
  child_jobid, trigger_status, trigger_last_time, trigger_next_time)
-SELECT @group_id, '跑腿超时兜底扫描', NOW(), NOW(), 'better-school', '',
-       'CRON', '0 * * * * ?', 'DO_NOTHING', 'FIRST',
-       'errandTimeoutScan', '', 'SERIAL_EXECUTION', 0,
-       0, 'BEAN', '', '', NOW(),
-       '', 1, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'errandTimeoutScan');
-
-INSERT INTO xxl_job_info
-(job_group, job_desc, add_time, update_time, author, alarm_email,
- schedule_type, schedule_conf, misfire_strategy, executor_route_strategy,
- executor_handler, executor_param, executor_block_strategy, executor_timeout,
- executor_fail_retry_count, glue_type, glue_source, glue_remark, glue_updatetime,
- child_jobid, trigger_status, trigger_last_time, trigger_next_time)
 SELECT @group_id, '搜索索引全量重建', NOW(), NOW(), 'better-school', '',
        'CRON', '0 30 3 * * ?', 'DO_NOTHING', 'FIRST',
        'searchIndexRebuildJob', '', 'SERIAL_EXECUTION', 0,

@@ -35,9 +35,11 @@ class ErrandPaidNotifyIntegrationTest extends CommunityApiTestBase {
         assertThat(payloads).as("支付应落 bs-errand-paid outbox").hasSize(1);
         assertThat(readTree(payloads.get(0)).path("orderId").asText()).as("载荷 orderId 为 UUID 字符串（uuid-biz-id 票 05）").isEqualTo(orderId);
 
-        // 消费两次（broker 重投场景）：dedup_key 幂等，作者只一条通知
+        // 消费两次（broker 重投场景）：dedup_key 幂等，作者只一条通知。
+        // 通知落库时机=事件消费时：消费写出的 bs-notify-event 再手动喂 NotifyEventConsumer（无 broker）
         errandPaidConsumer.onMessage(payloads.get(0));
         errandPaidConsumer.onMessage(payloads.get(0));
+        consumeNotifyEvents();
 
         Integer noticeRows = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM notification WHERE user_id = ? AND type = 'ORDER_EVENT' "

@@ -67,12 +67,13 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
 
 ### GET /ws/chat?ticket=
 
-裸 WebSocket 端点（`spring-boot-starter-websocket`，单机形态）。浏览器 WS 不能带自定义 header，JWT 不进 URL——先 `POST /ws-ticket` 换 60s 一次性票据再握手；拦截器对票据**原子取删**校验，无效/过期/重放返回 HTTP 401，客户端重新要票。连接存续期内不再鉴权。
+裸 WebSocket 端点（`spring-boot-starter-websocket`）。浏览器 WS 不能带自定义 header，JWT 不进 URL——先 `POST /ws-ticket` 换 60s 一次性票据再握手；拦截器对票据**原子取删**校验，无效/过期/重放返回 HTTP 401，客户端重新要票。连接存续期内不再鉴权。
 
 - 安全链：`/ws/chat` 在 Spring Security 白名单，鉴权完全由握手拦截器承担
 - 连接注册表 `Map<userId, session>`：单设备互踢——新连接先占位，旧连接收 `KICK` + close(4001)；close 回调两参注销，迟到 close 不误删新连接
 - 心跳：客户端 25s 一次 `PING`；服务端任何入站帧刷新活跃时间，60s 无入站判死清理（close 1001）
 - 服务端无业务路由、无 ACK：C→S 仅 `PING`；发送/已读/撤回全走 REST，WS 纯下行
+- **多实例推送路由（Redis 路由表 + HTTP 转发）**：握手注册 `bs:ws-route:{userId} = 端点|sessionId`（TTL 90s，入站帧续期，断连 CAS 注销）；推送消费方经 `WsPushRouter`——本地注册表优先 → 路由不是自己则 HTTP 转发目标实例 `/internal/ws/push`（共享密钥 fail-closed，目标对本机注册表二次确认）；miss/失败 CAS 清理路由条目后放弃。`better-school.ws.route.self-endpoint` 留空 = 单机形态，不注册路由、推送只走本地
 - 推送失败不重试，漏推合法——重连后 `GET /timeline` 补拉兜底，客户端按 `(roomId, seq)` 判重合流
 
 协议信封（JSON 文本帧）`{type, roomId?, seq?, payload?, ts}`：

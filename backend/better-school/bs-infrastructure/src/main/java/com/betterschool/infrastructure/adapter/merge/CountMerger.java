@@ -10,8 +10,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
@@ -19,16 +17,16 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * 计数侧合并器：<b>固定 N 个分片缓冲区 + 入口驱动定时器 + 固定大小共享执行池</b>（spec §2.2）。
+ * 计数侧合并器：<b>固定 N 个分片排空线程（每分片一条常驻 daemon 平台线程）+ 入口路由</b>（spec §2.2）。
  *
  * <h2>一件请求的一生</h2>
  * <pre>
  *   submitAndWait(postId, event)
  *     ├─ 按 shardOf(postId) 路由到分片
- *     ├─ 塞进该分片缓冲区（首个请求排定 maxFlushDelayMillis 后的 flush；攒满 maxBatch 提前触发）
+ *     ├─ 塞进该分片缓冲区（首件起算 maxFlushDelayMillis 合并窗口，攒满 maxBatch 提前唤醒摘批）
  *     └─ park 在自己的 future 上，最多等 waitTimeoutMs
- *                    ↓（定时器到点，由执行池线程接管）
- *   flush：锁内整块摘批 → 锁外按「动作 × 行主键」二次分组 → 一组一个事务落库 → 回填 → 有积压则续排
+ *                    ↓（窗口到点 / 攒满，由分片自己的常驻线程接管）
+ *   flush：锁内整块摘批 → 锁外按「动作 × 行主键」二次分组 → 一组一个事务落库 → 回填 → 有积压背靠背续跑
  * </pre>
  *
  * <h2>两个入口，不做合并签名</h2>
@@ -37,7 +35,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * 10k/s 的浏览若每人一个 future，每秒就是一万次分配 + park/unpark，比落库本身还贵。
  *
  * <h2>一条实例</h2>
- * 点赞（等）与浏览（不等）共用同一份分片与线程池——两个实例要 2×256 个缓冲，而它们打的是
+ * 点赞（等）与浏览（不等）共用同一份分片与线程——两个实例要 2×N 条常驻线程，而它们打的是
  * 同一批热点帖（同一条业务行必须落同一片，才能合并成一条 UPDATE）。
  *
  * <h2>背压与降级：引擎不说 {@code REJECTED}</h2>
@@ -47,8 +45,8 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <h2>五条不变量</h2>
  * I1 不丢件且恰一个终态（{@link Pending#complete} 幂等 + 漏回填补 {@code FAILED}）、
- * I2 同分片单飞（{@link ShardBuffer} 的 {@code running + generation} 双保险）、
- * I3 锁不跨 DB（临界区只碰内存）、I4 停机三步（停收 → 排空 → 关池）、
+ * I2 同分片单飞（分片串行化落在「同一分片恰一条线程」上，结构即保证）、
+ * I3 锁不跨 DB（临界区只碰内存）、I4 停机三步（停收 → 排空 → signal + join）、
  * I5 背压有界（满即拒，不扩容、不挤掉已入队件）。
  *
  * <h2>装配</h2>
@@ -67,8 +65,7 @@ public class CountMerger {
 
     private final MergeConfig config;
     private final ICountFlushHandler flushHandler;
-    private final ShardBuffer[] shards;
-    private final ScheduledThreadPoolExecutor scheduler;
+    private final ShardFlusher[] shards;
 
     /** 排空通知：flush 每走完一批就 signalAll，停机不用轮询 */
     private final ReentrantLock idleLock = new ReentrantLock();
@@ -100,24 +97,18 @@ public class CountMerger {
         }
         this.config = config;
         this.flushHandler = flushHandler;
-        this.scheduler = new ScheduledThreadPoolExecutor(
-                config.flushThreads(),
-                Thread.ofPlatform().daemon(true).name("count-merge-flush-", 0).factory(),
-                new ThreadPoolExecutor.AbortPolicy());
-        // ★ 取消的定时任务立刻出队。攒满提前触发每秒会 cancel 上千个任务，
-        //   不开这个策略，它们会一直躺在延时队列里等到原定窗口才被清理，
-        //   256 分片 × N/s 的规模下就是实打实的内存与调度开销。
-        this.scheduler.setRemoveOnCancelPolicy(true);
 
-        this.shards = new ShardBuffer[config.shardCount()];
+        // 每分片一条常驻 daemon 线程（count-merge-flush-<shardNo>），构造即开跑；
+        // flush 并发 = shardCount，其与连接池的不变量由装配层（CountMergeConfig）启动时校验
+        this.shards = new ShardFlusher[config.shardCount()];
         for (int i = 0; i < config.shardCount(); i++) {
-            shards[i] = new ShardBuffer(i, config, scheduler, this::flushBatch, this::signalIdle);
+            shards[i] = new ShardFlusher(i, config, this::flushBatch, this::signalIdle);
         }
 
         log.info("计数合并器启动：shardCount={}(mask={}), maxFlushDelayMillis={}, maxBatch={}, waitTimeoutMs={}, "
-                        + "shardCapacity={}, flushThreads={}, drainTimeoutMs={}",
+                        + "shardCapacity={}, flush=每分片1条常驻线程(共{}), drainTimeoutMs={}",
                 config.shardCount(), config.mask(), config.maxFlushDelayMillis(), config.maxBatch(),
-                config.waitTimeoutMs(), config.shardCapacity(), config.flushThreads(), config.drainTimeoutMs());
+                config.waitTimeoutMs(), config.shardCapacity(), config.shardCount(), config.drainTimeoutMs());
     }
 
     /**
@@ -130,11 +121,8 @@ public class CountMerger {
         Pending item = Pending.waiting(shardKey, event);
         SubmitOutcome outcome = enqueue(item);
         if (outcome != SubmitOutcome.ACCEPTED) {
-            if (outcome == SubmitOutcome.BUFFER_FULL) {
-                return MergeOutcome.bufferFull();
-            }
-            // 入队后被立即回填（调度器已在停机）也算失败：件过了缓冲区一道手，不能再叫「没接住」
-            return item.isSettled() ? MergeOutcome.failed() : MergeOutcome.closed();
+            // 未入队：满了或停机中。件从未进过缓冲区，必未 settle，交给调用方降级
+            return outcome == SubmitOutcome.BUFFER_FULL ? MergeOutcome.bufferFull() : MergeOutcome.closed();
         }
         try {
             return item.await(config.waitTimeoutMs());
@@ -163,40 +151,34 @@ public class CountMerger {
      * 「拒收怎么翻译」上不同，计数口径必须共用一份。
      *
      * <p><b>计数守恒</b>：{@code accepted == flushed + failed + drainedFailed + 在途 + timedOut 后的在途}
-     * 之所以能对上，靠这里三条分支互斥且覆盖：
-     * <ul>
-     *   <li>{@code ACCEPTED} → {@code accepted++}；</li>
-     *   <li>{@code BUFFER_FULL} → {@code rejectedFull++}（件从未入队）；</li>
-     *   <li>{@code CLOSED} 且件已被回填 → {@code accepted++} 且 {@code failed++}
-     *       （件确实进过缓冲区，只是调度器已关，立刻失败）；</li>
-     *   <li>{@code CLOSED} 且件未被回填 → {@code rejectedClosed++}（件从未入队）。</li>
-     * </ul>
+     * 之所以能对上，靠这里三条分支互斥且覆盖：{@code ACCEPTED} → {@code accepted++}；
+     * 分片拒绝时要么 {@code rejectedFull++}（件从未入队）、要么 {@code rejectedClosed++}（同前）。
      */
     private SubmitOutcome enqueue(Pending item) {
         if (!accepting) {
             rejectedClosed.incrementAndGet();
             return SubmitOutcome.CLOSED;
         }
-        SubmitOutcome outcome = shards[config.shardOf(item.shardKey())].offer(item);
-        if (outcome == SubmitOutcome.ACCEPTED) {
-            accepted.incrementAndGet();
-        } else if (outcome == SubmitOutcome.BUFFER_FULL) {
-            rejectedFull.incrementAndGet();
-        } else if (item.isSettled()) {
-            accepted.incrementAndGet();
-            failed.incrementAndGet();
-        } else {
+        if (!shards[config.shardOf(item.shardKey())].offer(item)) {
+            // 重读 accepting：close 与 offer 赛跑时（入队检查后分片才关闭），按停机算，不诬为背压
+            if (accepting) {
+                rejectedFull.incrementAndGet();
+                return SubmitOutcome.BUFFER_FULL;
+            }
             rejectedClosed.incrementAndGet();
+            return SubmitOutcome.CLOSED;
         }
-        return outcome;
+        accepted.incrementAndGet();
+        return SubmitOutcome.ACCEPTED;
     }
+
     /**
      * 当前缓冲件数（全分片求和，无锁镜像）。只供 {@link #metrics()}、停机日志与同包测试做
      * 排空/背压断言用——近似读数，不做任何正确性决策，故不对外暴露。
      */
     int pending() {
         int total = 0;
-        for (ShardBuffer shard : shards) {
+        for (ShardFlusher shard : shards) {
             total += shard.pendingSize();
         }
         return total;
@@ -205,8 +187,8 @@ public class CountMerger {
     /**
      * 等排空（{@code close()} 与测试用）。
      *
-     * <p>判据是「所有分片都没有在途 flush 且缓冲空」，由 flush 完成信号唤醒，
-     * 探测间隔只防信号丢失。
+     * <p>判据是「所有分片缓冲都空」，由 flush 完成信号唤醒，探测间隔只防信号丢失；
+     * 在途的那一批（已摘批、尚未回填）不在此判据内，由 {@link #close()} 的 join 兜底。
      */
     public boolean awaitIdle(long timeoutMs) {
         if (isIdle()) {
@@ -241,37 +223,40 @@ public class CountMerger {
     }
 
     /**
-     * 优雅停机（I4）：停收 → 排空 → 关池，顺序不能反。
+     * 优雅停机（I4）：停收 → 排空 → 回填 + signal + join，顺序不能反。
      *
-     * <p>先关池会把缓冲区里的件变成「永远等不到的 future」；排空超时则显式回填，让调用方立刻
+     * <p>先杀线程会把缓冲区里的件变成「永远等不到的 future」；排空超时则显式回填，让调用方立刻
      * 拿到可重试的结果，而不是干等 {@code waitTimeoutMs} 后猜。回填件数计入 {@code drainedFailed}，
-     * 这是「停机丢了多少」的唯一读数。
+     * 这是「停机丢了多少」的唯一读数。收尾把各分片线程 signal 出等待（{@code failRemaining} 置
+     * {@code closed} 并 signal），再 {@code join(drainTimeout)}——线程只在 {@code closed} 且缓冲空时
+     * 退出，join 返回即代表在途 flush 已收尾。{@code HikariDataSource} 的销毁晚于本方法
+     * （Spring 按依赖逆序销毁），所以排空时落库用的连接仍然可用——不要调换顺序。
      */
     @PreDestroy
     public void close() {
         accepting = false;
         boolean drained = awaitIdle(config.drainTimeoutMs());
-        for (ShardBuffer shard : shards) {
-            int left = shard.failRemaining(drained ? "应用停机（竞态补收）" : "排空超时");
-            if (left == 0) {
-                continue;
-            }
+        int left = 0;
+        for (ShardFlusher shard : shards) {
+            int remaining = shard.failRemaining(drained ? "应用停机（竞态补收）" : "排空超时");
             if (drained) {
                 // 正常排空后还会剩件，只可能是「close 与最后一个 offer 赛跑」漏进来的
-                failed.addAndGet(left);
+                failed.addAndGet(remaining);
             } else {
-                drainedFailed.addAndGet(left);
+                drainedFailed.addAndGet(remaining);
             }
+            left += remaining;
         }
-        scheduler.shutdown();
-        try {
-            if (!scheduler.awaitTermination(config.drainTimeoutMs(), TimeUnit.MILLISECONDS)) {
-                scheduler.shutdownNow();
-                log.warn("计数合并执行池未在 {}ms 内结束，已强制中断", config.drainTimeoutMs());
+        if (left > 0) {
+            log.warn("停机回填 {} 件未落库（从未进入事务，可安全重试）", left);
+        }
+        long joinDeadlineMillis = System.currentTimeMillis() + config.drainTimeoutMs();
+        for (int i = 0; i < shards.length; i++) {
+            long remainMs = Math.max(1, joinDeadlineMillis - System.currentTimeMillis());
+            if (!shards[i].joinFlushThread(remainMs)) {
+                log.warn("分片 {} 的 flush 线程未在 {}ms 内退出（大概率阻塞在落库上）：daemon 线程不阻塞 JVM 停机，放弃等待",
+                        i, remainMs);
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            scheduler.shutdownNow();
         }
         log.info("计数合并器已停止：drained={}, 剩余积压={}, 读数={}", drained, pending(), metrics());
     }
@@ -353,9 +338,9 @@ public class CountMerger {
         }
     }
 
-    /** 所有分片都空且无在途 flush（无锁：只读 volatile 镜像） */
+    /** 所有分片缓冲都空（无锁：只读 volatile 镜像；在途批由 close 的 join 兜底） */
     private boolean isIdle() {
-        for (ShardBuffer shard : shards) {
+        for (ShardFlusher shard : shards) {
             if (!shard.isIdle()) {
                 return false;
             }

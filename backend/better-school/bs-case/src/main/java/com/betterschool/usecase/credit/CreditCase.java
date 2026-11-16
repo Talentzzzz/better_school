@@ -1,5 +1,6 @@
 package com.betterschool.usecase.credit;
 
+import com.betterschool.domain.notification.model.valobj.NotificationEventMessage;
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.domain.notification.service.INotificationService;
@@ -10,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * 信用分用例编排：admin 操作顺序调用 credit 域（域内事务）+ 下发变动通知；
@@ -43,23 +45,47 @@ public class CreditCase {
         if (changeResult == null) {
             return;
         }
-        notificationService.sendToUser(targetUserId, NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.CREDIT_CHANGE, "信用分变动",
-                "管理员调分 " + (delta > 0 ? "+" : "") + delta + " 分，当前信用分 " + changeResult.getCurrentScore()
-                        + "（" + reason + "）",
-                "CREDIT", null);
+        notificationService.publish(NotificationEventMessage.builder()
+                .notificationId(UUID.randomUUID().toString())
+                .userId(targetUserId)
+                .scope(NotificationScopeVO.BOTTOM_SYSTEM.name())
+                .type(NotificationTypeVO.CREDIT_CHANGE.name())
+                .title("信用分变动")
+                .content("管理员调分 " + (delta > 0 ? "+" : "") + delta + " 分，当前信用分 " + changeResult.getCurrentScore()
+                        + "（" + reason + "）")
+                .refType("CREDIT")
+                .refId(null)
+                .dedupKey(null)
+                .build());
     }
 
     public void adminBan(String targetUserId, String reason) {
         creditAccountService.banByAdmin(targetUserId);
-        notificationService.sendToUser(targetUserId, NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.CREDIT_CHANGE, "账号封禁",
-                "账号已被封禁，无法发布或接单" + (reason == null || reason.isBlank() ? "" : "（原因：" + reason + "）"),
-                "CREDIT", null);
+        notificationService.publish(NotificationEventMessage.builder()
+                .notificationId(UUID.randomUUID().toString())
+                .userId(targetUserId)
+                .scope(NotificationScopeVO.BOTTOM_SYSTEM.name())
+                .type(NotificationTypeVO.CREDIT_CHANGE.name())
+                .title("账号封禁")
+                .content("账号已被封禁，无法发布或接单" + (reason == null || reason.isBlank() ? "" : "（原因：" + reason + "）"))
+                .refType("CREDIT")
+                .refId(null)
+                .dedupKey(null)
+                .build());
     }
 
     public void adminUnban(String targetUserId) {
         creditAccountService.unbanByAdmin(targetUserId);
-        notificationService.sendToUser(targetUserId, NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.CREDIT_CHANGE, "账号解封",
-                "账号已解封，当前信用分 " + creditAccountService.getCreditScore(targetUserId) + "，可正常发布或接单",
-                "CREDIT", null);
+        notificationService.publish(NotificationEventMessage.builder()
+                .notificationId(UUID.randomUUID().toString())
+                .userId(targetUserId)
+                .scope(NotificationScopeVO.BOTTOM_SYSTEM.name())
+                .type(NotificationTypeVO.CREDIT_CHANGE.name())
+                .title("账号解封")
+                .content("账号已解封，当前信用分 " + creditAccountService.getCreditScore(targetUserId) + "，可正常发布或接单")
+                .refType("CREDIT")
+                .refId(null)
+                .dedupKey(null)
+                .build());
     }
 }

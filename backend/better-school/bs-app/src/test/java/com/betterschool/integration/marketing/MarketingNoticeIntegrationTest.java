@@ -17,7 +17,8 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  * 由 dedup_key 幂等只落一条；载荷残缺静默丢弃不重投。
  * <p>
  * 事件体照营销服务 outbox 的真实形状构造（LotteryDrawnMessage / PointsChangedMessage），
- * 走消费者真实解析与处理路径。
+ * 走消费者真实解析与处理路径。通知落库时机=通知事件消费时：营销消费方现在 publish 通知事件，
+ * 断言 notification 前须先 {@link CommunityApiTestBase#consumeNotifyEvents()} 喂 NotifyEventConsumer。
  */
 class MarketingNoticeIntegrationTest extends CommunityApiTestBase {
 
@@ -47,6 +48,7 @@ class MarketingNoticeIntegrationTest extends CommunityApiTestBase {
 
         lotteryDrawnConsumer.onMessage(json(event));
         lotteryDrawnConsumer.onMessage(json(event));
+        consumeNotifyEvents();
 
         assertThat(noticeCount(userId, "LOTTERY_WON", REC_201))
                 .as("ref_id 取 recordId，重投不重复").isEqualTo(1);
@@ -60,6 +62,7 @@ class MarketingNoticeIntegrationTest extends CommunityApiTestBase {
         String userId = registerAndLogin("13800009005", "旧版中奖用户").userId();
         lotteryDrawnConsumer.onMessage(json(Map.of("recordId", REC_203, "userId", userId,
                 "prizeId", PRIZE_13, "prizeType", "POINTS", "pointsAmount", 100)));
+        consumeNotifyEvents();
 
         String content = noticeContent(userId, "LOTTERY_WON", REC_203);
         assertThat(content).as("在途旧消息不落成实物文案").contains("100").contains("积分");
@@ -70,6 +73,7 @@ class MarketingNoticeIntegrationTest extends CommunityApiTestBase {
         String userId = registerAndLogin("13800009004", "实物中奖用户").userId();
         lotteryDrawnConsumer.onMessage(json(Map.of("recordId", REC_202, "userId", userId,
                 "prizeId", PRIZE_12, "prizeType", "PHYSICAL", "pointsAmount", 0)));
+        consumeNotifyEvents();
 
         String content = noticeContent(userId, "LOTTERY_WON", REC_202);
         assertThat(content).contains("实物奖品").contains("我的奖品");
@@ -80,6 +84,7 @@ class MarketingNoticeIntegrationTest extends CommunityApiTestBase {
         String userId = registerAndLogin("13800009005", "谢谢参与用户").userId();
         lotteryDrawnConsumer.onMessage(json(Map.of("recordId", REC_203, "userId", userId,
                 "prizeId", PRIZE_13, "prizeType", "THANKS", "pointsAmount", 0)));
+        consumeNotifyEvents();
         assertThat(noticeCount(userId, "LOTTERY_WON", REC_203)).isZero();
     }
 
@@ -92,6 +97,7 @@ class MarketingNoticeIntegrationTest extends CommunityApiTestBase {
                 "balanceAfter", 350, "reasonType", "LOTTERY_WIN", "refId", REF_301)));
         pointsChangedConsumer.onMessage(json(Map.of("userId", userId, "delta", -50,
                 "balanceAfter", 300, "reasonType", "REDEEM_PRIZE", "refId", REF_401)));
+        consumeNotifyEvents();
 
         assertThat(noticeContent(userId, "POINTS_CHANGED", REF_301)).contains("+100").contains("350");
         assertThat(noticeContent(userId, "POINTS_CHANGED", REF_401)).contains("-50").contains("300");
@@ -101,6 +107,7 @@ class MarketingNoticeIntegrationTest extends CommunityApiTestBase {
         // 同一笔变动重投：dedup_key 幂等只一条
         pointsChangedConsumer.onMessage(json(Map.of("userId", userId, "delta", 100,
                 "balanceAfter", 350, "reasonType", "LOTTERY_WIN", "refId", REF_301)));
+        consumeNotifyEvents();
         assertThat(noticeCount(userId, "POINTS_CHANGED", REF_301)).isEqualTo(1);
     }
 

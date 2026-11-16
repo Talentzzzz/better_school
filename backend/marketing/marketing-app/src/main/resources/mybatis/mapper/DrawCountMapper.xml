@@ -41,4 +41,19 @@
         WHERE expire_at &lt;= NOW() AND remain &gt; 0
     </update>
 
+    <!--
+      过期桶加锁分组读：FOR UPDATE 锁住扫描到的桶行，并发任务在桶行锁上串行
+      （后到者重读时余量已置 0、分组为空）。过期清零目前单条 UPDATE 即可（见 expireBuckets），
+      本查询与积分侧桶合并的加锁重读同构，供分组读模式的批量任务参考/复用。
+    -->
+    <select id="selectExpiredRemainGroups"
+            resultType="com.betterschool.marketing.infrastructure.drawcount.dao.po.DrawCountExpiredGroupPO">
+        SELECT user_id, SUM(remain) AS total, COUNT(*) AS bucketCount
+        FROM draw_count_bucket
+        WHERE expire_at &lt;= NOW() AND remain &gt; 0
+        GROUP BY user_id
+        ORDER BY user_id
+        FOR UPDATE
+    </select>
+
 </mapper>

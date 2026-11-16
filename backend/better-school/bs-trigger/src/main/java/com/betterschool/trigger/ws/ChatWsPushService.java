@@ -7,20 +7,19 @@ import com.betterschool.domain.chat.model.valobj.ChatReadPushEvent;
 import com.betterschool.domain.chat.model.valobj.ChatRecallPushEvent;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
-import org.springframework.web.socket.WebSocketSession;
 
 import java.util.Map;
 
 /**
- * WS 推送服务（outbox 消费者的落地侧，spec §2）：按会话成员查注册表，仅在线成员推送，
- * 不在线直接跳过（漏推合法，timeline 补拉兜底）。MSG 排除发送者本人（发送方以 HTTP 200 为准）
+ * WS 推送服务（outbox 消费者的落地侧，spec §2）：按会话成员逐个经 WsPushRouter 投递，
+ * 仅在线成员推送，不在线直接跳过（漏推合法，timeline 补拉兜底）。
+ * MSG 排除发送者本人（发送方以 HTTP 200 为准）
  */
 @Component
 @RequiredArgsConstructor
 public class ChatWsPushService {
 
-    private final ChatConnectionRegistry connectionRegistry;
-    private final ChatWsPusher pusher;
+    private final WsPushRouter wsPushRouter;
     private final IChatRepository chatRepository;
 
     /** MSG：payload=完整消息体（含发送者昵称头像），客户端按 (roomId, seq) 判重 */
@@ -61,10 +60,7 @@ public class ChatWsPushService {
             if (excludeUserId != null && excludeUserId.equals(memberEntity.getUserId())) {
                 continue;
             }
-            WebSocketSession session = connectionRegistry.get(memberEntity.getUserId());
-            if (session != null && session.isOpen()) {
-                pusher.push(session, frame);
-            }
+            wsPushRouter.deliver(memberEntity.getUserId(), frame);
         }
     }
 }

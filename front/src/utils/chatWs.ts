@@ -4,7 +4,7 @@ import router from '@/router'
 import { toast } from '@/components/Toast'
 
 interface WsEnvelope {
-  type: 'PING' | 'PONG' | 'MSG' | 'READ' | 'RECALL' | 'KICK'
+  type: 'PING' | 'PONG' | 'MSG' | 'READ' | 'RECALL' | 'NOTIF' | 'ORDER' | 'KICK'
   roomId?: number
   seq?: number
   payload?: unknown

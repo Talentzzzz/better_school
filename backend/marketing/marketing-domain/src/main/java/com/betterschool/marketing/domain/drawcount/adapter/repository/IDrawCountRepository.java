@@ -17,8 +17,8 @@ public interface IDrawCountRepository {
 
     /**
      * 一次入账，**同一事务**内完成：造桶（bucket_id 走统一 IdGenerator 发号（uuid-biz-id 票 07）、expire_at = 事务内时点 + 次数有效期）
-     * → 插桶（撞 {@code uk_user_reason_ref} 即幂等命中）。幂等键落在 uk_user_reason_ref 上，
-     * 重复入账不重复加次数；「幂等跳过」的日志由域服务按业务口径打。
+     * → 插桶（撞 {@code uk_user_reason_ref} 即幂等命中）。
+     * 幂等键落在 uk_user_reason_ref 上，重复入账不重复加次数；「幂等跳过」的日志由域服务按业务口径打。
      * <p>
      * 时点与有效期都在事务内取：时间戳口径与改造前一致（同票 03 {@code createOrderWithLock} 先例）。
      *
@@ -41,13 +41,19 @@ public interface IDrawCountRepository {
 
     /**
      * 落一行消费明细并把该桶 remain 减 1（流水先行：先 INSERT IGNORE 明细、撞 uk 则整行不动）。
-     * 返回 false = 该桶这一笔抽奖已经扣过。
+     * 返回 false = 该桶这一笔抽奖已经扣过。本方法会被外层用例与测试直接复用，职责保持单一只管桶与明细。
      */
     boolean consumeBucket(DrawCountDetailEntity detail);
 
-    /** 剩余可用次数 = 未过期且未扣完的桶 remain 之和（没有余额列） */
+    /**
+     * 剩余次数 = 未过期且未扣完的桶 remain 之和（没有余额列）。
+     * 对外读与消费路径同口径。
+     */
     int sumAvailableRemain(String userId);
 
-    /** 懒过期落账清理：把已过期但仍有余量的桶置 0（不删行、留审计），返回清理行数 */
+    /**
+     * 懒过期清理（定时任务调度）：把已过期且仍有余量的桶 remain 置 0（不删行、留审计），
+     * 返回清理桶行数。过期判定以读路径 {@code expire_at > NOW()} 为准，本任务只是账务收拾。
+     */
     int expireBuckets();
 }

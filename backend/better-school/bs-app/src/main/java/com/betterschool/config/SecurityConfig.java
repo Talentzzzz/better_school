@@ -48,6 +48,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/search/**").permitAll()
                         // WS 握手鉴权不走 JWT：query 一次性票据由端点握手拦截器原子取删校验（票 04）
                         .requestMatchers(ChatWsProtocol.ENDPOINT).permitAll()
+                        // 实例间内部转发接口：不走 JWT，由共享密钥 X-Internal-Token 校验（InternalWsPushController，fail-closed）
+                        .requestMatchers("/internal/ws/**").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint((request, response, authException) -> writeJson(

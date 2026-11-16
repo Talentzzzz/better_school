@@ -1,5 +1,6 @@
 package com.betterschool.usecase.community;
 
+import com.betterschool.domain.notification.model.valobj.NotificationEventMessage;
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.domain.notification.service.INotificationService;
@@ -8,6 +9,8 @@ import com.betterschool.domain.community.service.post.ICommunityPostService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import java.util.UUID;
 
 /**
  * 帖子点赞编排（issue 06）：community 域点赞事务先提交，chat 域通知尽力而为——失败只吞日志不回滚点赞
@@ -29,9 +32,18 @@ public class PostLikeCase {
             return; // 自赞不发
         }
         try {
-            notificationService.sendInteraction(postEntity.getUserId(), userId, NotificationScopeVO.INTERACTION_LIKE, NotificationTypeVO.POST_LIKED,
-                    "互动通知", "你的帖子收到了一个赞", "POST", postId,
-                    NotificationTypeVO.POST_LIKED.name() + ":" + postId + ":" + userId);
+            notificationService.publish(NotificationEventMessage.builder()
+                    .notificationId(UUID.randomUUID().toString())
+                    .userId(postEntity.getUserId())
+                    .senderId(userId)
+                    .scope(NotificationScopeVO.INTERACTION_LIKE.name())
+                    .type(NotificationTypeVO.POST_LIKED.name())
+                    .title("互动通知")
+                    .content("你的帖子收到了一个赞")
+                    .refType("POST")
+                    .refId(postId)
+                    .dedupKey(NotificationTypeVO.POST_LIKED.name() + ":" + postId + ":" + userId)
+                    .build());
         } catch (Exception e) {
             log.warn("[PostLikeCase] 帖子被赞通知发送失败（不回滚点赞） postId={} senderId={}", postId, userId, e);
         }

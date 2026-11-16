@@ -1,5 +1,6 @@
 package com.betterschool.usecase.community;
 
+import com.betterschool.domain.notification.model.valobj.NotificationEventMessage;
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.domain.notification.service.INotificationService;
@@ -8,6 +9,8 @@ import com.betterschool.domain.community.service.comment.ICommunityCommentServic
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import java.util.UUID;
 
 /**
  * 评论点赞编排（issue 06）：community 域点赞事务（唯一键幂等 + like_count 同事务 ±1）先提交，
@@ -28,9 +31,18 @@ public class CommentLikeCase {
             return; // 自赞不发
         }
         try {
-            notificationService.sendInteraction(commentEntity.getUserId(), userId, NotificationScopeVO.INTERACTION_LIKE, NotificationTypeVO.COMMENT_LIKED,
-                    "互动通知", "你的评论收到了一个赞", "COMMENT", commentId,
-                    NotificationTypeVO.COMMENT_LIKED.name() + ":" + commentId + ":" + userId);
+            notificationService.publish(NotificationEventMessage.builder()
+                    .notificationId(UUID.randomUUID().toString())
+                    .userId(commentEntity.getUserId())
+                    .senderId(userId)
+                    .scope(NotificationScopeVO.INTERACTION_LIKE.name())
+                    .type(NotificationTypeVO.COMMENT_LIKED.name())
+                    .title("互动通知")
+                    .content("你的评论收到了一个赞")
+                    .refType("COMMENT")
+                    .refId(commentId)
+                    .dedupKey(NotificationTypeVO.COMMENT_LIKED.name() + ":" + commentId + ":" + userId)
+                    .build());
         } catch (Exception e) {
             log.warn("[CommentLikeCase] 评论被赞通知发送失败（不回滚点赞） commentId={} senderId={}", commentId, userId, e);
         }

@@ -4,6 +4,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.betterschool.trigger.listener.NotifyEventConsumer;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -131,6 +132,19 @@ public abstract class CommunityApiTestBase {
     protected JdbcTemplate jdbcTemplate;
     @Autowired
     protected RedissonClient redissonClient;
+    @Autowired
+    protected NotifyEventConsumer notifyEventConsumer;
+
+    /**
+     * 通知事件消费 helper（事件驱动改造，测试环境无 broker 手动喂）：把业务事务写进 outbox 的
+     * bs-notify-event 载荷逐条喂给通知域消费方 NotifyEventConsumer（生产环境由 MQ 驱动同一入口）
+     */
+    protected void consumeNotifyEvents() {
+        List<String> payloads = jdbcTemplate.queryForList(
+                "SELECT payload FROM outbox_message WHERE destination = ? AND state = 0 ORDER BY id",
+                String.class, Constants.NOTIFY_EVENT_TOPIC);
+        payloads.forEach(notifyEventConsumer::onMessage);
+    }
 
     /** 清超时分表用的裸 MySQL 连接（物理分表经 SS 连接查不到，同 TimeoutShardingRouteIntegrationTest） */
     @Value("${timeout-it.raw-mysql-url}")

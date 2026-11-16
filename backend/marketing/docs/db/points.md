@@ -10,6 +10,9 @@
 积分与抽奖次数是**同构的两套桶**：入账流水即事实源（桶表），消费按 `expire_at` FIFO
 递减各桶 `remain` 并落明细（detail 表），没有余额列——余额 = 未过期桶的 `SUM(remain)`。
 
+碎片桶（签到返利每天入一桶，桶数随账户年龄增长）由每 10 分钟的**桶合并任务**收敛：
+同用户的「有效小额桶」（remain ≤ 10 且 ≥ 2 张）并成一桶，SUM 读的工作集不随账户年龄膨胀（见下文「桶合并」）。
+
 | 表名 | 说明 | 归属域 |
 | ---- | ---- | ---- |
 | points_bucket | 积分桶：每笔入账一行，**同时是发放流水与事实源** | points |
@@ -31,8 +34,8 @@
 | amount | int | NOT NULL | 入账积分数（恒正） |
 | remain | int | NOT NULL | 该桶剩余可用（消费按 FIFO 递减，过期清理置 0） |
 | expire_at | datetime | NOT NULL | 过期时间 = 入账时点 + `points_validity_config.points_valid_days` |
-| reason_type | varchar(30) | NOT NULL | 入账来源：`LOTTERY_WIN` / `REBATE` |
-| ref_id | varchar(36) | NOT NULL | LOTTERY_WIN = 抽奖记录 id（UUID 字符串，MQ 幂等键）；REBATE = 发放幂等键 |
+| reason_type | varchar(30) | NOT NULL | 入账来源：`LOTTERY_WIN` / `REBATE` / `COMPACTION`（桶合并，对用户不可见） |
+| ref_id | varchar(36) | NOT NULL | LOTTERY_WIN = 抽奖记录 id（UUID 字符串，MQ 幂等键）；REBATE = 发放幂等键；COMPACTION = 合并批次号 |
 | create_time / update_time | datetime | NOT NULL | 由应用写入 |
 
 ### 索引
@@ -41,10 +44,10 @@
   （`WHERE user_id=? AND remain>0 AND expire_at>NOW() ORDER BY expire_at, id`）
 
 ### 注意
-- **没有余额列**：余额 = `SUM(remain) WHERE remain > 0 AND expire_at > NOW()`。
-  因此积分不可能为负，也不存在「余额列与流水对不上」的窗口
-- **过期一律懒判**：所有读路径带 `expire_at > NOW()`；`pointsExpireScan` 任务只把过期桶 `remain` 置 0
-  （**不删行、留审计、不发事件**）
+- **桶表没有余额列**：可用余额口径 = `SUM(remain) WHERE remain > 0 AND expire_at > NOW()`，
+  这是扣减安全性（加锁读 + 不足判断）、变动事件 `balanceAfter` 与对外余额读的共同口径
+- **过期一律懒判**：所有桶读路径带 `expire_at > NOW()`；`pointsExpireScan` 任务把已过期桶
+  置 0（**不删行、留审计、不发事件**），只是账务收拾，其快慢不影响任何读数
 - 消费顺序固定 `ORDER BY expire_at ASC, id ASC FOR UPDATE`：写路径必须先加行锁再改 `remain`；
   同一笔消费**明细先行**（先落齐 `points_detail`，再改各桶 `remain`），撞 `uk_bucket_reason_ref`
   时余量一行未动、整笔回滚
@@ -54,6 +57,29 @@
   `UPDATE ... SET remain = remain - ?` 扣那张部分扣的桶（恰好整笔扣完时这条跳过）。
   任一影响行数对不上即整笔回滚，不静默继续
 - 与旧模型的差异：新增 `bucket_id` 业务 ID 列 + `update_time`；`uk_user_reason_ref` 语义不变
+
+### 桶合并（points-compaction 票）
+
+碎片桶收敛：签到返利每天入一桶，桶数随账户年龄增长，SUM 读的工作集跟着膨胀。
+`pointsBucketCompaction` 任务（每 10 分钟，与每分钟的过期扫描错峰）逐用户合并：
+
+- **对象**：同用户、`remain > 0 AND expire_at > NOW() AND remain <= 10` 的「有效小额桶」，
+  数量 ≥ 2 才合并（阈值/最少桶数在 `types.points.Constants` 的 `MERGE_BUCKET_THRESHOLD` /
+  `MERGE_MIN_BUCKETS`，同值硬编码在 PointsMapper.xml 两条 SQL 里，改一处要同步另一处）
+- **新桶口径**：`amount = remain = SUM(各桶 remain)`，`expire_at = **max**(各桶 expire_at)`——
+  等于把小桶有效期延长到其中最晚到期，这是产品决策不是疏漏；`reason_type = COMPACTION`，
+  `ref_id` = 合并批次号（撞不了 `uk_user_reason_ref`）
+- **旧桶归零不删行**：桶表兼做发放流水，原始入账记录（amount/ref_id 记着来源）必须留审计；
+  合并是**一笔新的资产形态**，所以是新插一桶 + 旧桶 `remain` 置 0
+- **守恒**：`SUM(remain)` 合并前后不变（0+0+…+S = S），余额读不受影响；新桶 expire_at = max
+  天然排在 FIFO 扣减顺序最后，先到期先扣的次序不变；合并桶就是普通桶，不改消费逻辑
+- **事务与并发**：逐用户一事务——加锁重读（FOR UPDATE）→ 少于 2 张跳过 → 插新桶 →
+  清零旧桶（影响行数 = 旧桶数，不符抛异常回滚）。并发双跑靠桶行锁串行：后到者拿锁重读时
+  旧桶已清零、不再满足条件，自然跳过；整事务原子，崩溃即回滚，无半合并
+- **用户不可见**：合并前后余额不变，不算积分变动——`selectTransactions` / `countTransactions`
+  的桶分支按 `reason_type != 'COMPACTION'` 过滤（points_detail 分支不过滤，明细表没有 COMPACTION）
+- **只做积分侧**：次数桶单笔面额大（兑换一次入 3 次）、桶数少，碎片化不成立；
+  如需扩展按同构模式复制（阈值与 reason_type 单列）
 
 ## points_detail
 
@@ -83,7 +109,8 @@
 - `draw_count_detail` **没有 amount / reason_type 列**：每次抽奖恒扣 1 次，一行即 1 次；
   `uk_bucket_ref (bucket_id, ref_id)`，ref_id = 抽奖记录 id（draw_record.record_id）
 - 有效期 = 入账时点 + `draw_count_config.draw_count_valid_days`；过期扫描 handler 为
-  `drawCountBucketExpireScan`（与旧表的 `lotteryDrawCountExpireScan` 并存到票 13）
+  `drawCountBucketExpireScan`（与旧表的 `lotteryDrawCountExpireScan` 并存到票 13），
+  余额读与积分侧同口径（`SUM(remain)`，懒过期）
 
 ## points_validity_config / draw_count_config
 
@@ -117,4 +144,5 @@
 
 形状见 `schema.sql`（票 08 新形状：`destination` / `state` 0/1/2 / `retry_count`，`msg_id` 唯一键）。
 积分域的 topic：`bs-points-changed`（变动事件，单体消费后落通知）；
-`reasonType` 取值见 `PointsReasonType`：入账 `LOTTERY_WIN` / `REBATE`，出账 `REDEEM_DRAW_COUNT` / `REDEEM_PRIZE`。
+`reasonType` 取值见 `PointsReasonType`：入账 `LOTTERY_WIN` / `REBATE`，出账 `REDEEM_DRAW_COUNT` / `REDEEM_PRIZE`
+（`COMPACTION` 只落桶表、不进流水与事件，见「桶合并」小节）。

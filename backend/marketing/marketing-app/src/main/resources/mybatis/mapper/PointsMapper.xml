@@ -58,9 +58,58 @@
     </update>
 
     <!--
+      过期桶加锁分组读：FOR UPDATE 锁住扫描到的桶行，并发任务在桶行锁上串行
+      （后到者重读时余量已置 0、分组为空）。过期清零目前单条 UPDATE 即可（见上方 expireBuckets），
+      本查询与桶合并的 selectSmallBucketsForUpdate 同构，供分组读模式的批量任务参考/复用。
+      分组顺序无意义，仅为结果稳定。
+    -->
+    <select id="selectExpiredRemainGroups"
+            resultType="com.betterschool.marketing.infrastructure.points.dao.po.PointsExpiredGroupPO">
+        SELECT user_id, SUM(remain) AS total, COUNT(*) AS bucketCount
+        FROM points_bucket
+        WHERE expire_at &lt;= NOW() AND remain &gt; 0
+        GROUP BY user_id
+        ORDER BY user_id
+        FOR UPDATE
+    </select>
+
+    <!--
+      桶合并候选用户批（points-compaction 票）：每用户聚合「有效小额桶」（remain > 0、未过期、
+      remain <= MERGE_BUCKET_THRESHOLD），数量 >= MERGE_MIN_BUCKETS 才算候选。
+      普通快照读不加锁——真正的互斥在逐用户加锁重读那一步（桶行锁上串行）；
+      分组顺序无意义，仅为结果稳定。阈值 10 / 最少 2 张与 types.points.Constants 的
+      MERGE_BUCKET_THRESHOLD / MERGE_MIN_BUCKETS 同源，改一处要同步另一处。
+    -->
+    <select id="selectMergeCandidateGroups"
+            resultType="com.betterschool.marketing.infrastructure.points.dao.po.PointsMergeGroupPO">
+        SELECT user_id, COUNT(*) AS bucketCount, SUM(remain) AS total
+        FROM points_bucket
+        WHERE remain &gt; 0 AND expire_at &gt; NOW() AND remain &lt;= 10
+        GROUP BY user_id
+        HAVING COUNT(*) &gt;= 2
+        ORDER BY user_id
+        LIMIT #{limit}
+    </select>
+
+    <!--
+      桶合并的加锁重读（points-compaction 票）：单用户的有效小额桶，FOR UPDATE 锁行。
+      并发双跑在这里串行：后到者拿锁重读时旧桶已被先到者置 0、不再满足条件，自然跳过。
+    -->
+    <select id="selectSmallBucketsForUpdate"
+            resultType="com.betterschool.marketing.infrastructure.points.dao.po.PointsBucketPO">
+        SELECT id, bucket_id, user_id, amount, remain, expire_at, reason_type, ref_id, create_time, update_time
+        FROM points_bucket
+        WHERE user_id = #{userId} AND remain &gt; 0 AND expire_at &gt; NOW() AND remain &lt;= 10
+        ORDER BY expire_at ASC, id ASC
+        FOR UPDATE
+    </select>
+
+    <!--
       流水 = 入账 ∪ 消费按时间归并。两表在 SQL 里 UNION ALL 后统一排序分页——
       若改成应用层归并，分页要各表多取 offset+limit 行再内存合并，翻到第 N 页的代价随页码涨。
       id 是各自表内自增，排序 tiebreak 用 id 只为稳定，不跨表比较。
+      桶分支排除 COMPACTION：合并是余额不变的账务整形（SUM(remain) 前后守恒），不是积分变动，
+      对用户不可见；points_detail 分支不需要过滤——明细表没有 COMPACTION。
     -->
     <select id="selectTransactions"
             resultType="com.betterschool.marketing.infrastructure.points.dao.po.PointsTransactionPO">
@@ -68,7 +117,7 @@
         FROM (
             SELECT id, 'IN' AS direction, amount, reason_type, ref_id, create_time AS created_at, expire_at
             FROM points_bucket
-            WHERE user_id = #{userId}
+            WHERE user_id = #{userId} AND reason_type != 'COMPACTION'
             UNION ALL
             SELECT id, 'OUT' AS direction, amount, reason_type, ref_id, create_time AS created_at, NULL AS expire_at
             FROM points_detail
@@ -78,8 +127,10 @@
         LIMIT #{limit} OFFSET #{offset}
     </select>
 
+    <!-- 流水总条数，与 selectTransactions 同口径（桶分支排除 COMPACTION） -->
     <select id="countTransactions" resultType="long">
-        SELECT (SELECT COUNT(*) FROM points_bucket WHERE user_id = #{userId})
+        SELECT (SELECT COUNT(*) FROM points_bucket
+                WHERE user_id = #{userId} AND reason_type != 'COMPACTION')
              + (SELECT COUNT(*) FROM points_detail WHERE user_id = #{userId})
     </select>
 

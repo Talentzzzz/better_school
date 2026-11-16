@@ -19,6 +19,7 @@ public final class RoomPreviewRenderer {
     public static final String PREVIEW_PRODUCT = "[商品]";
     public static final String PREVIEW_POST = "[帖子]";
     public static final String PREVIEW_ERRAND = "[跑腿卡片]";
+    public static final String PREVIEW_SYSTEM = "[系统通知]";
 
     private RoomPreviewRenderer() {
     }
@@ -46,6 +47,7 @@ public final class RoomPreviewRenderer {
             case TEXT -> truncate(preview.getContent());
             case IMAGE -> PREVIEW_IMAGE;
             case CARD -> renderCard(preview.getRefType());
+            case SYSTEM -> PREVIEW_SYSTEM;
         };
     }
 

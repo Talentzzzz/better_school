@@ -400,6 +400,40 @@ function imageOf(row: Row) {
   return parseImageContent(row.msg.content)
 }
 
+// ---------- 系统通知卡片（SYSTEM：仅系统助手会话出现，content 为 JSON 载荷） ----------
+
+interface SystemPayload {
+  notificationId: string
+  title: string
+  content: string
+  refType: string
+  refId: string
+}
+
+function systemInfoOf(msg: ChatMessage): SystemPayload | null {
+  if (msg.msgType !== 'SYSTEM') return null
+  try {
+    const raw = JSON.parse(msg.content) as SystemPayload
+    if (!raw?.title || !raw?.content) return null
+    return raw
+  } catch {
+    // 降级：非 JSON 载荷按纯文本展示
+    return { notificationId: '', title: '系统通知', content: msg.content, refType: '', refId: '' }
+  }
+}
+
+function onSystemClick(msg: ChatMessage) {
+  const info = systemInfoOf(msg)
+  if (!info?.refId) return
+  // refType 与详情路由对齐：ERRAND→跑腿详情（其余类型暂只展示不跳转）
+  if (info.refType === 'ERRAND' && Number.isInteger(Number(info.refId))) {
+    void router.push(`/errand/${info.refId}`)
+  }
+}
+
+/** 系统助手会话判定：会话内出现过 SYSTEM 消息即隐藏输入区（用户不可回复，后端同口径拒绝） */
+const isSystemRoom = computed(() => rows.value.some((row) => row.msg.msgType === 'SYSTEM'))
+
 onMounted(() => {
   // 打开会话立即推水位线，不等补拉（spec §2）
   void chatRooms.markRead(roomId)
@@ -481,6 +515,20 @@ onUnmounted(() => {
             <span v-if="!cardInfoOf(row.msg)?.invalid" class="card-arrow">›</span>
           </button>
 
+          <div
+            v-else-if="row.msg.msgType === 'SYSTEM'"
+            class="system-bubble"
+            :class="{ 'system-bubble--link': systemInfoOf(row.msg)?.refId }"
+            @click="onSystemClick(row.msg)"
+          >
+            <span class="system-tag">系统</span>
+            <span class="system-body">
+              <span class="system-title">{{ systemInfoOf(row.msg)?.title || '系统通知' }}</span>
+              <span class="system-content">{{ systemInfoOf(row.msg)?.content }}</span>
+            </span>
+            <span v-if="systemInfoOf(row.msg)?.refId" class="card-arrow">›</span>
+          </div>
+
           <div class="msg-meta">
             <span class="msg-time">{{ formatTime(row.msg.createdAt) }}</span>
             <span
@@ -512,7 +560,7 @@ onUnmounted(() => {
       <button class="card-entry-close" aria-label="移除卡片" @click="dropPendingCardQuery">×</button>
     </div>
 
-    <footer class="chat-input-bar safe-bottom">
+    <footer v-if="!isSystemRoom" class="chat-input-bar safe-bottom">
       <input ref="fileInput" type="file" accept="image/*" multiple class="chat-file" @change="onPickImages" />
       <button class="chat-plus" @click="fileInput?.click()">＋</button>
       <input
@@ -536,6 +584,50 @@ onUnmounted(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+.system-bubble {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 78%;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: $bg-search;
+  border: 0.5px solid $line;
+  cursor: default;
+
+  &--link {
+    cursor: pointer;
+  }
+
+  .system-tag {
+    flex: none;
+    padding: 2px 6px;
+    border-radius: $radius-sm;
+    background: $primary;
+    color: #fff;
+    font-size: 11px;
+  }
+
+  .system-body {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .system-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: $text-1;
+  }
+
+  .system-content {
+    font-size: 12px;
+    color: $text-3;
+    word-break: break-all;
+  }
 }
 
 .chat-scroll {

@@ -1,6 +1,7 @@
 package com.betterschool.integration.chat;
 
 import com.betterschool.domain.notification.model.entity.NotificationEntity;
+import com.betterschool.domain.notification.model.valobj.NotificationEventMessage;
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.domain.notification.service.INotificationService;
@@ -11,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -18,7 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 通知读模型（营销票 02）集成测试：「scope + 水位线」照抄 chat 的序号模型——
  * 写入事务内 notification_seq 取号（seq 递增且 dedup 幂等不耗号）、未读数 = 计数器 − 水位（O(1)）、
  * 标已读 = 推水位且各 scope 互不误清、响应 read 字段由 seq ≤ 水位算出。
- * 写路径直接调 INotificationService（生产点同 seam），HTTP 端点另测 scope 过滤与推水位。
+ * 写路径走事件驱动 seam：publish（业务事务内写 outbox）→ 消费方落库（{@link #deliver} helper），
+ * HTTP 端点另测 scope 过滤与推水位。
  */
 class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
 
@@ -29,12 +32,12 @@ class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
     void 写入取号按scope独立递增未读数为计数器减水位() {
         var user = registerAndLogin("13900001001", "收件人");
 
-        notificationService.sendSystem(user.userId(), NotificationScopeVO.MARKET_ERRAND,
-                NotificationTypeVO.ORDER_EVENT, "订单动态", "您的跑腿订单已支付成功", "ERRAND", "1", "D1");
-        notificationService.sendSystem(user.userId(), NotificationScopeVO.MARKET_ERRAND,
-                NotificationTypeVO.ORDER_EVENT, "订单已取消", "超时未接单已取消", "ERRAND", "1", "D2");
-        notificationService.sendSystem(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
-                NotificationTypeVO.ANNOUNCEMENT, "平台公告", "系统维护通知", "BROADCAST", null, null);
+        deliver(event(user.userId(), NotificationScopeVO.MARKET_ERRAND,
+                NotificationTypeVO.ORDER_EVENT, "订单动态", "您的跑腿订单已支付成功", "ERRAND", "1", "D1"));
+        deliver(event(user.userId(), NotificationScopeVO.MARKET_ERRAND,
+                NotificationTypeVO.ORDER_EVENT, "订单已取消", "超时未接单已取消", "ERRAND", "1", "D2"));
+        deliver(event(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
+                NotificationTypeVO.ANNOUNCEMENT, "平台公告", "系统维护通知", "BROADCAST", null, null));
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT seq FROM notification WHERE dedup_key = 'D1'", Long.class))
@@ -65,10 +68,10 @@ class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
         var user = registerAndLogin("13900001002", "收件人");
         String dedupKey = "ORDER_EVENT:ERRAND_PAY:1:" + user.userId();
 
-        notificationService.sendSystem(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
-                NotificationTypeVO.ORDER_EVENT, "订单动态", "订单支付成功", "ERRAND", "1", dedupKey);
-        notificationService.sendSystem(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
-                NotificationTypeVO.ORDER_EVENT, "订单动态", "订单支付成功", "ERRAND", "1", dedupKey);
+        deliver(event(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
+                NotificationTypeVO.ORDER_EVENT, "订单动态", "订单支付成功", "ERRAND", "1", dedupKey));
+        deliver(event(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
+                NotificationTypeVO.ORDER_EVENT, "订单动态", "订单支付成功", "ERRAND", "1", dedupKey));
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM notification WHERE user_id = ?", Long.class, user.userId()))
@@ -84,10 +87,10 @@ class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
     void 推水位按scope独立新通知仍算未读() {
         var user = registerAndLogin("13900001003", "收件人");
 
-        notificationService.sendSystem(user.userId(), NotificationScopeVO.MARKET_ERRAND,
-                NotificationTypeVO.ORDER_EVENT, "订单动态", "第一批", "ERRAND", "1", "E1");
-        notificationService.sendSystem(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
-                NotificationTypeVO.CREDIT_CHANGE, "信用分变动", "+2", null, null, "E2");
+        deliver(event(user.userId(), NotificationScopeVO.MARKET_ERRAND,
+                NotificationTypeVO.ORDER_EVENT, "订单动态", "第一批", "ERRAND", "1", "E1"));
+        deliver(event(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
+                NotificationTypeVO.CREDIT_CHANGE, "信用分变动", "+2", null, null, "E2"));
 
         notificationService.markRead(user.userId(), NotificationScopeVO.MARKET_ERRAND);
 
@@ -97,8 +100,8 @@ class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
                 .as("系统范围不受误清").isEqualTo(1L);
 
         // 已读后再来新通知：旧行 read=true、新行 read=false，未读数回到 1
-        notificationService.sendSystem(user.userId(), NotificationScopeVO.MARKET_ERRAND,
-                NotificationTypeVO.ORDER_EVENT, "订单已取消", "第二批", "ERRAND", "1", "E3");
+        deliver(event(user.userId(), NotificationScopeVO.MARKET_ERRAND,
+                NotificationTypeVO.ORDER_EVENT, "订单已取消", "第二批", "ERRAND", "1", "E3"));
         List<NotificationEntity> marketList = notificationService.listNotifications(
                 user.userId(), NotificationScopeVO.MARKET_ERRAND, 1, 10);
         assertThat(marketList).hasSize(2);
@@ -117,10 +120,10 @@ class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
     void http端点按scope取数推水位与未读数() {
         var user = registerAndLogin("13900001004", "收件人");
 
-        notificationService.sendSystem(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
-                NotificationTypeVO.ANNOUNCEMENT, "公告", "平台维护", "BROADCAST", null, null);
-        notificationService.sendSystem(user.userId(), NotificationScopeVO.INTERACTION_LIKE,
-                NotificationTypeVO.POST_LIKED, "互动通知", "有人赞了你的帖子", "POST", "3", null);
+        deliver(event(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
+                NotificationTypeVO.ANNOUNCEMENT, "公告", "平台维护", "BROADCAST", null, null));
+        deliver(event(user.userId(), NotificationScopeVO.INTERACTION_LIKE,
+                NotificationTypeVO.POST_LIKED, "互动通知", "有人赞了你的帖子", "POST", "3", null));
 
         // unread-count 端点
         JsonNode unread = getJson("/api/chat/notifications/unread-count?scope=BOTTOM_SYSTEM", user);
@@ -149,5 +152,29 @@ class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
         assertThat(badScope.path("code").asText()).isEqualTo("400");
         JsonNode blankScope = getJson("/api/chat/notifications/unread-count?scope=", user);
         assertThat(blankScope.path("code").asText()).as("unread-count 的 scope 必填，空白拒绝").isEqualTo("400");
+    }
+
+    // ---------- 事件驱动写路径 helper ----------
+
+    private NotificationEventMessage event(String userId, NotificationScopeVO scope, NotificationTypeVO type,
+                                           String title, String content, String refType, String refId,
+                                           String dedupKey) {
+        return NotificationEventMessage.builder()
+                .notificationId(UUID.randomUUID().toString())
+                .userId(userId)
+                .scope(scope.name())
+                .type(type.name())
+                .title(title)
+                .content(content)
+                .refType(refType)
+                .refId(refId)
+                .dedupKey(dedupKey)
+                .build();
+    }
+
+    /** publish（业务事务内写 outbox）→ 手动喂消费方落库（生产环境由 MQ 驱动同一入口） */
+    private void deliver(NotificationEventMessage event) {
+        notificationService.publish(event);
+        consumeNotifyEvents();
     }
 }

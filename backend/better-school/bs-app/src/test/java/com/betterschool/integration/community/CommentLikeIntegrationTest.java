@@ -13,7 +13,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 评论点赞 + 通知补全（issue 06）：点赞/取消幂等 + 计数窄表（post_comment_like_count，票 02 起的真源）
  * 同事务 ±N + 互动通知去重（sender+目标）+ 不可见评论拒绝点赞 + 最热真实排序。
- * 通知为 chat 域衍生数据：case 层点赞事务提交后尽力而为发送，失败不回滚（测试断言成功路径）。
+ * 通知为 chat 域衍生数据：case 层点赞事务提交后 publish 通知事件（失败不回滚点赞），
+ * 测试断言成功路径前须 consumeNotifyEvents() 喂消费方落库（通知落库时机=事件消费时）。
  */
 @DisplayName("评论点赞：幂等/计数/通知去重/不可见拒绝/最热真实排序")
 class CommentLikeIntegrationTest extends CommunityApiTestBase {
@@ -55,14 +56,18 @@ class CommentLikeIntegrationTest extends CommunityApiTestBase {
 
         // 小北赞 → 小北的评论作者收到一条通知；取消不撤回；再赞去重仍一条
         assertSuccess(postJson("/api/community/comments/" + commentId + "/like", Map.of(), carl), "小南点赞");
+        consumeNotifyEvents();
         assertThat(notificationCountOf(bob.userId(), "COMMENT_LIKED")).isEqualTo(1);
         assertSuccess(deleteJson("/api/community/comments/" + commentId + "/like", carl), "小南取消赞");
+        consumeNotifyEvents();
         assertThat(notificationCountOf(bob.userId(), "COMMENT_LIKED")).as("取消不撤回已发通知").isEqualTo(1);
         assertSuccess(postJson("/api/community/comments/" + commentId + "/like", Map.of(), carl), "小南再赞");
+        consumeNotifyEvents();
         assertThat(notificationCountOf(bob.userId(), "COMMENT_LIKED")).as("同一人对同一目标只发一条").isEqualTo(1);
 
         // 换帖主点赞 → 不同人各一条
         assertSuccess(postJson("/api/community/comments/" + commentId + "/like", Map.of(), postAuthor), "帖主点赞");
+        consumeNotifyEvents();
         assertThat(notificationCountOf(bob.userId(), "COMMENT_LIKED")).as("不同触发者各一条").isEqualTo(2);
 
         // 通知内容：sender_id 与 ref 指向被赞评论（首条来自小南）
@@ -85,15 +90,18 @@ class CommentLikeIntegrationTest extends CommunityApiTestBase {
 
         assertSuccess(postJson("/api/community/posts/" + postId + "/like", Map.of(), bob), "小北赞帖");
         assertSuccess(postJson("/api/community/posts/" + postId + "/like", Map.of(), carl), "小南赞帖");
+        consumeNotifyEvents();
         assertThat(notificationCountOf(postAuthor.userId(), "POST_LIKED")).isEqualTo(2);
 
         // 小北取消后再赞：仍只两条（不撤回 + 去重）
         assertSuccess(deleteJson("/api/community/posts/" + postId + "/like", bob), "小北取消赞");
         assertSuccess(postJson("/api/community/posts/" + postId + "/like", Map.of(), bob), "小北再赞");
+        consumeNotifyEvents();
         assertThat(notificationCountOf(postAuthor.userId(), "POST_LIKED")).as("同一人对同一帖子只发一条").isEqualTo(2);
 
         // 自赞不发通知
         assertSuccess(postJson("/api/community/posts/" + postId + "/like", Map.of(), postAuthor), "自赞");
+        consumeNotifyEvents();
         assertThat(notificationCountOf(postAuthor.userId(), "POST_LIKED")).as("自赞不发").isEqualTo(2);
         assertThat(notificationCountOf(bob.userId(), "POST_LIKED")).isZero();
     }
@@ -178,6 +186,7 @@ class CommentLikeIntegrationTest extends CommunityApiTestBase {
 
         assertSuccess(postJson("/api/community/comments/" + replyId + "/like", Map.of(), postAuthor), "帖主赞子回复");
         assertThat(commentLikeCountOf(replyId)).isEqualTo(1);
+        consumeNotifyEvents();
         assertThat(notificationCountOf(bob.userId(), "COMMENT_LIKED")).as("子回复被赞通知其作者").isEqualTo(1);
 
         JsonNode replies = getJson("/api/community/comments/" + rootId + "/replies?page=1", postAuthor).path("data");

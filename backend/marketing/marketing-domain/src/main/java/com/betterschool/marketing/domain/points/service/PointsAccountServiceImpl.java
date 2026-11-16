@@ -17,8 +17,8 @@ import java.util.List;
 /**
  * 桶模型积分账户（sql.md 积分段）：入账 = 插一行带过期时间的桶；消费 = 按 FIFO 扣各桶 remain。
  * <p>
- * 关键不变量：余额永远是「未过期且未扣完的桶 remain 之和」，读路径一律带
- * {@code remain > 0 AND expire_at > NOW()}，因此积分不可能为负，也不存在余额列与流水对不上的窗口。
+ * 余额读口径：余额 = 未过期且未扣完的桶 remain 之和（SUM 读，没有余额列）——校园规模下
+ * O(N) 的 SUM 完全够用，结构简单优先；积分恒不为负的保证在消费路径（加锁读桶并判不足）。
  * <p>
  * 事务：一次入账 / 一次消费的原子边界在仓储方法里（{@code insertBucketWithChanged} / {@code deduct}），
  * 本类只做入参校验与业务口径判断，不注入 {@code TransactionTemplate}。
@@ -76,6 +76,7 @@ public class PointsAccountServiceImpl implements IPointsAccountService {
 
     @Override
     public int getBalance(String userId) {
+        // 余额 = 未过期且未扣完的桶 remain 之和（读路径懒过期：过期桶被 expire_at > NOW() 滤掉）
         return pointsRepository.sumAvailableRemain(userId);
     }
 
@@ -92,5 +93,10 @@ public class PointsAccountServiceImpl implements IPointsAccountService {
     @Override
     public int expireBuckets() {
         return pointsRepository.expireBuckets();
+    }
+
+    @Override
+    public int compactSmallBuckets() {
+        return pointsRepository.compactSmallBuckets();
     }
 }

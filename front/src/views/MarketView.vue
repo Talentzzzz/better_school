@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useUiStateStore, type MarketTab } from '@/stores/uiState'
 import { useAuthStore } from '@/stores/auth'
 import { useChatRoomsStore } from '@/stores/chatRooms'
+import { useNoticesStore } from '@/stores/notices'
 import { useWaterfall } from '@/composables/useWaterfall'
 import { listErrandOrders } from '@/api/errand'
 import { listProducts } from '@/api/trade'
@@ -132,13 +133,15 @@ function syncFilterTop() {
 }
 
 /**
- * 消息格角标＝市集消息页未读之和：跑腿系统消息 + 市集对家会话（会话来源列非空者；仅登录后取数）。
+ * 消息格角标＝跑腿订单通知未读（MARKET_ERRAND，进页拉取）+ 赞/评横幅通知未读（notices store，
+ * NOTIF 帧实时 +1）+ 市集对家会话未读（会话来源列非空者）。
  */
 const noticeUnread = ref(0)
+const notices = useNoticesStore()
 const roomUnread = computed(() =>
   chatRooms.rooms.reduce((sum, r) => sum + (r.source ? r.unread : 0), 0)
 )
-const entryUnread = computed(() => noticeUnread.value + roomUnread.value)
+const entryUnread = computed(() => noticeUnread.value + notices.unread.INTERACTION_LIKE + notices.unread.INTERACTION_COMMENT + roomUnread.value)
 
 async function loadEntryUnread() {
   if (!auth.isLoggedIn) return

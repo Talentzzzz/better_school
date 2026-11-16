@@ -65,4 +65,11 @@
         LIMIT 1
     </select>
 
+    <select id="existsNotificationId" resultType="int">
+        SELECT COUNT(1)
+        FROM notification
+        WHERE notification_id = #{notificationId}
+        LIMIT 1
+    </select>
+
 </mapper>

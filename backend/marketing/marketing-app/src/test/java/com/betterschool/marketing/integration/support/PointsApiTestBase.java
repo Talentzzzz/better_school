@@ -149,12 +149,13 @@ public abstract class PointsApiTestBase extends TestingEnvironment {
         return TestingEnvironment.readJson(objectMapper, payloads.get(0));
     }
 
-    /** 直查流水投影（不经过 HTTP），断言 direction / amount / reasonType 用 */
+    /** 直查流水投影（不经过 HTTP，与 selectTransactions 同口径：桶分支排除 COMPACTION），断言 direction / amount / reasonType 用 */
     protected List<Map<String, Object>> transactionsOf(String userId) {
         return jdbcTemplate.queryForList("""
                 SELECT direction, amount, reason_type, ref_id
                 FROM (
-                    SELECT 'IN' AS direction, amount, reason_type, ref_id FROM points_bucket WHERE user_id = ?
+                    SELECT 'IN' AS direction, amount, reason_type, ref_id FROM points_bucket
+                    WHERE user_id = ? AND reason_type != 'COMPACTION'
                     UNION ALL
                     SELECT 'OUT' AS direction, amount, reason_type, ref_id FROM points_detail WHERE user_id = ?
                 ) merged

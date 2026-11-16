@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   abandonErrandOrder,
@@ -19,6 +19,7 @@ import { createDirectRoom } from '@/api/chat'
 import type { ErrandOrder } from '@/types/api'
 import { useAuthStore } from '@/stores/auth'
 import { useChatRoomsStore } from '@/stores/chatRooms'
+import { chatWs } from '@/utils/chatWs'
 import { toast } from '@/components/Toast'
 import { confirmDialog } from '@/components/ConfirmDialog'
 import { formatDateTime, formatMoney, formatRemaining, formatTime } from '@/utils/format'
@@ -126,7 +127,25 @@ async function onContact(targetUserId: number | null | undefined) {
   router.push(`/chat/${room.roomId}`)
 }
 
-onMounted(load)
+// 订单状态实时刷新（ORDER 帧）：停留详情页期间对方动作/超时任务改了状态，收帧即重拉
+let unbindOrder: (() => void) | null = null
+
+onMounted(() => {
+  void load()
+  unbindOrder = chatWs.on('ORDER', (env) => {
+    const payload = env.payload as { orderId: number; status: string } | undefined
+    if (payload?.orderId !== orderId) return
+    if (order.value && order.value.status === payload.status) return
+    void load().catch(() => {
+      // 状态被并发改走/单被删：toast 已弹
+    })
+  })
+})
+
+onUnmounted(() => {
+  unbindOrder?.()
+  unbindOrder = null
+})
 </script>
 
 <template>

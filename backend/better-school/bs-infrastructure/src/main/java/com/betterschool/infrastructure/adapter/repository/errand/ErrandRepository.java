@@ -7,6 +7,7 @@ import com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO;
 import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
 import com.betterschool.domain.errand.model.valobj.ErrandTypeVO;
 import com.betterschool.domain.errand.model.valobj.ErrandOrderEventVO;
+import com.betterschool.domain.errand.model.valobj.ErrandOrderPushEvent;
 import com.betterschool.domain.errand.model.valobj.ErrandPaidMessage;
 import com.betterschool.domain.search.model.valobj.SearchEntityType;
 import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
@@ -36,6 +37,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -392,16 +394,6 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public List<String> listPayTimeoutOrderIds(LocalDateTime before, int limit) {
-        return errandDao.selectPayTimeoutOrderIds(before, limit);
-    }
-
-    @Override
-    public List<String> listTimeoutOrderIds(int limit) {
-        return errandDao.selectTimeoutOrderIds(limit);
-    }
-
-    @Override
     public boolean autoCompleteById(String orderId) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             boolean updated = errandDao.autoCompleteById(orderId) > 0;
@@ -411,11 +403,6 @@ public class ErrandRepository implements IErrandRepository {
             }
             return updated;
         }));
-    }
-
-    @Override
-    public List<String> listAutoCompleteOrderIds(LocalDateTime before, int limit) {
-        return errandDao.selectAutoCompleteOrderIds(before, limit);
     }
 
     @Override
@@ -470,6 +457,23 @@ public class ErrandRepository implements IErrandRepository {
                 Constants.ERRAND_LOCK_TIMEOUT, orderId + ":" + lockSeq, delaySeconds));
     }
 
+    /**
+     * deadline 到期取消任务：delay = {@code deadline - now} 的时长。deadline 是用户自选的绝对时刻
+     * （合法性区间 15min~7d 已在落库点校验），Java 时钟与数据库时钟的秒级偏差由回调侧的
+     * deadline 守卫吸收（早到按失败重投，见 ErrandOrderServiceImpl.handleOrderTimeout）。
+     */
+    private void scheduleOrderTimeout(String orderId, LocalDateTime deadline) {
+        long delaySeconds = Math.max(0, Duration.between(LocalDateTime.now(), deadline).getSeconds());
+        timeoutRepository.register(TimeoutTaskEntity.newWaiting(
+                Constants.ERRAND_ORDER_TIMEOUT, orderId, delaySeconds));
+    }
+
+    /** 送达 24h 未确认自动完成任务：Java 只传时长，到期时刻由 SQL 侧按数据库时钟落库 */
+    private void scheduleAutoComplete(String orderId, long delaySeconds) {
+        timeoutRepository.register(TimeoutTaskEntity.newWaiting(
+                Constants.ERRAND_AUTO_COMPLETE, orderId, delaySeconds));
+    }
+
     @Override
     public List<ErrandOrderEntity> listByIds(List<String> orderIdList) {
         List<ErrandOrder> errandOrderList = errandDao.selectByIds(orderIdList);
@@ -493,16 +497,26 @@ public class ErrandRepository implements IErrandRepository {
         outboxMessageStore.save(Constants.ERRAND_PAID_TOPIC, new ErrandPaidMessage(orderId));
     }
 
+    @Override
+    public void saveOrderPushEvent(String orderId, ErrandStatusVO status) {
+        // 独立小事务（OutboxMessageStore.afterCommit 需要活事务）：域服务在状态迁移方法成功返回后调用，
+        // 此刻迁移恒已提交；推送是加速路径，本行落库失败只少一次 WS 提醒，详情页拉取/通知中心兜底
+        transactionTemplate.executeWithoutResult(status ->
+                outboxMessageStore.save(Constants.ORDER_PUSH_TOPIC, new ErrandOrderPushEvent(orderId, status.name())));
+    }
+
     // ---------- 原子用例：仓储方法即一次事务（REQUIRED，与既有事务合流） ----------
 
     @Override
-    public void createWithPayTimeout(ErrandOrderEntity orderEntity, int payTimeoutMinutes) {
+    public void createWithTimeouts(ErrandOrderEntity orderEntity, int payTimeoutMinutes) {
         transactionTemplate.execute(status -> {
             validateDeadlineLegal(orderEntity.getDeadline());
             save(orderEntity);
             // "15 分钟未支付"超时任务与订单落库同事务（直插 timeout_task）：
             // Java 只传时长，到期时刻由 SQL 侧 TIMESTAMPADD 按数据库时钟落库
             schedulePayTimeout(orderEntity.getOrderId(), payTimeoutMinutes * 60L);
+            // deadline 到期取消任务同事务注册；deadline 只在创建/提交两个落库点出现且此后不可变
+            scheduleOrderTimeout(orderEntity.getOrderId(), orderEntity.getDeadline());
             return null;
         });
     }
@@ -556,7 +570,7 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public void submitDraftWithPayTimeout(String orderId, String publisherId, int payTimeoutMinutes) {
+    public void submitDraftWithTimeouts(String orderId, String publisherId, int payTimeoutMinutes) {
         transactionTemplate.execute(status -> {
             // 草稿可能压了几天：提交时复核 deadline 区间（含"已过期/只剩几分钟"），防支付完立刻超时
             ErrandOrder order = errandDao.selectById(orderId);
@@ -571,6 +585,8 @@ public class ErrandRepository implements IErrandRepository {
             // 支付超时任务与状态迁移同事务（草稿态不注册，提交即起钟）；
             // Java 只传时长，到期时刻由 SQL 侧按数据库时钟落库
             schedulePayTimeout(orderId, payTimeoutMinutes * 60L);
+            // deadline 到期取消任务同事务注册（草稿态不注册，提交时才起钟，与支付超时同口径）
+            scheduleOrderTimeout(orderId, order.getDeadline());
             return null;
         });
     }
@@ -600,11 +616,13 @@ public class ErrandRepository implements IErrandRepository {
     }
 
     @Override
-    public void deliverByIdOrThrow(String orderId, String takerId) {
+    public void deliverWithAutoComplete(String orderId, String takerId, int autoCompleteHours) {
         transactionTemplate.execute(status -> {
             if (!deliverById(orderId, takerId)) {
                 throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
             }
+            // "送达 24h 未确认自动完成"任务与状态迁移同事务（计时起点 = 送达时刻，回滚即无行）
+            scheduleAutoComplete(orderId, autoCompleteHours * 3600L);
             return null;
         });
     }

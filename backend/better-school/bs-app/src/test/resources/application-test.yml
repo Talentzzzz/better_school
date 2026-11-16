@@ -45,7 +45,7 @@ xxl:
     executor:
       port: 9998   # 与 IDE 里开发单体的 9999 错开，两边可同时运行
       # appname 也必须错开（票 10 起）：admin 里启用的任务会打到同 appname 的任一注册实例，
-      # 否则 outboxScan / errandTimeoutScan 等兜底 job 会打到测试实例、动被测数据（与用例断言竞态）
+      # 否则 outboxScan 等兜底 job 会打到测试实例、动被测数据（与用例断言竞态）
       appname: better-school-executor-test
 
 # 内嵌超时中心（票 04）：测试显式写死与开发同值——用例断言「退避 30s / 16 次进死信 / 并行度 4」，

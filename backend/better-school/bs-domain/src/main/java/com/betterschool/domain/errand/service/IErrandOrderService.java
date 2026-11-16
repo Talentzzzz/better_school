@@ -120,7 +120,7 @@ public interface IErrandOrderService {
 
     long countUserPublishedOrders(String userId);
 
-    /** 待支付 15 分钟未支付：超时中心回调或扫描触发 → CANCELLED（无退款） */
+    /** 待支付 15 分钟未支付：超时中心回调 → CANCELLED（无退款） */
     void handlePayTimeout(String orderId);
 
     /**
@@ -130,20 +130,14 @@ public interface IErrandOrderService {
      */
     ErrandLockTimeoutResult handleLockTimeout(String orderId, int lockSeq);
 
-    /** 待支付超时订单 id 列表（cutoff = now − 15min，XXL-Job 兜底扫描用） */
-    List<String> listPayTimeoutOrderIds();
-
-    /** 订单超时 id 列表（PUBLISHED/LOCKED/CONFIRMED/PICKED_UP 且 deadline 已过，每批 100，XXL-Job 兜底扫描用） */
-    List<String> listTimeoutOrderIds();
-
-
-    /** 送达超时订单 id 列表（DELIVERED 且送达后超 24h 未确认，每批 100，自动完成扫描用） */
-    List<String> listAutoCompleteOrderIds();
-
     /** 内部加载订单（通知编排等 case 层用，无可见性限制；不存在返回 null） */
     ErrandOrderEntity loadOrder(String orderId);
 
-    /** 订单超时（无事务）：CANCELLED，返回退款/扣分需求；幂等忽略返回 null */
+    /**
+     * 订单 deadline 超时（无事务）：CANCELLED，返回退款/扣分需求；幂等忽略返回 null。
+     * 任务比 deadline 早到（时钟偏差）或条件 UPDATE 未命中（并发竞态）时抛出按失败重投，
+     * 绝不静默成功——否则任务被结算成 SUCCESS、订单永远漏关单
+     */
     ErrandTimeoutResult handleOrderTimeout(String orderId);
 
     /** 送达 24h 未确认（无事务）：自动 COMPLETED，返回解冻总额 + 入账需求（与确认同一口径）；幂等忽略返回 null */

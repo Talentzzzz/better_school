@@ -306,7 +306,8 @@ export interface ChatMessage {
   fromUserId: number | null
   fromNickname: string | null
   fromAvatar: string | null
-  msgType: 'TEXT' | 'IMAGE' | 'CARD'
+  /** SYSTEM=系统通知卡片（系统助手会话，content 为 JSON 载荷，用户不可回复） */
+  msgType: 'TEXT' | 'IMAGE' | 'CARD' | 'SYSTEM'
   status: string
   content: string
   refType: string | null
@@ -342,9 +343,18 @@ export type NotificationType =
   | 'ANNOUNCEMENT'
   | 'ORDER_EVENT'
   | 'CREDIT_CHANGE'
+  | 'POST_COMMENTED'
+  | 'COMMENT_REPLIED'
+  | 'POST_LIKED'
+  | 'COMMENT_LIKED'
+  | 'LOTTERY_WON'
+  | 'POINTS_CHANGED'
 
 export interface Notification {
   id: number
+  /** per-(user, scope) 收件序号：横幅补拉游标锚点（seq > 本地水位 = 没弹过） */
+  seq: number
+  senderId: number | null
   type: NotificationType
   title: string
   content: string

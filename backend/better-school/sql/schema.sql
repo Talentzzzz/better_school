@@ -32,6 +32,13 @@ CREATE TABLE IF NOT EXISTS bs_user (
     UNIQUE KEY uk_phone (phone)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '用户表';
 
+-- 系统助手账号（通知 CHAT 通道发送者，Constants.SYSTEM_USER_ID 固定 ID）：
+-- 订单动态/信用分等留档类通知由它经 chat 发送管线落进用户「系统助手」1v1 会话；
+-- phone 占位不参与登录，role=ADMIN 避免被普通用户维度枚举逻辑误伤
+INSERT INTO bs_user (user_id, phone, nickname, role, state, credit_score, create_time, update_time)
+SELECT '00000000-0000-0000-0000-000000000001', '00000000000', '系统助手', 'ADMIN', 'NORMAL', 100, NOW(), NOW()
+WHERE NOT EXISTS (SELECT 1 FROM bs_user WHERE user_id = '00000000-0000-0000-0000-000000000001');
+
 CREATE TABLE IF NOT EXISTS post (
     id            BIGINT        NOT NULL AUTO_INCREMENT,
     post_id       VARCHAR(36)   NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串；物理自增 id 只作内部键）',

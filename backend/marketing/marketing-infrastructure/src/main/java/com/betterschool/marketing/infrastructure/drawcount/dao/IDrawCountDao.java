@@ -1,6 +1,7 @@
 package com.betterschool.marketing.infrastructure.drawcount.dao;
 
 import com.betterschool.marketing.infrastructure.drawcount.dao.po.DrawCountBucketPO;
+import com.betterschool.marketing.infrastructure.drawcount.dao.po.DrawCountExpiredGroupPO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -26,4 +27,10 @@ public interface IDrawCountDao {
 
     /** 过期桶置零（不删行、留审计），返回清理行数 */
     int expireBuckets();
+
+    /**
+     * 过期落账的加锁分组读（wallet-read-view 票 01，与积分侧同构）：
+     * {@code GROUP BY user_id FOR UPDATE}，并发扫描在桶行锁上串行，wallet 每笔过期量只减一次。
+     */
+    List<DrawCountExpiredGroupPO> selectExpiredRemainGroups();
 }

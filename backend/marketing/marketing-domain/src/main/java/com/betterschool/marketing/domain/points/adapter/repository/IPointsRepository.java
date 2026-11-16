@@ -19,7 +19,8 @@ public interface IPointsRepository {
 
     /**
      * 一次入账，**同一事务**内完成：造桶（bucket_id 走统一 IdGenerator 发号（uuid-biz-id 票 07）、expire_at = 事务内时点 + 积分有效期）
-     * → 插桶（撞 {@code uk_user_reason_ref} 即幂等命中）→ 读变动后余额 → 落积分变动事件（走本服务 outbox）。
+     * → 插桶（撞 {@code uk_user_reason_ref} 即幂等命中）→ 读变动后余额 →
+     * 落积分变动事件（走本服务 outbox）。
      * 桶已存在时不读余额、不发事件、也不打日志，返回 false——「幂等跳过」的日志由域服务按业务口径打。
      * <p>
      * 时点与有效期都在事务内取：时间戳口径与改造前一致（同票 03 `createOrderWithLock` 的
@@ -40,11 +41,27 @@ public interface IPointsRepository {
      */
     PointsDeductResultVO deduct(String userId, int amount, PointsReasonType reasonType, String refId);
 
-    /** 余额 = 未过期且未扣完的桶 remain 之和（没有余额列） */
+    /**
+     * 余额 = 未过期且未扣完的桶 remain 之和（没有余额列）。
+     * 对外余额读与消费路径的不足判断、变动事件 balanceAfter 同口径。
+     */
     int sumAvailableRemain(String userId);
 
-    /** 懒过期落账清理：把已过期但仍有余量的桶置 0（不删行、留审计、不发事件），返回清理行数 */
+    /**
+     * 懒过期清理（定时任务调度）：把已过期且仍有余量的桶 remain 置 0（不删行、留审计、不发事件），
+     * 返回清理桶行数。过期判定以读路径 {@code expire_at > NOW()} 为准，本任务只是账务收拾。
+     */
     int expireBuckets();
+
+    /**
+     * 桶合并（points-compaction 票，定时任务调度）：把同用户的「有效小额桶」（remain &le; 阈值且
+     * 数量 &ge; 2）并成一桶——新桶 amount = remain = SUM、expire_at = 合并集合最大值（把小桶有效期
+     * 延长到其中最晚到期，产品口径），旧桶全部置 0（不删行，发放流水留审计）。
+     * 单事务逐用户推进，加锁重读 + 影响行数守卫，SUM(remain) 合并前后守恒、用户无感。
+     *
+     * @return 本轮实际合并（清零）的旧桶总数
+     */
+    int compactSmallBuckets();
 
     /** 流水（入账 ∪ 消费按时间归并），create_time DESC */
     List<PointsTransactionVO> listTransactions(String userId, int offset, int limit);

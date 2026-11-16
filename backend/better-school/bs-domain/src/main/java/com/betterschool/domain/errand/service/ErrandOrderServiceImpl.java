@@ -48,7 +48,6 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     /** 锁单确认窗口：从**锁单时刻**起算（与 {@link #PAY_TIMEOUT_MINUTES} 的「从创建时刻起算」口径不同） */
     private static final int LOCK_TIMEOUT_MINUTES = 5;
     private static final int AUTO_COMPLETE_HOURS = 24;
-    private static final int SCAN_BATCH_SIZE = 100;
 
     /** 事件类型字面量（与仓储写入侧同口径）：接单方取消——重试幂等判定只认「最新事件 = 本人的 TAKER_CANCELLED」 */
     private static final String EVENT_TAKER_CANCELLED = "TAKER_CANCELLED";
@@ -65,6 +64,15 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     private final IErrandRepository errandRepository;
     private final IErrandGrabAbusePort errandGrabAbusePort;
 
+    /** 状态迁移成功后的 WS 推送事件（outbox → ORDER 帧）：推送是加速路径，失败/漏推由详情页拉取兜底 */
+    private void pushOrderStatus(String orderId, ErrandStatusVO status) {
+        try {
+            errandRepository.saveOrderPushEvent(orderId, status);
+        } catch (Exception e) {
+            log.warn("[ErrandOrderService] 订单状态推送事件写入失败 orderId={} status={}", orderId, status, e);
+        }
+    }
+
     @Override
     public String createOrder(String userId, String title, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward,
@@ -72,8 +80,8 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         ErrandTypeVO typeVO = ErrandTypeVO.from(type);
         ErrandOrderEntity orderEntity = ErrandOrderEntity.create(userId, title, typeVO, description,
                 pickupLocation, deliveryLocation, reward, images, deadline);
-        // 落库 + "15 分钟未支付"超时注册同属一个仓储原子用例（提交后即时注册到超时中心）
-        errandRepository.createWithPayTimeout(orderEntity, PAY_TIMEOUT_MINUTES);
+        // 落库 + 两个超时任务（支付钟/deadline 钟）注册同属一个仓储原子用例（即时注册到超时中心）
+        errandRepository.createWithTimeouts(orderEntity, PAY_TIMEOUT_MINUTES);
         return orderEntity.getOrderId();
     }
 
@@ -116,8 +124,9 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     public void submitDraft(String orderId, String userId) {
         // 必填完整性 + 信用分门槛 + 同步初筛由 case 层前置；此处只做状态守卫与迁移
         getOwnedDraft(orderId, userId);
-        // 状态迁移与 15 分钟支付超时注册同属一个仓储原子用例（提交即起支付钟）
-        errandRepository.submitDraftWithPayTimeout(orderId, userId, PAY_TIMEOUT_MINUTES);
+        // 状态迁移与两个超时任务（支付钟/deadline 钟）注册同属一个仓储原子用例（提交即起钟）
+        errandRepository.submitDraftWithTimeouts(orderId, userId, PAY_TIMEOUT_MINUTES);
+        pushOrderStatus(orderId, ErrandStatusVO.PENDING_PAYMENT);
     }
 
     @Override
@@ -154,6 +163,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         // bs-errand-paid outbox 消息只承担"支付成功"通知，不承载状态迁移；
         // deadline 已随单落库（payById WHERE deadline > NOW() 拒绝已过期单）
         errandRepository.payWithPaidMessage(orderId, userId);
+        pushOrderStatus(orderId, ErrandStatusVO.PUBLISHED);
         return new ErrandPayResult(orderEntity.getTotalReward());
     }
 
@@ -274,6 +284,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (!errandRepository.grabWithLockTimeout(orderId, userId, LOCK_TIMEOUT_MINUTES)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "手慢了，订单已被抢或已超时");
         }
+        pushOrderStatus(orderId, ErrandStatusVO.LOCKED);
     }
 
     @Override
@@ -283,6 +294,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (!errandRepository.acceptLockedById(orderId, userId)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
         }
+        pushOrderStatus(orderId, ErrandStatusVO.CONFIRMED);
     }
 
     @Override
@@ -296,6 +308,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (!errandRepository.abandonLockedById(orderId, userId)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
         }
+        pushOrderStatus(orderId, ErrandStatusVO.PUBLISHED);
         // 主效应（条件 UPDATE + 事件）成功后再计数：Redis 写失败 = 少计 = 宽恕
         recordGrabAbandon(userId, orderId, lockSeq);
     }
@@ -353,6 +366,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (!errandRepository.pickupById(orderId, userId)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
         }
+        pushOrderStatus(orderId, ErrandStatusVO.PICKED_UP);
     }
 
     @Override
@@ -362,7 +376,8 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
             throw new BusinessException(ResponseCode.NOT_FOUND, "订单不存在或未在已取货状态");
         }
         checkTaker(orderEntity, userId);
-        errandRepository.deliverByIdOrThrow(orderId, userId);
+        errandRepository.deliverWithAutoComplete(orderId, userId, AUTO_COMPLETE_HOURS);
+        pushOrderStatus(orderId, ErrandStatusVO.DELIVERED);
     }
 
     @Override
@@ -377,6 +392,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
             throw new BusinessException(ResponseCode.NOT_FOUND, "订单不存在或未送达");
         }
         errandRepository.confirmWithSearchSync(orderId, userId);
+        pushOrderStatus(orderId, ErrandStatusVO.COMPLETED);
         return completionResult(orderEntity);
     }
 
@@ -423,6 +439,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         // 待支付未冻结无需退款；已发布/锁单中/已确认需解冻退回
         boolean needRefund = orderEntity.getStatus() != ErrandStatusVO.PENDING_PAYMENT;
         errandRepository.cancelByPublisherWithSearchSync(orderEntity.getOrderId(), orderEntity.getPublisherId());
+        pushOrderStatus(orderEntity.getOrderId(), ErrandStatusVO.CANCELLED);
         return new ErrandCancelResult(needRefund, orderEntity.getPublisherId(), orderEntity.getTotalReward(),
                 false, null);
     }
@@ -434,6 +451,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (!errandRepository.cancelByTaker(orderEntity.getOrderId(), orderEntity.getTakerId(), requestId)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
         }
+        pushOrderStatus(orderEntity.getOrderId(), ErrandStatusVO.PUBLISHED);
         // 接单后取消扣信用分（credit 域），订单回已发布重新可抢
         return new ErrandCancelResult(false, orderEntity.getPublisherId(), orderEntity.getTotalReward(),
                 true, orderEntity.getTakerId());
@@ -452,6 +470,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         }
         String actorRole = orderEntity.isOwner(userId) ? "PUBLISHER" : "TAKER";
         errandRepository.disputeWithSearchSync(orderId, userId, actorRole);
+        pushOrderStatus(orderId, ErrandStatusVO.DISPUTED);
     }
 
     @Override
@@ -473,6 +492,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
             if (!errandRepository.arbitrateWithSearchSync(orderId, operatorId, true)) {
                 throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
             }
+            pushOrderStatus(orderId, ErrandStatusVO.CANCELLED);
             return new ErrandArbitrateResult(orderEntity.getPublisherId(), orderEntity.getTakerId(),
                     orderEntity.getTotalReward(), "cancel");
         }
@@ -480,6 +500,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
             if (!errandRepository.arbitrateWithSearchSync(orderId, operatorId, false)) {
                 throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
             }
+            pushOrderStatus(orderId, ErrandStatusVO.COMPLETED);
             // 判接单方 = 一笔完成结算，口径同确认完成
             return new ErrandArbitrateResult(orderEntity.getPublisherId(), orderEntity.getTakerId(),
                     orderEntity.getTotalReward(), "complete", completionIncomes(orderEntity));
@@ -529,6 +550,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
             return;
         }
         errandRepository.cancelPendingPayment(orderId);
+        pushOrderStatus(orderId, ErrandStatusVO.CANCELLED);
         log.info("[ErrandPayTimeout] 待支付订单超时取消 orderId={}", orderId);
     }
 
@@ -546,28 +568,10 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (!errandRepository.releaseLockedByTimeout(orderId, lockSeq)) {
             return null;
         }
+        pushOrderStatus(orderId, ErrandStatusVO.PUBLISHED);
         log.info("[ErrandLockTimeout] 锁单超时释放回待接单 orderId={}, lockSeq={}, releasedTakerId={}",
                 orderId, lockSeq, releasedTakerId);
         return new ErrandLockTimeoutResult(releasedTakerId);
-    }
-
-    @Override
-    public List<String> listPayTimeoutOrderIds() {
-        // 锚在"进入待支付"时刻（update_time）：直接发布=落库时刻，草稿提交=提交时刻——草稿可能先存很久再提交
-        LocalDateTime cutoff = LocalDateTime.now().minusMinutes(PAY_TIMEOUT_MINUTES);
-        return errandRepository.listPayTimeoutOrderIds(cutoff, SCAN_BATCH_SIZE);
-    }
-
-    @Override
-    public List<String> listTimeoutOrderIds() {
-        return errandRepository.listTimeoutOrderIds(SCAN_BATCH_SIZE);
-    }
-
-    @Override
-    public List<String> listAutoCompleteOrderIds() {
-        // DELIVERED 由送达条件 UPDATE 翻转而来，updated_at 即送达时间（24h 未确认自动完成）
-        LocalDateTime cutoff = LocalDateTime.now().minusHours(AUTO_COMPLETE_HOURS);
-        return errandRepository.listAutoCompleteOrderIds(cutoff, SCAN_BATCH_SIZE);
     }
 
     @Override
@@ -591,10 +595,18 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         }
         // 扣分口径＝「已承诺后违约」：锁单期还没开工（抢 ≠ 开工），与「放弃不扣分」同口径
         boolean committed = status == ErrandStatusVO.CONFIRMED || status == ErrandStatusVO.PICKED_UP;
-        // 条件 UPDATE（状态 + deadline 双校验）防并发重复处理
-        if (!errandRepository.markTimeoutWithSearchSync(orderId)) {
-            return null;
+        // 早到守卫：任务的 delay 由 Java 时钟对 deadline 折算，时钟偏差可能让回调比 deadline 早几秒触发；
+        // 此刻必须按失败重投（30s 退避后必然越过 deadline）而不是幂等成功——静默成功会把任务结算成
+        // SUCCESS，这单就永远没人关了
+        if (orderEntity.getDeadline() != null && orderEntity.getDeadline().isAfter(LocalDateTime.now())) {
+            throw new IllegalStateException("订单超时任务早于 deadline 触发，按失败重投：orderId=" + orderId);
         }
+        // 条件 UPDATE（状态 + deadline 双校验）防并发重复处理；未命中可能是并发重复回调
+        // （另一实例刚提交取消）或时钟偏差——同样按失败重投，下一轮读到终态即幂等成功
+        if (!errandRepository.markTimeoutWithSearchSync(orderId)) {
+            throw new IllegalStateException("订单超时回调条件 UPDATE 未命中，按失败重投：orderId=" + orderId);
+        }
+        pushOrderStatus(orderId, ErrandStatusVO.CANCELLED);
         log.info("[ErrandTimeout] 订单超时取消 orderId={}, wasStatus={}", orderId, status);
         return new ErrandTimeoutResult(orderEntity.getPublisherId(), orderEntity.getTakerId(),
                 orderEntity.getTotalReward(), committed);
@@ -610,6 +622,7 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (!errandRepository.autoCompleteWithSearchSync(orderId)) {
             return null;
         }
+        pushOrderStatus(orderId, ErrandStatusVO.COMPLETED);
         log.info("[ErrandAutoComplete] 送达超时自动完成 orderId={}", orderId);
         // 与发布方确认同一结算口径
         return new ErrandAutoCompleteResult(orderEntity.getPublisherId(), orderEntity.getTotalReward(),

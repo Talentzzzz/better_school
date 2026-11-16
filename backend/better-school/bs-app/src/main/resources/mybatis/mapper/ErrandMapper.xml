@@ -312,34 +312,6 @@
           AND state = 'DRAFT'
     </update>
 
-    <!-- XXL-Job 兜底扫描：待支付超时（15min）与订单超时（deadline 已过）订单 id 列表。
-         待支付锚在 update_time（= 进入待支付时刻：直接发布=落库时刻，草稿提交=提交时刻）——
-         不能用 create_time：草稿可能在创建很久之后才提交，那样会被扫描立刻误判超时 -->
-    <select id="selectPayTimeoutOrderIds" resultType="string">
-        SELECT errand_order_id
-        FROM errand_order
-        WHERE state = 'PENDING_PAYMENT'
-          AND update_time &lt;= #{before}
-        LIMIT #{limit}
-    </select>
-
-    <select id="selectTimeoutOrderIds" resultType="string">
-        SELECT errand_order_id
-        FROM errand_order
-        WHERE state IN ('PUBLISHED', 'LOCKED', 'CONFIRMED', 'PICKED_UP')
-          AND deadline &lt;= NOW()
-        LIMIT #{limit}
-    </select>
-
-    <!-- 送达超时自动完成扫描：DELIVERED 由送达条件 UPDATE 翻转而来，update_time 即送达时间 -->
-    <select id="selectAutoCompleteOrderIds" resultType="string">
-        SELECT errand_order_id
-        FROM errand_order
-        WHERE state = 'DELIVERED'
-          AND update_time &lt;= #{before}
-        LIMIT #{limit}
-    </select>
-
     <!-- 截止时间合法性：数据库时钟为唯一事实源——用户指定的绝对时刻须落在
          now+15min（支付窗口内支付后仍有意义）~ now+7d（挂单跨度上限）之间；
          创建/存草稿/编辑草稿/提交草稿四个落库点共用 -->

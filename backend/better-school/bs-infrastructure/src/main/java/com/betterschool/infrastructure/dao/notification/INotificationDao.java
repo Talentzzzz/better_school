@@ -28,4 +28,7 @@ public interface INotificationDao {
 
     /** dedup_key 命中检查：先查后插避免重复消费白耗 seq 号段 */
     int existsDedupKey(@Param("dedupKey") String dedupKey);
+
+    /** notification_id 命中检查：无 dedupKey 的事件重试时防普通 insert 撞 uk_notification_id 抛 DuplicateKeyException */
+    int existsNotificationId(@Param("notificationId") String notificationId);
 }

@@ -93,6 +93,7 @@ public class NotificationController implements INotificationService {
     private NotificationResponseDTO toNotificationResponseDTO(NotificationEntity notificationEntity) {
         NotificationResponseDTO dto = new NotificationResponseDTO();
         dto.setId(notificationEntity.getNotificationId());
+        dto.setSeq(notificationEntity.getSeq());
         dto.setSenderId(notificationEntity.getSenderId());
         dto.setType(notificationEntity.getType().name());
         dto.setTitle(notificationEntity.getTitle());

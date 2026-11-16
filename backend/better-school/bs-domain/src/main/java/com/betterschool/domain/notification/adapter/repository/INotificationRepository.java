@@ -2,7 +2,10 @@ package com.betterschool.domain.notification.adapter.repository;
 
 import com.betterschool.domain.notification.model.entity.NotificationEntity;
 import com.betterschool.domain.notification.model.valobj.NotificationBroadcastMessage;
+import com.betterschool.domain.notification.model.valobj.NotificationEventMessage;
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
+import com.betterschool.domain.notification.model.valobj.NotifyChatMessage;
+import com.betterschool.domain.notification.model.valobj.NotifyPushMessage;
 
 import java.util.List;
 
@@ -27,12 +30,22 @@ public interface INotificationRepository {
     /** 落广播消息到 outbox（一个原子用例，事务与业务写合流） */
     void saveBroadcastMessage(NotificationBroadcastMessage message);
 
+    /** 通知事件写 outbox（一个原子用例，事务与业务写合流）：outbox 写成功即返回 true，落库幂等由消费端收敛 */
+    boolean saveEvent(NotificationEventMessage event);
+
+    /** CHAT 通道投递 outbox（一个原子用例，事务自收）：NotifyEventConsumer 落库成功后调用 */
+    void saveChatDelivery(NotifyChatMessage message);
+
+    /** BANNER 通道投递 outbox（一个原子用例，事务自收）：NotifyEventConsumer 落库成功后调用 */
+    void savePushDelivery(NotifyPushMessage message);
+
     /** 广播落库（消费方）：按 msgId 幂等，给全用户各插一条（scope=BOTTOM_SYSTEM，逐用户取号；实现内一个事务） */
     void insertBroadcast(String msgId, String type, String title, String content);
 
     /**
-     * 单用户定向通知（一个原子用例）：dedupKey 命中时静默忽略（不耗号）；否则取号 + 落库同事务
-     * （取号行锁到提交 ⇒ 取号序 = 提交序）。调用方已有事务时并入（REQUIRED）
+     * 单用户定向通知（一个原子用例）：dedupKey / notificationId 命中时静默忽略（不耗号，返回 false）；
+     * 否则取号 + 落库同事务（取号行锁到提交 ⇒ 取号序 = 提交序），真正插入返回 true。
+     * 调用方已有事务时并入（REQUIRED）
      */
-    void insertOne(NotificationEntity notificationEntity);
+    boolean insertOne(NotificationEntity notificationEntity);
 }

@@ -102,9 +102,9 @@
 |msg_id|varchar(36)|UNIQUE(`uk_msg_id`), NOT NULL|消息业务 ID（对外唯一标识，UUID 字符串）：应用层 insert 前生成（`UUID.randomUUID()`）、随行一次写入；跨表引用与对外暴露用它|
 |room_id|varchar(36)|NOT NULL|会话业务键（引用 `room.room_id`）|
 |seq|bigint|NOT NULL|消息序号（`room.last_seq` 取号，会话内从 1 起），`uk_room_seq` 第二列|
-|from_user_id|varchar(36)|NOT NULL|发送者（1v1 无系统消息，恒非空）|
-|msg_type|varchar(20)|NOT NULL, DEFAULT 'TEXT'|TEXT/IMAGE/CARD 三类定死|
-|content|varchar(1024)|NULL|载荷按类型分：TEXT=裸文本（上限 500 由代码常量收敛，列宽留余量）；IMAGE=JSON{url,width,height}；CARD=恒空|
+|from_user_id|varchar(36)|NOT NULL|发送者（1v1 无系统消息，恒非空；SYSTEM 消息发送者 = 系统助手固定账号 `Constants.SYSTEM_USER_ID`，schema.sql 种子行）|
+|msg_type|varchar(20)|NOT NULL, DEFAULT 'TEXT'|TEXT/IMAGE/CARD/SYSTEM 四类定死（SYSTEM=系统通知卡片，仅系统助手账号可发，用户不可回复）|
+|content|varchar(1024)|NULL|载荷按类型分：TEXT=裸文本（上限 500 由代码常量收敛，列宽留余量）；IMAGE=JSON{url,width,height}；CARD=恒空；SYSTEM=JSON{notificationId,title,content,refType?,refId?}（通知 CHAT 通道投递载荷）|
 |client_msg_id|varchar(36)|NULL|客户端幂等键（UUID，重发复用同键），`uk_room_client` 第二列|
 |ref_type|varchar(20)|NULL|CARD 引用类型 PRODUCT/POST/ERRAND（仅 CARD 非空）|
 |ref_id|varchar(36)|NULL|CARD 引用对象业务 ID（POST/PRODUCT/ERRAND 均为 UUID 字符串；渲染实时查，失效显示「内容已失效」）|
@@ -174,6 +174,7 @@
 
 > 已读照抄 chat 的「序号 + 水位线」；逐行 is_read 已退休（读态 = seq ≤ 该范围水位）。
 > 票 05 口径：时间列为 `create_time`/`update_time`（无 `created_at`），`notification` 有业务 ID `notification_id`（≠ 物理 `id`）；两张计数器表由「复合主键」改为物理 `id` 主键 + `uk_user_scope` 唯一键，并各自补齐两个时间列。
+> **谁在写：通知域消费者 `NotifyEventConsumer`（事件驱动）——业务侧只经 `INotificationService.publish` 写 `bs-notify-event` outbox 一行，不直写本表；公告广播走 `NotificationBroadcastConsumer`（按 msgId 幂等）**
 
 |字段|类型|约束|说明|
 |----|----|----|----|

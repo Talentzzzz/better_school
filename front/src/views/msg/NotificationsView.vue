@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { listNotifications, markNotificationsRead } from '@/api/chat'
 import type { Notification } from '@/types/api'
+import { useNoticesStore } from '@/stores/notices'
 import { formatTime } from '@/utils/format'
 import NavBar from '@/components/NavBar.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -62,6 +63,8 @@ async function load() {
     }
     list.value = all
     await markNotificationsRead(scope)
+    // 已读水位推进后同步呈现层未读角标（NOTIF 帧累加的本地值归服务端口径）
+    void useNoticesStore().refreshUnread()
   } finally {
     loading.value = false
   }

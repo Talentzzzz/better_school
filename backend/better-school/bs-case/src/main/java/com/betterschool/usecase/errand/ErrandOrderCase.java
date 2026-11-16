@@ -1,5 +1,6 @@
 package com.betterschool.usecase.errand;
 
+import com.betterschool.domain.notification.model.valobj.NotificationEventMessage;
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.domain.notification.service.INotificationService;
@@ -19,7 +20,6 @@ import com.betterschool.domain.errand.model.valobj.ErrandTimeoutResult;
 import com.betterschool.domain.errand.service.IErrandOrderService;
 import com.betterschool.domain.wallet.service.IWalletAccountService;
 import com.betterschool.types.common.Constants;
-import com.betterschool.types.concurrent.VirtualThreadFanout;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +29,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * 跑腿用例编排：跨域组合顺序调用各域服务（每个域各自事务原子），
@@ -46,7 +47,6 @@ public class ErrandOrderCase {
     private final ICreditAccountService creditAccountService;
     private final IWalletAccountService walletAccountService;
     private final INotificationService notificationService;
-    private final VirtualThreadFanout fanout;
 
     public String createOrder(String userId, String title, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward,
@@ -202,26 +202,20 @@ public class ErrandOrderCase {
             return; // 幂等：陈旧轮次 / 已确认 / 已放弃 / 已取消，零副作用
         }
         try {
-            notificationService.sendSystem(lockTimeoutResult.getTakerId(), NotificationScopeVO.MARKET_ERRAND,
-                    NotificationTypeVO.ORDER_EVENT, "订单动态",
-                    "您锁定的跑腿订单已超时释放，订单回到待接单，其他同学可重新接单", "ERRAND", orderId,
-                    NotificationTypeVO.ORDER_EVENT.name() + ":ERRAND_LOCK_TIMEOUT:" + orderId + ":" + lockSeq);
+            notificationService.publish(NotificationEventMessage.builder()
+                    .notificationId(UUID.randomUUID().toString())
+                    .userId(lockTimeoutResult.getTakerId())
+                    .scope(NotificationScopeVO.MARKET_ERRAND.name())
+                    .type(NotificationTypeVO.ORDER_EVENT.name())
+                    .title("订单动态")
+                    .content("您锁定的跑腿订单已超时释放，订单回到待接单，其他同学可重新接单")
+                    .refType("ERRAND")
+                    .refId(orderId)
+                    .dedupKey(NotificationTypeVO.ORDER_EVENT.name() + ":ERRAND_LOCK_TIMEOUT:" + orderId + ":" + lockSeq)
+                    .build());
         } catch (Exception e) {
             log.warn("[ErrandOrderCase] 锁单超时释放通知发送失败 orderId={} lockSeq={}", orderId, lockSeq, e);
         }
-    }
-
-    /**
-     * 超时兜底扫描（XXL-Job 每分钟）：待支付超 15min 取消 + 订单超时取消/退款/扣分
-     * + 送达超 24h 自动完成结算。
-     * 幂等：各 handle 条件 UPDATE 0 行返回 null 跳过，重复扫描无害
-     */
-    public void scanTimeouts() {
-        fanout.forEach("errand-pay-timeout-", errandOrderService.listPayTimeoutOrderIds(),
-                errandOrderService::handlePayTimeout);
-        fanout.forEach("errand-timeout-", errandOrderService.listTimeoutOrderIds(), this::handleOrderTimeout);
-        fanout.forEach("errand-auto-complete-", errandOrderService.listAutoCompleteOrderIds(),
-                this::handleAutoComplete);
     }
 
     /**
@@ -234,9 +228,17 @@ public class ErrandOrderCase {
         if (orderEntity == null) {
             return;
         }
-        notificationService.sendSystem(orderEntity.getPublisherId(), NotificationScopeVO.MARKET_ERRAND, NotificationTypeVO.ORDER_EVENT, "订单动态",
-                "您的跑腿订单已支付成功，现已对外可见", "ERRAND", orderId,
-                NotificationTypeVO.ORDER_EVENT.name() + ":ERRAND_PAID:" + orderId);
+        notificationService.publish(NotificationEventMessage.builder()
+                .notificationId(UUID.randomUUID().toString())
+                .userId(orderEntity.getPublisherId())
+                .scope(NotificationScopeVO.MARKET_ERRAND.name())
+                .type(NotificationTypeVO.ORDER_EVENT.name())
+                .title("订单动态")
+                .content("您的跑腿订单已支付成功，现已对外可见")
+                .refType("ERRAND")
+                .refId(orderId)
+                .dedupKey(NotificationTypeVO.ORDER_EVENT.name() + ":ERRAND_PAID:" + orderId)
+                .build());
     }
 
     public void handleOrderTimeout(String orderId) {

@@ -164,14 +164,16 @@ class DrawCountBucketIntegrationTest extends TestingEnvironment {
         long expiredBucketId = insertDrawCountBucket(USER_ID, 2, 2, LocalDateTime.now().minusDays(1), "REDEEM", "96006");
         insertDrawCountBucket(USER_ID, 1, 1, LocalDateTime.now().plusDays(10), "REDEEM", "96007");
 
-        assertThat(drawCountAccountService.getBalance(USER_ID)).as("读路径懒过期").isEqualTo(1);
+        assertThat(drawCountAccountService.getBalance(USER_ID)).as("读路径懒过期：过期量不进读数").isEqualTo(1);
 
         int cleaned = drawCountAccountService.expireBuckets();
         assertThat(cleaned).isEqualTo(1);
         assertThat(bucketRemainOf(expiredBucketId)).isZero();
         assertThat(bucketCountOf(USER_ID)).isEqualTo(2);
+        assertThat(drawCountAccountService.getBalance(USER_ID)).as("置 0 前后余额读同值").isEqualTo(1);
 
         assertThat(drawCountAccountService.deductForDraw(USER_ID, "97007")).isTrue();
+        assertThat(drawCountAccountService.getBalance(USER_ID)).as("扣次后归零").isZero();
         // 两查拼装（SQL 层零 JOIN）：先单表查扣减明细，再单表核对该桶真实存在
         List<String> detailBucketIds = jdbcTemplate.queryForList(
                 "SELECT bucket_id FROM draw_count_detail WHERE ref_id = '97007'", String.class);

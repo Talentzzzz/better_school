@@ -23,6 +23,9 @@ import java.util.List;
  * （入账、扣次，都由本类用 {@code TransactionTemplate} REQUIRED 包住），桶的分配算法在域服务里。
  * 「流水先行」与积分侧同构——先 INSERT IGNORE 明细（撞 uk = 已处理过），再动余量；
  * 这个顺序同时是并发重复抽奖的互斥点：后到者插不进同一间隙，撞 uk 后整事务回滚。
+ * <p>
+ * 关键不变量：剩余次数永远是未过期且未扣完的桶 remain 之和（没有余额列），读路径一律带
+ * {@code expire_at > NOW()}。
  */
 @Slf4j
 @Repository

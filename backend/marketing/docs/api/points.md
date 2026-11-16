@@ -9,15 +9,17 @@
 ## GET /balance
 
 - Auth: 需要登录
-- 成功: `{ balance }`，`balance` = 未过期且未扣完的桶 `SUM(remain)`（没有余额列）
+- 成功: `{ balance }`，`balance` = 未过期且未扣完的桶 remain 之和（**没有余额列**，
+  `SUM(remain) WHERE remain > 0 AND expire_at > NOW()`，读路径懒过期）
 - 流程图：Controller → `IPointsAccountService.getBalance` → `IPointsDao.sumAvailableRemain`
-  （单条聚合 SQL，带 `remain > 0 AND expire_at > NOW()`）
 
 ## GET /transactions
 
 - Auth: 需要登录
 - 成功: `PageResult<{ id, direction, amount, reasonType, refId, createdAt, expireAt }>`，`created_at DESC`
   - `direction`：`IN`（入账，来自 `points_bucket`）/ `OUT`（消费，来自 `points_detail`）
+  - **`COMPACTION` 行不出现在用户流水**：桶合并是余额不变的账务整形（`SUM(remain)` 前后守恒），
+    不是积分变动——桶分支按 `reason_type != 'COMPACTION'` 过滤（`total` 同口径）
   - 两表在 SQL 里 `UNION ALL` 后统一排序分页；`id` 是各自表内自增，列表项唯一性靠 `(direction, id)`
   - 一笔兑换跨几个桶 = 几行 `OUT`（保留每桶被扣掉的量）
   - `expireAt` 仅 `IN` 行有值
@@ -80,4 +82,5 @@ Provider：`marketing-trigger/.../trigger/points/rpc/PointsExchangeDubboService`
 | 任务 | handler | 作用 |
 | --- | --- | --- |
 | 积分过期落账 | `pointsExpireScan` | 把已过期桶 `remain` 置 0（不删行、留审计、不发事件） |
+| 桶合并 | `pointsBucketCompaction` | 同用户小额桶（remain ≤ 10 且 ≥ 2 张）并成一桶：`expire_at` 取合并集最大值、旧桶归零留审计、余额守恒；每 10 分钟，对用户不可见 |
 | outbox 兜底扫描 | `outboxScan` | 重发 PENDING 消息 |

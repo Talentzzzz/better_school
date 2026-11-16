@@ -1,8 +1,8 @@
 package com.betterschool.domain.notification.service;
 
 import com.betterschool.domain.notification.model.entity.NotificationEntity;
+import com.betterschool.domain.notification.model.valobj.NotificationEventMessage;
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
-import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 
 import java.util.List;
 
@@ -29,21 +29,9 @@ public interface INotificationService {
     /** 公告广播落库（消费方入口）：按 msgId 幂等，给全用户各落一条 */
     void insertBroadcast(String msgId, String type, String title, String content);
 
-    /** 单用户定向通知（取号+落库自成一事务；调用方已有事务则并入）：直插 notification 表不走 MQ */
-    void sendToUser(String userId, NotificationScopeVO scope, NotificationTypeVO type, String title,
-                    String content, String refType, String refId);
-
     /**
-     * 互动通知（带触发者）：按 dedupKey 幂等（同一触发者对同一目标只落一条，冲突静默忽略）。
-     * 供 case 层在业务事务提交后尽力而为调用，取消动作不撤回已发通知。
+     * 发布通知事件：业务事务内只写 outbox 一行（与业务写同事务原子），提交后发 MQ，
+     * 由 NotifyEventConsumer 统一落 notification 表并按类型通道投递——通知落库时机=事件消费时
      */
-    void sendInteraction(String userId, String senderId, NotificationScopeVO scope, NotificationTypeVO type,
-                         String title, String content, String refType, String refId, String dedupKey);
-
-    /**
-     * 系统通知（无触发者）：带 dedupKey 时按唯一键幂等忽略（消费重放/重复扫描只落一条）。
-     * 供消费方/扫描任务尽力而为调用，调用方自行吞异常（通知失败不影响主流程）。
-     */
-    void sendSystem(String userId, NotificationScopeVO scope, NotificationTypeVO type, String title,
-                    String content, String refType, String refId, String dedupKey);
+    void publish(NotificationEventMessage event);
 }

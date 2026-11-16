@@ -1,9 +1,11 @@
 package com.betterschool.integration.errand;
 
+import com.betterschool.infrastructure.sharding.TimeoutTaskShardSlots;
 import com.betterschool.integration.support.CommunityApiTestBase;
-import com.betterschool.trigger.job.ErrandTimeoutScanJob;
 import com.betterschool.types.common.Constants;
+import com.betterschool.usecase.timeout.TimeoutTaskScanCase;
 import com.fasterxml.jackson.databind.JsonNode;
+import org.apache.shardingsphere.infra.hint.HintManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -23,12 +25,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 跑腿锁单状态机（票 03）集成测试：把「抢 ≠ 开工」落成状态机——
  * 抢单 = PUBLISHED→LOCKED（写 taker_id + lock_seq+1，先到先得）；接单方自己点「确认接单」→ CONFIRMED；
  * 不合适可「放弃」回 PUBLISHED（不扣分、不动幂等位、不改轮次）；锁单期发布方可取消、不可争议；
- * 执行时限到点而单在 LOCKED 时由扫描收口（本轮锁单未开工，不扣接单人分）。
+ * 执行时限到点而单在 LOCKED 时由超时中心收口（本轮锁单未开工，不扣接单人分）。
  */
 class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
 
     @Autowired
-    private ErrandTimeoutScanJob errandTimeoutScanJob;
+    private TimeoutTaskScanCase timeoutTaskScanCase;
 
     // ---------- 抢单：落 LOCKED，写接单人 + 轮次，两端可见 ----------
 
@@ -325,18 +327,21 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
     // ---------- 锁单中被执行时限扫描收口 ----------
 
     @Test
-    void 锁单中被执行时限扫描取消() {
+    void 锁单中被执行时限超时回调取消() {
         Session author = registerAndLogin("13800005019", "发单用户8");
         Session taker = registerAndLogin("13800005020", "接单用户11");
         String orderId = publishableOrder(author);
         grab(orderId, taker);
 
-        // 执行时限到点而单仍在 LOCKED：超时扫描的状态集与条件 UPDATE 都含 LOCKED，否则无人收口
+        // 执行时限到点而单仍在 LOCKED：markTimeout 的状态集含 LOCKED，否则无人收口。
+        // 触发路径 = 超时中心：业务行的 deadline 回拨（过 markTimeout 的 deadline 校验与早到守卫）
+        // + timeout_task 行的 next_fire_time 回拨（注册时刻按原 deadline 落库，不改期不会到点）
         jdbcTemplate.update(
                 "UPDATE errand_order SET deadline = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE errand_order_id = ?", orderId);
-        errandTimeoutScanJob.scan(null);
+        expireTimeoutTask(Constants.ERRAND_ORDER_TIMEOUT, orderId);
+        scanAllTimeoutTasks();
 
-        assertThat(statusOf(orderId)).as("锁单中的过期单被扫描取消").isEqualTo("CANCELLED");
+        assertThat(statusOf(orderId)).as("锁单中的过期单被超时回调取消").isEqualTo("CANCELLED");
         assertThat(countWalletTransactions(orderId, "UNFROZEN")).as("解冻全额退款").isEqualTo(1);
         assertThat(eventRowOf(orderId, "TIMEOUT"))
                 .as("超时事件前态取业务行真值 LOCKED")
@@ -348,6 +353,23 @@ class ErrandLockStateIntegrationTest extends CommunityApiTestBase {
     }
 
     // ---------- 工具 ----------
+
+    /** 把某条超时任务的到期时刻拉回过去（next_fire_time 注册时按业务时限落库，测试不真等） */
+    private void expireTimeoutTask(String taskType, String bizId) {
+        int slot = TimeoutTaskShardSlots.slotOf(bizId);
+        try (HintManager hintManager = HintManager.getInstance()) {
+            hintManager.addDatabaseShardingValue("timeout_task", slot);
+            hintManager.addTableShardingValue("timeout_task", slot);
+            jdbcTemplate.update(
+                    "UPDATE timeout_task SET next_fire_time = DATE_SUB(NOW(), INTERVAL 1 MINUTE) "
+                            + "WHERE task_type = ? AND biz_id = ?", taskType, bizId);
+        }
+    }
+
+    /** 跑一轮全槽位超时扫描（单实例认领全部 16 槽，shardTotal=1） */
+    private void scanAllTimeoutTasks() {
+        timeoutTaskScanCase.scan(0, 1);
+    }
 
     /** 走到 PUBLISHED 的完整前置：发布 → 支付冻结 → 人工裁决通过 */
     private String publishableOrder(Session author) {

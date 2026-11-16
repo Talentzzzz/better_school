@@ -1,5 +1,6 @@
 package com.betterschool.usecase.marketing;
 
+import com.betterschool.domain.notification.model.valobj.NotificationEventMessage;
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.domain.notification.service.INotificationService;
@@ -7,13 +8,16 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.UUID;
+
 /**
- * 营销事件落通知（营销票 09）：单体作为消费者订阅两个营销 topic，case 层复用
- * {@code NotificationService.sendSystem} 落 {@code notification} 表——营销侧不同步调单体，单体停 → 营销照跑。
+ * 营销事件落通知（营销票 09）：单体作为消费者订阅两个营销 topic，case 层发布通知事件
+ * {@code NotificationService.publish}——通知落库统一由 NotifyEventConsumer 消费 bs-notify-event 完成
+ * （营销侧不同步调单体，单体停 → 营销照跑）。
  * <p>
  * 两类通知统一 {@code scope = BOTTOM_SYSTEM}（底部消息页 system tab，不进市集消息页）、
  * {@code ref_type = MARKETING}、type 取营销枚举（不复用 ORDER_EVENT）。
- * 幂等 = {@code notification.dedup_key}（营销票 04 定的 {@code MARKETING:...} 形状）：
+ * 幂等 = {@code notification.dedup_key}（营销票 04 定的 {@code MARKETING:...} 形状，原样随事件携带）：
  * broker 重投 / outbox 补发只落一条；业务异常不吞，上抛交 broker 重试（重放由 dedup_key 幂等）。
  */
 @Slf4j
@@ -39,9 +43,17 @@ public class MarketingNoticeCase {
         String content = isVirtualPrize(message.getPrizeType())
                 ? "恭喜您在抽奖中抽中 " + message.getPointsAmount() + " 积分，已发放至您的积分账户"
                 : "恭喜您在抽奖中抽中实物奖品，可在活动页「我的奖品」中查看";
-        notificationService.sendSystem(message.getUserId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.LOTTERY_WON,
-                "抽奖中奖", content, REF_TYPE_MARKETING, message.getRecordId(),
-                marketingDedupKey("DRAWN", message.getRecordId()));
+        notificationService.publish(NotificationEventMessage.builder()
+                .notificationId(UUID.randomUUID().toString())
+                .userId(message.getUserId())
+                .scope(NotificationScopeVO.BOTTOM_SYSTEM.name())
+                .type(NotificationTypeVO.LOTTERY_WON.name())
+                .title("抽奖中奖")
+                .content(content)
+                .refType(REF_TYPE_MARKETING)
+                .refId(message.getRecordId())
+                .dedupKey(marketingDedupKey("DRAWN", message.getRecordId()))
+                .build());
         log.info("[MarketingNoticeCase] 中奖通知已落 recordId={} userId={} prizeType={}",
                 message.getRecordId(), message.getUserId(), message.getPrizeType());
     }
@@ -62,9 +74,17 @@ public class MarketingNoticeCase {
         int delta = message.getDelta();
         String content = reasonText + "：积分 " + (delta >= 0 ? "+" : "") + delta
                 + "，当前余额 " + message.getBalanceAfter();
-        notificationService.sendSystem(message.getUserId(), NotificationScopeVO.BOTTOM_SYSTEM, NotificationTypeVO.POINTS_CHANGED,
-                "积分变动", content, REF_TYPE_MARKETING, message.getRefId(),
-                marketingDedupKey("POINTS", message.getReasonType(), message.getRefId()));
+        notificationService.publish(NotificationEventMessage.builder()
+                .notificationId(UUID.randomUUID().toString())
+                .userId(message.getUserId())
+                .scope(NotificationScopeVO.BOTTOM_SYSTEM.name())
+                .type(NotificationTypeVO.POINTS_CHANGED.name())
+                .title("积分变动")
+                .content(content)
+                .refType(REF_TYPE_MARKETING)
+                .refId(message.getRefId())
+                .dedupKey(marketingDedupKey("POINTS", message.getReasonType(), message.getRefId()))
+                .build());
         log.info("[MarketingNoticeCase] 积分变动通知已落 userId={} delta={} reasonType={} refId={}",
                 message.getUserId(), delta, message.getReasonType(), message.getRefId());
     }

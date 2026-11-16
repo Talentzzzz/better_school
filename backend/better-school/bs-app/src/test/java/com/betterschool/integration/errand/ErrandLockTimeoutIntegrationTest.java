@@ -86,6 +86,7 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
         assertThat(takerIdOf(orderId)).isEqualTo(takerB.userId());
         assertThat(lockSeqOf(orderId)).isEqualTo(2);
         assertThat(lockTimeoutEventCount(orderId)).as("未命中轮次守卫不落事件").isZero();
+        consumeNotifyEvents();
         assertThat(notificationCountFor(takerB.userId(), orderId)).as("未释放不发通知").isZero();
 
         // 新轮次的回调才生效
@@ -130,6 +131,8 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
         assertThat(lockSeqOf(orderId)).as("二次锁单轮次 +1").isEqualTo(2);
 
         // 结果通知发给**被释放的接单方**（taker_id 已清空，通知靠释放前读出的 id）
+        // 通知落库时机=事件消费时：先喂 NotifyEventConsumer 消费释放事务写的 bs-notify-event 再断言
+        consumeNotifyEvents();
         Map<String, Object> notice = notificationOf(taker.userId(), orderId, 1);
         assertThat(notice.get("scope")).isEqualTo("MARKET_ERRAND");
         assertThat(notice.get("type")).isEqualTo("ORDER_EVENT");
@@ -146,15 +149,18 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
 
         grab(orderId, taker);
         assertCallbackSuccess(callback(lockTask(orderId, 1)));
+        consumeNotifyEvents();
         assertThat(notificationCountFor(taker.userId(), orderId)).isEqualTo(1);
 
         // 同轮重投（中心 at-least-once）：未命中状态机 = 幂等成功，且不重复发通知
         assertCallbackSuccess(callback(lockTask(orderId, 1)));
+        consumeNotifyEvents();
         assertThat(notificationCountFor(taker.userId(), orderId)).as("同轮重投不重复发").isEqualTo(1);
 
         // 同一人再抢（新轮次）→ 释放 → 再发一条：dedupKey 含 lockSeq，多轮各发各的
         grab(orderId, taker);
         assertCallbackSuccess(callback(lockTask(orderId, 2)));
+        consumeNotifyEvents();
 
         assertThat(notificationCountFor(taker.userId(), orderId)).as("第二轮释放再发一条").isEqualTo(2);
         assertThat(notificationDedupKeysFor(taker.userId(), orderId))
@@ -176,6 +182,7 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
         assertThat(statusOf(orderId)).as("已确认离开 LOCKED，回调打不中").isEqualTo("CONFIRMED");
         assertThat(takerIdOf(orderId)).isEqualTo(taker.userId());
         assertThat(lockTimeoutEventCount(orderId)).isZero();
+        consumeNotifyEvents();
         assertThat(notificationCountFor(taker.userId(), orderId)).isZero();
     }
 
@@ -192,6 +199,7 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
 
         assertThat(statusOf(orderId)).isEqualTo("CANCELLED");
         assertThat(lockTimeoutEventCount(orderId)).as("已取消单不落释放事件").isZero();
+        consumeNotifyEvents();
         assertThat(notificationCountFor(taker.userId(), orderId)).as("已取消单不发通知").isZero();
     }
 

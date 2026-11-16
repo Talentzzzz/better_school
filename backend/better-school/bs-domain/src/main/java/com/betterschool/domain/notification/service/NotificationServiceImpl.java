@@ -3,6 +3,7 @@ package com.betterschool.domain.notification.service;
 import com.betterschool.domain.notification.adapter.repository.INotificationRepository;
 import com.betterschool.domain.notification.model.entity.NotificationEntity;
 import com.betterschool.domain.notification.model.valobj.NotificationBroadcastMessage;
+import com.betterschool.domain.notification.model.valobj.NotificationEventMessage;
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import lombok.RequiredArgsConstructor;
@@ -38,32 +39,13 @@ public class NotificationServiceImpl implements INotificationService {
     }
 
     @Override
-    public void sendToUser(String userId, NotificationScopeVO scope, NotificationTypeVO type, String title,
-                           String content, String refType, String refId) {
-        insertWithSeq(NotificationEntity.create(userId, scope, type, title, content, refType, refId));
-    }
-
-    @Override
-    public void sendInteraction(String userId, String senderId, NotificationScopeVO scope, NotificationTypeVO type,
-                                String title, String content, String refType, String refId, String dedupKey) {
-        insertWithSeq(NotificationEntity.createInteraction(
-                userId, senderId, scope, type, title, content, refType, refId, dedupKey));
-    }
-
-    @Override
-    public void sendSystem(String userId, NotificationScopeVO scope, NotificationTypeVO type, String title,
-                           String content, String refType, String refId, String dedupKey) {
-        insertWithSeq(NotificationEntity.createSystem(userId, scope, type, title, content, refType, refId, dedupKey));
+    public void publish(NotificationEventMessage event) {
+        notificationRepository.saveEvent(event);
     }
 
     @Override
     public void insertBroadcast(String msgId, String type, String title, String content) {
         notificationRepository.insertBroadcast(msgId, type, title, content);
-    }
-
-    /** 取号 + 落库的原子性由仓储方法自带的事务保证（PROPAGATION_REQUIRED）：调用方已有事务则并入 */
-    private void insertWithSeq(NotificationEntity notificationEntity) {
-        notificationRepository.insertOne(notificationEntity);
     }
 
     @Override

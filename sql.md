@@ -757,7 +757,7 @@ CREATE TABLE IF NOT EXISTS user_credit_detail (
 
 ## 2. 营销服务 marketing（库 bs_marketing）
 
-来源：`backend/marketing/sql/schema.sql`（该文件是本节唯一 DDL 事实源，比对脚本 `.scratch/project-rework/cmp_schema_marketing.py`）· 共 18 张表（按该文件 `CREATE TABLE` 逐张清点）
+来源：`backend/marketing/sql/schema.sql`（该文件是本节唯一 DDL 事实源，比对脚本 `.scratch/project-rework/cmp_schema_marketing.py`）· 共 21 张表（按该文件 `CREATE TABLE` 逐张清点；其中库存票的 `draw_strategy_award_inventory` / `draw_strategy_award_inventory_detail` / `inventory_allocation_flow` 三张历史表本节未展开，形状以 schema.sql 为准）
 
 积分（桶模型）、抽奖次数（与积分同构的桶模型）、配置（积分/次数有效期 + 行为返利）、抽奖（活动/策略/奖品/记录）、库存（虚拟权益池与实物营销配额的两段式库存：进程内合并 + DB 台账）、本服务 outbox。原积分与抽奖两个服务合并为一个营销服务、共库，积分流水与抽奖记录可同库同事务。**uuid-biz-id 票 07**：营销自有业务键（bucket_id / activity_id / strategy_id / award_id / record_id / inv_id / 兑换 ref_id / 台账 biz_id）全 `VARCHAR(36)`，由工程内 `IIdGenerator`（`IdGeneratorConfig` @Bean）insert 前发号一次写入；抽奖记录/兑换单两个幂等键由 `IdempotencyKeys.of()` 确定性映射（SHA-256(userId, token) 16 字节组 UUID，36 位规范形）——同一 token 恒同一 id，重放语义不变。`draw_strategy_award.inv_id` 的「不限量」哨兵由数值 0 改字符串 `'0'`（`RaffleDrawServiceImpl` 按字符串等值判断；落库快照无库存来源仍置 NULL）；`draw_strategy_weight.weights` 随 award_id 变长放宽到 VARCHAR(512)。存量数据不迁移，删库重建。
 

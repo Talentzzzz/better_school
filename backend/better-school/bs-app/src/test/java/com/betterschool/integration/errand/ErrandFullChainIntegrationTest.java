@@ -38,9 +38,10 @@ class ErrandFullChainIntegrationTest extends CommunityApiTestBase {
         Session author = registerAndLogin("13800007002", "发单作者");
         String orderId = createPaidOrder(author, List.of("http://minio.test/bs-files/uploads/a.png"));
 
-        // 1. 支付落 outbox → 消费者直接驱动 → 作者收到"支付成功"通知
+        // 1. 支付落 outbox → 消费者直接驱动 → 支付成功通知走事件链（publish → bs-notify-event → 消费落库）
         String payload = pendingPayloadOf(orderId);
         errandPaidConsumer.onMessage(payload);
+        consumeNotifyEvents();
         assertThat(notificationsOf(author.userId(), "ORDER_EVENT", "支付成功"))
                 .as("支付后作者应收到支付成功通知").hasSize(1);
 

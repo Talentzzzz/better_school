@@ -17,19 +17,19 @@ import java.util.Objects;
  *   <li><b>{@code shardCapacity >= maxBatch}</b>：否则永远攒不满一批就被背压拒绝。</li>
  * </ol>
  *
- * <p><b>{@code flushThreads} 这里只校验 {@code >= 1}</b>：真正的上限是「连接池 − 2」，而连接池大小
- * 属于应用装配层（{@code bs-app} 的 {@code CountMergeConfig}），引擎不认识 Hikari。
+ * <p><b>{@code shardCount} 同时是 flush 并发</b>（per-shard 常驻线程模型，线程数 = 分片数），
+ * 真正的上限「连接池 − 2」在装配层（{@code bs-app} 的 {@code CountMergeConfig}）校验——
+ * 连接池属于应用装配层，引擎不认识 Hikari。
  *
  * <p><b>{@code shardCapacity} 只当「降级触发点 + 内存上界」</b>，不做扩容：满了就让调用方走
  * 同步降级（组大小 1 调同一个落库方法），合并器自己永不扩容、永不丢弃已入队件。
  *
- * @param shardCount     分片数（= 缓冲区个数），2 的幂；建议 ≈ 峰值并发热点数，只买「批纯度」
- * @param maxFlushDelayMillis       合并窗口：分片首个请求排定 maxFlushDelayMillis 后 flush，攒满可提前触发
+ * @param shardCount     分片数（= 缓冲区个数 = 常驻 flush 线程数），2 的幂
+ * @param maxFlushDelayMillis       合并窗口：分片首件起算 maxFlushDelayMillis 后 flush，攒满可提前触发
  * @param maxBatch       单次 flush 最多取走的件数
  * @param waitTimeoutMs  等结果的调用方最长等待（含排队 + 落库），超时返回 {@code TIMEOUT}
  * @param shardCapacity  单分片缓冲区上限，满即 {@code BUFFER_FULL}（入口背压）
- * @param flushThreads   flush 执行池大小，装配层另校验 {@code <= 池 − 2}
- * @param drainTimeoutMs 停机排空（停收 → 排空 → 关池）的等待上限
+ * @param drainTimeoutMs 停机排空（停收 → 排空 → signal + join）的等待上限
  */
 public final class MergeConfig {
 
@@ -38,17 +38,19 @@ public final class MergeConfig {
     private final int maxBatch;
     private final int waitTimeoutMs;
     private final int shardCapacity;
-    private final int flushThreads;
     private final long drainTimeoutMs;
 
-    /** 计数侧默认值（spec §2.4：一套参数，未扫参） */
-    public static final int DEFAULT_SHARD_COUNT = 256;
-    public static final int DEFAULT_WINDOW_MS = 5;
-    public static final int DEFAULT_MAX_BATCH = 200;
-    public static final int DEFAULT_WAIT_TIMEOUT_MS = 100;
-    public static final int DEFAULT_SHARD_CAPACITY = 5000;
-    public static final int DEFAULT_FLUSH_THREADS = 4;
-    public static final long DEFAULT_DRAIN_TIMEOUT_MS = 5_000;
+    /**
+     * 分片的本职是路由桶（合并粒度由「动作 × 行主键」分组决定，与分片数无关），8 片足够摊平
+     * offer 争抢；而 per-shard 线程模型把 flush 并发与分片数绑死（受「连接池 − 2」封顶），默认取下限。
+     * 例外：单分片 offer 成为瓶颈或需要更大路由空间时重议。
+     */
+    private static final int DEFAULT_SHARD_COUNT = 8;
+    private static final int DEFAULT_WINDOW_MS = 5;
+    private static final int DEFAULT_MAX_BATCH = 200;
+    private static final int DEFAULT_WAIT_TIMEOUT_MS = 100;
+    private static final int DEFAULT_SHARD_CAPACITY = 2000;
+    private static final long DEFAULT_DRAIN_TIMEOUT_MS = 5_000;
 
     /**
      * 构造即校验（原 record 紧凑构造器的校验逻辑原样保留）：配置错误必须在启动瞬间炸掉。
@@ -58,7 +60,6 @@ public final class MergeConfig {
                        int maxBatch,
                        int waitTimeoutMs,
                        int shardCapacity,
-                       int flushThreads,
                        long drainTimeoutMs) {
         require(shardCount > 0, "merge.count.shard-count 必须 > 0（当前 %s）", shardCount);
         require(Integer.bitCount(shardCount) == 1,
@@ -71,14 +72,12 @@ public final class MergeConfig {
         require(shardCapacity >= maxBatch,
                 "merge.count.shard-capacity(%s) 必须 >= merge.count.max-batch(%s)，否则永远攒不满一批就被拒绝",
                 shardCapacity, maxBatch);
-        require(flushThreads >= 1, "merge.count.flush-threads 必须 >= 1（当前 %s）", flushThreads);
         require(drainTimeoutMs > 0, "merge.count.drain-timeout-ms 必须 > 0（当前 %s）", drainTimeoutMs);
         this.shardCount = shardCount;
         this.maxFlushDelayMillis = maxFlushDelayMillis;
         this.maxBatch = maxBatch;
         this.waitTimeoutMs = waitTimeoutMs;
         this.shardCapacity = shardCapacity;
-        this.flushThreads = flushThreads;
         this.drainTimeoutMs = drainTimeoutMs;
     }
 
@@ -102,10 +101,6 @@ public final class MergeConfig {
         return shardCapacity;
     }
 
-    public int flushThreads() {
-        return flushThreads;
-    }
-
     public long drainTimeoutMs() {
         return drainTimeoutMs;
     }
@@ -119,27 +114,25 @@ public final class MergeConfig {
                 && maxBatch == other.maxBatch
                 && waitTimeoutMs == other.waitTimeoutMs
                 && shardCapacity == other.shardCapacity
-                && flushThreads == other.flushThreads
                 && drainTimeoutMs == other.drainTimeoutMs;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(shardCount, maxFlushDelayMillis, maxBatch, waitTimeoutMs, shardCapacity, flushThreads, drainTimeoutMs);
+        return Objects.hash(shardCount, maxFlushDelayMillis, maxBatch, waitTimeoutMs, shardCapacity, drainTimeoutMs);
     }
 
     @Override
     public String toString() {
         return "MergeConfig[shardCount=" + shardCount + ", maxFlushDelayMillis=" + maxFlushDelayMillis + ", maxBatch=" + maxBatch
                 + ", waitTimeoutMs=" + waitTimeoutMs + ", shardCapacity=" + shardCapacity
-                + ", flushThreads=" + flushThreads + ", drainTimeoutMs=" + drainTimeoutMs + "]";
+                + ", drainTimeoutMs=" + drainTimeoutMs + "]";
     }
 
-    /** 计数侧默认参数（{@code 256 / 5ms / 200 / 100ms / 5000 / 4 线程 / 5s}） */
+    /** 计数侧默认参数（{@code 8 / 5ms / 200 / 100ms / 2000 / 5s}） */
     public static MergeConfig countDefaults() {
         return new MergeConfig(DEFAULT_SHARD_COUNT, DEFAULT_WINDOW_MS, DEFAULT_MAX_BATCH,
-                DEFAULT_WAIT_TIMEOUT_MS, DEFAULT_SHARD_CAPACITY, DEFAULT_FLUSH_THREADS,
-                DEFAULT_DRAIN_TIMEOUT_MS);
+                DEFAULT_WAIT_TIMEOUT_MS, DEFAULT_SHARD_CAPACITY, DEFAULT_DRAIN_TIMEOUT_MS);
     }
 
     /** 路由掩码：{@code shardCount} 是 2 的幂，故 {@code n - 1} 即全 1 位 */

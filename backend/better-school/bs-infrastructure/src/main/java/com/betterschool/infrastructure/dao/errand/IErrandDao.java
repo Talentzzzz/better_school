@@ -96,15 +96,6 @@ public interface IErrandDao {
     /** 删除草稿：软删 DRAFT → DELETED（条件 UPDATE，带作者守卫） */
     int softDelete(@Param("orderId") String orderId, @Param("publisherId") String publisherId);
 
-    /** 待支付超时订单 id 列表（PENDING_PAYMENT 且进入待支付早于 before：直接发布=落库时刻，草稿提交=提交时刻） */
-    List<String> selectPayTimeoutOrderIds(@Param("before") LocalDateTime before, @Param("limit") int limit);
-
-    /** 订单超时 id 列表（PUBLISHED/LOCKED/CONFIRMED/PICKED_UP 且 deadline 已过） */
-    List<String> selectTimeoutOrderIds(@Param("limit") int limit);
-
-    /** 送达超时订单 id 列表（DELIVERED 且送达早于 before，24h 自动完成扫描用） */
-    List<String> selectAutoCompleteOrderIds(@Param("before") LocalDateTime before, @Param("limit") int limit);
-
     /** 送达后自动完成：DELIVERED → COMPLETED（发布方 24h 未确认） */
     int autoCompleteById(@Param("orderId") String orderId);
 
