@@ -1,5 +1,9 @@
 Type: task
-Status: claimed
+Status: resolved
+
+## Comments
+
+- 2026-11-20 完成：`CompositeTxExecutor`（REQUIRED 物理事务编排）+ `CompositeTxAction` 回调接口落 `bs-infrastructure/infrastructure/tx/`，4 条外显行为单测随交付（未执行，维护者验证）。提交 `ec66bad`，合并 `457b715`。02–07 经消费方域 port 接口 + 基础设施实现（用本组件编排）接续。
 
 # 01 基础设施组合事务端口
 
