@@ -614,11 +614,12 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (orderEntity.getDeadline() != null && orderEntity.getDeadline().isAfter(LocalDateTime.now())) {
             throw new IllegalStateException("订单超时任务早于 deadline 触发，按失败重投：orderId=" + orderId);
         }
-        // 条件 UPDATE（状态 + deadline 双校验）防并发重复处理；未命中可能是并发重复回调
-        // （另一实例刚提交取消）或时钟偏差——同样按失败重投，下一轮读到终态即幂等成功
-        if (!errandRepository.markTimeoutWithSearchSync(orderId)) {
-            throw new IllegalStateException("订单超时回调条件 UPDATE 未命中，按失败重投：orderId=" + orderId);
-        }
+        // 超时取消资金收口（IErrandFundPort 端口编排）：发布方解冻退款（开工场景另含接单方信用分扣减）
+        // 与超时取消条件翻转并入一个物理事务——「订单已取消但悬赏悬置冻结态」「退了钱分没扣」的
+        // 中间态无处存活；条件翻转未命中（并发重复回调 / 时钟偏差）在端口内抛异常按失败重投，
+        // 解冻与扣分随之回滚，重投下一轮读到终态即幂等成功（终态短路语义保持现状）
+        errandFundPort.timeoutCancelWithRefund(orderId, orderEntity.getPublisherId(),
+                orderEntity.getTakerId(), orderEntity.getTotalReward(), committed);
         pushOrderStatus(orderId, ErrandStatusVO.CANCELLED);
         log.info("[ErrandTimeout] 订单超时取消 orderId={}, wasStatus={}", orderId, status);
         return new ErrandTimeoutResult(orderEntity.getPublisherId(), orderEntity.getTakerId(),
