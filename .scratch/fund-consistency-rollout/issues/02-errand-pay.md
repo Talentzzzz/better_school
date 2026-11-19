@@ -1,5 +1,10 @@
 Type: task
-Status: open
+Status: resolved
+
+## Comments
+
+- 2026-11-20 完成：`IErrandFundPort`（errand 域声明）+ `ErrandFundPort`（infra 实现，经 `CompositeTxExecutor` 编排冻结+条件翻转+outbox+feed 一个物理事务）；case 层收敛为单次调用。3 条外显行为集成测试随交付（未执行）。提交 `06db8da`，合并 `221a853`。
+- 设计说明：端口调用落在 `ErrandOrderServiceImpl` 域服务内（判据/终态幂等留在域内，端口只做编排），case 层退为单次调用——符合「判据留在消费方域，port 里不放判据逻辑」纪律。03–05 沿用同一端口扩展新编排方法。
 Blocked by: 01
 
 # 02 跑腿支付收口（冻结悬赏 + 转已发布一个物理事务）

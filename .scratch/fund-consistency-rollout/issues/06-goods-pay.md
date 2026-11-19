@@ -1,5 +1,9 @@
 Type: task
-Status: open
+Status: resolved
+
+## Comments
+
+- 2026-11-20 完成：`IProductPayCompositeTxPort`（trade 域声明）+ `ProductPayCompositeTxPort`（infra 实现，经 `CompositeTxExecutor` 编排条件翻转+PRODUCT_FROZEN 冻结一个物理事务）；case 层收敛为单次调用。3 条外显行为集成测试随交付（未执行）。提交 `a3f57dd`，合并 `b00c5c8`。07 沿用同一端口扩展取消编排方法。
 Blocked by: 01
 
 # 06 商品订单支付收口（货款冻结 + 转已支付一个物理事务）

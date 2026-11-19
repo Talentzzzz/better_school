@@ -32,11 +32,13 @@
 01…08 ──→ 09 文档对齐 + GLOSSARY 词条
 ```
 
-**Frontier（可立即开工）**：02、06、08（08 已开工）。
+**Frontier（可立即开工）**：03、04 不解锁（串行）；07（已开工）、08（进行中）。02 ✅ 06 ✅
 
 ## 进度
 
 - 01 ✅ 组合事务组件 `CompositeTxExecutor`（`ec66bad` → 合并 `457b715`）。
+- 02 ✅ 跑腿支付收口（`06db8da` → 合并 `221a853`）；03–05 沿用 `IErrandFundPort` 扩展。
+- 06 ✅ 商品支付收口（`a3f57dd` → 合并 `b00c5c8`）；07 沿用 `IProductPayCompositeTxPort` 扩展。
 
 ## 收口
 
