@@ -17,4 +17,12 @@
         VALUES (#{userId}, #{bucketId}, #{refId}, #{createTime}, #{updateTime})
     </insert>
 
+    <!-- 按抽奖记录反查扣次明细（孤儿预扣种单取 user_id 快照）：走 idx_ref，单行 -->
+    <select id="selectByRefId" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawCountDetailPO">
+        SELECT id, user_id, bucket_id, ref_id, create_time, update_time
+        FROM draw_count_detail
+        WHERE ref_id = #{refId}
+        LIMIT 1
+    </select>
+
 </mapper>

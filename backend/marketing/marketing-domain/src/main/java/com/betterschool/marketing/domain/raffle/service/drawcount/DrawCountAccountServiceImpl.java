@@ -63,6 +63,14 @@ public class DrawCountAccountServiceImpl implements IDrawCountAccountService {
     }
 
     @Override
+    public void refundForOrphanDraw(String userId, String recordId, int amount) {
+        if (userId == null || recordId == null || amount <= 0) {
+            throw new AppException(ResponseCode.LOTTERY_PARAM_ERROR);
+        }
+        credit(userId, amount, DrawCountReasonType.ORPHAN_REFUND, recordId);
+    }
+
+    @Override
     public int getValidDays() {
         return raffleRepository.drawCountValidDays();
     }

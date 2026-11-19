@@ -54,6 +54,23 @@ SELECT @group_id, '购买单补偿扫描（DEDUCTED 单补入账）', NOW(), NOW
 WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'drawCountPurchaseScan'
                   AND job_group = @group_id);
 
+-- 孤儿预扣对账扫描——「预扣在、抽奖记录不在、超过 10 分钟」的孤儿预扣收敛：
+-- 决策可重放以原幂等键补落库（不重复扣次数、预扣撞唯一键按已扣回放，决策漂移接受）；
+-- 不可重放（活动已结束/下线）库存回补 + 次数退还。重试口径与购买单补偿同（0/30、抢占、1/2/4/8/16 退避、死信）。
+INSERT INTO xxl_job_info
+(job_group, job_desc, add_time, update_time, author, alarm_email,
+ schedule_type, schedule_conf, misfire_strategy, executor_route_strategy,
+ executor_handler, executor_param, executor_block_strategy, executor_timeout,
+ executor_fail_retry_count, glue_type, glue_source, glue_remark, glue_updatetime,
+ child_jobid, trigger_status, trigger_last_time, trigger_next_time)
+SELECT @group_id, '孤儿预扣对账扫描（补落库或回补+退还）', NOW(), NOW(), 'marketing', '',
+       'CRON', '0/30 * * * * ?', 'DO_NOTHING', 'FIRST',
+       'orphanPrereserveScan', '', 'SERIAL_EXECUTION', 0,
+       0, 'BEAN', '', '', NOW(),
+       '', 1, 0, 0
+WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'orphanPrereserveScan'
+                  AND job_group = @group_id);
+
 -- 桶过期清零任务下线：过期是读路径懒判（所有读路径都带 expire_at > NOW()），清零只写不读；
 -- 且它的谓词 expire_at <= NOW() AND remain > 0 走不了 idx_user_expire 的最左前缀，等于每分钟
 -- 全表扫一遍 + 按 InnoDB 当前读规则把扫过的行都锁住，与入账/消费互斥——净负收益，handler 已随代码删除。

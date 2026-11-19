@@ -33,6 +33,14 @@ public interface IDrawCountAccountService {
      */
     boolean deductForDraw(String userId, String recordId);
 
+    /**
+     * 孤儿预扣退还（对账 job，决策不可重放时）：按次数桶幂等键入账一桶新次数，
+     * {@code refId} = 抽奖记录 id（= 原扣次明细的 {@code ref_id}，幂等键不与消费侧冲突），
+     * 重复退还撞 {@code uk_user_reason_ref} 不重复加。数量必须为正，不合法抛参数异常
+     * （对账方据此把坏行推入退避 / 死信）。
+     */
+    void refundForOrphanDraw(String userId, String recordId, int amount);
+
     /** 抽奖次数有效期天数（域内 draw_count_config，后台读 + 入账算 expire_at + 抽奖读侧展示同口径） */
     int getValidDays();
 

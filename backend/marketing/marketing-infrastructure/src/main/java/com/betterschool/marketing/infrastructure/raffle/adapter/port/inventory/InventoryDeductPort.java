@@ -9,6 +9,9 @@ import com.betterschool.marketing.types.inventory.InventoryBizTypes;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
+import java.util.List;
+
 /**
  * 库存域发放预扣端口的实现：委托唯一的库存配额服务（账户类型由本实现选），
  * 结果对象翻成端口自己的 {@link Outcome}（不把库存域的值对象类型漏进抽奖域）。
@@ -43,5 +46,19 @@ public class InventoryDeductPort implements IInventoryDeductPort {
             case FALLBACK -> Outcome.FALLBACK;
             case FAILED -> Outcome.FAILED;
         };
+    }
+
+    // ---- 孤儿预扣对账（spec User Stories 14–16）：候选与回补都委托库存配额服务，bizType 在这里填 ----
+
+    @Override
+    public List<OrphanPrereserveRef> listOrphanPrereserves(LocalDateTime before, int limit) {
+        return inventoryQuotaService.listOrphanPrereserves(before, limit).stream()
+                .map(candidate -> new OrphanPrereserveRef(candidate.awardId(), candidate.bizId(), candidate.quantity()))
+                .toList();
+    }
+
+    @Override
+    public boolean restituteOrphanPrereserve(String awardId, String recordId, long quantity) {
+        return inventoryQuotaService.restitutePrereserve(awardId, InventoryBizTypes.LOTTERY_DRAW, recordId, quantity);
     }
 }

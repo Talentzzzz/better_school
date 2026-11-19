@@ -41,6 +41,19 @@ public interface IAwardInventoryDao {
     int transferWaitingToIssued(@Param("awardId") String awardId, @Param("quantity") long quantity);
 
     /**
+     * 孤儿预扣回补（PHYSICAL 行）：{@code waiting → surplus} 条件转移（{@code transferWaitingToIssued}
+     * 的反向，守卫形状一致）；0 行 = 已回补过或守卫不过（调用方 ERROR 留人工核对）。
+     * 不限量户（surplus=-1）不动 surplus；exhausted 户随回补放回 open（closed 不自动重开）。
+     */
+    int restitutePhysical(@Param("awardId") String awardId, @Param("quantity") long quantity);
+
+    /**
+     * 孤儿预扣回补（VIRTUAL 行）：{@code issued → surplus} 条件回退（VIRTUAL 预扣直接进 issued，
+     * 无 waiting 悬挂）；0 行语义与 {@link #restitutePhysical} 相同。
+     */
+    int restituteVirtual(@Param("awardId") String awardId, @Param("quantity") long quantity);
+
+    /**
      * 分配转入（池 → 奖品）：账户不存在则按给定 type / value_qty 建户（1 奖品位 1 账户），
      * 已存在则 surplus 直接累加；exhausted 户新到货重新放回 open（closed 是人工关户，不自动重开）。
      */

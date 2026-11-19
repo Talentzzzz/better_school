@@ -5,6 +5,7 @@ import com.betterschool.marketing.domain.raffle.model.aggregate.DrawRecordAggreg
 import com.betterschool.marketing.domain.raffle.model.entity.DrawActivityEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawCountBucketEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawCountPurchaseOrderEntity;
+import com.betterschool.marketing.domain.raffle.model.entity.DrawOrphanPrereserveOrderEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawRecordDetailEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawRecordEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawStrategyAwardEntity;
@@ -23,6 +24,7 @@ import com.betterschool.marketing.infrastructure.raffle.dao.IDrawCountConfigDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawCountDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawCountDetailDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawCountPurchaseOrderDao;
+import com.betterschool.marketing.infrastructure.raffle.dao.IDrawOrphanPrereserveOrderDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawRecordDetailDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawStrategyAwardDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawStrategyDao;
@@ -32,6 +34,7 @@ import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawActivityPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawCountBucketPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawCountDetailPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawCountPurchaseOrderPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawOrphanPrereserveOrderPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordDetailPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordViewPO;
@@ -45,6 +48,7 @@ import com.betterschool.marketing.types.common.Constants;
 import com.betterschool.marketing.types.id.IIdGenerator;
 import com.betterschool.marketing.types.raffle.DrawCountPurchaseState;
 import com.betterschool.marketing.types.raffle.DrawCountReasonType;
+import com.betterschool.marketing.types.raffle.DrawOrphanPrereserveState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBucket;
@@ -85,6 +89,7 @@ public class RaffleRepository implements IRaffleRepository {
     private final IDrawCountDao drawCountDao;
     private final IDrawCountDetailDao drawCountDetailDao;
     private final IDrawCountPurchaseOrderDao drawCountPurchaseOrderDao;
+    private final IDrawOrphanPrereserveOrderDao drawOrphanPrereserveOrderDao;
     private final IDrawCountConfigDao drawCountConfigDao;
     private final IVirtualInventoryQuotaDao virtualInventoryQuotaDao;
     private final IAwardInventoryDao awardInventoryDao;
@@ -504,6 +509,75 @@ public class RaffleRepository implements IRaffleRepository {
     @Override
     public boolean markPurchaseOrderDead(Long id) {
         return drawCountPurchaseOrderDao.markDead(id) > 0;
+    }
+
+    // ---------------------------------------------------------------- 孤儿预扣对账单（扫描种单 + 重试状态机）
+
+    @Override
+    public boolean insertOrphanPrereserveOrder(DrawOrphanPrereserveOrderEntity order) {
+        // 种单是扫描动作：INSERT IGNORE 撞 uk_record_id 静默跳过（DONE/DEAD 的对账单不再被重新种）
+        return drawOrphanPrereserveOrderDao.insertIgnoreOrder(toOrphanPrereserveOrderPO(order)) > 0;
+    }
+
+    @Override
+    public List<DrawOrphanPrereserveOrderEntity> listDueOrphanPrereserveOrders(int limit) {
+        return drawOrphanPrereserveOrderDao.listDue(limit).stream()
+                .map(this::toOrphanPrereserveOrderEntity).toList();
+    }
+
+    @Override
+    public boolean claimOrphanPrereserveOrder(Long id, LocalDateTime nextRetryAt) {
+        return drawOrphanPrereserveOrderDao.claim(id, nextRetryAt) > 0;
+    }
+
+    @Override
+    public boolean finishOrphanPrereserveOrder(String recordId) {
+        return drawOrphanPrereserveOrderDao.finish(recordId) > 0;
+    }
+
+    @Override
+    public boolean markOrphanPrereserveOrderDead(Long id) {
+        return drawOrphanPrereserveOrderDao.markDead(id) > 0;
+    }
+
+    @Override
+    public String queryUserIdByDrawCountRef(String refId) {
+        DrawCountDetailPO detailPO = drawCountDetailDao.selectByRefId(refId);
+        return detailPO == null ? null : detailPO.getUserId();
+    }
+
+    private DrawOrphanPrereserveOrderPO toOrphanPrereserveOrderPO(DrawOrphanPrereserveOrderEntity order) {
+        DrawOrphanPrereserveOrderPO po = new DrawOrphanPrereserveOrderPO();
+        po.setRecordId(order.getRecordId());
+        po.setAwardId(order.getAwardId());
+        po.setUserId(order.getUserId());
+        po.setQuantity(order.getQuantity());
+        po.setState(order.getState().getCode());
+        po.setRetryCount(order.getRetryCount());
+        po.setNextRetryAt(order.getNextRetryAt());
+        po.setFinishTime(order.getFinishTime());
+        po.setCreateTime(order.getCreateTime());
+        po.setUpdateTime(order.getUpdateTime());
+        return po;
+    }
+
+    private DrawOrphanPrereserveOrderEntity toOrphanPrereserveOrderEntity(DrawOrphanPrereserveOrderPO po) {
+        if (po == null) {
+            return null;
+        }
+        DrawOrphanPrereserveOrderEntity order = new DrawOrphanPrereserveOrderEntity();
+        order.setId(po.getId());
+        order.setRecordId(po.getRecordId());
+        order.setAwardId(po.getAwardId());
+        order.setUserId(po.getUserId());
+        order.setQuantity(po.getQuantity());
+        order.setState(DrawOrphanPrereserveState.of(po.getState()));
+        order.setRetryCount(po.getRetryCount());
+        order.setNextRetryAt(po.getNextRetryAt());
+        order.setFinishTime(po.getFinishTime());
+        order.setCreateTime(po.getCreateTime());
+        order.setUpdateTime(po.getUpdateTime());
+        return order;
     }
 
     private DrawCountPurchaseOrderPO toPurchaseOrderPO(DrawCountPurchaseOrderEntity order) {
