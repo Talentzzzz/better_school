@@ -1,5 +1,6 @@
 package com.betterschool.domain.errand.service;
 
+import com.betterschool.domain.errand.adapter.port.IErrandFundPort;
 import com.betterschool.domain.errand.adapter.port.IErrandGrabAbusePort;
 import com.betterschool.domain.errand.adapter.repository.IErrandRepository;
 import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
@@ -63,6 +64,8 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
 
     private final IErrandRepository errandRepository;
     private final IErrandGrabAbusePort errandGrabAbusePort;
+    /** 支付资金收口端口：冻结悬赏与本域状态翻转收进一个物理事务（基础设施层编排，本域不写钱包表） */
+    private final IErrandFundPort errandFundPort;
 
     /** 状态迁移成功后的 WS 推送事件（outbox → ORDER 帧）：推送是加速路径，失败/漏推由详情页拉取兜底 */
     private void pushOrderStatus(String orderId, ErrandStatusVO status) {
@@ -159,10 +162,11 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (orderEntity.getStatus() != ErrandStatusVO.PENDING_PAYMENT) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "订单不存在或不可支付");
         }
-        // 状态迁移跟着钱走：支付事务内转 PUBLISHED（冻结悬赏、即对外可见进入大厅），
+        // 状态迁移跟着钱走：支付组合事务内先冻结悬赏再转 PUBLISHED（即对外可见进入大厅），
+        // 冻结与翻转同生共死（IErrandFundPort 端口编排，余额不足整事务回滚、订单留待支付），
         // bs-errand-paid outbox 消息只承担"支付成功"通知，不承载状态迁移；
         // deadline 已随单落库（payById WHERE deadline > NOW() 拒绝已过期单）
-        errandRepository.payWithPaidMessage(orderId, userId);
+        errandFundPort.payWithFundFreeze(orderId, userId, orderEntity.getTotalReward());
         pushOrderStatus(orderId, ErrandStatusVO.PUBLISHED);
         return new ErrandPayResult(orderEntity.getTotalReward());
     }

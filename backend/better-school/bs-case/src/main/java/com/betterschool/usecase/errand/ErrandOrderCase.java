@@ -15,7 +15,6 @@ import com.betterschool.domain.errand.model.valobj.ErrandFeedPageVO;
 import com.betterschool.domain.errand.model.valobj.ErrandIncomeVO;
 import com.betterschool.domain.errand.model.valobj.ErrandLockTimeoutResult;
 import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
-import com.betterschool.domain.errand.model.valobj.ErrandPayResult;
 import com.betterschool.domain.errand.model.valobj.ErrandTimeoutResult;
 import com.betterschool.domain.errand.service.IErrandOrderService;
 import com.betterschool.domain.wallet.service.IWalletAccountService;
@@ -57,10 +56,13 @@ public class ErrandOrderCase {
                 reward, images, deadline);
     }
 
-    /** 冻结悬赏，由 domain 返回口径 */
+    /**
+     * 支付（资金收口）：冻结悬赏与「待支付 → 已发布」翻转（含 outbox + feed 索引行）
+     * 已由 IErrandFundPort 并入一个物理事务（见 ErrandOrderServiceImpl.payOrder），
+     * 本层不再拆两步调用——「发布成功但钱没冻」的中间态由该事务消灭
+     */
     public void payOrder(String orderId, String userId) {
-        ErrandPayResult payResult = errandOrderService.payOrder(orderId, userId);
-        walletAccountService.freeze(userId, payResult.getAmount(), orderId);
+        errandOrderService.payOrder(orderId, userId);
     }
 
     /** 保存草稿：私有停靠内容——不做同步初筛、不做信用分门槛（提交时才校验），字段可缺省 */
