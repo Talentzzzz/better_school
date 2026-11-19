@@ -1,5 +1,6 @@
 package com.betterschool.domain.trade.service.productorder;
 
+import com.betterschool.domain.trade.adapter.port.IProductPayCompositeTxPort;
 import com.betterschool.domain.trade.adapter.repository.ITradeRepository;
 import com.betterschool.domain.trade.model.entity.ProductEntity;
 import com.betterschool.domain.trade.model.entity.ProductOrderEntity;
@@ -21,8 +22,9 @@ import java.util.List;
 /**
  * 商品托管订单服务：5 态订单状态机 + 库存台账扣减/回补（multi-quantity-listing，同域仓储同事务），
  * 全部条件 UPDATE 防并发（防超卖唯一闸门在台账 remaining 的条件扣减上）；
- * 跨域动作（资金冻结/解冻/入账）不在此执行——通过结果对象返回，由 case 层编排。
- * 跨表原子写（订单 + 台账扣减 + 流水 + 搜索同步 + 超时注册）收成 ITradeRepository 的原子用例，事务在仓储实现内
+ * 跨表原子写（订单 + 台账扣减 + 流水 + 搜索同步 + 超时注册）收成 ITradeRepository 的原子用例，事务在仓储实现内；
+ * 支付的跨域资金动作（货款冻结）经组合事务端口与订单翻转并入一个物理事务（票 06），其余跨域动作
+ * （解冻/入账）仍通过结果对象返回，由 case 层编排
  */
 @Slf4j
 @Service
@@ -35,6 +37,9 @@ public class ProductOrderServiceImpl implements IProductOrderService {
     private static final int MAX_ORDER_QUANTITY = 999;
 
     private final ITradeRepository tradeRepository;
+
+    /** 商品支付组合事务端口：订单翻转 + 货款冻结一个物理事务（票 06） */
+    private final IProductPayCompositeTxPort productPayCompositeTxPort;
 
     @Override
     public String createOrder(String buyerId, String productId, int quantity) {
@@ -62,11 +67,10 @@ public class ProductOrderServiceImpl implements IProductOrderService {
                 || orderEntity.getStatus() == ProductOrderStatusVO.COMPLETED) {
             return new ProductPayResult(totalAmount(orderEntity));
         }
-        // 支付只翻订单状态：库存已在下单时扣减（售罄已随行翻 SOLD），无商品状态联动与搜索同步
-        if (!tradeRepository.payOrderById(orderId, buyerId)) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
-        }
-        return new ProductPayResult(totalAmount(orderEntity));
+        // 支付只翻订单状态：库存已在下单时扣减（售罄已随行翻 SOLD），无商品状态联动与搜索同步。
+        // 组合事务端口收口（票 06）：订单「待支付 → 已支付」翻转 + 货款 PRODUCT_FROZEN 冻结
+        // 在一个物理事务内——余额不足整事务回滚，订单留待支付
+        return productPayCompositeTxPort.payOrder(orderId, buyerId, totalAmount(orderEntity));
     }
 
     @Override
