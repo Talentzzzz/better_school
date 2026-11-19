@@ -101,7 +101,7 @@
 下单（需登录，信用可操作账号）：商品锁定进订单，返回 `data = orderId`。
 
 ### POST /api/trade/orders/{orderId}/pay
-支付（买家）：钱包冻结 `PRODUCT_FROZEN` 托管款，订单进入已付款。
+支付（买家）：钱包冻结 `PRODUCT_FROZEN` 托管款，订单进入已付款——**冻结流水（`uk_order_type` 幂等）+ 余额条件扣减与「待支付 → 已支付」条件翻转经组合事务端口并入一个物理事务**；余额不足整事务回滚、订单留待支付（fund-consistency 票 06）。
 
 ### POST /api/trade/orders/{orderId}/mark-delivered
 卖家标记已发货。
@@ -110,7 +110,7 @@
 买家确认收货：托管款解冻（`PRODUCT_UNFROZEN`）并入卖家余额（`PRODUCT_INCOME`），订单完成。
 
 ### POST /api/trade/orders/{orderId}/cancel
-买家取消订单：已支付的解冻托管款退回（未支付的不动钱包），订单关闭。
+买家取消订单：已支付的解冻托管款退回（未支付的不动钱包），订单关闭——已支付态的取消翻转与解冻退款（`uk_order_type` 幂等）经组合事务端口并入**一个物理事务**，翻转未命中整事务回滚（fund-consistency 票 07）。
 
 ### GET /api/trade/orders/{orderId}
 订单详情（参与者可见），返回 `ProductOrderResponseDTO`。
