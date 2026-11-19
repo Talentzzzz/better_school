@@ -1,5 +1,9 @@
 Type: task
-Status: claimed
+Status: resolved
+
+## Comments
+
+- 2026-11-20 完成：状态表 `draw_orphan_prereserve_order`（孤儿预扣登记，entry-point 幂等）+ `OrphanPrereserveScanJob`（xxl-job `0/30`，注册进 `sql/xxl-job-tasks.sql`）+ `RaffleOrphanPrereserveService`（条件更新抢占、1/2/4/8/16 分钟退避、耗尽 DEAD 只 ERROR 日志）。收敛路径：决策可重放 → 原幂等键重放落库后半段；不可重放 → 库存回补 + 次数退还（`DrawCountReasonType.ORPHAN_REFUND`，桶 uk 幂等，不产生新两步缝）。提交 `2bf738f`，合并 `2ef6da7`。测试随交付（job 触发→域扫描入口 + 域层收敛行为/死信，未执行）。
 Blocked by: （无，独立）
 
 # 08 孤儿预扣对账 job（抽奖「预扣→落库」缝的收敛）
