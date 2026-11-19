@@ -51,7 +51,7 @@ public interface IErrandOrderService {
     /** 删除草稿：软删 DRAFT → DELETED（仅作者、仅 DRAFT；本期 DELETED 仅从 DRAFT 可达） */
     void deleteDraft(String orderId, String userId);
 
-    /** 确认支付（无事务）：payById 转 PUBLISHED + bs-errand-paid outbox，返回冻结需求 */
+    /** 确认支付：经 IErrandFundPort 组合事务内冻结悬赏（余额不足整事务回滚）+ payById 转 PUBLISHED + bs-errand-paid outbox */
     ErrandPayResult payOrder(String orderId, String userId);
 
     /**
