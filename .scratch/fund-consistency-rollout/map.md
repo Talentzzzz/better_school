@@ -53,6 +53,6 @@
 
 **修复票**：`ticket-fix-review` worktree（Fix 1 重放短路 + 测试断言、Fix 2 活动码核对、Fix 3 CLAUDE.md §9.7 豁免条款）。
 
-## 收口
+## 收口（2026-11-20）
 
-（待补）
+票 01–09 全部完成：01 组合事务组件 `CompositeTxExecutor`、02 跑腿支付、03 跑腿取消、04 超时取消、05 自动完成、06 商品支付、07 商品取消、08 孤儿预扣对账 job、09 文档对齐（errand/trade/CONTEXT/inventory/lottery 同事务与对账口径回填 + GLOSSARY 三词条 + ADR-0015）。Code-review 两轴（Standards/Spec）通过，修复票处理 3 项：票 02 测试断言修正（重放短路核实为基线已有，误报澄清）、票 08 活动码核对（4301/4302 已全覆盖，零改动）、CLAUDE.md §9.7 追加只读 NOT EXISTS 豁免。全部票 `Status: resolved`；票分支已删（均并入集成分支）；worktree 已清理。集成分支 `fund-consistency-rollout` 终点 `e3e7c77`，交付口径：**测试随实现交付、未运行 mvn，由维护者自行验证**。本 effort 终点。
