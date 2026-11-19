@@ -1,5 +1,9 @@
 Type: task
-Status: open
+Status: resolved
+
+## Comments
+
+- 2026-11-20 完成：`IErrandFundPort.completeWithIncome(orderId, publisherId, takerId, reward)`——发布方解冻（uk 幂等）+ 接单方悬赏收入（INCOME uk 幂等）+ 终态翻转 + 事件/feed/搜索 outbox 全部并入一个物理事务；翻转未命中按失败重投、资金随回滚。DELIVERED 守卫/终态短路保留；确认收货与仲裁路径一字未动（diff 已核对）。3 条集成测试 + `WalletIncomeFailureProbe` 失败注入探针随交付（未执行）。提交 `791cc75`，合并 `c7617bd`。跑腿线（02–05）全部收口完毕。
 Blocked by: 04
 
 # 05 跑腿自动完成收口（悬赏结算 + 终态一个物理事务）
