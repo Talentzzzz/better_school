@@ -630,12 +630,15 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     public ErrandAutoCompleteResult handleAutoComplete(String orderId) {
         ErrandOrderEntity orderEntity = errandRepository.findById(orderId);
         if (orderEntity == null || orderEntity.getStatus() != ErrandStatusVO.DELIVERED) {
-            // 已确认/已仲裁/其他：幂等忽略
+            // 已完成/已取消/其他：终态短路——资金已随终态在同一事务内完成过，重投幂等无害
             return null;
         }
-        if (!errandRepository.autoCompleteWithSearchSync(orderId)) {
-            return null;
-        }
+        // 自动完成资金收口（IErrandFundPort 端口编排）：发布方解冻退款 + 接单方悬赏收入
+        // 与「已送达 → 已完成」条件翻转并入一个物理事务——「订单已完成但接单方收入永久不结算」的
+        // 中间态无处存活；条件翻转未命中（并发重复回调）在端口内抛异常按失败重投，
+        // 解冻与入账随之回滚，重投下一轮读到终态即幂等成功（终态短路语义保持现状）
+        errandFundPort.completeWithIncome(orderId, orderEntity.getPublisherId(),
+                orderEntity.getTakerId(), orderEntity.getTotalReward());
         pushOrderStatus(orderId, ErrandStatusVO.COMPLETED);
         log.info("[ErrandAutoComplete] 送达超时自动完成 orderId={}", orderId);
         // 与发布方确认同一结算口径

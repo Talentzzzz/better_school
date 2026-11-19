@@ -8,7 +8,6 @@ import com.betterschool.domain.credit.model.valobj.CreditReasonTypeVO;
 import com.betterschool.domain.credit.service.ICreditAccountService;
 import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
 import com.betterschool.domain.errand.model.valobj.ErrandArbitrateResult;
-import com.betterschool.domain.errand.model.valobj.ErrandAutoCompleteResult;
 import com.betterschool.domain.errand.model.valobj.ErrandCancelResult;
 import com.betterschool.domain.errand.model.valobj.ErrandConfirmResult;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedPageVO;
@@ -257,16 +256,15 @@ public class ErrandOrderCase {
         errandOrderService.handleOrderTimeout(orderId);
     }
 
+    /**
+     * 送达 24h 自动完成编排（超时中心回调，资金收口）：发布方解冻退款 + 接单方悬赏收入
+     * 与「已送达 → 已完成」翻转已由 IErrandFundPort 并入一个物理事务
+     * （见 ErrandOrderServiceImpl.handleAutoComplete），本层不再拆两步调用——
+     * 「订单已完成但接单方悬赏收入永久不结算」的中间态由该事务消灭。
+     * 终态短路语义保持现状：重投一个已处理的回调，读到终态即安全返回（资金已随终态完成过）。
+     */
     public void handleAutoComplete(String orderId) {
-        ErrandAutoCompleteResult autoCompleteResult = errandOrderService.handleAutoComplete(orderId);
-        if (autoCompleteResult == null) {
-            return;
-        }
-        walletAccountService.unfreeze(autoCompleteResult.getPublisherId(), autoCompleteResult.getReward(), orderId);
-        // 与发布方确认同一结算口径：接单方得悬赏
-        for (ErrandIncomeVO income : autoCompleteResult.getIncomes()) {
-            walletAccountService.income(income.getUserId(), income.getAmount(), orderId);
-        }
+        errandOrderService.handleAutoComplete(orderId);
     }
 
     /** 配图上限（直接发布与草稿共用同一口径，封顶 6 张） */
