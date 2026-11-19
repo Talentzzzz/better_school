@@ -1,7 +1,10 @@
 # 营销服务文档总览
 
-一个 app 两业务域 + 两支撑域（票 06 并入积分、票 07 并入抽奖、票 10 起次数桶 drawcount 与配置 config；
-票 13 起抽奖域整体落 `draw_*` 新模型，旧域表与代码已删）：
+一个 app 两业务域（points / raffle）+ 两支撑域（rebate / inventory）
+（票 06 并入积分、票 07 并入抽奖、票 12 两段式库存、票 13 抽奖域整体落 `draw_*` 新模型；
+**抽奖次数与抽奖同域**——`draw_count_*` 三张表与次数账务并入 raffle，不再有独立的 drawcount 域
+（`draw_count_config` 因此归 raffle）。原 `config` 域只留行为返利并改名 `rebate`。
+域下没有 `common` 段：跨服务/跨域只读端口声明在消费方域）：
 HTTP **8081**，Dubbo 50052，xxl 执行器 `marketing-executor`（9998），库 **`bs_marketing`**（测试 `bs_marketing_test`）。
 
 ## 接口
@@ -10,19 +13,21 @@ HTTP **8081**，Dubbo 50052，xxl 执行器 `marketing-executor`（9998），库
 | --- | --- | --- |
 | 积分（points） | [points.md](api/points.md) | `/api/points` |
 | 抽奖（raffle） | [lottery.md](api/lottery.md) | `/api/lottery` |
-| 配置后台（config） | [config.md](api/config.md) | `/api/marketing/config` |
+| 配置后台（两业务域各管一段：points / raffle（次数）+ rebate） | [config.md](api/config.md) | `/api/marketing/config` |
 
 - 免登录白名单只有两条（抽奖域）：`GET /api/lottery/activity`、`GET /api/lottery/prizes`；其余全部需登录
   （积分接口无例外）。抽奖域票 13 起**没有 ADMIN 接口**（旧「开桶」端点已删）；配置后台的写接口另有 ADMIN 校验。
+- 抽奖域的写入口只有两条、口径互不交叉：`POST /api/lottery/draw` **只扣抽奖次数**；
+  `POST /api/lottery/purchase/draw-count`（历史名 `/exchange/draw-count`）**用积分买次数**。
 - 分页一律 `page`/`pageSize`，返回统一的 `Response{code,info,data}` 信封（各域共用一份 `types.common.ResponseCode`）。
 
 ## 库表
 
 | 域 | 表集 | 表文档 |
 | --- | --- | --- |
-| 积分（points） | points_bucket / points_detail（桶模型） | [points.md](db/points.md) |
-| 抽奖次数（drawcount） | draw_count_bucket / draw_count_detail（与积分同构；票 13 接入抽奖业务） | [points.md](db/points.md) |
-| 配置（config） | points_validity_config / draw_count_config / action_rebate_config | [points.md](db/points.md) |
+| 积分（points） | points_bucket / points_detail（桶模型）+ points_validity_config（积分有效期，单行） | [points.md](db/points.md) |
+| 抽奖次数（归 raffle 域） | draw_count_bucket / draw_count_detail（与积分同构）+ draw_count_config（次数有效期，单行）；抽奖只扣次数，积分换次数走「购买次数」 | [points.md](db/points.md) |
+| 行为返利（rebate） | action_rebate_config（行为 × 返利类型 → 发多少分 / 多少次） | [points.md](db/points.md) |
 | 抽奖决策侧 + 主链路 + 发货闭环（raffle） | draw_* 6 张（票 11 表 + 责任链 + 预热；票 13 主链路与读侧；票 14 发货状态机） | [draw.md](db/draw.md) |
 | 库存（inventory） | award-inventory 两层模型：配额池 `virtual_inventory_quota_*` / `physical_marketing_quota_*` 各 2 张 + 分配流水 `inventory_allocation_flow` + 奖品库存统一台账 `draw_strategy_award_inventory`(+detail) 2 张（抽奖只扣奖品库存账户，池只被分配转移） | [inventory.md](db/inventory.md) |
 | 跨域公共（MQ） | outbox_message（本地消息表，票 08 定型、票 14 起抽奖域写入） | 本文件下「事件」段 |

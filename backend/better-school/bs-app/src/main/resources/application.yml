@@ -87,14 +87,14 @@ minio:
   bucket: bs-files
   public-url: http://localhost:9000 # 图片访问前缀（浏览器直连，默认同 endpoint）
 
-# WS 多实例推送路由（Redis 路由表 + HTTP 转发）：self-endpoint 留空 = 单机形态，
-# 路由不注册、推送只走本地（测试与单实例部署零感知）；多实例部署各实例配自己的对内可达端点，
-# internal-token 必须一起配（内部转发接口 fail-closed，未配置一律 403）。漏推由增量补拉兜底
+# WS 多实例推送路由（Redis 路由表 + pub/sub 定向频道）：self-endpoint 留空 = 单机形态，
+# 路由不注册、推送只走本地（测试与单实例部署零感知）；多实例部署各实例配自己的端点标识，
+# 每个实例订阅自己的频道（bs:ws-push:{端点标识}），推送方按路由精确发布到目标实例频道。
+# fire-and-forget：无回执无持久化，漏推由客户端 (roomId, seq) 增量补拉兜底
 better-school:
   ws:
     route:
-      self-endpoint: ""            # 如 http://10.0.0.5:8080（对内可达，实例间互访）
-      internal-token: ""           # 实例间共享密钥，与 self-endpoint 一起启用
+      self-endpoint: ""            # 实例端点标识，如 http://10.0.0.5:8080（同时作为本实例频道后缀）
 
 # 内嵌超时中心（票 04）：扫描并行度与重试退避口径（与原独立中心同值，域服务按 @Value 默认值兜底）
 timeout:

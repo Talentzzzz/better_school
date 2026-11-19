@@ -10,9 +10,10 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 
 /**
- * WS 连接路由表（Redis，多实例推送路由）：value = {@code 端点|sessionId}。
+ * WS 连接路由表（Redis，多实例推送路由）：value = {@code 端点标识|sessionId}。
  * 注册/续期/注销都是「比对后操作」——接管与迁移场景下不会误删/误续别人的条目；
- * 查询只返回端点部分（sessionId 是防误删的代际标识，不参与转发）
+ * 查询只返回端点标识部分（sessionId 是防误删的代际标识）——端点标识同时充当
+ * 目标实例 pub/sub 定向频道后缀与「路由指向自己」的判定
  */
 @Component
 @RequiredArgsConstructor

@@ -2,6 +2,7 @@ package com.betterschool.marketing.domain.raffle.adapter.repository;
 
 import com.betterschool.marketing.domain.raffle.model.aggregate.DrawRecordAggregate;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawActivityEntity;
+import com.betterschool.marketing.domain.raffle.model.entity.DrawCountPurchaseOrderEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawRecordDetailEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawRecordEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawStrategyAwardEntity;
@@ -10,18 +11,22 @@ import com.betterschool.marketing.domain.raffle.model.entity.DrawStrategyWeightE
 import com.betterschool.marketing.domain.raffle.model.valobj.DrawRecordVO;
 import com.betterschool.marketing.domain.raffle.model.valobj.PrizeCatalogVO;
 import com.betterschool.marketing.domain.raffle.model.valobj.UserPrizeVO;
+import com.betterschool.marketing.types.raffle.DrawCountReasonType;
 
 import java.util.List;
 import java.util.Map;
 
 /**
  * 抽奖域唯一仓储（一域一仓储）：决策侧配置读 + 决策数据 Redis 读写、读侧翻页视图、
- * 落库写面、发货状态机写面四张面合成一个接口。四张面原本各有一个接口，但都建在同一个
- * {@code IRaffleDao} 上，故合并为一个仓储、实现体原样搬。
+ * 落库写面、发货状态机写面、抽奖次数桶账务五张面合成一个接口。前四张面原本各有一个接口，
+ * 但都建在同一个 {@code IRaffleDao} 上，故合并为一个仓储、实现体原样搬；次数桶一张面随
+ * 「次数与抽奖同域」从原 {@code IDrawCountRepository} 并入。
  * <p>
  * 事务：一次操作内的多步读写由仓储自己用 {@code TransactionTemplate}（REQUIRED）收成一个原子用例
- * ——{@link #insertDrawRecord}（记录 + 明细 + 中奖事件 outbox 同事务）与
- * {@link #advanceState}（状态推进 + 动作明细同事务）；域服务不再注入 {@code TransactionTemplate}。
+ * ——{@link #insertDrawRecord}（记录 + 明细 + 中奖事件 outbox 同事务）、
+ * {@link #advanceState}（状态推进 + 动作明细同事务）、{@link #creditDrawCountBucket}（造桶即插桶）
+ * 与 {@link #deductDrawCountForDraw}（幂等预检 + FIFO 扣次 + 消费明细同事务）；
+ * 域服务不再注入 {@code TransactionTemplate}。
  */
 public interface IRaffleRepository {
 
@@ -127,4 +132,67 @@ public interface IRaffleRepository {
      * @return true = 本次真的推进了；false = 起点状态不匹配（重复投递 / 已终态）
      */
     boolean advanceState(String userId, String recordId, String fromState, List<DrawRecordDetailEntity> details);
+
+    // ---- 抽奖次数桶账务（与积分桶同构：桶即流水、无余额列、过期懒判） ----
+
+    /**
+     * 一次次数入账，**同一事务**内完成：造桶（bucket_id 走统一 IdGenerator 发号、expire_at =
+     * 事务内时点 + 次数有效期）→ 插桶（撞 {@code uk_user_reason_ref} 即幂等命中）。
+     * 幂等键落在 uk_user_reason_ref 上，重复入账不重复加次数；「幂等跳过」的日志由域服务按业务口径打。
+     *
+     * @param reasonType REDEEM（积分购买入账）或 REBATE（行为返利）
+     * @return true = 本次真的入账了；false = 这笔入账已记过（幂等跳过）
+     */
+    boolean creditDrawCountBucket(String userId, int amount, DrawCountReasonType reasonType, String refId);
+
+    /**
+     * 一次抽奖扣次，**同一事务**内完成：幂等预检（该抽奖记录已扣过即跳过）→ FIFO 取最早可用桶 →
+     * 落一行明细并把该桶 remain 减 1。桶不足返回 false，一行都没动（无半扣）。
+     */
+    boolean deductDrawCountForDraw(String userId, String recordId);
+
+    /** 剩余次数 = 未过期且未扣完的桶 remain 之和（没有余额列）；对外读与消费路径同口径 */
+    int sumAvailableDrawCount(String userId);
+
+    /** 抽奖次数有效期天数（{@code draw_count_config} 单行，种子 id=1 / 30 天）；缺行抛系统异常 */
+    int drawCountValidDays();
+
+    /** 更新抽奖次数有效期天数（单行，id=1）；缺行视为系统错误 */
+    void updateDrawCountValidDays(int days);
+
+    // ---- 购买单（ADR-0014，订单兼 outbox：幂等入口 + 状态机载体 + 对账源） ----
+
+    /**
+     * 落一行购买单（{@code state = DEDUCTED}）。事务边界在调用方（port 适配器的组合事务）：
+     * 本方法用 {@code TransactionTemplate} REQUIRED 并入外层，与积分扣分同一物理事务提交/回滚——
+     * 「单在 ⇒ 分已扣」由调用方保证，本方法不单独兜底。
+     * 撞 {@code uk_purchase_order_id} 抛 {@code DuplicateKeyException}（并发同 token 的唯一互斥点）。
+     */
+    boolean insertPurchaseOrder(DrawCountPurchaseOrderEntity order);
+
+    /** 按购买单业务 ID 查（Stripe 幂等重放入口）；不存在返回 null */
+    DrawCountPurchaseOrderEntity queryPurchaseOrder(String purchaseOrderId);
+
+    /**
+     * 到期待补偿的购买单：{@code state = DEDUCTED} 且 {@code next_retry_at} 为空或已到点，
+     * 按 id 升序（FIFO），上限 {@code limit}。走 {@code idx_state_next_retry}，正常时点扫描只碰分钟级窗口内的少量行。
+     */
+    List<DrawCountPurchaseOrderEntity> listDuePurchaseOrders(int limit);
+
+    /**
+     * 抢占式认领一笔待补偿单：条件更新 {@code state = DEDUCTED 且到点} 才生效，
+     * 同时递增 {@code retry_count}、写 {@code next_retry_at}（退避到下一轮）。
+     * 返回 false = 已被其他实例抢占或状态已不在起点，跳过即可。
+     */
+    boolean claimPurchaseOrder(Long id, LocalDateTime nextRetryAt);
+
+    /**
+     * 入账完成置 {@code DONE}（条件更新 {@code state <> DONE} 才生效）——
+     * 从 DEDUCTED 与 DEAD 都可达：DEAD 行被人工重置或客户端重试补齐后同样收敛。
+     * 返回 false = 已是 DONE（幂等跳过）。
+     */
+    boolean finishPurchaseOrder(String purchaseOrderId);
+
+    /** 重试耗尽置 {@code DEAD}（条件更新 {@code state = DEDUCTED}）；返回 false = 状态已变，跳过 */
+    boolean markPurchaseOrderDead(Long id);
 }

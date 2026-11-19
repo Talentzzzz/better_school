@@ -24,7 +24,7 @@ import com.betterschool.marketing.domain.raffle.model.valobj.UserPrizeVO;
 import com.betterschool.marketing.domain.raffle.service.IRaffleDrawService;
 import com.betterschool.marketing.domain.raffle.service.IRaffleQueryService;
 import com.betterschool.marketing.domain.raffle.service.IRaffleShippingService;
-import com.betterschool.marketing.usecase.raffle.RaffleExchangeCase;
+import com.betterschool.marketing.domain.raffle.service.drawcount.IRaffleDrawCountPurchaseService;
 import com.betterschool.marketing.trigger.common.http.security.SecurityUtils;
 import com.betterschool.marketing.types.common.AppException;
 import com.betterschool.marketing.types.common.ResponseCode;
@@ -65,7 +65,7 @@ public class LotteryController implements ILotteryService {
 
     private final IRaffleQueryService raffleQueryService;
     private final IRaffleDrawService raffleDrawService;
-    private final RaffleExchangeCase raffleExchangeCase;
+    private final IRaffleDrawCountPurchaseService raffleDrawCountPurchaseService;
     private final IRaffleShippingService raffleShippingService;
 
     @Override
@@ -80,7 +80,7 @@ public class LotteryController implements ILotteryService {
         dto.setStartAt(activity.getStartAt());
         dto.setEndAt(activity.getEndAt());
         dto.setStatus(activity.statusAt(LocalDateTime.now()));
-        dto.setDrawCountPrice(Constants.DRAW_COUNT_EXCHANGE_PRICE);
+        dto.setDrawCountPrice(Constants.DRAW_COUNT_PURCHASE_PRICE);
         dto.setDrawCountValidDays(activity.getDrawCountValidDays());
         return Response.ok(dto);
     }
@@ -142,13 +142,22 @@ public class LotteryController implements ILotteryService {
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
 
+    /**
+     * 用积分购买抽奖次数（抽奖域内的次数资产，与抽奖同域）：购买单与扣积分同事务落库
+     * （ADR-0014，单在即分已扣），入账幂等，宕机残留由 drawCountPurchaseScan 定时补偿收敛；
+     * 同 token 重放按 Stripe 语义返回原结果、不重复扣不重复加。
+     * <p>
+     * 路径保留历史的 {@code /exchange/draw-count}（前端在调），并给出语义化的
+     * {@code /purchase/draw-count}——两条指向同一实现。
+     */
     @Override
-    @PostMapping("/exchange/draw-count")
+    @PostMapping({"/purchase/draw-count", "/exchange/draw-count"})
     public Response<RedeemDrawCountResponseDTO> exchangeDrawCount(
             @Valid @RequestBody RedeemDrawCountRequestDTO request) {
-        // 跨域兑换边（扣分 + 入账）走 case 层顺序编排，域服务各自不知道自己以外的事
-        var result = raffleExchangeCase.exchangeDrawCount(SecurityUtils.currentUserId(), request.getToken());
-        return Response.ok(new RedeemDrawCountResponseDTO(result.getRedeemOrderId(), result.getDrawCount()));
+        var result = raffleDrawCountPurchaseService.purchaseDrawCount(
+                SecurityUtils.currentUserId(), request.getToken(), request.quantityOrDefault());
+        return Response.ok(new RedeemDrawCountResponseDTO(
+                result.getPurchaseOrderId(), result.getPointsCost(), result.getDrawCount()));
     }
 
     @Override

@@ -21,7 +21,7 @@ public class PointsBucketEntity {
     private String userId;
     /** 入账积分数（恒正） */
     private Integer amount;
-    /** 该桶剩余可用（消费按 FIFO 递减；过期清理置 0） */
+    /** 该桶剩余可用（消费按 FIFO 递减；过期桶不计入读数，由 expire_at 懒判） */
     private Integer remain;
     private LocalDateTime expireAt;
     private PointsReasonType reasonType;

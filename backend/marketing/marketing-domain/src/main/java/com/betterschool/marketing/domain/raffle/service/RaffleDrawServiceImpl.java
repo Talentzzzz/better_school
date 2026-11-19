@@ -1,6 +1,5 @@
 package com.betterschool.marketing.domain.raffle.service;
 
-import com.betterschool.marketing.domain.raffle.adapter.port.drawcount.IDrawCountPort;
 import com.betterschool.marketing.domain.raffle.adapter.port.inventory.IInventoryDeductPort;
 import com.betterschool.marketing.domain.raffle.adapter.repository.IRaffleRepository;
 import com.betterschool.marketing.domain.raffle.model.aggregate.DrawRecordAggregate;
@@ -11,6 +10,7 @@ import com.betterschool.marketing.domain.raffle.model.entity.DrawStrategyAwardEn
 import com.betterschool.marketing.domain.raffle.model.valobj.DrawRecordActionVO;
 import com.betterschool.marketing.domain.raffle.model.valobj.DrawResultVO;
 import com.betterschool.marketing.domain.raffle.service.chain.factory.RaffleChainFactory;
+import com.betterschool.marketing.domain.raffle.service.drawcount.IDrawCountAccountService;
 import com.betterschool.marketing.types.common.AppException;
 import com.betterschool.marketing.types.common.LotteryDrawnMessage;
 import com.betterschool.marketing.types.common.ResponseCode;
@@ -27,7 +27,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 抽奖主链路实现（票 13）：编排次数域（port）、责任链（票 11）、库存域（port）与落库，不持有跨域状态。
+ * 抽奖主链路实现（票 13）：编排次数（**同域**，抽奖次数归抽奖域）、责任链（票 11）、
+ * 库存域（port）与落库，不持有跨域状态。
  * <p>
  * 三条降级 / 兜底路径：预热缺失（链尾默认节点抛 4311）→ DB 直算概率；虚拟奖品桶不足 / 实物配额不足
  * → 切兜底奖品位（type=fallback）；连兜底也扣不出 → RAFFLE_ISSUE_FAILED，本次不落任何库存。
@@ -44,7 +45,7 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
 
     private final IRaffleRepository raffleRepository;
     private final RaffleChainFactory raffleChainFactory;
-    private final IDrawCountPort drawCountPort;
+    private final IDrawCountAccountService drawCountAccountService;
     private final IInventoryDeductPort inventoryDeductPort;
 
     @Override
@@ -63,8 +64,10 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
         DrawActivityEntity activity = raffleRepository.queryCurrentActivity();
         checkActivityOpen(activity);
 
-        // 次数扣减先于决策（rafflex 同序）：不足即拒，无任何副作用
-        if (!drawCountPort.deductForDraw(userId, recordId)) {
+        // 次数扣减先于决策（rafflex 同序）：不足即拒，无任何副作用。
+        // 抽奖只消耗抽奖次数，**从不直接扣积分**——积分换次数是另一条独立入口，见
+        // IRaffleDrawCountPurchaseService。
+        if (!drawCountAccountService.deductForDraw(userId, recordId)) {
             // 并发同 token：另一请求刚扣次落库 → 这笔是重放；真没次数才是 NO_CHANCE
             DrawRecordEntity concurrent = queryOwnRecord(recordId, userId);
             if (concurrent != null) {

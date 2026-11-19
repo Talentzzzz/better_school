@@ -87,13 +87,20 @@ public class Constants {
     public final static long WS_TICKET_TTL_SECONDS = 60;
 
     /**
-     * WS 连接路由表 Redis key 前缀（多实例推送路由）：value = {@code 转发端点|sessionId}。
-     * 握手注册、心跳续期、断连 CAS 注销；推送侧查它做 HTTP 转发（漏推仍由补拉兜底）
+     * WS 连接路由表 Redis key 前缀（多实例推送路由）：value = {@code 实例端点标识|sessionId}。
+     * 握手注册、心跳续期、断连 CAS 注销；推送侧查它定向到目标实例的 pub/sub 频道（漏推仍由补拉兜底）
      */
     public final static String WS_ROUTE_KEY = "bs:ws-route:";
 
     /** WS 路由条目 TTL（秒）：客户端心跳 25s、60s 判死，90s 容忍丢两次心跳 */
     public final static long WS_ROUTE_TTL_SECONDS = 90;
+
+    /**
+     * WS 跨实例推送 pub/sub 定向频道前缀（多实例推送路由）：channel = 前缀 + 实例端点标识。
+     * 每个实例只订阅自己的频道，发布方按路由查到的端点精确发布——fire-and-forget，
+     * 无回执无持久化，漏推由客户端 (roomId, seq) 增量补拉兜底；Redis Cluster 下如需定向语义换 Sharded Pub/Sub
+     */
+    public final static String WS_PUSH_CHANNEL_PREFIX = "bs:ws-push:";
 
     /**
      * 跑腿防占单：主动放弃的滑动窗口计数 Redis ZSET key 前缀（票 05）。

@@ -14,26 +14,35 @@ backend/
     └── marketing-{types,api,domain,case,infrastructure,trigger,app}
 ```
 
-营销服务一个 app 承载 **五个域段**：`points`（积分）、`raffle`（抽奖——票 11 表 + 责任链 + 预热，
-票 13 主链路与读侧；**票 13 起取代原 lottery 旧域**），以及三个支撑域 `drawcount`（抽奖次数桶）、
-`config`（有效期 / 次数 / 行为返利配置）、`inventory`（票 12 两段式库存）。
+营销服务一个 app 承载 **四个域段**：两个业务域 `points`（积分）、`raffle`（抽奖——票 11 表 + 责任链 + 预热，
+票 13 主链路与读侧；**票 13 起取代原 lottery 旧域**，并**吸收抽奖次数**：`draw_count_bucket / detail /
+config` 与次数账务、次数购买都归它），以及两个支撑域 `rebate`（行为返利规则）、`inventory`（票 12 两段式库存）。
 （沿革：票 06 并入 points、票 07 并入 lottery 旧域、票 10 加 drawcount 与 config、
-票 12 加 inventory、票 13 删 lottery 旧域并把它换成 raffle。）
+票 12 加 inventory、票 13 删 lottery 旧域并把它换成 raffle；**config 域后来拆掉**——
+两张有效期表跟表走，`points_validity_config` 归 points、`action_rebate_config` 留给改名后的 `rebate` 域；
+**drawcount 域后来并入 raffle**——抽奖次数是抽奖域内的资产，`draw_count_config` 随之归 raffle，
+抽奖只扣次数、积分换次数改为 raffle 域内的「购买次数」用例。）
+
+**domain 层没有 `common` 段**：跨服务 / 跨域的只读端口一律在**消费方域**声明（`domain/<域>/adapter/port/…`），
+infrastructure 各自实现。因此用户信息这种「每个域都要一点」的读能力不设共享域——
+points 与 raffle 各自有 `IUserQueryPort` + 域内读视图（照单体 chat / community 的先例）。
+`marketing.{layer}.common.*` 只用**非域**公共件（框架装配、统一响应、JWT、outbox、wire 契约）。
 `MarketingApplication` 一个启动器 + 一套 `marketing.config.*`。
 
 每个工程 = 7 个模块，依赖方向照 `backend/CLAUDE.md` §1 严格单向。**每个工程自带一份 types**，
 不复用 `bs-types`——改一个常量不该让两个 app 一起重发。对外 `Response<T>{code,info,data}` 在各 `-api/response/`。
 
 包名口径：包根 `com.betterschool.marketing`，**所有层都带域子包**
-（`marketing.{layer}.{points,drawcount,config,raffle,inventory}.*`——多域同名类多，物理上必须）：
+（`marketing.{layer}.{points,rebate,raffle,inventory}.*`——多域同名类多，物理上必须；抽奖次数在 raffle 域内
+落 `raffle.{model.entity,adapter.repository,service.drawcount}` 三段）：
 
 - 域专属（`Constants`、`PointsReasonType`、`DrawRecordEntity`、`IRaffleRepository`…）落
   `marketing.{layer}.<域>.*`；
-- 跨域公共件（框架装配 / 统一响应 / JWT / MyBatis·事务 / RocketMQ 容器与虚拟线程 / VT 探针 /
-  `IUserQueryPort`·`UserBasicVO` / outbox / 跨域 wire 契约 `LotteryDrawnMessage`）
-  落 `marketing.{layer}.common.*`，**只留一份**；
+- 非域公共件（框架装配 / 统一响应 / JWT / MyBatis·事务 / RocketMQ 容器与虚拟线程 / VT 探针 /
+  outbox / 跨域 wire 契约 `LotteryDrawnMessage`）落 `marketing.{layer}.common.*`，**只留一份**；
+  注意 domain 层的 common 只此一条口径：**不放任何端口与域模型**（端口按消费方域声明）；
 - 同名类的 bean 名冲突由 `FqcnAnnotationBeanNameGenerator`（组件扫描与 `@MapperScan` 都挂）解决；
-  `@MapperScan` **逐域列出**（`infrastructure.{points,drawcount,config,raffle,inventory}.dao` + `infrastructure.common.dao.outbox`），
+  `@MapperScan` **逐域列出**（`infrastructure.{points,rebate,raffle,inventory}.dao` + `infrastructure.common.dao.outbox`），
   不能扫 `marketing.infrastructure.dao` 这种伪公共前缀。
   **抽奖域自票 13 起只有 `raffle` 一个包段**（旧 `lottery` 段已删）。
 
@@ -99,17 +108,22 @@ RocketMQ dashboard 在 **8089**（避免与各服务的 HTTP 端口撞）。票 
 | 用户只读 | `IUserQueryService` | `bs-api`（跨 project） | 单体 `bs-trigger/rpc/UserQueryDubboService` | marketing `-infrastructure/common/adapter/port/marketing/UserQueryPort` |
 | 积分兑换 | `IPointsExchangeService` | `marketing-api`（**同 reactor 模块**） | marketing `-trigger/points/rpc/PointsExchangeDubboService` | 票 13 起**无 Dubbo consumer**（见下） |
 
-**票 13 把「兑换」从 Dubbo 边折叠成进程内调用**：兑抽奖次数是「积分扣分 + 次数入账」，
+**票 13 把「兑换」从 Dubbo 边折叠成进程内调用**：买抽奖次数是「积分扣分 + 次数入账」，
 两域同进程同库，走 RPC 反而要在同进程里做跨「服务」的分布式一致性。现由
 `domain/raffle/adapter/port/` 的 `IPointsDeductPort` 声明、`infrastructure/raffle/adapter/port/`
-纯委托积分域服务。**票 05 起这两步不再共用一个 MySQL 事务**：抽奖域只扣积分（本域内原子），
-次数入账由 case 层的 `RaffleExchangeCase` 顺序调次数域 `IDrawCountAccountService.creditForRedeem`
-推进，与全仓跨域口径一致（各域内原子 = 幂等 + 重试收敛；两个域共用同一个
-`hash(userId, token)` 兑换单号做幂等互斥，因此「扣分成功、入账未成功」时带同一 token 重试即收敛）。
+承担**组合事务**（ADR-0014）：**INSERT 购买单（`draw_count_purchase_order`）与扣积分
+同一物理事务——「单在 ⇒ 分已扣」**；次数入账幂等（桶 uk），收敛靠三路重试踩同一
+`hash(userId, token)` 购买单号：客户端带 token 重放（Stripe 语义：DONE 返回原结果、
+中间态顺势补齐）、xxl `drawCountPurchaseScan` 定时补偿（条件更新抢占 + 退避
+1/2/4/8/16 分钟，5 次耗尽进死信）、T+1 对账兜底（另开票）。决策依据与否决项见
+[`docs/adr/0014-draw-count-purchase-eventual-consistency.md`](../../../docs/adr/0014-draw-count-purchase-eventual-consistency.md)。
+**drawcount 域并入 raffle 后这条边只剩两段**：`IRaffleDrawCountPurchaseService`（抽奖域）编排
+「组合事务落单扣分」与经域内 `IDrawCountAccountService.creditForPurchase` 入账，不再有跨域 case 编排；
+抽奖主链路则**只扣次数**（同域 `IDrawCountAccountService.deductForDraw`），从不碰积分。
 `IPointsExchangeService` 的 Dubbo Provider 仍在（对外契约不删），但**域内不再有 consumer**；
 集成测试用的 `@Primary StubPointsExchangePort` 随之删除。跨域写组合的 port 模式照 `backend/CLAUDE.md` §1
-（domain 服务禁止互相注入）：抽奖域另有 `IDrawCountPort`（次数域，主链路扣次 / 读余额）、
-`IInventoryDeductPort`（库存域，票 12）与 `IQuotaConfirmPort`（库存域兑换确认面，票 14）三条边。
+（domain 服务禁止互相注入）：抽奖域另有 `IInventoryDeductPort`（库存域，票 12）与
+`IQuotaConfirmPort`（库存域兑换确认面，票 14）两条边。
 
 ## 4.1 MQ：一个 topic 三方订阅，各用一组
 
@@ -169,7 +183,7 @@ mvn -o install -pl marketing-api -am -DskipTests
 ## 6. 数据面：营销一个库
 
 营销服务一个 schema（与单体**同 MySQL 实例、不同库**）：**`bs_marketing`**（测试 `bs_marketing_test`），
-points / drawcount / config / raffle / inventory 五段同库。跨 schema 的硬约定只对**单体库**成立：
+points / rebate / raffle（含抽奖次数）/ inventory 四段同库。跨 schema 的硬约定只对**单体库**成立：
 **互相只存 id、不回查单体库、不存昵称头像快照**，用户信息一律经 `IUserQueryService` 取回后在应用层拼。
 **同库内跨表展示的数据也一律多查一次应用层拼装**（如抽奖的中奖记录关联 `virtual_inventory_quota` 带出面额与库存），SQL 层零 JOIN。
 
@@ -177,10 +191,10 @@ points / drawcount / config / raffle / inventory 五段同库。跨 schema 的�
 | --- | --- |
 | `marketing/sql/schema.sql` | DDL 主体（不含 `CREATE DATABASE` / `USE`，开发库与测试库共用；18 张表，全部 `IF NOT EXISTS` 幂等；hot-row-merge-l2w256 起为**最终形态**——无两张库存桶表、明细表无 `bucket_id` / `state`；uuid-biz-id 票 08 起存量库退役，历史切换包已删，改库表 = 改 schema.sql + 删库重建） |
 | `marketing/sql/init-{dev,test}.sql` | 建库文件：只建 `bs_marketing` / `bs_marketing_test`，**不切库** |
-| `marketing/sql/xxl-job-tasks.sql` | xxl 执行器 + 任务注册落点（executor `marketing-executor`，4 handler：`outboxScan`（票 14 起只重发超时行）、`pointsExpireScan`、`drawCountBucketExpireScan`、`raffleCacheWarmup`，表里的 appname/cron 以此为准）；新增/改名 handler 时改这里并重灌 admin 库 |
+| `marketing/sql/xxl-job-tasks.sql` | xxl 执行器 + 任务注册落点（executor `marketing-executor`，2 handler：`outboxScan`（票 14 起只重发超时行）、`raffleCacheWarmup`；桶过期清零的两个 handler 已下线，过期改纯读路径懒判。表里的 appname/cron 以此为准）；新增/改名 handler 时改这里并重灌 admin 库 |
 
 > 营销侧**尚未接入超时中心**（零接入方；内嵌化票 08 只定规格）：将来落表 / 落码的确定落法，
-> 以及它与既有扫描 job（`pointsExpireScan` / `drawCountBucketExpireScan`）的边界，
+> 以及它与桶过期清零（已下线）的边界判据，
 > 见 [`marketing/docs/architecture/timeout.md`](../../marketing/docs/architecture/timeout.md)。
 > 库存合并已整条进进程（hot-row-merge-l2w256，ADR-0013）：无消息、无桶、无兜底，
 > `inventoryMergeBackstop` / `inventoryBucketWarmup` 两个注册行在切换窗口停用、D9 收口删除。

@@ -3,6 +3,8 @@ package com.betterschool.marketing.infrastructure.raffle.adapter.repository.raff
 import com.betterschool.marketing.domain.raffle.adapter.repository.IRaffleRepository;
 import com.betterschool.marketing.domain.raffle.model.aggregate.DrawRecordAggregate;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawActivityEntity;
+import com.betterschool.marketing.domain.raffle.model.entity.DrawCountBucketEntity;
+import com.betterschool.marketing.domain.raffle.model.entity.DrawCountPurchaseOrderEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawRecordDetailEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawRecordEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawStrategyAwardEntity;
@@ -17,12 +19,19 @@ import com.betterschool.marketing.infrastructure.inventory.dao.IAwardInventoryDa
 import com.betterschool.marketing.infrastructure.inventory.dao.IVirtualInventoryQuotaDao;
 import com.betterschool.marketing.infrastructure.inventory.dao.po.AwardInventoryPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawActivityDao;
+import com.betterschool.marketing.infrastructure.raffle.dao.IDrawCountConfigDao;
+import com.betterschool.marketing.infrastructure.raffle.dao.IDrawCountDao;
+import com.betterschool.marketing.infrastructure.raffle.dao.IDrawCountDetailDao;
+import com.betterschool.marketing.infrastructure.raffle.dao.IDrawCountPurchaseOrderDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawRecordDetailDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawStrategyAwardDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawStrategyDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawStrategyWeightDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IRaffleDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawActivityPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawCountBucketPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawCountDetailPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawCountPurchaseOrderPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordDetailPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordViewPO;
@@ -33,7 +42,11 @@ import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawUserPrizeView
 import com.betterschool.marketing.infrastructure.raffle.dao.po.ExchangeDetailRowPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.VirtualQuotaRowPO;
 import com.betterschool.marketing.types.common.Constants;
+import com.betterschool.marketing.types.id.IIdGenerator;
+import com.betterschool.marketing.types.raffle.DrawCountPurchaseState;
+import com.betterschool.marketing.types.raffle.DrawCountReasonType;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBucket;
 import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
@@ -50,11 +63,15 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * 抽奖域唯一仓储实现：四张面（决策侧配置读 + 决策数据 Redis 读写、读侧翻页视图、落库写面、
- * 发货状态机写面）原样合成，数据访问按表分落各 DAO（一表一 DAO；读侧批量回查直接注入
- * 库存域的 {@code IAwardInventoryDao} / {@code IVirtualInventoryQuotaDao}）；只有跨表 /
- * 带 outbox 的写面用 {@code TransactionTemplate}（REQUIRED，可并入调用方事务）。
+ * 抽奖域唯一仓储实现：五张面（决策侧配置读 + 决策数据 Redis 读写、读侧翻页视图、落库写面、
+ * 发货状态机写面、抽奖次数桶账务）原样合成，数据访问按表分落各 DAO（一表一 DAO；读侧批量回查
+ * 直接注入库存域的 {@code IAwardInventoryDao} / {@code IVirtualInventoryQuotaDao}）；跨表 /
+ * 带 outbox / 桶与明细的写面用 {@code TransactionTemplate}（REQUIRED，可并入调用方事务）。
+ * <p>
+ * 次数桶四张表（bucket / detail / config）随「抽奖次数与抽奖同域」并入本仓储，原
+ * {@code DrawCountRepository} 的方法体原样搬入（入账、扣次两处事务仍由本类承担）。
  */
+@Slf4j
 @Repository
 @RequiredArgsConstructor
 public class RaffleRepository implements IRaffleRepository {
@@ -65,11 +82,16 @@ public class RaffleRepository implements IRaffleRepository {
     private final IDrawStrategyAwardDao drawStrategyAwardDao;
     private final IDrawStrategyWeightDao drawStrategyWeightDao;
     private final IDrawRecordDetailDao drawRecordDetailDao;
+    private final IDrawCountDao drawCountDao;
+    private final IDrawCountDetailDao drawCountDetailDao;
+    private final IDrawCountPurchaseOrderDao drawCountPurchaseOrderDao;
+    private final IDrawCountConfigDao drawCountConfigDao;
     private final IVirtualInventoryQuotaDao virtualInventoryQuotaDao;
     private final IAwardInventoryDao awardInventoryDao;
     private final RedissonClient redissonClient;
     private final TransactionTemplate transactionTemplate;
     private final OutboxMessageStore outboxMessageStore;
+    private final IIdGenerator idGenerator;
 
     // ---------------------------------------------------------------- 配置读（决策侧）
 
@@ -375,6 +397,195 @@ public class RaffleRepository implements IRaffleRepository {
             return true;
         });
         return Boolean.TRUE.equals(advanced);
+    }
+
+    // ---------------------------------------------------------------- 抽奖次数桶账务（同域）
+
+    @Override
+    public boolean creditDrawCountBucket(String userId, int amount, DrawCountReasonType reasonType, String refId) {
+        return Boolean.TRUE.equals(transactionTemplate.execute(status ->
+                insertDrawCountBucket(newDrawCountBucket(userId, amount, reasonType, refId, LocalDateTime.now()))));
+    }
+
+    @Override
+    public boolean deductDrawCountForDraw(String userId, String recordId) {
+        Boolean result = transactionTemplate.execute(status -> {
+            if (drawCountDetailDao.selectDetailIdForUpdate(recordId) != null) {
+                // 同一抽奖记录重放：幂等跳过，不重复扣次
+                log.info("[RaffleRepository] 次数扣次明细已存在，幂等跳过 userId={}, recordId={}", userId, recordId);
+                return Boolean.TRUE;
+            }
+            List<DrawCountBucketEntity> buckets = listAvailableDrawCountBucketsForUpdate(userId);
+            if (buckets.isEmpty()) {
+                // 一行都没动，事务空提交——不用回滚来表达业务失败
+                return Boolean.FALSE;
+            }
+            // 每次抽奖恒扣 1 次：最早的可用桶必有 remain >= 1，单个桶即扣完，不跨桶
+            DrawCountBucketEntity bucket = buckets.get(0);
+            LocalDateTime now = LocalDateTime.now();
+            DrawCountDetailPO detailPO = new DrawCountDetailPO();
+            detailPO.setUserId(userId);
+            detailPO.setBucketId(bucket.getBucketId());
+            detailPO.setRefId(recordId);
+            detailPO.setCreateTime(now);
+            detailPO.setUpdateTime(now);
+            // 流水先行：INSERT IGNORE 明细撞 uk = 这笔抽奖已被并发事务扣过 ⇒ 整事务回滚
+            if (drawCountDetailDao.insertIgnoreDetail(detailPO) == 0) {
+                log.warn("[RaffleRepository] 扣次明细撞唯一键，判定为重复抽奖 userId={}, bucketId={}, recordId={}",
+                        userId, bucket.getBucketId(), recordId);
+                status.setRollbackOnly();
+                return null;
+            }
+            // 桶已在 listAvailableDrawCountBucketsForUpdate 里加了行锁，这里必然命中 1 行；0 行说明不变量被破坏
+            if (drawCountDao.deductRemain(bucket.getBucketId()) == 0) {
+                throw new IllegalStateException("扣减次数桶余量影响 0 行，桶余量与加锁读结果不一致 bucketId="
+                        + bucket.getBucketId());
+            }
+            return Boolean.TRUE;
+        });
+        return Boolean.TRUE.equals(result);
+    }
+
+    /** 当前可用桶（FIFO 加行锁），只服务 {@link #deductDrawCountForDraw} 的加锁读，不对外 */
+    private List<DrawCountBucketEntity> listAvailableDrawCountBucketsForUpdate(String userId) {
+        return drawCountDao.selectAvailableBucketsForUpdate(userId).stream().map(this::toDrawCountBucketEntity).toList();
+    }
+
+    @Override
+    public int sumAvailableDrawCount(String userId) {
+        return drawCountDao.sumAvailableRemain(userId);
+    }
+
+    @Override
+    public int drawCountValidDays() {
+        Integer validDays = drawCountConfigDao.selectDrawCountValidDays();
+        if (validDays == null) {
+            throw new IllegalStateException("draw_count_config 缺单行配置——种子或迁移没跑");
+        }
+        return validDays;
+    }
+
+    @Override
+    public void updateDrawCountValidDays(int days) {
+        if (drawCountConfigDao.updateDrawCountValidDays(days) == 0) {
+            throw new IllegalStateException("draw_count_config 缺单行配置，更新无效——种子或迁移没跑");
+        }
+    }
+
+    // ---------------------------------------------------------------- 购买单（ADR-0014，订单兼 outbox）
+
+    @Override
+    public boolean insertPurchaseOrder(DrawCountPurchaseOrderEntity order) {
+        // REQUIRED：并入调用方（port 适配器）的组合事务，与积分扣分同提交同回滚
+        return Boolean.TRUE.equals(transactionTemplate.execute(status ->
+                drawCountPurchaseOrderDao.insertOrder(toPurchaseOrderPO(order)) > 0));
+    }
+
+    @Override
+    public DrawCountPurchaseOrderEntity queryPurchaseOrder(String purchaseOrderId) {
+        return toPurchaseOrderEntity(drawCountPurchaseOrderDao.selectByPurchaseOrderId(purchaseOrderId));
+    }
+
+    @Override
+    public List<DrawCountPurchaseOrderEntity> listDuePurchaseOrders(int limit) {
+        return drawCountPurchaseOrderDao.listDue(limit).stream().map(this::toPurchaseOrderEntity).toList();
+    }
+
+    @Override
+    public boolean claimPurchaseOrder(Long id, LocalDateTime nextRetryAt) {
+        return drawCountPurchaseOrderDao.claim(id, nextRetryAt) > 0;
+    }
+
+    @Override
+    public boolean finishPurchaseOrder(String purchaseOrderId) {
+        return drawCountPurchaseOrderDao.finish(purchaseOrderId) > 0;
+    }
+
+    @Override
+    public boolean markPurchaseOrderDead(Long id) {
+        return drawCountPurchaseOrderDao.markDead(id) > 0;
+    }
+
+    private DrawCountPurchaseOrderPO toPurchaseOrderPO(DrawCountPurchaseOrderEntity order) {
+        DrawCountPurchaseOrderPO po = new DrawCountPurchaseOrderPO();
+        po.setPurchaseOrderId(order.getPurchaseOrderId());
+        po.setUserId(order.getUserId());
+        po.setQuantity(order.getQuantity());
+        po.setPointsCost(order.getPointsCost());
+        po.setState(order.getState().getCode());
+        po.setRetryCount(order.getRetryCount());
+        po.setNextRetryAt(order.getNextRetryAt());
+        po.setFinishTime(order.getFinishTime());
+        po.setCreateTime(order.getCreateTime());
+        po.setUpdateTime(order.getUpdateTime());
+        return po;
+    }
+
+    private DrawCountPurchaseOrderEntity toPurchaseOrderEntity(DrawCountPurchaseOrderPO po) {
+        if (po == null) {
+            return null;
+        }
+        DrawCountPurchaseOrderEntity order = new DrawCountPurchaseOrderEntity();
+        order.setPurchaseOrderId(po.getPurchaseOrderId());
+        order.setUserId(po.getUserId());
+        order.setQuantity(po.getQuantity());
+        order.setPointsCost(po.getPointsCost());
+        order.setState(DrawCountPurchaseState.of(po.getState()));
+        order.setRetryCount(po.getRetryCount());
+        order.setNextRetryAt(po.getNextRetryAt());
+        order.setFinishTime(po.getFinishTime());
+        order.setCreateTime(po.getCreateTime());
+        order.setUpdateTime(po.getUpdateTime());
+        return order;
+    }
+
+    /** 插一行桶（{@link #creditDrawCountBucket} 的一步）；撞 uk_user_reason_ref 返回 false = 已记过 */
+    private boolean insertDrawCountBucket(DrawCountBucketEntity bucket) {
+        DrawCountBucketPO bucketPO = new DrawCountBucketPO();
+        bucketPO.setBucketId(bucket.getBucketId());
+        bucketPO.setUserId(bucket.getUserId());
+        bucketPO.setAmount(bucket.getAmount());
+        bucketPO.setRemain(bucket.getRemain());
+        bucketPO.setExpireAt(bucket.getExpireAt());
+        bucketPO.setReasonType(bucket.getReasonType().name());
+        bucketPO.setRefId(bucket.getRefId());
+        bucketPO.setCreateTime(bucket.getCreateTime());
+        bucketPO.setUpdateTime(bucket.getUpdateTime());
+        return drawCountDao.insertIgnoreBucket(bucketPO) > 0;
+    }
+
+    /**
+     * 造一行待入账的桶：bucket_id 走统一 IdGenerator 发号（uuid-biz-id 票 07），
+     * expire_at = 入账时点 + 次数有效期配置（都在事务内取）。
+     */
+    private DrawCountBucketEntity newDrawCountBucket(String userId, int amount, DrawCountReasonType reasonType,
+                                                     String refId, LocalDateTime now) {
+        DrawCountBucketEntity bucket = new DrawCountBucketEntity();
+        bucket.setBucketId(idGenerator.nextId());
+        bucket.setUserId(userId);
+        bucket.setAmount(amount);
+        bucket.setRemain(amount);
+        bucket.setExpireAt(now.plusDays(drawCountValidDays()));
+        bucket.setReasonType(reasonType);
+        bucket.setRefId(refId);
+        bucket.setCreateTime(now);
+        bucket.setUpdateTime(now);
+        return bucket;
+    }
+
+    private DrawCountBucketEntity toDrawCountBucketEntity(DrawCountBucketPO bucketPO) {
+        DrawCountBucketEntity bucket = new DrawCountBucketEntity();
+        bucket.setId(bucketPO.getId());
+        bucket.setBucketId(bucketPO.getBucketId());
+        bucket.setUserId(bucketPO.getUserId());
+        bucket.setAmount(bucketPO.getAmount());
+        bucket.setRemain(bucketPO.getRemain());
+        bucket.setExpireAt(bucketPO.getExpireAt());
+        bucket.setReasonType(DrawCountReasonType.valueOf(bucketPO.getReasonType()));
+        bucket.setRefId(bucketPO.getRefId());
+        bucket.setCreateTime(bucketPO.getCreateTime());
+        bucket.setUpdateTime(bucketPO.getUpdateTime());
+        return bucket;
     }
 
     // ---------------------------------------------------------------- Redis key 口径

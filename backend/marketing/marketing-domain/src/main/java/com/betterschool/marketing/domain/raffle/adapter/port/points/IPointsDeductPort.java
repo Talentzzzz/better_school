@@ -1,14 +1,19 @@
 package com.betterschool.marketing.domain.raffle.adapter.port.points;
 
+import com.betterschool.marketing.domain.raffle.model.entity.DrawCountPurchaseOrderEntity;
+
 /**
- * 抽奖域 → 积分域的兑换扣分端口（CLAUDE.md §1：跨域写组合不在域服务间直接注入）。
- * 实现在 infrastructure，委托 {@code IPointsAccountService.deduct}（reasonType 固定
- * REDEEM_DRAW_COUNT——抽奖域只兑次数）。业务失败以结果对象返回、不抛异常：
- * 「积分不足」的语义不能被异常抹平。
+ * 抽奖域 → 积分域的扣分端口：**只服务「用积分购买抽奖次数」这一条路径**
+ * （抽奖主链路只扣次数，从不碰积分）。实现在 infrastructure，除委托
+ * {@code IPointsAccountService.deduct}（reasonType 固定 REDEEM_DRAW_COUNT）外，
+ * 还承担 ADR-0014 的组合事务边界：**INSERT 购买单与扣积分同一个物理事务**——
+ * 「单在 ⇒ 分已扣」由此成立，补偿重试才永远安全。
+ * 业务失败以结果对象返回、不抛异常：「积分不足」的语义不能被异常抹平
+ * （失败路径由实现内部回滚事务，购买单不落、积分不扣）。
  */
 public interface IPointsDeductPort {
 
-    /** 扣分结果：success = 已扣（或幂等重放）；insufficient = 积分不足；balance = 扣后余额 */
+    /** 扣分结果：success = 单已落 + 分已扣；insufficient = 积分不足（事务已回滚，单不存在）；balance = 扣后余额 */
     class PointsDeductOutcome {
 
         public final boolean success;
@@ -35,7 +40,9 @@ public interface IPointsDeductPort {
     }
 
     /**
-     * 兑换扣分（幂等键 = refId，即兑换单 id）：FIFO 跨桶扣减，凑不够返回「积分不足」而不扣任何一行。
+     * 组合事务「落购买单 + 扣分」（ADR-0014）：先 INSERT 购买单（{@code state = DEDUCTED}）
+     * 再 FIFO 跨桶扣分，同一物理事务提交或回滚。撞 {@code uk_purchase_order_id}
+     * 抛 {@code DuplicateKeyException}——并发同 token 的唯一互斥点，由调用方转幂等推进。
      */
-    PointsDeductOutcome deduct(String userId, int amount, String refId);
+    PointsDeductOutcome deductForOrder(DrawCountPurchaseOrderEntity order);
 }

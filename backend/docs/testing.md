@@ -51,7 +51,7 @@ scripts/test-env.sh up
 ## 营销服务的测试设施（营销票 05 建立，票 06 扩到积分外域，票 07 扩到抽奖并域合一，票 13 抽奖换 raffle 域段）
 
 营销服务是**独立 project**（与单体无 reactor），测试因此放服务的组装层，不挤进 `bs-app`。
-（票 07 起五个域段同属 `marketing` 工程一个 app：points / drawcount / config / raffle / inventory；
+（票 07 起多个域段同属 `marketing` 工程一个 app：points / raffle（含抽奖次数）/ rebate / inventory；
 票 13 起抽奖由 `raffle` 域承载，旧 `lottery` 域段与它的测试基类已删除。）
 
 ```bash
@@ -59,7 +59,7 @@ scripts/test-env.sh up
 mvn -o test -Dtest=RaffleDrawPipelineIntegrationTest -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
-| 项 | 单体（bs-app） | 营销服务（marketing-app，points + drawcount + config + raffle + inventory） |
+| 项 | 单体（bs-app） | 营销服务（marketing-app，points + raffle + rebate + inventory） |
 | --- | --- | --- |
 | 测试库 | `better_school_test` | `bs_marketing_test`（同一 MySQL 容器，库名隔离）+ **redis 逻辑库 1**（key 前缀 `bs:points:` / `bs:raffle:` / `bs:inventory:`） |
 | 基类 | `integration.support.CommunityApiTestBase` | `marketing.integration.support.{PointsApiTestBase, RaffleApiTestBase}`（两类按域共存；VT 两个 seam 测试跑在 `RaffleApiTestBase` 上） |

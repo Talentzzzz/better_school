@@ -25,7 +25,7 @@ public enum ResponseCode {
      * 400 是**跨域同码但文案不同**的常量：合并前积分侧是「参数错误」、
      * 抽奖侧是「参数不合法」，而集成测试逐字断言这条 info（不带 info 的 AppException 重载也用 getInfo()），
      * 所以按域拆开——码值同为 "400"，前端只认码，行为零变更。域内自行选对的那个。
-     * （票 10 起配置域自取第三个：CONFIG_PARAM_ERROR，文案与积分侧一致。）
+     * （票 10 起返利域 / 有效期配置自取第三个：CONFIG_PARAM_ERROR，文案与积分侧一致。）
      */
     POINTS_PARAM_ERROR("400", "参数错误"),
     LOTTERY_PARAM_ERROR("400", "参数不合法"),

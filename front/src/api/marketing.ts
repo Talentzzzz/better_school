@@ -27,7 +27,7 @@ export interface LotteryActivity {
   status: ActivityStatus
   /** 用积分兑 1 次抽奖的单价（后端常量返回） */
   drawCountPrice: number
-  /** 兑换来的次数有效期天数 */
+  /** 买来的次数有效期天数 */
   drawCountValidDays: number
 }
 
@@ -87,7 +87,8 @@ export const listMyPrizes = (status: UserPrizeStatus, page = 1, pageSize = 20) =
 export const confirmReceived = (id: number) =>
   httpPost<{ id: number; status: UserPrizeStatus }>(`/lottery/my-prizes/${id}/receive`)
 
-/** 兑换抽奖次数：token 是「这一次兑换意图」的 uuid，网络重试必须带同一个（否则重复扣积分） */
+/** 用积分购买抽奖次数：token 是「这一次购买意图」的 uuid，网络重试必须带同一个（否则重复扣积分）.
+ * 后端同一实现也挂在 /lottery/purchase/draw-count；抽奖本身只扣次数、不扣积分。 */
 export const exchangeDrawCount = (token: string) =>
   httpPost<{ redeemOrderId: number; drawCount: number }>(
     '/lottery/exchange/draw-count',
@@ -118,11 +119,11 @@ export const LOTTERY_CODE = {
   PRIZE_NOT_RECEIVABLE: '4314'
 } as const
 
-/** 兑换次数失败业务码 → 专用弹窗文案；未收录的码由调用方落回默认 toast */
+/** 购买次数失败业务码 → 专用弹窗文案；未收录的码由调用方落回默认 toast */
 export const EXCHANGE_FAIL_TEXT: Record<string, { title: string; sub: string }> = {
-  '4306': { title: '积分不足', sub: '抽奖中的积分、攒一攒再来兑换' },
-  '4302': { title: '活动已结束', sub: '兑换通道已关闭' },
-  '4301': { title: '活动还没开始', sub: '开始后再来兑换吧' },
+  '4306': { title: '积分不足', sub: '抽奖中的积分、攒一攒再来购买' },
+  '4302': { title: '活动已结束', sub: '购买通道已关闭' },
+  '4301': { title: '活动还没开始', sub: '开始后再来购买吧' },
   '4311': { title: '活动准备中', sub: '抽奖活动正在准备，稍后再试' }
 }
 

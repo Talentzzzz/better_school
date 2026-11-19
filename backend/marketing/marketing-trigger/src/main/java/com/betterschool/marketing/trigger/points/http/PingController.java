@@ -2,8 +2,8 @@ package com.betterschool.marketing.trigger.points.http;
 
 import com.betterschool.marketing.api.common.dto.UserBasicResponseDTO;
 import com.betterschool.marketing.api.common.response.Response;
-import com.betterschool.marketing.domain.common.adapter.port.marketing.IUserQueryPort;
-import com.betterschool.marketing.domain.common.model.valobj.marketing.UserBasicVO;
+import com.betterschool.marketing.domain.points.adapter.port.marketing.IUserQueryPort;
+import com.betterschool.marketing.domain.points.model.valobj.PointsUserVO;
 import com.betterschool.marketing.trigger.common.http.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,15 +25,15 @@ public class PingController {
 
     @GetMapping("/ping")
     public Response<UserBasicResponseDTO> ping() {
-        UserBasicVO userBasicVO = userQueryPort.getBasic(SecurityUtils.currentUserId());
-        if (userBasicVO == null) {
+        PointsUserVO pointsUserVO = userQueryPort.getBasic(SecurityUtils.currentUserId());
+        if (pointsUserVO == null) {
             return Response.ok(null);
         }
         UserBasicResponseDTO dto = new UserBasicResponseDTO();
-        dto.setUserId(userBasicVO.getUserId());
-        dto.setNickname(userBasicVO.getNickname());
-        dto.setAvatar(userBasicVO.getAvatar());
-        dto.setCreatedAt(userBasicVO.getCreatedAt());
+        dto.setUserId(pointsUserVO.getUserId());
+        dto.setNickname(pointsUserVO.getNickname());
+        dto.setAvatar(pointsUserVO.getAvatar());
+        dto.setCreatedAt(pointsUserVO.getCreatedAt());
         return Response.ok(dto);
     }
 }

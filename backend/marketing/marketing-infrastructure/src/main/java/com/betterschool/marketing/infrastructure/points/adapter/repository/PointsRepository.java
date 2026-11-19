@@ -1,7 +1,6 @@
 package com.betterschool.marketing.infrastructure.points.adapter.repository;
 
 import com.betterschool.marketing.domain.points.adapter.repository.IPointsRepository;
-import com.betterschool.marketing.domain.points.adapter.port.config.IPointsConfigPort;
 import com.betterschool.marketing.domain.points.model.entity.PointsBucketEntity;
 import com.betterschool.marketing.domain.points.model.entity.PointsDetailEntity;
 import com.betterschool.marketing.domain.points.model.valobj.PointsChangedMessage;
@@ -13,6 +12,7 @@ import com.betterschool.marketing.domain.points.model.valobj.PointsTransactionVO
 import com.betterschool.marketing.infrastructure.common.outbox.OutboxMessageStore;
 import com.betterschool.marketing.infrastructure.points.dao.IPointsDao;
 import com.betterschool.marketing.infrastructure.points.dao.IPointsDetailDao;
+import com.betterschool.marketing.infrastructure.points.dao.IPointsValidityConfigDao;
 import com.betterschool.marketing.infrastructure.points.dao.po.PointsBucketPO;
 import com.betterschool.marketing.infrastructure.points.dao.po.PointsDetailPO;
 import com.betterschool.marketing.infrastructure.points.dao.po.PointsMergeGroupPO;
@@ -50,8 +50,8 @@ public class PointsRepository implements IPointsRepository {
 
     private final IPointsDao pointsDao;
     private final IPointsDetailDao pointsDetailDao;
+    private final IPointsValidityConfigDao pointsValidityConfigDao;
     private final OutboxMessageStore outboxMessageStore;
-    private final IPointsConfigPort pointsConfigPort;
     private final TransactionTemplate transactionTemplate;
     private final IIdGenerator idGenerator;
 
@@ -108,11 +108,6 @@ public class PointsRepository implements IPointsRepository {
     @Override
     public int sumAvailableRemain(String userId) {
         return pointsDao.sumAvailableRemain(userId);
-    }
-
-    @Override
-    public int expireBuckets() {
-        return pointsDao.expireBuckets();
     }
 
     @Override
@@ -322,12 +317,28 @@ public class PointsRepository implements IPointsRepository {
         bucket.setUserId(userId);
         bucket.setAmount(amount);
         bucket.setRemain(amount);
-        bucket.setExpireAt(now.plusDays(pointsConfigPort.pointsValidDays()));
+        bucket.setExpireAt(now.plusDays(validDays()));
         bucket.setReasonType(reasonType);
         bucket.setRefId(refId);
         bucket.setCreateTime(now);
         bucket.setUpdateTime(now);
         return bucket;
+    }
+
+    @Override
+    public int validDays() {
+        Integer validDays = pointsValidityConfigDao.selectPointsValidDays();
+        if (validDays == null) {
+            throw new IllegalStateException("points_validity_config 缺单行配置——种子或迁移没跑");
+        }
+        return validDays;
+    }
+
+    @Override
+    public void updateValidDays(int days) {
+        if (pointsValidityConfigDao.updatePointsValidDays(days) == 0) {
+            throw new IllegalStateException("points_validity_config 缺单行配置，更新无效——种子或迁移没跑");
+        }
     }
 
     private static PointsDeductResultVO success(int balance) {

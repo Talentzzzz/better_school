@@ -42,7 +42,7 @@
             <groupId>org.apache.rocketmq</groupId>
             <artifactId>rocketmq-spring-boot-starter</artifactId>
         </dependency>
-        <!-- 过期落账清理 job（job/） -->
+        <!-- xxl-job：定时任务（job/：outbox 兜底、桶合并、决策表预热） -->
         <dependency>
             <groupId>com.xuxueli</groupId>
             <artifactId>xxl-job-core</artifactId>

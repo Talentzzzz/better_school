@@ -40,9 +40,6 @@ public interface IPointsAccountService {
 
     long countTransactions(String userId);
 
-    /** 懒过期落账清理（xxl-job 调度）：只置零、不删行、不发事件 */
-    int expireBuckets();
-
     /**
      * 桶合并（points-compaction 票，xxl-job 调度）：把同用户的「有效小额桶」（remain &le; 阈值且
      * 数量 &ge; 2）并成一桶，过期时间取合并集合最大值、旧桶归零留审计，SUM(remain) 守恒、用户无感。
@@ -50,4 +47,10 @@ public interface IPointsAccountService {
      * @return 本轮实际合并（清零）的旧桶总数
      */
     int compactSmallBuckets();
+
+    /** 积分有效期天数（本域 points_validity_config，后台读 + 入账算 expire_at 同口径） */
+    int getValidDays();
+
+    /** 改积分有效期天数（后台管理面，ADMIN）；天数必须为正，不合法抛 CONFIG_PARAM_ERROR */
+    void updateValidDays(int days);
 }

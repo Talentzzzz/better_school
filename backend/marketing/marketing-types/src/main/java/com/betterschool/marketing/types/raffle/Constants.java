@@ -36,11 +36,15 @@ public class Constants {
     public final static String RULE_NODE_DEFAULT = "rule_default";
 
     /**
-     * 积分兑抽奖次数的单价（积分 / 次）。定价载体（旧模型活动表的价格列）已随
-     * 旧模型删除，新模型没有对应的配置表，暂以常量承载（与旧种子同值 100）；配置化载体归票 14
-     * 前端对齐时再定。对外展示在活动信息 DTO 的 {@code drawCountPrice}。
+     * 积分购买抽奖次数的单价（积分 / 次）。定价载体（旧模型活动表的价格列）已随
+     * 旧模型删除，新模型没有对应的配置表，暂以常量承载（与旧种子同值 100）。
+     * 对外展示在活动信息 DTO 的 {@code drawCountPrice}；**抽奖本身不读它**——抽奖只扣次数，
+     * 只有「用积分购买次数」这条路径按它算钱。
      */
-    public final static int DRAW_COUNT_EXCHANGE_PRICE = 100;
+    public final static int DRAW_COUNT_PURCHASE_PRICE = 100;
+
+    /** 单次购买的次数份数上限（一次请求最多买几次，防前端误填把积分一把梭） */
+    public final static int DRAW_COUNT_PURCHASE_MAX_QUANTITY = 10;
 
     /** 默认概率表 key（RMap 槽位 → awardId，恒 10000 槽） */
     public static String defaultTableKey(String strategyId) {

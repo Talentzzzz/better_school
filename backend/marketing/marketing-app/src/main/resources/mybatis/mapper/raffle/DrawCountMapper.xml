@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.marketing.infrastructure.raffle.dao.IDrawCountDao">
+
+    <!-- 入账：撞 uk_user_reason_ref 返回 0（幂等命中），重试 / 重投不重复加次数 -->
+    <insert id="insertIgnoreBucket" parameterType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawCountBucketPO">
+        INSERT IGNORE INTO draw_count_bucket (bucket_id, user_id, amount, remain, expire_at, reason_type, ref_id,
+                                              create_time, update_time)
+        VALUES (#{bucketId}, #{userId}, #{amount}, #{remain}, #{expireAt}, #{reasonType}, #{refId},
+                #{createTime}, #{updateTime})
+    </insert>
+
+    <!-- FIFO 可用桶：未过期且未扣完，按 (expire_at, id) 升序加行锁 -->
+    <select id="selectAvailableBucketsForUpdate"
+            resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawCountBucketPO">
+        SELECT id, bucket_id, user_id, amount, remain, expire_at, reason_type, ref_id, create_time, update_time
+        FROM draw_count_bucket
+        WHERE user_id = #{userId} AND remain &gt; 0 AND expire_at &gt; NOW()
+        ORDER BY expire_at ASC, id ASC
+        FOR UPDATE
+    </select>
+
+    <!-- remain >= 1 守卫：正常路径（桶已加行锁）必中 1 行，0 行说明不变量被破坏 -->
+    <update id="deductRemain">
+        UPDATE draw_count_bucket
+        SET remain = remain - 1, update_time = NOW()
+        WHERE bucket_id = #{bucketId} AND remain &gt;= 1
+    </update>
+
+    <!-- 剩余次数 = 未过期且未扣完的桶 remain 之和：没有余额列 -->
+    <select id="sumAvailableRemain" resultType="int">
+        SELECT COALESCE(SUM(remain), 0)
+        FROM draw_count_bucket
+        WHERE user_id = #{userId} AND remain &gt; 0 AND expire_at &gt; NOW()
+    </select>
+
+</mapper>

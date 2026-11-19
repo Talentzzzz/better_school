@@ -48,12 +48,6 @@ public interface IPointsRepository {
     int sumAvailableRemain(String userId);
 
     /**
-     * 懒过期清理（定时任务调度）：把已过期且仍有余量的桶 remain 置 0（不删行、留审计、不发事件），
-     * 返回清理桶行数。过期判定以读路径 {@code expire_at > NOW()} 为准，本任务只是账务收拾。
-     */
-    int expireBuckets();
-
-    /**
      * 桶合并（points-compaction 票，定时任务调度）：把同用户的「有效小额桶」（remain &le; 阈值且
      * 数量 &ge; 2）并成一桶——新桶 amount = remain = SUM、expire_at = 合并集合最大值（把小桶有效期
      * 延长到其中最晚到期，产品口径），旧桶全部置 0（不删行，发放流水留审计）。
@@ -68,4 +62,14 @@ public interface IPointsRepository {
 
     /** 流水总条数（两表相加） */
     long countTransactions(String userId);
+
+    /**
+     * 积分有效期天数（{@code points_validity_config} 单行，种子 id=1 / 365 天）。
+     * 本域自己的配置表——入账算 expire_at 的那次读就在入账事务内，不走端口。
+     * 缺行抛系统异常（种子或迁移没跑）。
+     */
+    int validDays();
+
+    /** 更新积分有效期天数（单行，id=1）；缺行视为系统错误 */
+    void updateValidDays(int days);
 }
