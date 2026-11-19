@@ -5,9 +5,11 @@ import com.betterschool.marketing.domain.inventory.model.valobj.ClaimOutcome;
 import com.betterschool.marketing.domain.inventory.model.valobj.DeductResult;
 import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductRequestVO;
 import com.betterschool.marketing.domain.inventory.model.valobj.InventoryLedgerVO;
+import com.betterschool.marketing.domain.inventory.model.valobj.OrphanPrereserveCandidateVO;
 import com.betterschool.marketing.types.inventory.AwardInventoryType;
 import com.betterschool.marketing.types.inventory.InventorySegmentVO;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -127,4 +129,23 @@ public interface IInventoryRepository {
      * @throws IllegalStateException {@code waiting} 不足（不变量破坏，整组回滚后抛出）
      */
     List<ClaimOutcome> flushClaimGroup(List<InventoryClaimRequestVO> items);
+
+    // ---- 孤儿预扣对账（spec User Stories 14–16；低频对账动作，不进合并器） ----
+
+    /**
+     * 孤儿预扣候选扫描：预扣行（{@code flow_type = 1} + {@code LOTTERY_DRAW}）且
+     * {@code create_time} 早于 {@code before}，其 {@code biz_id}（= 抽奖记录 id）在
+     * {@code draw_record} 无对应行（NOT EXISTS 只读反查对账判据的另一张域表）。按 id 升序 FIFO。
+     */
+    List<OrphanPrereserveCandidateVO> listOrphanPrereserveDetails(LocalDateTime before, int limit);
+
+    /**
+     * 回补一笔孤儿预扣（一个事务：台账条件转移 + 预扣明细行删除，守恒判据 B3 要求两者同提交）。
+     * 台账按账户 {@code type} 分支：PHYSICAL 走 {@code waiting → surplus}（守卫
+     * {@code waiting_qty >= qty}，照 {@code transferWaitingToIssued} 的反向转移形状），
+     * VIRTUAL 走 {@code issued → surplus}（守卫 {@code issued_qty >= qty}）；
+     * 不限量户（surplus=-1）不动 surplus，exhausted 户随回补放回 open（closed 不自动重开）。
+     * 返回 false = 守卫不过（已回补过或不变量破坏），调用方留 ERROR 后继续，不重试这条。
+     */
+    boolean restitutePrereserve(String awardId, String bizType, String bizId, long quantity);
 }

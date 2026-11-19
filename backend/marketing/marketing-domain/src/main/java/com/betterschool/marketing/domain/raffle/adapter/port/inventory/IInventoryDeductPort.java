@@ -1,5 +1,8 @@
 package com.betterschool.marketing.domain.raffle.adapter.port.inventory;
 
+import java.time.LocalDateTime;
+import java.util.List;
+
 /**
  * 抽奖域 → 库存域的发放预扣端口（CLAUDE.md §1：跨域写组合不在域服务间直接注入）。
  * 实现在 infrastructure，委托库存域的 {@code IInventoryQuotaService.preDeduct} /
@@ -16,6 +19,13 @@ public interface IInventoryDeductPort {
 
     /** 预扣结果：DEDUCTED = 已扣；FALLBACK = 主档不足改扣兜底奖品位成功；FAILED = 连兜底也扣不出 */
     enum Outcome { DEDUCTED, FALLBACK, FAILED }
+
+    /**
+     * 孤儿预扣候选（对账扫描出参）：一行「预扣在、抽奖记录不在」的事实。库存域的候选值对象
+     * 不漏进抽奖域，端口翻成自己的形状（同 {@link Outcome} 的翻译口径）。
+     */
+    record OrphanPrereserveRef(String awardId, String recordId, long quantity) {
+    }
 
     /**
      * 虚拟奖品库存账户预扣 quantity 份（POINTS / DRAW_COUNT 奖品）。
@@ -36,4 +46,20 @@ public interface IInventoryDeductPort {
      * @throws com.betterschool.marketing.types.common.AppException 奖品位没有库存账户（未投放的配置错）
      */
     Outcome preDeductPhysicalWithFallback(String awardId, String fallbackAwardId, long quantity, String recordId);
+
+    // ---- 孤儿预扣对账（spec User Stories 14–16；对账 job 经本端口收敛库存侧） ----
+
+    /**
+     * 孤儿预扣候选扫描：预扣在（{@code flow_type = 1} + {@code LOTTERY_DRAW}）、抽奖记录不在
+     * （{@code biz_id} 在 {@code draw_record} 无对应行）、且预扣发生时刻早于 {@code before}
+     * （补偿阈值）。按 id 升序 FIFO，上限 {@code limit}。
+     */
+    List<OrphanPrereserveRef> listOrphanPrereserves(LocalDateTime before, int limit);
+
+    /**
+     * 回补一笔孤儿预扣（库存侧动作由端口委托库存域）：一个事务内完成台账条件转移
+     * （PHYSICAL {@code waiting → surplus} / VIRTUAL {@code issued → surplus}）+ 预扣明细行删除
+     * （守恒判据 B3）。返回 false = 守卫不过（已回补过或不变量破坏），调用方留 ERROR 后继续。
+     */
+    boolean restituteOrphanPrereserve(String awardId, String recordId, long quantity);
 }

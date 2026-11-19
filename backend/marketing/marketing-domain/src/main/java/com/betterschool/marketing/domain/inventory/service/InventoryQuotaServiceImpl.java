@@ -8,6 +8,7 @@ import com.betterschool.marketing.domain.inventory.model.valobj.DeductOutcomeVO;
 import com.betterschool.marketing.domain.inventory.model.valobj.DeductResult;
 import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductRequestVO;
 import com.betterschool.marketing.domain.inventory.model.valobj.InventoryLedgerVO;
+import com.betterschool.marketing.domain.inventory.model.valobj.OrphanPrereserveCandidateVO;
 import com.betterschool.marketing.types.common.AppException;
 import com.betterschool.marketing.types.common.ResponseCode;
 import com.betterschool.marketing.types.inventory.AwardInventoryType;
@@ -15,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -191,5 +193,31 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
         log.info("库存预扣扣不出，但本账户的业务明细已存在，按成功回放 awardId={} bizType={} bizId={}",
                 awardId, bizType, bizId);
         return true;
+    }
+
+    // ---- 孤儿预扣对账（spec User Stories 14–16；低频对账动作，不进合并器） ----
+
+    @Override
+    public List<OrphanPrereserveCandidateVO> listOrphanPrereserves(LocalDateTime before, int limit) {
+        return inventoryRepository.listOrphanPrereserveDetails(before, limit);
+    }
+
+    /**
+     * 回补一笔孤儿预扣：低频直落（对账扫描每轮至多 {@code limit} 行，不值得进合并器），
+     * 台账转移 + 明细行删除的原子性交给仓储的「一个事务」（落库真身同在
+     * {@code InventoryQuotaFlushService}）。守卫不过（0 行）按「已回补过」回 false，
+     * 不抛——对账方据此留 ERROR 后继续收敛次数退还，不再重试这条。
+     */
+    @Override
+    public boolean restitutePrereserve(String awardId, String bizType, String bizId, long quantity) {
+        boolean restituted = inventoryRepository.restitutePrereserve(awardId, bizType, bizId, quantity);
+        if (restituted) {
+            log.info("孤儿预扣已回补（台账转回 + 明细行删除，同事务） awardId={} bizType={} bizId={} quantity={}",
+                    awardId, bizType, bizId, quantity);
+        } else {
+            log.error("孤儿预扣回补守卫不过（可能已回补过或不变量破坏），留人工核对"
+                    + " awardId={} bizType={} bizId={} quantity={}", awardId, bizType, bizId, quantity);
+        }
+        return restituted;
     }
 }

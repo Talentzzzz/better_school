@@ -19,7 +19,10 @@ public enum DrawCountReasonType {
     PURCHASE("积分购买"),
 
     /** 行为返利（签到/支付等，规则见 action_rebate_config）：入账，{@code ref_id} = 发放幂等键 */
-    REBATE("行为返利");
+    REBATE("行为返利"),
+
+    /** 孤儿预扣退还（对账 job，决策不可重放时）：入账，{@code ref_id} = 抽奖记录 id（= 原扣次明细 ref_id，幂等键不重落） */
+    ORPHAN_REFUND("孤儿预扣退还");
 
     private final String desc;
 }

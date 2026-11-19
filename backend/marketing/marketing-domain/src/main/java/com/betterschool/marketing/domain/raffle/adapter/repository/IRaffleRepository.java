@@ -3,6 +3,7 @@ package com.betterschool.marketing.domain.raffle.adapter.repository;
 import com.betterschool.marketing.domain.raffle.model.aggregate.DrawRecordAggregate;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawActivityEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawCountPurchaseOrderEntity;
+import com.betterschool.marketing.domain.raffle.model.entity.DrawOrphanPrereserveOrderEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawRecordDetailEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawRecordEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawStrategyAwardEntity;
@@ -195,4 +196,42 @@ public interface IRaffleRepository {
 
     /** 重试耗尽置 {@code DEAD}（条件更新 {@code state = DEDUCTED}）；返回 false = 状态已变，跳过 */
     boolean markPurchaseOrderDead(Long id);
+
+    // ---- 孤儿预扣对账单（spec User Stories 14–16：扫描种单 + 重试状态机 + 死信） ----
+
+    /**
+     * 种一张孤儿预扣对账单：{@code INSERT IGNORE} 撞 {@code uk_record_id} 静默跳过——
+     * 同一孤儿被多个扫描周期 / 多实例重复种出是常态，DONE/DEAD 的对账单不再被重新种。
+     * 返回 true = 本周期真的种出了（新孤儿）。
+     */
+    boolean insertOrphanPrereserveOrder(DrawOrphanPrereserveOrderEntity order);
+
+    /**
+     * 到期待收敛的对账单：{@code state = ORPHAN} 且 {@code next_retry_at} 为空或已到点，
+     * 按 id 升序（FIFO），上限 {@code limit}。走 {@code idx_state_next_retry}。
+     */
+    List<DrawOrphanPrereserveOrderEntity> listDueOrphanPrereserveOrders(int limit);
+
+    /**
+     * 抢占式认领一张待收敛单：条件更新 {@code state = ORPHAN 且到点} 才生效，同时递增
+     * {@code retry_count}、写 {@code next_retry_at}（退避到下一轮）。
+     * 返回 false = 已被其他实例抢占或状态已不在起点，跳过即可。
+     */
+    boolean claimOrphanPrereserveOrder(Long id, LocalDateTime nextRetryAt);
+
+    /**
+     * 收敛完成置 {@code DONE}（条件更新 {@code state <> DONE} 才生效）——从 ORPHAN 与 DEAD
+     * 都可达：DEAD 行人工 SQL 重置后同样自愈。返回 false = 已是 DONE（幂等跳过）。
+     */
+    boolean finishOrphanPrereserveOrder(String recordId);
+
+    /** 重试耗尽置 {@code DEAD}（条件更新 {@code state = ORPHAN}）；返回 false = 状态已变，跳过 */
+    boolean markOrphanPrereserveOrderDead(Long id);
+
+    /**
+     * 按抽奖记录反查扣次明细的用户 ID（走 {@code draw_count_detail.idx_ref}）：
+     * 孤儿种单时取 {@code user_id} 快照——孤儿口径下扣次必然已发生（主链路先扣次后预扣），
+     * 明细行不在 = 数据破坏，返回 null 由调用方留 ERROR 跳过。
+     */
+    String queryUserIdByDrawCountRef(String refId);
 }

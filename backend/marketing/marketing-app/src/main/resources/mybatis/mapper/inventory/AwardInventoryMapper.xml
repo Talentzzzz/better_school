@@ -52,6 +52,31 @@
         WHERE award_id = #{awardId} AND type = 'PHYSICAL' AND waiting_qty &gt;= #{quantity}
     </update>
 
+    <!-- ============ 孤儿预扣回补（对账 job；照 transferWaitingToIssued 的守卫形状写反向转移） ============ -->
+
+    <!-- 回补（PHYSICAL）：waiting → surplus 条件转移，waiting_qty >= qty 守卫（0 行 = 已回补过或不变量破坏）。
+         surplus 按预扣的镜像口径回加：不限量户（surplus=-1）不动 surplus（对应 deductPhysical 的不减）；
+         exhausted 户随回补放回 open（照 allocateIn 的重开口径），closed 人工关户不自动重开 -->
+    <update id="restitutePhysical">
+        UPDATE draw_strategy_award_inventory
+        SET state = IF(state = 1, 0, state),
+            surplus_qty = IF(surplus_qty &lt; 0, surplus_qty, surplus_qty + #{quantity}),
+            waiting_qty = waiting_qty - #{quantity},
+            update_time = NOW()
+        WHERE award_id = #{awardId} AND type = 'PHYSICAL' AND waiting_qty &gt;= #{quantity}
+    </update>
+
+    <!-- 回补（VIRTUAL）：issued → surplus 条件回退，issued_qty >= qty 守卫（0 行 = 已回补过或不变量破坏）。
+         VIRTUAL 预扣直接进 issued（无 waiting 悬挂），守卫口径与 waiting 版同形 -->
+    <update id="restituteVirtual">
+        UPDATE draw_strategy_award_inventory
+        SET state = IF(state = 1, 0, state),
+            surplus_qty = IF(surplus_qty &lt; 0, surplus_qty, surplus_qty + #{quantity}),
+            issued_qty = issued_qty - #{quantity},
+            update_time = NOW()
+        WHERE award_id = #{awardId} AND type = 'VIRTUAL' AND issued_qty &gt;= #{quantity}
+    </update>
+
     <!-- 分配转入（池 → 奖品，一条 upsert）：无户建户（1 奖品位 1 账户，type/value_qty 由分配单按来源池段给定），
          有户 surplus 直接累加；exhausted 户新到货放回 open（closed 是人工关户，不自动重开） -->
     <insert id="allocateIn">

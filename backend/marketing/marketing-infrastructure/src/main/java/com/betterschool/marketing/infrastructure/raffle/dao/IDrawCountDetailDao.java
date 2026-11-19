@@ -16,4 +16,10 @@ public interface IDrawCountDetailDao {
 
     /** 撞 uk_bucket_ref 返回 0 = 该桶这一笔抽奖已扣过 */
     int insertIgnoreDetail(DrawCountDetailPO detailPO);
+
+    /**
+     * 按抽奖记录反查扣次明细（走 idx_ref，无锁读）：孤儿预扣种单时取 user_id 快照——
+     * 孤儿口径下扣次必然已发生（主链路先扣次后预扣），明细行不在 = 数据破坏，调用方跳过留 ERROR。
+     */
+    DrawCountDetailPO selectByRefId(@Param("refId") String refId);
 }

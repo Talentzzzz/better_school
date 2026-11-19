@@ -7,6 +7,7 @@ import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductR
 import com.betterschool.marketing.infrastructure.inventory.dao.IAwardInventoryDao;
 import com.betterschool.marketing.infrastructure.inventory.dao.IAwardInventoryDetailDao;
 import com.betterschool.marketing.infrastructure.inventory.dao.po.AwardInventoryDetailPO;
+import com.betterschool.marketing.infrastructure.inventory.dao.po.AwardInventoryPO;
 import com.betterschool.marketing.types.inventory.AwardInventoryType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -390,6 +391,44 @@ public class InventoryQuotaFlushService {
             results.add(ClaimOutcome.CONFIRMED);
         }
         return results;
+    }
+
+    // ---------------------------------------------------------------- 孤儿预扣回补（对账，一个事务）
+
+    /**
+     * 回补一笔孤儿预扣（spec User Stories 14–16，对账 job 的库存侧动作）：**一个事务**——
+     * <pre>
+     * BEGIN
+     *   UPDATE draw_strategy_award_inventory SET waiting/issued -= q, surplus += q（按 type 分支，带守卫）
+     *   DELETE FROM draw_strategy_award_inventory_detail WHERE (award_id, flow_type=1, biz_type, biz_id)
+     * COMMIT
+     * </pre>
+     * 两者必须同事务：守恒判据 B3（{@code waiting + issued = Σ flow_type=1 quantity}）——台账转回
+     * 而明细行还在（或反之）即破等式。守卫（{@code waiting_qty >= q} / {@code issued_qty >= q}）
+     * 不过 = 已回补过（前次部分成功的重放）或不变量破坏：返回 false 整体不动，日志由
+     * {@code InventoryQuotaServiceImpl} 统一打 ERROR 留人工核对。账户类型由台账行现读。
+     */
+    public boolean restitutePrereserve(String awardId, String bizType, String bizId, long quantity) {
+        Boolean restituted = transactionTemplate.execute(status -> {
+            AwardInventoryPO ledger = awardInventoryDao.selectByAwardId(awardId);
+            if (ledger == null) {
+                // 台账行缺失：预扣明细在而账户不在 = 不变量破坏，不动、留给人工
+                log.error("孤儿预扣回补失败：台账行缺失（不变量破坏） awardId={} bizType={} bizId={}",
+                        awardId, bizType, bizId);
+                return Boolean.FALSE;
+            }
+            // 台账 type 列存枚举 name（allocateIn 写入口径），valueOf 反查；脏值炸出来好过静默错分支
+            int restored = switch (AwardInventoryType.valueOf(ledger.getType())) {
+                case PHYSICAL -> awardInventoryDao.restitutePhysical(awardId, quantity);
+                case VIRTUAL -> awardInventoryDao.restituteVirtual(awardId, quantity);
+            };
+            if (restored == 0) {
+                // 守卫不过：已回补过或不变量破坏。不动明细行（B3 不因这次调用破坏），返回 false
+                return Boolean.FALSE;
+            }
+            return awardInventoryDetailDao.deleteDeductDetail(awardId, bizType, bizId) > 0;
+        });
+        return Boolean.TRUE.equals(restituted);
     }
 
     // ---------------------------------------------------------------- PO → 公共形状

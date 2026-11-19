@@ -88,6 +88,29 @@ public class RaffleDrawServiceImpl implements IRaffleDrawService {
         return toResult(record);
     }
 
+    /**
+     * 孤儿预扣收敛专用重放（见 {@link IRaffleDrawService#replayDrawAfterPrereserve}）：
+     * 编排步骤与 {@link #draw} 完全同源（决策 / 预扣 / 落库三个私有步骤复用，不另写一套），
+     * 只裁掉「幂等预检 + 次数扣减」两步——扣次事实由对账单承载，记录缺失由预扣明细反证。
+     */
+    @Override
+    public DrawResultVO replayDrawAfterPrereserve(String userId, String recordId) {
+        DrawActivityEntity activity = raffleRepository.queryCurrentActivity();
+        // 不可重放（查无进行中活动 / 已结束 / 未开始）抛 4301/4302，对账方转「回补 + 退还」路径
+        checkActivityOpen(activity);
+
+        List<DrawStrategyAwardEntity> awardList = raffleRepository.queryAwardListByStrategyId(activity.getStrategyId());
+        Map<String, DrawStrategyAwardEntity> awardMap = awardList.stream()
+                .collect(Collectors.toMap(DrawStrategyAwardEntity::getAwardId, Function.identity()));
+
+        RaffleChainFactory.ChainAwardVO decision = decide(activity, userId, awardList);
+        DrawStrategyAwardEntity award = requireAward(awardMap, decision.getAwardId());
+        award = issueWithFallback(award, activity.getStrategyId(), awardMap, recordId);
+
+        DrawRecordEntity record = persistRecord(userId, activity, recordId, award);
+        return toResult(record);
+    }
+
     // ---------------------------------------------------------------- 编排步骤
 
     private void checkActivityOpen(DrawActivityEntity activity) {
