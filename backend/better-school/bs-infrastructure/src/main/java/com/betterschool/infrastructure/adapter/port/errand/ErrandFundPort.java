@@ -84,4 +84,23 @@ public class ErrandFundPort implements IErrandFundPort {
             return null;
         });
     }
+
+    @Override
+    public void completeWithIncome(String orderId, String publisherId, String takerId, BigDecimal reward) {
+        compositeTxExecutor.execute(action -> {
+            // 1. 发布方解冻退款：流水先行（UNFROZEN，uk_order_type 冲突 = 已解冻过，幂等跳过不动冻结额）
+            //    + 冻结额回退——托管悬赏先回发布方可用余额
+            walletRepository.unfreeze(publisherId, reward, orderId, WalletDetailTypeVO.UNFROZEN);
+            // 2. 接单方悬赏收入：流水先行（INCOME，uk_order_type 冲突 = 已入账过，幂等跳过不动余额）
+            //    + 余额入账——与确认收货同一结算口径（接单方得悬赏总额）
+            walletRepository.income(takerId, reward, orderId, WalletDetailTypeVO.INCOME);
+            // 3. 订单「已送达 → 已完成」条件翻转（守卫 DELIVERED）+ AUTO_COMPLETED 事件行
+            //    + feed 索引完成化 + 搜索同步 outbox 行（翻转 0 行 = 并发重复回调 → 抛异常按失败重投，
+            //    解冻与入账随之回滚——钱跟着订单状态走）
+            if (!errandRepository.autoCompleteWithSearchSync(orderId)) {
+                throw new IllegalStateException("订单自动完成条件 UPDATE 未命中，按失败重投：orderId=" + orderId);
+            }
+            return null;
+        });
+    }
 }

@@ -65,4 +65,24 @@ public interface IErrandFundPort {
      */
     void timeoutCancelWithRefund(String orderId, String publisherId, String takerId,
                                  BigDecimal reward, boolean committed);
+
+    /**
+     * 自动完成组合事务：发布方解冻退款（流水先行 + 冻结额回退）、接单方悬赏收入
+     * （INCOME 流水先行 + {@code uk_order_type} 幂等）与订单「已送达 → 已完成」条件翻转
+     * （含 AUTO_COMPLETED 事件行 + feed 索引完成化 + 搜索同步 outbox 行）在一个物理事务内
+     * 同生共死，消灭「订单已完成但接单方悬赏收入永久不结算」的中间态。
+     * <ul>
+     *   <li>重复执行由解冻/入账流水 {@code uk_order_type} 唯一键幂等吸收（已处理过则零副作用）；</li>
+     *   <li>条件翻转未命中（并发重复回调）→ 抛异常按失败重投，解冻与入账随之回滚；</li>
+     *   <li>终态短路在调用方（域服务读态判定）：重投读到终态即不进本端口——资金已随终态
+     *       在同一事务内完成过，重投永远无害。</li>
+     * </ul>
+     * 结算口径与发布方确认收货一致：发布方全额解冻退款，接单方得悬赏（总额）。
+     *
+     * @param orderId     跑腿订单业务 ID（解冻与入账流水的幂等键 order_id）
+     * @param publisherId 发布方用户 ID（解冻退款对象）
+     * @param takerId     接单方用户 ID（悬赏收入对象）
+     * @param reward      悬赏金额（解冻口径与冻结口径同值；接单方入账 = 同额悬赏）
+     */
+    void completeWithIncome(String orderId, String publisherId, String takerId, BigDecimal reward);
 }
