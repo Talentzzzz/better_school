@@ -39,6 +39,19 @@
 - 01 ✅ 组合事务组件 `CompositeTxExecutor`（`ec66bad` → 合并 `457b715`）。
 - 02 ✅ 跑腿支付收口（`06db8da` → 合并 `221a853`）；03–05 沿用 `IErrandFundPort` 扩展。
 - 06 ✅ 商品支付收口（`a3f57dd` → 合并 `b00c5c8`）；07 沿用 `IProductPayCompositeTxPort` 扩展。
+- 03 ✅ 跑腿取消收口（`ee247cd` → 合并 `1a1913f`）。
+- 04 ✅ 超时取消收口（`4b55bde` → 合并 `be69aec`）；05 ✅ 自动完成收口（`791cc75` → 合并 `c7617bd`）——跑腿线收口完毕。
+- 08 ✅ 孤儿预扣对账 job（`2bf738f` → 合并 `2ef6da7`）。
+- 07 ✅ 商品取消收口（`4f25a20` → 合并 `b883d3d`）——商品线收口完毕。
+- 09 ✅ 文档对齐 + GLOSSARY 三词条 + ADR-0015（`8f3f808`）。
+
+## Code review（2026-11-20，两轴）
+
+**Standards**：依赖方向 / 判据落位 / GLOSSARY 用语全部合规。判断性发现：① `listOrphanDrawPrereserveDetails` 的 NOT EXISTS 跨表谓词与 CLAUDE.md §9.7 单表规则冲突（有先例，补豁免条款→修复票）；② 两端口钱包动作形态不一致（IWalletRepository vs IWalletAccountService，均为 ADR-0014/基线先例，判不修）；③ 端口参数 Data Clump、11 参构造、case 层返回值死重等 judgement call，判不修（churn > 价值）。
+
+**Spec**：核心要求全落地（单物理事务逐端口实读确认、终态短路、确认收货/仲裁/超时中心零改动、Out of Scope 无越界）。待修：① 票 02 支付重放命中 PUBLISHED 抛错而非返回原结果（US3 违约，基线遗留行为）→ 修复票；② 票 02 测试 balance 断言笔误（updateFreeze 不动 balance）→ 修复票；③ 票 08 isActivityNotReplayable 仅映射 4301/4302，需核对活动查询全部失败码 → 修复票；④ 票 07 簿记缺口已补。
+
+**修复票**：`ticket-fix-review` worktree（Fix 1 重放短路 + 测试断言、Fix 2 活动码核对、Fix 3 CLAUDE.md §9.7 豁免条款）。
 
 ## 收口
 
