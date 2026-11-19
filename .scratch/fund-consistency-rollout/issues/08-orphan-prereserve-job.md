@@ -1,5 +1,5 @@
 Type: task
-Status: open
+Status: claimed
 Blocked by: （无，独立）
 
 # 08 孤儿预扣对账 job（抽奖「预扣→落库」缝的收敛）
@@ -7,6 +7,13 @@ Blocked by: （无，独立）
 ## 问题
 
 spec User Stories 14–16、18：抽奖「预扣 → 落库」跨库存合并器事务，无法并成一个物理事务（合并器 5ms 批量窗口是有意设计）。预扣成功但中奖记录未落库时，这次抽奖凭空消失、库存白占一份。
+
+## 事实修正（2026-11-20，research.md §4）
+
+库存明细表 `draw_strategy_award_inventory_detail` **没有 status 列**，「等待态」只存在于台账 `waiting_qty`（仅 PHYSICAL）；VIRTUAL 预扣直接进 `issued_qty`。因此：
+
+- 孤儿判定口径 = 台账流水 `flow_type=1 AND biz_type='LOTTERY_DRAW'` 且 `biz_id` 在 `draw_record` 无对应行，且超过补偿阈值（10 分钟）；
+- 「回补转移」只对 PHYSICAL 台账成立（`waiting_qty` → `remaining_qty` 条件转移）；VIRTUAL 预扣回补按其台账语义对 `issued_qty` 条件回退。
 
 ## 交付
 

@@ -1,5 +1,5 @@
 Type: task
-Status: open
+Status: claimed
 
 # 01 基础设施组合事务端口
 
