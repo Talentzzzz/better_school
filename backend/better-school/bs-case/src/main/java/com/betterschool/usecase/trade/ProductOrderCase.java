@@ -4,7 +4,6 @@ import com.betterschool.domain.credit.service.ICreditAccountService;
 import com.betterschool.domain.trade.model.entity.ProductOrderEntity;
 import com.betterschool.domain.trade.model.valobj.ProductCancelResult;
 import com.betterschool.domain.trade.model.valobj.ProductConfirmResult;
-import com.betterschool.domain.trade.model.valobj.ProductPayResult;
 import com.betterschool.domain.trade.service.productorder.IProductOrderService;
 import com.betterschool.domain.wallet.model.valobj.WalletDetailTypeVO;
 import com.betterschool.domain.wallet.service.IWalletAccountService;
@@ -15,7 +14,8 @@ import java.util.List;
 
 /**
  * 商品订单用例编排：跨域组合顺序调用（每个域各自事务原子），
- * 一致性靠"幂等 + 重试"——状态机条件 UPDATE / wallet 流水 uk_order_type 保证重试安全，本层不做事务
+ * 一致性靠"幂等 + 重试"——状态机条件 UPDATE / wallet 流水 uk_order_type 保证重试安全，本层不做事务；
+ * 支付链路经域服务组合事务端口收口（票 06）：订单翻转与货款冻结同物理事务，本层单次调用即可
  */
 @Service
 @RequiredArgsConstructor
@@ -30,9 +30,9 @@ public class ProductOrderCase {
         return productOrderService.createOrder(buyerId, productId, quantity);
     }
 
+    /** 商品支付（票 06 收口）：翻转 + 冻结在域服务组合事务端口内一个物理事务完成，余额不足整事务回滚 */
     public void payOrder(String orderId, String buyerId) {
-        ProductPayResult payResult = productOrderService.payOrder(orderId, buyerId);
-        walletAccountService.freeze(buyerId, payResult.getAmount(), orderId, WalletDetailTypeVO.PRODUCT_FROZEN);
+        productOrderService.payOrder(orderId, buyerId);
     }
 
     public void markDelivered(String orderId, String sellerId) {
