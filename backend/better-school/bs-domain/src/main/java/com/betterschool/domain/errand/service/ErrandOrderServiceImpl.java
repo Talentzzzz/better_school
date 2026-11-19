@@ -442,7 +442,16 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         }
         // 待支付未冻结无需退款；已发布/锁单中/已确认需解冻退回
         boolean needRefund = orderEntity.getStatus() != ErrandStatusVO.PENDING_PAYMENT;
-        errandRepository.cancelByPublisherWithSearchSync(orderEntity.getOrderId(), orderEntity.getPublisherId());
+        if (needRefund) {
+            // 取消翻转与解冻退款并入一个物理事务（IErrandFundPort 端口编排）：
+            // 「订单已取消 ⇒ 悬赏已解冻回余额」，宕机中间态无处存活；
+            // 重复执行由解冻流水 uk_order_type 幂等吸收
+            errandFundPort.cancelWithRefund(orderEntity.getOrderId(), orderEntity.getPublisherId(),
+                    orderEntity.getTotalReward());
+        } else {
+            // 待支付取消无资金动作，取消翻转（含事件 + feed 索引 + 搜索同步）单事务即可
+            errandRepository.cancelByPublisherWithSearchSync(orderEntity.getOrderId(), orderEntity.getPublisherId());
+        }
         pushOrderStatus(orderEntity.getOrderId(), ErrandStatusVO.CANCELLED);
         return new ErrandCancelResult(needRefund, orderEntity.getPublisherId(), orderEntity.getTotalReward(),
                 false, null);

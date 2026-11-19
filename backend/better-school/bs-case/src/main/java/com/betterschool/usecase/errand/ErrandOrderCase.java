@@ -156,12 +156,15 @@ public class ErrandOrderCase {
         }
     }
 
+    /**
+     * 取消（资金收口）：发布方解冻退款与取消翻转已由 IErrandFundPort 并入一个物理事务
+     * （见 ErrandOrderServiceImpl.cancelByPublisher），本层不再拆两步调用——
+     * 「订单已取消但悬赏悬置冻结态」的中间态由该事务消灭。
+     * 接单方取消不涉资金（悬赏继续托管），仅扣信用分（流水 uk 幂等）。
+     */
     public void cancelOrder(String orderId, String userId, String requestId) {
         // requestId 可空（请求级幂等键）：同一次点击的重放在 domain 层已被回放拦截，不会走到跨域动作
         ErrandCancelResult cancelResult = errandOrderService.cancelOrder(orderId, userId, requestId);
-        if (cancelResult.isNeedRefund()) {
-            walletAccountService.unfreeze(cancelResult.getPublisherId(), cancelResult.getReward(), orderId);
-        }
         if (cancelResult.isTakerCanceled()) {
             creditAccountService.applyChange(cancelResult.getTakerId(), CreditReasonTypeVO.ERRAND_TAKER_CANCEL, orderId);
         }
