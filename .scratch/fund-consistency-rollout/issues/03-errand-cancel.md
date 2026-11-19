@@ -1,5 +1,11 @@
 Type: task
-Status: open
+Status: resolved
+
+## Comments
+
+- 2026-11-20 完成：`IErrandFundPort.cancelWithRefund(orderId, publisherId, reward)`（解冻 uk 幂等 + 翻转未命中整事务回滚）；`cancelByPublisher` 重接（needRefund=true 走组合事务，待支付保留原单事务翻转）；case 层撤两步解冻。5 条集成测试随交付（未执行）。提交 `ee247cd`，合并 `1a1913f`。
+- 维护者备注：解冻动作无 0 行失败路径，钱包侧原子性以「成功⇒钱到位 / 重放⇒不重复退款」两向外显覆盖（测试类头注释已说明）。
+- 移交 code-review：票 02 测试 `ErrandPayFundConsistencyIntegrationTest:44` 断言 balance=990 疑似笔误（updateFreeze 只加 frozen_amount 不动 balance，可用余额 = balance − frozen 口径）。
 Blocked by: 02
 
 # 03 跑腿取消收口（解冻退款 + 取消一个物理事务）
