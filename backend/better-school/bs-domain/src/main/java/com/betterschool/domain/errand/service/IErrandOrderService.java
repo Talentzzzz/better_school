@@ -134,7 +134,8 @@ public interface IErrandOrderService {
     ErrandOrderEntity loadOrder(String orderId);
 
     /**
-     * 订单 deadline 超时（无事务）：CANCELLED，返回退款/扣分需求；幂等忽略返回 null。
+     * 订单 deadline 超时：CANCELLED，解冻退款（开工场景另含接单方信用分扣减）与取消翻转
+     * 由 IErrandFundPort 并入一个物理事务；幂等忽略返回 null。
      * 任务比 deadline 早到（时钟偏差）或条件 UPDATE 未命中（并发竞态）时抛出按失败重投，
      * 绝不静默成功——否则任务被结算成 SUCCESS、订单永远漏关单
      */

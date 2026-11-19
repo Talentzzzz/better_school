@@ -15,7 +15,6 @@ import com.betterschool.domain.errand.model.valobj.ErrandFeedPageVO;
 import com.betterschool.domain.errand.model.valobj.ErrandIncomeVO;
 import com.betterschool.domain.errand.model.valobj.ErrandLockTimeoutResult;
 import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
-import com.betterschool.domain.errand.model.valobj.ErrandTimeoutResult;
 import com.betterschool.domain.errand.service.IErrandOrderService;
 import com.betterschool.domain.wallet.service.IWalletAccountService;
 import com.betterschool.types.common.Constants;
@@ -246,15 +245,16 @@ public class ErrandOrderCase {
                 .build());
     }
 
+    /**
+     * 订单超时取消编排（超时中心回调，资金收口）：取消翻转 + 发布方解冻退款
+     * （开工场景另含接单方信用分扣减）已由 IErrandFundPort 并入一个物理事务
+     * （见 ErrandOrderServiceImpl.handleOrderTimeout），本层不再拆两步调用——
+     * 「订单已取消但悬赏悬置冻结态」「退了钱分没扣」的中间态由该事务消灭。
+     * 终态短路语义保持现状：重投一个已处理的回调，读到终态即安全返回；
+     * 早到回调仍按失败重投（资金动作随翻转失败整体回滚，零残留）。
+     */
     public void handleOrderTimeout(String orderId) {
-        ErrandTimeoutResult timeoutResult = errandOrderService.handleOrderTimeout(orderId);
-        if (timeoutResult == null) {
-            return;
-        }
-        walletAccountService.unfreeze(timeoutResult.getPublisherId(), timeoutResult.getReward(), orderId);
-        if (timeoutResult.isCommitted()) {
-            creditAccountService.applyChange(timeoutResult.getTakerId(), CreditReasonTypeVO.ERRAND_TIMEOUT, orderId);
-        }
+        errandOrderService.handleOrderTimeout(orderId);
     }
 
     public void handleAutoComplete(String orderId) {

@@ -4,7 +4,8 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 
-/** 订单超时处理结果（null = 幂等忽略）：case 层据此执行解冻退款与接单方扣分 */
+/** 订单超时处理结果（null = 幂等忽略）：资金动作（解冻退款 + 开工场景扣分）已随取消翻转
+ *  在 IErrandFundPort 组合事务内完成，结果对象供编排层观察（committed 口径等） */
 @Data
 public class ErrandTimeoutResult {
 

@@ -42,4 +42,27 @@ public interface IErrandFundPort {
      * @param reward      悬赏金额（解冻口径与冻结口径同值）
      */
     void cancelWithRefund(String orderId, String publisherId, BigDecimal reward);
+
+    /**
+     * 超时取消组合事务：发布方解冻退款（流水先行 + 冻结额回退）、开工场景接单方信用分扣减
+     * （信用域流水先行 + {@code uk_user_reason_ref} 幂等）与订单超时取消条件翻转
+     * （state + deadline 双守卫，含 CANCELLED 事件行 + feed 索引不可见化 + 搜索同步 outbox 行）
+     * 在一个物理事务内同生共死，消灭「订单已取消但悬赏悬置冻结态」「退了钱分没扣」的中间态。
+     * <ul>
+     *   <li>重复执行由解冻流水 {@code uk_order_type} 与信用分流水 {@code uk_user_reason_ref}
+     *       唯一键幂等吸收（已处理过则零副作用）；</li>
+     *   <li>条件翻转未命中（并发重复回调 / 时钟偏差）→ 抛异常按失败重投，解冻与扣分随之回滚；</li>
+     *   <li>终态短路在调用方（域服务读态判定）：重投读到终态即不进本端口——资金已随终态
+     *       在同一事务内完成过，重投永远无害。</li>
+     * </ul>
+     *
+     * @param orderId     跑腿订单业务 ID（解冻流水与信用分流水的幂等键 ref）
+     * @param publisherId 发布方用户 ID（解冻退款对象）
+     * @param takerId     接单方用户 ID（开工场景扣分对象；未开工时不会被使用）
+     * @param reward      悬赏金额（解冻口径与冻结口径同值）
+     * @param committed   是否「已承诺后违约」（CONFIRMED 起）：只有已开工的接单方超时才扣信用分
+     *                    （锁单期抢 ≠ 开工，与「放弃不扣分」同口径）
+     */
+    void timeoutCancelWithRefund(String orderId, String publisherId, String takerId,
+                                 BigDecimal reward, boolean committed);
 }

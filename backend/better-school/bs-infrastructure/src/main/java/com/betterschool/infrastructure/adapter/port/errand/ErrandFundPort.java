@@ -1,5 +1,7 @@
 package com.betterschool.infrastructure.adapter.port.errand;
 
+import com.betterschool.domain.credit.model.valobj.CreditReasonTypeVO;
+import com.betterschool.domain.credit.service.ICreditAccountService;
 import com.betterschool.domain.errand.adapter.port.IErrandFundPort;
 import com.betterschool.domain.errand.adapter.repository.IErrandRepository;
 import com.betterschool.domain.wallet.adapter.repository.IWalletRepository;
@@ -12,7 +14,7 @@ import java.math.BigDecimal;
 
 /**
  * 跑腿资金收口端口适配器：一个 REQUIRED 物理事务（{@link CompositeTxExecutor}）内编排
- * 钱包域资金动作与跑腿域状态迁移，两域仓储同为 REQUIRED 自动并入——
+ * 钱包域资金动作与跑腿域状态迁移（超时取消另含信用域扣减），各域仓储同为 REQUIRED 自动并入——
  * 「订单对外可见（待支付 → 已发布）⇒ 悬赏已冻结托管」「订单已取消 ⇒ 悬赏已解冻回余额」
  * 由物理事务保证，中间态无处存活。
  * <p>
@@ -32,6 +34,8 @@ public class ErrandFundPort implements IErrandFundPort {
     private final CompositeTxExecutor compositeTxExecutor;
     private final IWalletRepository walletRepository;
     private final IErrandRepository errandRepository;
+    /** 信用域变更入口（applyChange = 流水先行 + uk_user_reason_ref 幂等的唯一口径，与 case 层同用） */
+    private final ICreditAccountService creditAccountService;
 
     @Override
     public void payWithFundFreeze(String orderId, String publisherId, BigDecimal reward) {
@@ -55,6 +59,28 @@ public class ErrandFundPort implements IErrandFundPort {
             // 2. 订单取消条件翻转（守卫前态）+ CANCELLED 事件行 + feed 索引不可见化 + 搜索同步 outbox 行
             //    （翻转 0 行抛异常，解冻随之回滚——钱跟着订单状态走）
             errandRepository.cancelByPublisherWithSearchSync(orderId, publisherId);
+            return null;
+        });
+    }
+
+    @Override
+    public void timeoutCancelWithRefund(String orderId, String publisherId, String takerId,
+                                        BigDecimal reward, boolean committed) {
+        compositeTxExecutor.execute(action -> {
+            // 1. 解冻退款：流水先行（UNFROZEN，uk_order_type 冲突 = 已解冻过，幂等跳过不动冻结额）
+            //    + 冻结额回退——钱先回可用余额
+            walletRepository.unfreeze(publisherId, reward, orderId, WalletDetailTypeVO.UNFROZEN);
+            // 2. 开工场景接单方信用分扣减：流水先行（uk_user_reason_ref 冲突 = 已扣过，幂等跳过不动分数）
+            //    + 分数/封禁联动（信用域仓储 REQUIRED 自动并入同一物理事务）
+            if (committed) {
+                creditAccountService.applyChange(takerId, CreditReasonTypeVO.ERRAND_TIMEOUT, orderId);
+            }
+            // 3. 订单超时取消条件翻转（state + deadline 双守卫）+ CANCELLED 事件行 + feed 索引不可见化
+            //    + 搜索同步 outbox 行（翻转 0 行 = 并发重复回调或时钟偏差 → 抛异常按失败重投，
+            //    解冻与扣分随之回滚——钱和分都跟着订单状态走）
+            if (!errandRepository.markTimeoutWithSearchSync(orderId)) {
+                throw new IllegalStateException("订单超时回调条件 UPDATE 未命中，按失败重投：orderId=" + orderId);
+            }
             return null;
         });
     }
