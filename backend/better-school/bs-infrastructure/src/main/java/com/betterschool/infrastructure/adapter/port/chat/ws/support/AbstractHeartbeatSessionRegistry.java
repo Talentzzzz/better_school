@@ -16,7 +16,8 @@ import java.util.concurrent.TimeUnit;
 /**
  * 会话存活注册表骨架：任何入站帧刷新 lastInboundAt，
  * 调度清扫对超过判死阈值无入站的会话主动 close（GOING_AWAY）+ 两参注销。
- * 客户端心跳 25s 一次，60s 判死容忍丢一次心跳（CONTEXT.md「心跳」口径，各端点共用）
+ * 客户端心跳 25s 一次，60s 判死容忍丢一次心跳（CONTEXT.md「心跳」口径）；
+ * 骨架支撑后续第二个 WS 端点复用同一套判死机制
  */
 @Slf4j
 public abstract class AbstractHeartbeatSessionRegistry {

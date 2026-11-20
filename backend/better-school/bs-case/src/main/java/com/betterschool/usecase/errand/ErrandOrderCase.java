@@ -139,13 +139,14 @@ public class ErrandOrderCase {
         if (orderEntity == null) {
             return;
         }
-        broadcast(orderEntity.getPublisherId(), event);
+        deliverTo(orderEntity.getPublisherId(), event);
         if (orderEntity.getTakerId() != null) {
-            broadcast(orderEntity.getTakerId(), event);
+            deliverTo(orderEntity.getTakerId(), event);
         }
     }
 
-    private void broadcast(String userId, ErrandOrderPushEvent event) {
+    /** 向单个收件人投递一帧 ORDER 通知（订单双方由 pushStatus 逐个调用） */
+    private void deliverTo(String userId, ErrandOrderPushEvent event) {
         wsPushPort.deliver(userId, ChatWsFrame.builder()
                 .type(ChatWsFrameType.ORDER)
                 .payload(Map.of(

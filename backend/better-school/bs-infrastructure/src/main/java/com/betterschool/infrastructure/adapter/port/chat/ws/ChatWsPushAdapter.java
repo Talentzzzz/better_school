@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.util.function.BiConsumer;
+
 /**
  * WS 推送适配器：把「投递一帧」与「连接登记」两件出站能力打包在两个 domain 端口后——
  * <ul>
@@ -77,23 +79,22 @@ public class ChatWsPushAdapter implements IWsPushPort, IWsConnectionRegistryPort
 
     /** 路由续期：任意入站帧（心跳 25s）刷 TTL；token 比对防误续接管后的新条目 */
     private void renewRoute(String userId, WebSocketSession session) {
-        if (!routeProperties.enabled()) {
-            return;
-        }
-        Object token = session.getAttributes().get(ATTR_ROUTE_TOKEN);
-        if (token instanceof String t && userId != null) {
-            routeStore.renew(userId, t);
-        }
+        applyRoute(userId, session, routeStore::renew);
     }
 
     /** 路由注销：token 比对 CAS——被互踢/接管后迟到的 close 不误删新连接的条目 */
     private void revokeRoute(String userId, WebSocketSession session) {
+        applyRoute(userId, session, routeStore::revoke);
+    }
+
+    /** 路由动作共享形态：单机形态（未配置端点）跳过；token 比对通过才对 (userId, token) 执行 */
+    private void applyRoute(String userId, WebSocketSession session, BiConsumer<String, String> action) {
         if (!routeProperties.enabled()) {
             return;
         }
         Object token = session.getAttributes().get(ATTR_ROUTE_TOKEN);
         if (token instanceof String t && userId != null) {
-            routeStore.revoke(userId, t);
+            action.accept(userId, t);
         }
     }
 
