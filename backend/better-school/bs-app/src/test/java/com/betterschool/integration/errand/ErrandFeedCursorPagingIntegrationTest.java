@@ -1,5 +1,6 @@
 package com.betterschool.integration.errand;
 
+import com.betterschool.domain.errand.adapter.port.IErrandFundPort;
 import com.betterschool.domain.errand.adapter.port.IErrandGrabAbusePort;
 import com.betterschool.domain.errand.adapter.repository.IErrandRepository;
 import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
@@ -45,6 +46,8 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
     private IErrandRepository errandRepository;
     @Autowired
     private IErrandGrabAbusePort errandGrabAbusePort;
+    @Autowired
+    private IErrandFundPort errandFundPort;
 
     @Test
     @DisplayName("五档排序游标翻页不重不漏、整序与索引序一致、total 降口径 -1")
@@ -179,7 +182,7 @@ class ErrandFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
                         org.mockito.ArgumentMatchers.any(),
                         org.mockito.ArgumentMatchers.anyInt());
 
-        ErrandFeedPageVO page = new ErrandOrderServiceImpl(failingIndexRepo, errandGrabAbusePort)
+        ErrandFeedPageVO page = new ErrandOrderServiceImpl(failingIndexRepo, errandGrabAbusePort, errandFundPort)
                 .listOrders(null, "PUBLISHED", "time", null, 1, PAGE_SIZE);
         assertThat(page.isIndexPath()).as("降级后 indexPath=false（total 由调用方精确 COUNT）").isFalse();
         assertThat(page.getNextCursor()).as("降级路径不发游标").isNull();

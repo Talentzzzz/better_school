@@ -17,7 +17,8 @@ public final class MergeOutcome<T> {
     private final MergeState state;
     private final T result;
 
-    private MergeOutcome(MergeState state, T result) {
+    // 包内可见：Pending.complete 需要回填 COMPLETED 之外的任意终态（工厂方法只覆盖固定四态）
+    MergeOutcome(MergeState state, T result) {
         this.state = state;
         this.result = result;
     }

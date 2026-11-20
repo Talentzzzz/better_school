@@ -61,7 +61,7 @@ class ViewMergeWriterTest {
 
     /** 单热点、窄窗口：正常路径用 */
     private static MergeConfig hotConfig() {
-        return new MergeConfig(8, 1, 200, 5_000, 5_000, 4, 2_000);
+        return new MergeConfig(8, 1, 200, 5_000, 5_000, 2_000);
     }
 
     @Test
@@ -119,7 +119,7 @@ class ViewMergeWriterTest {
     void bufferFullDegradesToSingleUpdateOnCallerThread() {
         ProbeHandler handler = new ProbeHandler();
         // 窗口 500ms ≫ 两次 write 的间隔、容量 1（= maxBatch 下限）：第二件必然撞满，且第一件还没开始落库
-        ViewMergeWriter writer = start(new MergeConfig(8, 500, 1, 5_000, 1, 4, 2_000), handler);
+        ViewMergeWriter writer = start(new MergeConfig(8, 500, 1, 5_000, 1, 2_000), handler);
 
         writer.write(POST_VIEW, POST_ID, VIEWER);
         writer.write(POST_VIEW, POST_ID, VIEWER);

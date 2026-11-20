@@ -1,4 +1,4 @@
-package com.betterschool.trigger.ws.support;
+package com.betterschool.infrastructure.adapter.port.chat.ws.support;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -14,7 +14,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 会话存活注册表骨架（票 10 从 chat 抽出）：任何入站帧刷新 lastInboundAt，
+ * 会话存活注册表骨架：任何入站帧刷新 lastInboundAt，
  * 调度清扫对超过判死阈值无入站的会话主动 close（GOING_AWAY）+ 两参注销。
  * 客户端心跳 25s 一次，60s 判死容忍丢一次心跳（CONTEXT.md「心跳」口径，各端点共用）
  */

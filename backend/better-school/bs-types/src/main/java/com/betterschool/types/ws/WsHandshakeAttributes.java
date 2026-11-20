@@ -1,8 +1,9 @@
-package com.betterschool.trigger.ws.support;
+package com.betterschool.types.ws;
 
 /**
- * WS 握手/连接层共享属性键（连接层骨架，票 10）：chat 与 review 两端点共用同一套键名，
- * 各端点协议类（ChatWsProtocol / ReviewWsProtocol）以常量委托本类
+ * WS 握手/连接层共享属性键（WS 连接层共享常量）：握手拦截器写入、连接处理器与
+ * infra 侧投递适配器（登记/注销时取回装饰 session）共用同一套键名，
+ * 各端点协议类以常量委托本类
  */
 public final class WsHandshakeAttributes {
 

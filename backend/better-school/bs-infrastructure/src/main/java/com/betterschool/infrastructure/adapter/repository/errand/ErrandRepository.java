@@ -501,7 +501,7 @@ public class ErrandRepository implements IErrandRepository {
     public void saveOrderPushEvent(String orderId, ErrandStatusVO status) {
         // 独立小事务（OutboxMessageStore.afterCommit 需要活事务）：域服务在状态迁移方法成功返回后调用，
         // 此刻迁移恒已提交；推送是加速路径，本行落库失败只少一次 WS 提醒，详情页拉取/通知中心兜底
-        transactionTemplate.executeWithoutResult(status ->
+        transactionTemplate.executeWithoutResult(txStatus ->
                 outboxMessageStore.save(Constants.ORDER_PUSH_TOPIC, new ErrandOrderPushEvent(orderId, status.name())));
     }
 

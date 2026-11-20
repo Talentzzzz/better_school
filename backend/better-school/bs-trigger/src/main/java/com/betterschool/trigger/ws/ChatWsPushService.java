@@ -1,25 +1,29 @@
 package com.betterschool.trigger.ws;
 
+import com.betterschool.domain.chat.adapter.port.IWsPushPort;
 import com.betterschool.domain.chat.adapter.repository.IChatRepository;
 import com.betterschool.domain.chat.model.entity.RoomMemberEntity;
 import com.betterschool.domain.chat.model.valobj.ChatMessagePushEvent;
 import com.betterschool.domain.chat.model.valobj.ChatReadPushEvent;
 import com.betterschool.domain.chat.model.valobj.ChatRecallPushEvent;
+import com.betterschool.domain.chat.model.valobj.ChatWsFrame;
+import com.betterschool.domain.chat.model.valobj.ChatWsFrameType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
 
 /**
- * WS 推送服务（outbox 消费者的落地侧，spec §2）：按会话成员逐个经 WsPushRouter 投递，
+ * WS 推送服务（outbox 消费者的落地侧，spec §2）：按会话成员逐个经 IWsPushPort 投递，
  * 仅在线成员推送，不在线直接跳过（漏推合法，timeline 补拉兜底）。
- * MSG 排除发送者本人（发送方以 HTTP 200 为准）
+ * MSG 排除发送者本人（发送方以 HTTP 200 为准）。
+ * 注：按成员扇出的决策暂留本类，票 02 上收进 case 推送服务
  */
 @Component
 @RequiredArgsConstructor
 public class ChatWsPushService {
 
-    private final WsPushRouter wsPushRouter;
+    private final IWsPushPort wsPushPort;
     private final IChatRepository chatRepository;
 
     /** MSG：payload=完整消息体（含发送者昵称头像），客户端按 (roomId, seq) 判重 */
@@ -60,7 +64,7 @@ public class ChatWsPushService {
             if (excludeUserId != null && excludeUserId.equals(memberEntity.getUserId())) {
                 continue;
             }
-            wsPushRouter.deliver(memberEntity.getUserId(), frame);
+            wsPushPort.deliver(memberEntity.getUserId(), frame);
         }
     }
 }

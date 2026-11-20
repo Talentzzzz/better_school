@@ -1,12 +1,12 @@
-package com.betterschool.trigger.ws;
+package com.betterschool.infrastructure.adapter.port.chat.ws;
 
-import com.betterschool.trigger.ws.support.AbstractHeartbeatSessionRegistry;
+import com.betterschool.infrastructure.adapter.port.chat.ws.support.AbstractHeartbeatSessionRegistry;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketSession;
 
 /**
- * chat 会话存活注册表（spec §3）：心跳判死骨架（票 10）的 chat 绑定——
+ * chat 会话存活注册表：心跳判死骨架（support 抽象类）的 chat 绑定——
  * 判死清理时注销 chat 连接注册表并关闭会话
  */
 @Component

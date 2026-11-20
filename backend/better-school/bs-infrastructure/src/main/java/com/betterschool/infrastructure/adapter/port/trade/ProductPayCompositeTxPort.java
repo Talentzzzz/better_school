@@ -55,7 +55,7 @@ public class ProductPayCompositeTxPort implements IProductPayCompositeTxPort {
 
     @Override
     public void cancelWithRefund(String orderId, String buyerId, BigDecimal amount) {
-        compositeTxExecutor.execute(action -> {
+        compositeTxExecutor.execute(() -> {
             // 同事务第一步：解冻退款——流水先行（PRODUCT_UNFROZEN，uk_order_type 冲突 = 已解冻过，
             // 幂等跳过不动冻结额）+ 冻结额回退，钱先回可用余额
             walletAccountService.unfreeze(buyerId, amount, orderId, WalletDetailTypeVO.PRODUCT_UNFROZEN);

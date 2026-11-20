@@ -41,7 +41,7 @@ class CountMergeWriterTest {
 
     /** 单分片、单件一批、够长的窗口：分片容量 1 ⇒ 第二笔必然 BUFFER_FULL */
     private CountMergeWriter startFullBufferScenario() {
-        merger = new CountMerger(new MergeConfig(1, 1_000, 1, 2_000, 1, 1, 1_000), handler);
+        merger = new CountMerger(new MergeConfig(1, 1_000, 1, 2_000, 1, 1_000), handler);
         writer = new CountMergeWriter(merger, handler);
         return writer;
     }
@@ -49,7 +49,7 @@ class CountMergeWriterTest {
     /** 窗口 1ms、等 60ms：落库方法故意慢 ⇒ 必然 TIMEOUT */
     private CountMergeWriter startTimeoutScenario(long handlerSleepMs) {
         handler.sleepMillis = handlerSleepMs;
-        merger = new CountMerger(new MergeConfig(1, 1, 10, 60, 100, 1, 1_000), handler);
+        merger = new CountMerger(new MergeConfig(1, 1, 10, 60, 100, 1_000), handler);
         writer = new CountMergeWriter(merger, handler);
         return writer;
     }
@@ -57,7 +57,7 @@ class CountMergeWriterTest {
     @Test
     @DisplayName("COMPLETED：业务结果原样上抛（LIKED / DUPLICATE 都走这条）")
     void completedPassesBusinessResultThrough() {
-        merger = new CountMerger(new MergeConfig(1, 1, 10, 2_000, 100, 1, 1_000), handler);
+        merger = new CountMerger(new MergeConfig(1, 1, 10, 2_000, 100, 1_000), handler);
         writer = new CountMergeWriter(merger, handler);
 
         handler.nextState = LikeState.DUPLICATE;
@@ -87,7 +87,7 @@ class CountMergeWriterTest {
     @Test
     @DisplayName("停机中（CLOSED）：同样降级同步落库，COMPLETED/CLOSED 都不回 REJECTED")
     void closedDegradesToSameFlushMethodWithSingleItem() {
-        merger = new CountMerger(new MergeConfig(1, 1, 10, 2_000, 100, 1, 1_000), handler);
+        merger = new CountMerger(new MergeConfig(1, 1, 10, 2_000, 100, 1_000), handler);
         writer = new CountMergeWriter(merger, handler);
         merger.close();
 
@@ -115,7 +115,7 @@ class CountMergeWriterTest {
     @DisplayName("落库失败（整组回滚）：调用方拿可重试，不吞不假装成功")
     void flushFailureIsRetryable() {
         handler.failNext = true;
-        merger = new CountMerger(new MergeConfig(1, 1, 10, 2_000, 100, 1, 1_000), handler);
+        merger = new CountMerger(new MergeConfig(1, 1, 10, 2_000, 100, 1_000), handler);
         writer = new CountMergeWriter(merger, handler);
 
         BusinessException e = assertThrows(BusinessException.class, () -> writer.write(POST_LIKE, POST_ID, "11"));
@@ -127,7 +127,7 @@ class CountMergeWriterTest {
     @Test
     @DisplayName("降级也失败：仍是可重试（行一定没动），不抛出内部异常类型")
     void degradeFailureIsRetryable() {
-        merger = new CountMerger(new MergeConfig(1, 1, 10, 2_000, 100, 1, 1_000), handler);
+        merger = new CountMerger(new MergeConfig(1, 1, 10, 2_000, 100, 1_000), handler);
         writer = new CountMergeWriter(merger, handler);
         merger.close();
         handler.failNext = true;

@@ -122,6 +122,11 @@ public class ErrandOrderCase {
         return errandOrderService.orderDetail(orderId, currentUserId);
     }
 
+    /** 读模型查询：推送消费方（bs-order-push）定位投递对象用，无权限语义（对方可见性由读侧 orderDetail 把守） */
+    public ErrandOrderEntity loadOrder(String orderId) {
+        return errandOrderService.loadOrder(orderId);
+    }
+
     public void grabOrder(String orderId, String userId) {
         creditAccountService.ensureOperable(userId);
         errandOrderService.grabOrder(orderId, userId);
