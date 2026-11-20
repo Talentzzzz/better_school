@@ -1,7 +1,7 @@
 package com.betterschool.trigger.listener;
 
 import com.betterschool.domain.chat.model.valobj.ChatReadPushEvent;
-import com.betterschool.trigger.ws.ChatWsPushService;
+import com.betterschool.usecase.chat.ChatWsPushCase;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -21,14 +21,14 @@ import org.springframework.stereotype.Component;
 @RocketMQMessageListener(topic = Constants.CHAT_READ_TOPIC, consumerGroup = "bs-chat-read-group")
 public class ChatReadPushConsumer implements RocketMQListener<String> {
 
-    private final ChatWsPushService chatWsPushService;
+    private final ChatWsPushCase chatWsPushCase;
     private final ObjectMapper objectMapper;
 
     @Override
     public void onMessage(String payload) {
         try {
             ChatReadPushEvent chatReadPushEvent = objectMapper.readValue(payload, ChatReadPushEvent.class);
-            chatWsPushService.pushRead(chatReadPushEvent);
+            chatWsPushCase.pushRead(chatReadPushEvent);
         } catch (Exception e) {
             log.error("[ChatReadPushConsumer] READ 推送失败 payload={}", payload, e);
         }
