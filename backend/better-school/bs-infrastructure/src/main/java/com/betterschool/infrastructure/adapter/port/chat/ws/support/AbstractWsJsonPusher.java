@@ -11,7 +11,7 @@ import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorato
 /**
  * WS 帧写出器骨架：JSON 序列化 + 并发写保护（JSR-356 不允许并发 send，
  * 包装 ConcurrentWebSocketSessionDecorator；缓冲超限由装饰器主动断开）。
- * 推送失败不重试——漏推合法，客户端靠各端点自己的兜底收敛
+ * 推送失败不重试——漏推合法，客户端靠兜底收敛；骨架支撑后续第二个 WS 端点复用
  */
 @Slf4j
 public abstract class AbstractWsJsonPusher<F> {
@@ -52,7 +52,7 @@ public abstract class AbstractWsJsonPusher<F> {
         }
     }
 
-    /** 互踢 KICK 帧（各端点各自的协议信封与 KICK 帧类型） */
+    /** 互踢 KICK 帧（协议信封与 KICK 帧类型由子类按各自端点给出） */
     protected abstract F kickFrame();
 
     /** 日志用帧类型名（帧类型枚举未实现 toString 契约时由子类给出） */
