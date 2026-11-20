@@ -1,11 +1,8 @@
-package com.betterschool.unit.chat;
+package com.betterschool.infrastructure.adapter.port.chat.ws;
 
-import com.betterschool.trigger.ws.ChatConnectionRegistry;
-import com.betterschool.trigger.ws.ChatSessionRegistry;
-import com.betterschool.trigger.ws.ChatWsPusher;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.WebSocketSession;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;

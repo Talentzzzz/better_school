@@ -1,5 +1,6 @@
-package com.betterschool.trigger.ws.support;
+package com.betterschool.infrastructure.adapter.port.chat.ws.support;
 
+import com.betterschool.types.ws.WsCloseCodes;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.socket.CloseStatus;
@@ -8,9 +9,9 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
 
 /**
- * WS 帧写出器骨架（票 10 从 chat 抽出）：JSON 序列化 + 并发写保护（JSR-356 不允许并发 send，
+ * WS 帧写出器骨架：JSON 序列化 + 并发写保护（JSR-356 不允许并发 send，
  * 包装 ConcurrentWebSocketSessionDecorator；缓冲超限由装饰器主动断开）。
- * 推送失败不重试——漏推合法，客户端靠各端点自己的兜底（chat 补拉 / review 上线补推）收敛
+ * 推送失败不重试——漏推合法，客户端靠各端点自己的兜底收敛
  */
 @Slf4j
 public abstract class AbstractWsJsonPusher<F> {

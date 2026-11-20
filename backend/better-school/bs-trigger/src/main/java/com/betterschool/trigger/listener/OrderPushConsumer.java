@@ -1,10 +1,10 @@
 package com.betterschool.trigger.listener;
 
+import com.betterschool.domain.chat.adapter.port.IWsPushPort;
+import com.betterschool.domain.chat.model.valobj.ChatWsFrame;
+import com.betterschool.domain.chat.model.valobj.ChatWsFrameType;
 import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
 import com.betterschool.domain.errand.model.valobj.ErrandOrderPushEvent;
-import com.betterschool.trigger.ws.ChatWsFrame;
-import com.betterschool.trigger.ws.ChatWsFrameType;
-import com.betterschool.trigger.ws.WsPushRouter;
 import com.betterschool.types.common.Constants;
 import com.betterschool.usecase.errand.ErrandOrderCase;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,8 +18,8 @@ import java.util.Map;
 
 /**
  * 跑腿订单状态推送消费方（outbox → MQ → WS ORDER 帧，spec §2）：状态迁移后把新状态推给
- * 订单双方在线者，详情页收到帧后重拉详情实现实时刷新。经 WsPushRouter 投递
- * （本地优先 → Redis 路由 → HTTP 转发）。消费失败不重试——推送是加速路径，
+ * 订单双方在线者，详情页收到帧后重拉详情实现实时刷新。经 IWsPushPort 投递
+ * （本地优先 → Redis 路由 → 定向频道）。消费失败不重试——推送是加速路径，
  * 漏推由详情页下次拉取与通知中心兜底；草稿态（DELETED/DRAFT）不推（无「双方」概念）
  */
 @Slf4j
@@ -29,7 +29,7 @@ import java.util.Map;
 public class OrderPushConsumer implements RocketMQListener<String> {
 
     private final ErrandOrderCase errandOrderCase;
-    private final WsPushRouter wsPushRouter;
+    private final IWsPushPort wsPushPort;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -50,7 +50,7 @@ public class OrderPushConsumer implements RocketMQListener<String> {
     }
 
     private void broadcast(String userId, ErrandOrderPushEvent event) {
-        wsPushRouter.deliver(userId, ChatWsFrame.builder()
+        wsPushPort.deliver(userId, ChatWsFrame.builder()
                 .type(ChatWsFrameType.ORDER)
                 .payload(Map.of(
                         "orderId", event.getOrderId(),

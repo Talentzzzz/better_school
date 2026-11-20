@@ -39,7 +39,7 @@ public class ErrandFundPort implements IErrandFundPort {
 
     @Override
     public void payWithFundFreeze(String orderId, String publisherId, BigDecimal reward) {
-        compositeTxExecutor.execute(action -> {
+        compositeTxExecutor.execute(() -> {
             // 1+2. 冻结悬赏：流水先行（uk_order_type 冲突 = 已冻结过，幂等跳过不动余额）
             //      + 可用余额（balance - frozen）条件扣减，不足抛异常 → 整事务回滚、订单留待支付
             walletRepository.freeze(publisherId, reward, orderId, WalletDetailTypeVO.FROZEN);
@@ -52,7 +52,7 @@ public class ErrandFundPort implements IErrandFundPort {
 
     @Override
     public void cancelWithRefund(String orderId, String publisherId, BigDecimal reward) {
-        compositeTxExecutor.execute(action -> {
+        compositeTxExecutor.execute(() -> {
             // 1. 解冻退款：流水先行（UNFROZEN，uk_order_type 冲突 = 已解冻过，幂等跳过不动冻结额）
             //    + 冻结额回退——钱先回可用余额
             walletRepository.unfreeze(publisherId, reward, orderId, WalletDetailTypeVO.UNFROZEN);
@@ -66,7 +66,7 @@ public class ErrandFundPort implements IErrandFundPort {
     @Override
     public void timeoutCancelWithRefund(String orderId, String publisherId, String takerId,
                                         BigDecimal reward, boolean committed) {
-        compositeTxExecutor.execute(action -> {
+        compositeTxExecutor.execute(() -> {
             // 1. 解冻退款：流水先行（UNFROZEN，uk_order_type 冲突 = 已解冻过，幂等跳过不动冻结额）
             //    + 冻结额回退——钱先回可用余额
             walletRepository.unfreeze(publisherId, reward, orderId, WalletDetailTypeVO.UNFROZEN);
@@ -87,7 +87,7 @@ public class ErrandFundPort implements IErrandFundPort {
 
     @Override
     public void completeWithIncome(String orderId, String publisherId, String takerId, BigDecimal reward) {
-        compositeTxExecutor.execute(action -> {
+        compositeTxExecutor.execute(() -> {
             // 1. 发布方解冻退款：流水先行（UNFROZEN，uk_order_type 冲突 = 已解冻过，幂等跳过不动冻结额）
             //    + 冻结额回退——托管悬赏先回发布方可用余额
             walletRepository.unfreeze(publisherId, reward, orderId, WalletDetailTypeVO.UNFROZEN);

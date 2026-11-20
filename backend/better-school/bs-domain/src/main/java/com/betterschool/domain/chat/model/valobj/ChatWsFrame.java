@@ -1,4 +1,4 @@
-package com.betterschool.trigger.ws;
+package com.betterschool.domain.chat.model.valobj;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

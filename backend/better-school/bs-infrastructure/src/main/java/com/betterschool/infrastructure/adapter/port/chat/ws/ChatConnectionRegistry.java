@@ -1,11 +1,11 @@
-package com.betterschool.trigger.ws;
+package com.betterschool.infrastructure.adapter.port.chat.ws;
 
-import com.betterschool.trigger.ws.support.AbstractSingleSessionConnectionRegistry;
+import com.betterschool.infrastructure.adapter.port.chat.ws.support.AbstractSingleSessionConnectionRegistry;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
 
 /**
- * chat 连接注册表（单机形态，spec §3）：单设备互踢骨架（票 10）的 chat 绑定——
+ * chat 连接注册表：单设备互踢骨架（support 抽象类）的 chat 绑定——
  * 被顶掉的旧连接由 chat 推送器发 KICK + close(4001)
  */
 @Component

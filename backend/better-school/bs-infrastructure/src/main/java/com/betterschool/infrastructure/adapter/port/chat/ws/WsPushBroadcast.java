@@ -1,4 +1,6 @@
-package com.betterschool.trigger.ws;
+package com.betterschool.infrastructure.adapter.port.chat.ws;
+
+import com.betterschool.domain.chat.model.valobj.ChatWsFrame;
 
 /**
  * 跨实例推送广播消息体（pub/sub 定向频道负载，JSON 文本）：

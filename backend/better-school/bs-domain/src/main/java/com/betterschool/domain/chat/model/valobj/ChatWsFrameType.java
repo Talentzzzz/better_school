@@ -1,4 +1,4 @@
-package com.betterschool.trigger.ws;
+package com.betterschool.domain.chat.model.valobj;
 
 /**
  * WS 协议信封类型（spec §3）：C→S 仅 PING；S→C PONG/MSG/READ/RECALL/NOTIF/ORDER/KICK。

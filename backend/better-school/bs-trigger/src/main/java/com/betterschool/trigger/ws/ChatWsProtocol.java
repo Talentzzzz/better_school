@@ -1,11 +1,11 @@
 package com.betterschool.trigger.ws;
 
-import com.betterschool.trigger.ws.support.WsCloseCodes;
-import com.betterschool.trigger.ws.support.WsHandshakeAttributes;
+import com.betterschool.types.ws.WsCloseCodes;
+import com.betterschool.types.ws.WsHandshakeAttributes;
 
 /**
- * chat WS 连接层常量（spec §3）：端点、握手属性键、互踢关闭码。
- * 属性键与互踢口径为两端点共享骨架（票 10），以常量委托 support 包
+ * chat WS 连接层常量：端点、握手属性键、互踢关闭码。
+ * 属性键与互踢口径为连接层共享常量（types.ws），以常量委托
  */
 public final class ChatWsProtocol {
 

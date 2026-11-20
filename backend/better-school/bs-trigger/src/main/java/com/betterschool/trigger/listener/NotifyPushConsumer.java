@@ -1,9 +1,9 @@
 package com.betterschool.trigger.listener;
 
+import com.betterschool.domain.chat.adapter.port.IWsPushPort;
+import com.betterschool.domain.chat.model.valobj.ChatWsFrame;
+import com.betterschool.domain.chat.model.valobj.ChatWsFrameType;
 import com.betterschool.domain.notification.model.valobj.NotifyPushMessage;
-import com.betterschool.trigger.ws.ChatWsFrame;
-import com.betterschool.trigger.ws.ChatWsFrameType;
-import com.betterschool.trigger.ws.WsPushRouter;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +17,7 @@ import java.util.Map;
 
 /**
  * 通知 BANNER 通道消费方（outbox → MQ → WS NOTIF 帧，spec §2）：点赞/评论等瞬态横幅只推在线者，
- * 排除逻辑无需（单收件人）。经 WsPushRouter 投递（本地优先 → Redis 路由 → HTTP 转发）。
+ * 排除逻辑无需（单收件人）。经 IWsPushPort 投递（本地优先 → Redis 路由 → 定向频道）。
  * 消费失败不重试——横幅是加速路径，漏推由前端按 (scope, seq) 水位补拉重放兜底
  * （保证弹过：上线后把积压的通知逐条弹完）
  */
@@ -27,14 +27,14 @@ import java.util.Map;
 @RocketMQMessageListener(topic = Constants.NOTIFY_PUSH_TOPIC, consumerGroup = "bs-notify-push-group")
 public class NotifyPushConsumer implements RocketMQListener<String> {
 
-    private final WsPushRouter wsPushRouter;
+    private final IWsPushPort wsPushPort;
     private final ObjectMapper objectMapper;
 
     @Override
     public void onMessage(String payload) {
         try {
             NotifyPushMessage message = objectMapper.readValue(payload, NotifyPushMessage.class);
-            wsPushRouter.deliver(message.getUserId(), ChatWsFrame.builder()
+            wsPushPort.deliver(message.getUserId(), ChatWsFrame.builder()
                     .type(ChatWsFrameType.NOTIF)
                     .payload(Map.of(
                             "scope", message.getScope(),

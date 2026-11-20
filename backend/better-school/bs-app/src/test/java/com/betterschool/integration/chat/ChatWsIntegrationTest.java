@@ -1,12 +1,12 @@
 package com.betterschool.integration.chat;
 
+import com.betterschool.domain.chat.model.valobj.ChatWsFrame;
+import com.betterschool.domain.chat.model.valobj.ChatWsFrameType;
+import com.betterschool.infrastructure.adapter.port.chat.ws.ChatSessionRegistry;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.betterschool.trigger.listener.ChatPushConsumer;
 import com.betterschool.trigger.listener.ChatReadPushConsumer;
 import com.betterschool.trigger.listener.ChatRecallPushConsumer;
-import com.betterschool.trigger.ws.ChatSessionRegistry;
-import com.betterschool.trigger.ws.ChatWsFrame;
-import com.betterschool.trigger.ws.ChatWsFrameType;
 import com.betterschool.trigger.ws.ChatWsProtocol;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;

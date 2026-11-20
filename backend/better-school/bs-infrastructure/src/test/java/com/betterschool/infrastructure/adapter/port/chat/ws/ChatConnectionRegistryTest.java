@@ -1,7 +1,5 @@
-package com.betterschool.unit.chat;
+package com.betterschool.infrastructure.adapter.port.chat.ws;
 
-import com.betterschool.trigger.ws.ChatConnectionRegistry;
-import com.betterschool.trigger.ws.ChatWsPusher;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.WebSocketSession;
 

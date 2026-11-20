@@ -6,7 +6,9 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -105,6 +107,16 @@ class ErrandPayFundConsistencyIntegrationTest extends CommunityApiTestBase {
         JsonNode createResponse = postJson("/api/errand/orders", body, author);
         assertSuccess(createResponse, "发布跑腿");
         return createResponse.path("data").asText();
+    }
+
+    /** 公开列表当前可见的订单 id 集（GET /api/errand/orders 大厅口径，供可见性断言用） */
+    private List<String> listPublicOrderIds() {
+        JsonNode data = getJson("/api/errand/orders?status=PUBLISHED", null).path("data");
+        List<String> orderIds = new ArrayList<>();
+        for (JsonNode order : data.path("orders")) {
+            orderIds.add(order.path("orderId").asText());
+        }
+        return orderIds;
     }
 
     private String statusOf(String orderId) {

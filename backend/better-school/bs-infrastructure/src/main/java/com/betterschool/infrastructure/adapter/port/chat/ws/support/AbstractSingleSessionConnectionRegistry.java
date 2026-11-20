@@ -1,4 +1,4 @@
-package com.betterschool.trigger.ws.support;
+package com.betterschool.infrastructure.adapter.port.chat.ws.support;
 
 import org.springframework.web.socket.WebSocketSession;
 
@@ -6,10 +6,10 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 单设备连接注册表骨架（票 10 从 chat 抽出）：Map&lt;userId, session&gt;，单设备互踢。
+ * 单设备连接注册表骨架：Map&lt;userId, session&gt;，单设备互踢。
  * 互斥规则：新连接先 put 占位，返回的旧连接交子类互踢（KICK + close 4001）；
  * close 回调用两参 remove（userId + session 身份比对），迟到 close 不会误删新连接。
- * 各端点各持一份实例（同账号的 chat 连接与 review 连接互不干扰）
+ * 各端点各持一份实例（同账号的 chat 连接与其他端点连接互不干扰）
  */
 public abstract class AbstractSingleSessionConnectionRegistry {
 

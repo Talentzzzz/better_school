@@ -26,6 +26,12 @@
             <groupId>org.springframework</groupId>
             <artifactId>spring-tx</artifactId>
         </dependency>
+        <!-- WS 连接登记端口（IWsConnectionRegistryPort）签名交接 WebSocketSession：
+             连接交接走 domain 端口是 spec 拍板口径，session 类型由此进入端口签名 -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-websocket</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
