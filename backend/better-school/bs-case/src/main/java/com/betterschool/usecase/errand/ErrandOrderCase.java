@@ -4,12 +4,16 @@ import com.betterschool.domain.notification.model.valobj.NotificationEventMessag
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.domain.notification.service.INotificationService;
+import com.betterschool.domain.chat.adapter.port.IWsPushPort;
+import com.betterschool.domain.chat.model.valobj.ChatWsFrame;
+import com.betterschool.domain.chat.model.valobj.ChatWsFrameType;
 import com.betterschool.domain.credit.model.valobj.CreditReasonTypeVO;
 import com.betterschool.domain.credit.service.ICreditAccountService;
 import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
 import com.betterschool.domain.errand.model.valobj.ErrandArbitrateResult;
 import com.betterschool.domain.errand.model.valobj.ErrandCancelResult;
 import com.betterschool.domain.errand.model.valobj.ErrandConfirmResult;
+import com.betterschool.domain.errand.model.valobj.ErrandOrderPushEvent;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedPageVO;
 import com.betterschool.domain.errand.model.valobj.ErrandIncomeVO;
 import com.betterschool.domain.errand.model.valobj.ErrandLockTimeoutResult;
@@ -26,6 +30,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -44,6 +49,7 @@ public class ErrandOrderCase {
     private final ICreditAccountService creditAccountService;
     private final IWalletAccountService walletAccountService;
     private final INotificationService notificationService;
+    private final IWsPushPort wsPushPort;
 
     public String createOrder(String userId, String title, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward,
@@ -122,9 +128,31 @@ public class ErrandOrderCase {
         return errandOrderService.orderDetail(orderId, currentUserId);
     }
 
-    /** 读模型查询：推送消费方（bs-order-push）定位投递对象用，无权限语义（对方可见性由读侧 orderDetail 把守） */
-    public ErrandOrderEntity loadOrder(String orderId) {
-        return errandOrderService.loadOrder(orderId);
+    /**
+     * 订单状态推送编排（bs-order-push 消费落地）：定位订单双方后逐个投递 ORDER 帧
+     * （payload={orderId, status}）。草稿态（DELETED/DRAFT）无「双方」概念，不推；
+     * 推送是加速路径：不做事务、不做重试，不在线/失败由 IWsPushPort 静默放弃——
+     * 漏推由详情页下次拉取与通知中心兜底
+     */
+    public void pushStatus(ErrandOrderPushEvent event) {
+        ErrandOrderEntity orderEntity = errandOrderService.loadOrder(event.getOrderId());
+        if (orderEntity == null) {
+            return;
+        }
+        broadcast(orderEntity.getPublisherId(), event);
+        if (orderEntity.getTakerId() != null) {
+            broadcast(orderEntity.getTakerId(), event);
+        }
+    }
+
+    private void broadcast(String userId, ErrandOrderPushEvent event) {
+        wsPushPort.deliver(userId, ChatWsFrame.builder()
+                .type(ChatWsFrameType.ORDER)
+                .payload(Map.of(
+                        "orderId", event.getOrderId(),
+                        "status", event.getStatus()))
+                .ts(System.currentTimeMillis())
+                .build());
     }
 
     public void grabOrder(String orderId, String userId) {
