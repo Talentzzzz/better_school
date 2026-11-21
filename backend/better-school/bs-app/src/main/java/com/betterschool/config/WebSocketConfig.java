@@ -1,8 +1,8 @@
 package com.betterschool.config;
 
-import com.betterschool.trigger.ws.ChatWsHandler;
-import com.betterschool.trigger.ws.ChatWsHandshakeInterceptor;
-import com.betterschool.trigger.ws.ChatWsProtocol;
+import com.betterschool.trigger.ws.WsHandler;
+import com.betterschool.trigger.ws.WsHandshakeInterceptor;
+import com.betterschool.trigger.ws.WsConnectionConstants;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
@@ -13,21 +13,21 @@ import org.springframework.context.annotation.Bean;
 
 /**
  * WS 端点注册：Spring 原生裸 WebSocket，握手鉴权走一次性票据拦截器。
- * chat 端点——连接层骨架在 ws/support，
- * 端点常量与帧类型归 ChatWsProtocol。
+ * chat 端点归全站 WS 连接层（骨架在 ws/support），
+ * 端点常量与帧类型归 WsConnectionConstants。
  */
 @Configuration
 @EnableWebSocket
 @RequiredArgsConstructor
 public class WebSocketConfig implements WebSocketConfigurer {
 
-    private final ChatWsHandler chatWsHandler;
-    private final ChatWsHandshakeInterceptor chatWsHandshakeInterceptor;
+    private final WsHandler wsHandler;
+    private final WsHandshakeInterceptor wsHandshakeInterceptor;
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(chatWsHandler, ChatWsProtocol.ENDPOINT)
-                .addInterceptors(chatWsHandshakeInterceptor);
+        registry.addHandler(wsHandler, WsConnectionConstants.ENDPOINT)
+                .addInterceptors(wsHandshakeInterceptor);
     }
 
     /**

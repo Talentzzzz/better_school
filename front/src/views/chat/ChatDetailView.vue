@@ -9,7 +9,7 @@ import { uploadImage } from '@/api/files'
 import type { ChatMessage, RoomMember } from '@/types/api'
 import { useAuthStore } from '@/stores/auth'
 import { useChatRoomsStore } from '@/stores/chatRooms'
-import { chatWs } from '@/utils/chatWs'
+import { wsClient } from '@/utils/ws'
 import { formatTime } from '@/utils/format'
 import { parseImageContent, roomDisplayName } from '@/utils/chat'
 import { vLongpress } from '@/utils/longpress'
@@ -438,9 +438,11 @@ onMounted(() => {
   // 打开会话立即推水位线，不等补拉（spec §2）
   void chatRooms.markRead(roomId)
   unbindMessage = chatRooms.onMessage((msg) => applyIncoming(msg))
-  unbindRecall = chatWs.on('RECALL', (env) => {
-    if (env.roomId !== roomId || !env.seq) return
-    const row = rows.value.find((r) => r.msg.seq === env.seq)
+  unbindRecall = wsClient.on('RECALL', (env) => {
+    // payload={roomId, seq}：轻事件只带定位
+    const payload = env.payload as { roomId: number; seq: number } | undefined
+    if (payload?.roomId !== roomId || !payload?.seq) return
+    const row = rows.value.find((r) => r.msg.seq === payload.seq)
     if (row) row.msg.status = 'RECALLED'
   })
   void loadInitial()

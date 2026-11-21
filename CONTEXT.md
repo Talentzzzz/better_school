@@ -129,8 +129,8 @@ _Avoid_: 保活、ping 包（协议层 ping/pong 浏览器发不了）
 _Avoid_: 挤下线、顶号
 
 **推送端口**：
-WS 实时帧投递的出站能力归属：IWsPushPort（按 userId 投递一帧）与 IWsConnectionRegistryPort（连接登记/互踢注销）归 chat 域所有，notification/errand 等 case 经其投递，不得各自再声明第二套推送端口。
-_Avoid_: 各域自建推送通道、第二套推送端口
+WS 实时帧投递的出站能力归属：帧信封（WsFrame/WsFrameType）与帧组装（WsFrameFactory）归 infrastructure/ws 托管，业务侧经本域仓储的 pushXxx（chat 域 pushMessage/pushRead/pushRecall、notification 域 pushNotif、errand 域 pushOrderStatus）只传本域推送事件，仓储实现组帧后委托 IWsConnectionHub（按 userId 投递一帧）与连接登记组件，不得各自再声明第二套推送出口。
+_Avoid_: 各域自建推送通道、第二套推送端口、域内手拼帧信封
 
 **投递序号**：
 成员个人的收件箱消费编号（delivery_seq）：扇出写时间线时从 user_seq 计数器取号，per-user 单调且等于提交顺序；增量补拉以它为游标。与消息序号（会话内编号）是两个空间的编号，不可混用。

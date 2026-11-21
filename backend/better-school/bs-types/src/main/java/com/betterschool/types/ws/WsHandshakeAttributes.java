@@ -15,4 +15,5 @@ public final class WsHandshakeAttributes {
 
     private WsHandshakeAttributes() {
     }
+
 }

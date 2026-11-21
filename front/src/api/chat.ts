@@ -57,10 +57,6 @@ export function pullTimeline(afterDeliverySeq: number, limit = 200) {
   return httpGet<ChatTimelinePage>('/chat/timeline', { afterDeliverySeq, limit })
 }
 
-export function createWsTicket() {
-  return httpPost<{ ticket: string }>('/chat/ws-ticket')
-}
-
 export function listNotifications(page = 1, pageSize = 20, scope?: string) {
   return httpGet<PageResult<Notification>>('/chat/notifications', { page, pageSize, scope })
 }

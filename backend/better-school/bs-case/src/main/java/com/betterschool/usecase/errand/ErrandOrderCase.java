@@ -4,9 +4,7 @@ import com.betterschool.domain.notification.model.valobj.NotificationEventMessag
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.domain.notification.service.INotificationService;
-import com.betterschool.domain.chat.adapter.port.IWsPushPort;
-import com.betterschool.domain.chat.model.valobj.ChatWsFrame;
-import com.betterschool.domain.chat.model.valobj.ChatWsFrameType;
+import com.betterschool.domain.errand.adapter.repository.IErrandRepository;
 import com.betterschool.domain.credit.model.valobj.CreditReasonTypeVO;
 import com.betterschool.domain.credit.service.ICreditAccountService;
 import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
@@ -30,7 +28,6 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -49,7 +46,7 @@ public class ErrandOrderCase {
     private final ICreditAccountService creditAccountService;
     private final IWalletAccountService walletAccountService;
     private final INotificationService notificationService;
-    private final IWsPushPort wsPushPort;
+    private final IErrandRepository errandRepository;
 
     public String createOrder(String userId, String title, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward,
@@ -129,9 +126,9 @@ public class ErrandOrderCase {
     }
 
     /**
-     * 订单状态推送编排（bs-order-push 消费落地）：定位订单双方后逐个投递 ORDER 帧
-     * （payload={orderId, status}）。草稿态（DELETED/DRAFT）无「双方」概念，不推；
-     * 推送是加速路径：不做事务、不做重试，不在线/失败由 IWsPushPort 静默放弃——
+     * 订单状态推送编排（bs-order-push 消费落地）：定位订单双方后逐个投递 ORDER 推送
+     * （帧 payload={orderId, status}，组装归 infrastructure/ws）。草稿态（DELETED/DRAFT）无「双方」概念，不推；
+     * 推送是加速路径：不做事务、不做重试，不在线/失败由仓储出站（infrastructure/ws 连接组件）静默放弃——
      * 漏推由详情页下次拉取与通知中心兜底
      */
     public void pushStatus(ErrandOrderPushEvent event) {
@@ -147,13 +144,7 @@ public class ErrandOrderCase {
 
     /** 向单个收件人投递一帧 ORDER 通知（订单双方由 pushStatus 逐个调用） */
     private void deliverTo(String userId, ErrandOrderPushEvent event) {
-        wsPushPort.deliver(userId, ChatWsFrame.builder()
-                .type(ChatWsFrameType.ORDER)
-                .payload(Map.of(
-                        "orderId", event.getOrderId(),
-                        "status", event.getStatus()))
-                .ts(System.currentTimeMillis())
-                .build());
+        errandRepository.pushOrderStatus(userId, event);
     }
 
     public void grabOrder(String orderId, String userId) {

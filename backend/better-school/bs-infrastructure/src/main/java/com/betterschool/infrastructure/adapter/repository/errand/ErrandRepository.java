@@ -1,6 +1,8 @@
 package com.betterschool.infrastructure.adapter.repository.errand;
 
 import com.betterschool.domain.errand.adapter.repository.IErrandRepository;
+import com.betterschool.infrastructure.ws.IWsConnectionHub;
+import com.betterschool.infrastructure.ws.wsframe.WsFrameFactory;
 import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedCursorVO;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO;
@@ -70,6 +72,7 @@ public class ErrandRepository implements IErrandRepository {
     private final ITimeoutRepository timeoutRepository;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
+    private final IWsConnectionHub wsConnectionHub;
     /** 发布方/接单方昵称头像批量回查（SQL 层零 JOIN：订单列表/详情的 bs_user 信息在这里多查一次拼装） */
     private final IUserDao userDao;
 
@@ -961,4 +964,9 @@ public class ErrandRepository implements IErrandRepository {
         return new ArrayList<>(userIds);
     }
 
+
+    @Override
+    public void pushOrderStatus(String userId, ErrandOrderPushEvent event) {
+        wsConnectionHub.push(userId, WsFrameFactory.order(event));
+    }
 }

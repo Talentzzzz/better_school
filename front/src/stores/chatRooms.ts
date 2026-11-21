@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { hideRoom as apiHideRoom, listRooms, markRead as apiMarkRead, pullTimeline } from '@/api/chat'
 import type { ChatMessage, ChatRoomSummary } from '@/types/api'
-import { chatWs } from '@/utils/chatWs'
+import { wsClient } from '@/utils/ws'
 
 const TIMELINE_LIMIT = 200
 const REFRESH_DEBOUNCE_MS = 500
@@ -69,22 +69,23 @@ export const useChatRoomsStore = defineStore('chatRooms', {
 
     bindWs() {
       this.unbindFns.push(
-        chatWs.on('MSG', (env) => {
+        wsClient.on('MSG', (env) => {
+          // payload=完整消息体（含 roomId/seq 判重键），客户端按 (roomId, seq) 判重
           const msg = env.payload as ChatMessage | undefined
-          if (msg && env.roomId) {
-            this.applyMessage({ ...msg, roomId: env.roomId, seq: env.seq ?? msg.seq }, true)
-          }
+          if (msg?.roomId && msg.seq) this.applyMessage(msg, true)
         }),
-        chatWs.on('READ', (env) => {
-          // payload={userId(readerId), readSeq}，就地更新成员水位 map
-          const payload = env.payload as { userId: number; readSeq: number } | undefined
-          if (env.roomId && payload) this.mergeReadSeq(env.roomId, payload.userId, payload.readSeq)
+        wsClient.on('READ', (env) => {
+          // payload={roomId, userId(readerId), readSeq}，就地更新成员水位 map
+          const payload = env.payload as { roomId: number; userId: number; readSeq: number } | undefined
+          if (payload?.roomId) this.mergeReadSeq(payload.roomId, payload.userId, payload.readSeq)
         }),
-        chatWs.on('RECALL', (env) => {
-          if (env.roomId && env.seq) this.applyRecall(env.roomId, env.seq)
+        wsClient.on('RECALL', (env) => {
+          // payload={roomId, seq}：轻事件只带定位，内容终态以拉取为准
+          const payload = env.payload as { roomId: number; seq: number } | undefined
+          if (payload?.roomId && payload.seq) this.applyRecall(payload.roomId, payload.seq)
         }),
         // 断线重连对齐：连接成功即补拉（推是加速，拉是真相，spec §2）
-        chatWs.onOpen(() => this.syncLoop())
+        wsClient.onOpen(() => this.syncLoop())
       )
     },
 

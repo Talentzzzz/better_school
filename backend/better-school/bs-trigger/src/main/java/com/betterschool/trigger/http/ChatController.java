@@ -9,7 +9,6 @@ import com.betterschool.api.dto.ChatRoomListItemResponseDTO;
 import com.betterschool.api.dto.ChatTimelineResponseDTO;
 import com.betterschool.api.dto.CreateDirectRoomRequestDTO;
 import com.betterschool.api.dto.SendMessageRequestDTO;
-import com.betterschool.api.dto.WsTicketResponseDTO;
 import com.betterschool.api.response.Response;
 import com.betterschool.domain.chat.model.entity.MessageEntity;
 import com.betterschool.domain.chat.model.entity.RoomEntity;
@@ -19,7 +18,6 @@ import com.betterschool.domain.chat.model.valobj.RoomMemberVO;
 import com.betterschool.domain.chat.model.valobj.RoomSourceEnum;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
 import com.betterschool.domain.chat.model.valobj.TimelinePageVO;
-import com.betterschool.domain.chat.adapter.port.IWsTicketPort;
 import com.betterschool.domain.chat.service.query.IChatQueryService;
 import com.betterschool.domain.chat.service.recall.IChatRecallService;
 import com.betterschool.domain.chat.service.read.IChatReadService;
@@ -59,7 +57,6 @@ public class ChatController implements IChatService {
     private final IChatQueryService chatQueryService;
     private final IChatReadService chatReadService;
     private final IChatRecallService chatRecallService;
-    private final IWsTicketPort wsTicketPort;
     private final IUserRepository userRepository;
 
     @Override
@@ -164,14 +161,6 @@ public class ChatController implements IChatService {
         ChatMembersResponseDTO dto = new ChatMembersResponseDTO();
         dto.setMemberCount(members.size());
         dto.setMembers(members.stream().map(this::toMemberResponseDTO).toList());
-        return Response.ok(dto);
-    }
-
-    @Override
-    @PostMapping("/ws-ticket")
-    public Response<WsTicketResponseDTO> createWsTicket() {
-        WsTicketResponseDTO dto = new WsTicketResponseDTO();
-        dto.setTicket(wsTicketPort.issue(SecurityUtils.currentUserId()));
         return Response.ok(dto);
     }
 

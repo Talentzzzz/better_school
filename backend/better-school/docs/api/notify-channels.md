@@ -47,7 +47,7 @@ NotifyEventConsumer（通知域唯一写入口）
 ## BANNER 通道：顶部横幅（瞬态）
 
 - `NotifyEventConsumer` 落库成功后写 outbox `bs-notify-push`（`NotifyPushMessage`）→ `NotifyPushConsumer`（反序列化 + 调 case）→
-  `NotifyPushCase` 组帧经 `IWsPushPort` 由 infra WS 推送适配器推 WS `NOTIF` 帧（只推在线者，漏推合法）。
+  `NotifyPushCase` 组帧经本域仓储 `deliverWsFrame` 委托 infra WS 组件推 WS `NOTIF` 帧（只推在线者，漏推合法）。
 - 「保证弹过」（小红书口径）：前端按 `(userId, scope)` 在 localStorage 记 seq 水位
   （`bs:notify-cursor:<userId>:<scope>`），WS 重连/上线时把 `seq > 水位` 的积压通知逐条重放横幅；
   首次登录该账号（无水位）静默对齐不回放历史存量。NOTIF 帧就地推进水位。
@@ -57,7 +57,7 @@ NotifyEventConsumer（通知域唯一写入口）
 
 - 跑腿订单每个状态迁移点成功后由域服务写 outbox `bs-order-push`（`ErrandOrderPushEvent{orderId,status}`）→
   `OrderPushConsumer`（反序列化 + 调 case）→ `ErrandOrderCase.pushStatus` 决定订单双方投递 →
-  经 `IWsPushPort` 由 infra WS 推送适配器推 WS `ORDER` 帧给发布方+接单方在线者。
+  经 errand 本域仓储 `deliverWsFrame` 委托 infra WS 组件推 WS `ORDER` 帧给发布方+接单方在线者。
 - 详情页收到帧（匹配当前 orderId）即重拉详情；推送是加速路径，漏推由详情页拉取/通知中心兜底。
 
 ## 关键文件
@@ -71,6 +71,6 @@ NotifyEventConsumer（通知域唯一写入口）
 | 系统消息投递 | `bs-case/.../usecase/notification/SystemMessageCase.java` |
 | 通道消费方 | `bs-trigger/.../listener/NotifyChatConsumer.java` / `NotifyPushConsumer.java` / `OrderPushConsumer.java`（后两者均为反序列化 + 调 case） |
 | 推送决策 | `bs-case/.../usecase/notification/NotifyPushCase.java`（NOTIF 组帧）/ `usecase/errand/ErrandOrderCase.java`（pushStatus 双方投递决策） |
-| WS 投递端口 | `bs-domain/.../chat/adapter/port/IWsPushPort.java`（deliver 单一入口）→ `bs-infrastructure/.../adapter/port/chat/ws/ChatWsPushAdapter.java` |
-| WS 帧 | `bs-domain/.../chat/model/valobj/ChatWsFrameType.java` 增 NOTIF / ORDER |
+| WS 投递出口  | 各域仓储方法 `deliverWsFrame`（`IChatRepository`/`INotificationRepository`/`IErrandRepository`）→ 仓储实现委托组件 `bs-infrastructure/.../ws/`（IWsConnectionHub） 
+| WS 帧 | `bs-domain/.../chat/model/valobj/WsFrameType.java` 增 NOTIF / ORDER |
 | 前端 | `stores/notices.ts`（横幅队列/水位补放/未读）+ `components/NotifBanner.vue` + `App.vue` 挂载 |
