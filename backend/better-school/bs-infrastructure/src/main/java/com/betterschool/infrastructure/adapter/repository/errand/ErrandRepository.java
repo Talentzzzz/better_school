@@ -234,7 +234,8 @@ public class ErrandRepository implements IErrandRepository {
     public ErrandOrderEventVO latestEventOf(String orderId) {
         ErrandOrderEvent latest = errandOrderEventDao.selectLatestEvent(orderId);
         return latest == null ? null
-                : new ErrandOrderEventVO(latest.getEventSeq(), latest.getEventType(), latest.getActorId());
+                : new ErrandOrderEventVO(latest.getEventSeq(), latest.getEventType(), latest.getActorId(),
+                        latest.getFromState());
     }
 
     @Override
@@ -425,6 +426,12 @@ public class ErrandRepository implements IErrandRepository {
         List<ErrandOrder> errandOrderList = errandDao.selectPublicPageByPublisher(userId, offset, limit);
         fillOrderExtras(errandOrderList);
         return errandOrderList.stream().map(this::toEntity).toList();
+    }
+
+    /** 孤儿扫描输入（ADR-0016 两段式）：近窗口进入终态的订单，只取结算需要的裸列，不带昵称/浏览量附加信息 */
+    @Override
+    public List<ErrandOrderEntity> listRecentSettled(int windowMinutes, int limit) {
+        return errandDao.selectRecentSettled(windowMinutes, limit).stream().map(this::toEntity).toList();
     }
 
     @Override

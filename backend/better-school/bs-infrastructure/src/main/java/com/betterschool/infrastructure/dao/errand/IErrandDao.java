@@ -119,4 +119,7 @@ public interface IErrandDao {
 
     /** 重灌取数①：errand_order 全量 (errand_order_id, state, create_time, reward)——行集 = PUBLISHED，仓储拼装 */
     List<ErrandFeedIndexRow> selectRebuildRows();
+
+    /** 孤儿扫描输入（ADR-0016 两段式）：近窗口进入终态（CANCELLED/COMPLETED）的订单，按 update_time 升序 */
+    List<ErrandOrder> selectRecentSettled(@Param("windowMinutes") int windowMinutes, @Param("limit") int limit);
 }

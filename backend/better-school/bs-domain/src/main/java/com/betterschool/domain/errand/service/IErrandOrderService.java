@@ -51,8 +51,20 @@ public interface IErrandOrderService {
     /** 删除草稿：软删 DRAFT → DELETED（仅作者、仅 DRAFT；本期 DELETED 仅从 DRAFT 可达） */
     void deleteDraft(String orderId, String userId);
 
-    /** 确认支付：经 IErrandFundPort 组合事务内冻结悬赏（余额不足整事务回滚）+ payById 转 PUBLISHED + bs-errand-paid outbox */
-    ErrandPayResult payOrder(String orderId, String userId);
+    /**
+     * 支付准备（两段式 ADR-0016 第一段的前置，ADR-0016 起不再有组合事务端口）：
+     * 校验作者与状态幂等（已在 PUBLISHED → alreadyPublished=true，调用方跳过冻结与翻转），
+     * 返回需冻结的悬赏总额；本方法零副作用（只读 + 校验）
+     */
+    ErrandPayResult preparePayOrder(String orderId, String userId);
+
+    /**
+     * 支付提交（两段式第二段，资金段由 case 层先行完成）：payById「待支付 → 已发布」条件翻转
+     * （含 bs-errand-paid outbox + feed 索引行诞生，单仓储事务）。翻转未命中（状态已变化 /
+     * deadline 已过）→ 抛业务异常；此刻悬赏可能已冻结（case 层资金段先于本段），孤儿由
+     * errandFundOrphanScan 扫描解冻收敛——长款中间态，绝不丢钱
+     */
+    void confirmPayOrder(String orderId, String userId);
 
     /**
      * 跑腿大厅（market-feed-uv 票 04）：无类型筛选且只看 PUBLISHED 时走 errand_feed_index 索引序扫描 +
@@ -101,7 +113,9 @@ public interface IErrandOrderService {
      * 取消（无事务）：发布方（取货前，终态）/ 接单方（仅已确认，回已发布），返回退款/扣分需求。
      * {@code requestId} 为客户端每次点击生成、重试沿用的请求编号，可空——
      * 非空且该订单已存在「本人 + TAKER_CANCELLED + 同编号」事件时视为同一次点击的重放，
-     * 直接回放成功结果、业务零执行（防「取消后重抢再确认」窗口期的旧重试误伤新一轮）
+     * 直接回放成功结果、业务零执行（防「取消后重抢再确认」窗口期的旧重试误伤新一轮）。
+     * 两段式 ADR-0016：发布方取消的已冻结场景，本方法只做翻转（翻转段先行，长款中间态），
+     * 解冻退款由 case 层在本方法返回后顺序执行；翻转与解冻之间的宕机孤儿由 errandFundOrphanScan 收敛
      */
     ErrandCancelResult cancelOrder(String orderId, String userId, String requestId);
 
@@ -134,13 +148,16 @@ public interface IErrandOrderService {
     ErrandOrderEntity loadOrder(String orderId);
 
     /**
-     * 订单 deadline 超时：CANCELLED，解冻退款（开工场景另含接单方信用分扣减）与取消翻转
-     * 由 IErrandFundPort 并入一个物理事务；幂等忽略返回 null。
-     * 任务比 deadline 早到（时钟偏差）或条件 UPDATE 未命中（并发竞态）时抛出按失败重投，
+     * 订单 deadline 超时：CANCELLED 条件翻转（state + deadline 双守卫，两段式 ADR-0016 的翻转段），
+     * 解冻退款与开工场景信用分扣减由 case 层在本方法返回后顺序执行（各自域内事务 + 流水唯一键幂等）；
+     * 翻转与资金动作之间的宕机孤儿由 errandFundOrphanScan 收敛。
+     * 幂等忽略返回 null。任务比 deadline 早到（时钟偏差）或条件 UPDATE 未命中（并发竞态）时抛出按失败重投，
      * 绝不静默成功——否则任务被结算成 SUCCESS、订单永远漏关单
      */
     ErrandTimeoutResult handleOrderTimeout(String orderId);
 
-    /** 送达 24h 未确认（无事务）：自动 COMPLETED，返回解冻总额 + 入账需求（与确认同一口径）；幂等忽略返回 null */
+    /** 送达 24h 未确认（无事务）：自动 COMPLETED 条件翻转（两段式 ADR-0016 的翻转段），
+     * 解冻退款与接单方悬赏入账由 case 层在本方法返回后顺序执行；宕机孤儿由 errandFundOrphanScan 收敛；
+     * 幂等忽略返回 null */
     ErrandAutoCompleteResult handleAutoComplete(String orderId);
 }

@@ -11,7 +11,7 @@
   1. **资金段**：资金域仓储事务——流水先行（`INSERT IGNORE`，`uk_order_type` / `uk_user_reason_ref` 冲突 = 已处理过，幂等跳过）+ 可用余额条件扣减 / 解冻 / 入账。
   2. **翻转段**：业务域仓储事务——条件 UPDATE 守卫前态，事件行 / feed 索引行 / 搜索 outbox 行随行落库（与现行仓储口径一致，本就是单仓储事务，不变）。
 - **段落顺序逐链路定，判据唯一**：宕机窗口留下的中间态必须是**长款**（资金悬置/冻结、可凭流水单向回补），不得是**短款**（状态已推进而应付资金缺失）。支付类（冻结/扣分）资金段恒先行——余额不足直接失败，订单留待支付；退款/入账类的顺序在重构票里按此判据逐条复核。
-- **孤儿扫描**：每条两段式链路一个收敛 job，照 `drawCountPurchaseScan` 口径（cron `0/30`、条件更新抢占、1/2/4/8/16 分钟退避、耗尽进 DEAD 只 ERROR 日志 + 人工 SQL 重置）。扫描判据是**流水行与业务行状态比对**（资金流水已落、对应状态翻转未命中、超阈值），**零新增状态表**——流水唯一键本身就是幂等凭证与对账源，与 `draw-recon-round` 的对账口径同族。收敛动作：可按原幂等键重放翻转则重放；不可重放则资金回补（`ORPHAN_REFUND` 型，唯一键幂等）。
+- **孤儿扫描**：每条两段式链路一个收敛 job（cron `0/30`）。**无状态窗口重扫**，不照搬 `drawCountPurchaseScan` 的逐行退避——本链路的每个收敛动作都是单次幂等调用（流水唯一键吸收重复），失败行永远满足扫描条件、下个周期自然重试，因此**无 per-row 状态、无退避、无死信**；扫描判据是**流水行与业务行状态比对**（资金流水已落、对应状态翻转未命中、超阈值），**零新增状态表**——流水唯一键本身就是幂等凭证与对账源。收敛动作：终态订单补解冻 / 补入账 / 补扣分（全部按原幂等键重放）。
 - **重试安全**：两段各自幂等（流水唯一键 + 条件 UPDATE），MQ 重投 / 客户端带 token 重试 / 扫描 job 三路重试全部安全，与既有终态短路语义兼容。
 - **购买次数链路（marketing `PointsDeductPort`）**：改「购买单先落 `CREATED` → 扣分 → 推进 `DONE`」三段。购买单的表形态、唯一键、Stripe 幂等入口、`drawCountPurchaseScan` 均不变（ADR-0014 的表形态决策保留）；「单在 ⇒ 分已扣」的承诺降级为「单在 ⇒ 扣分结果未知、扫描收敛」。ADR-0014 当初否掉「先落 CREATED」的理由（补偿逻辑分叉）被新纪律覆盖：跨仓储事务已不可用，分叉是必须接受的形态。
 
@@ -41,12 +41,14 @@
 
 ## Migration
 
-重构按票推进，本 ADR 只定口径：
-
-1. 票 A：退役 `CompositeTxExecutor` + `ErrandFundPort` 四方法两段化 + 跑腿孤儿扫描 job。
-2. 票 B：`ProductPayCompositeTxPort` 两方法两段化 + 商品孤儿扫描（可与票 A 共用一个按 `biz_type` 分派的扫描）。
+1. **票 A（已完成，2026-11-22）**：`IErrandFundPort` / `ErrandFundPort` 删除，`ErrandOrderCase` 四条链路两段化
+   （支付 prepare→freeze→confirm；取消/超时/自动完成翻转先行、case 层补资金段）+
+   `ErrandFundOrphanScanCase` / `ErrandFundOrphanScanJob`（xxl `errandFundOrphanScan`，钱包侧
+   `listOrphanFrozen` + 订单侧 `listRecentSettled` 两个扫描查询）+ `errand.md` 宣称改写。
+2. 票 B：`ProductPayCompositeTxPort` 两方法两段化 + 商品孤儿扫描（可与票 A 共用扫描 job 按 `biz_type` 分派）。
 3. 票 C：marketing `PointsDeductPort` 三段化 + `drawCountPurchaseScan` 口径扩展。
-4. 文档随票：`backend/better-school/docs/api/errand.md` / `trade.md`、`backend/docs/architecture/marketing-services.md` 中「经组合事务端口并入一个物理事务」的宣称改写为两段式口径（当前描述与现存实现一致，先不改，避免反向漂移）。
+4. 文档随票：`backend/better-school/docs/api/trade.md`、`backend/docs/architecture/marketing-services.md` 中
+   「经组合事务端口并入一个物理事务」的宣称改写为两段式口径（票 A 的 `errand.md` 已随票完成）。
 
 ## References
 

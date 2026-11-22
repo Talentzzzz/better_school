@@ -177,4 +177,11 @@ public class WalletRepository implements IWalletRepository {
         detailEntity.setCreateTime(detail.getCreateTime());
         return detailEntity;
     }
+
+    /** 孤儿扫描输入（ADR-0016 两段式）：只读，无事务 */
+    @Override
+    public List<WalletDetailEntity> listOrphanFrozen(int thresholdMinutes, int limit) {
+        return walletDetailDao.selectOrphanFrozen(thresholdMinutes, limit)
+                .stream().map(this::toDetailEntity).toList();
+    }
 }

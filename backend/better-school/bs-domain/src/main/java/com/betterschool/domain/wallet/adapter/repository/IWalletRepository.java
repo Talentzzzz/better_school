@@ -48,4 +48,11 @@ public interface IWalletRepository {
     List<WalletDetailEntity> listDetails(String userId, int offset, int limit);
 
     long countDetails(String userId);
+
+    /**
+     * 孤儿扫描输入（ADR-0016 两段式）：存在 FROZEN 冻结流水、但同订单同轮次没有对应 UNFROZEN 流水、
+     * 且冻结时间早于阈值的行（按 create_time 升序）。单仓储自查（FROZEN 与 UNFROZEN 都在本表比对），
+     * 不跨域；「是否该解冻」的业务判据（订单是否终态）由扫描用例查订单域裁决
+     */
+    List<WalletDetailEntity> listOrphanFrozen(int thresholdMinutes, int limit);
 }

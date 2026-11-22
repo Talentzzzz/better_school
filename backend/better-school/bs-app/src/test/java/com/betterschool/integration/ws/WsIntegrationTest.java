@@ -12,7 +12,7 @@ import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyAccessor;
+import com.fasterxml.jackson.annotation.PropertyAccessor;
 import jakarta.annotation.Resource;
 import jakarta.websocket.DeploymentException;
 import org.junit.jupiter.api.AfterEach;

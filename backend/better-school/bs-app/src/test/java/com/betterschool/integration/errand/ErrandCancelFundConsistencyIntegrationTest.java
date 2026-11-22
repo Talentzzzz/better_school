@@ -12,7 +12,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 跑腿取消资金收口（票 03）：发布方解冻退款与订单取消翻转经 IErrandFundPort 并入一个物理事务。
+ * 跑腿取消资金收口（票 03，ADR-0016 两段式）：订单取消翻转先行（翻转段），case 层随后解冻退款（资金段）。
  * 只断言外显行为（HTTP 响应 + 数据库状态），不测事务内部编排：
  * <ul>
  *   <li>取消成功 ⇒ 订单已取消且解冻流水恰一条、冻结额归零、可用余额全额恢复——无悬置冻结；</li>

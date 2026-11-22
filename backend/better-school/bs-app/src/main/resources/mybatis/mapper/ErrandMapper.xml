@@ -402,4 +402,15 @@
         FROM errand_order
     </select>
 
+    <!-- 孤儿扫描输入（ADR-0016 两段式）：近窗口进入终态的订单，按 update_time 升序，
+         供扫描用例结合事件行裁决补解冻/入账/扣分；窗口重扫幂等（资金动作全部流水唯一键吸收） -->
+    <select id="selectRecentSettled" resultType="com.betterschool.infrastructure.dao.errand.po.ErrandOrder">
+        SELECT <include refid="baseColumns"/>, update_time
+        FROM errand_order
+        WHERE state IN ('CANCELLED', 'COMPLETED')
+          AND update_time &gt;= NOW() - INTERVAL #{windowMinutes} MINUTE
+        ORDER BY update_time
+        LIMIT #{limit}
+    </select>
+
 </mapper>

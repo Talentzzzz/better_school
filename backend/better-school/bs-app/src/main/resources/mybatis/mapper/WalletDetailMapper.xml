@@ -26,4 +26,23 @@
         WHERE user_id = #{userId}
     </select>
 
+    <!-- 孤儿扫描输入（ADR-0016 两段式）：有 FROZEN、同订单同轮次同人无 UNFROZEN、冻结已超阈值。
+         自联结（两处引用同表）按仓库 SQL 规范在此引入别名：d = 冻结行，u = 候选解冻行 -->
+    <select id="selectOrphanFrozen" resultType="com.betterschool.infrastructure.dao.wallet.po.WalletDetail">
+        SELECT d.id, d.wallet_id, d.user_id, d.type, d.amount, d.order_id, d.biz_round, d.create_time
+        FROM wallet_detail d
+        WHERE d.type = 'FROZEN'
+          AND d.create_time &lt;= NOW() - INTERVAL #{thresholdMinutes} MINUTE
+          AND NOT EXISTS (
+              SELECT 1
+              FROM wallet_detail u
+              WHERE u.order_id = d.order_id
+                AND u.biz_round = d.biz_round
+                AND u.user_id = d.user_id
+                AND u.type = 'UNFROZEN'
+          )
+        ORDER BY d.id
+        LIMIT #{limit}
+    </select>
+
 </mapper>

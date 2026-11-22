@@ -9,14 +9,18 @@ import com.betterschool.domain.credit.model.valobj.CreditReasonTypeVO;
 import com.betterschool.domain.credit.service.ICreditAccountService;
 import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
 import com.betterschool.domain.errand.model.valobj.ErrandArbitrateResult;
+import com.betterschool.domain.errand.model.valobj.ErrandAutoCompleteResult;
 import com.betterschool.domain.errand.model.valobj.ErrandCancelResult;
 import com.betterschool.domain.errand.model.valobj.ErrandConfirmResult;
 import com.betterschool.domain.errand.model.valobj.ErrandOrderPushEvent;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedPageVO;
 import com.betterschool.domain.errand.model.valobj.ErrandIncomeVO;
 import com.betterschool.domain.errand.model.valobj.ErrandLockTimeoutResult;
+import com.betterschool.domain.errand.model.valobj.ErrandPayResult;
 import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
+import com.betterschool.domain.errand.model.valobj.ErrandTimeoutResult;
 import com.betterschool.domain.errand.service.IErrandOrderService;
+import com.betterschool.domain.wallet.model.valobj.WalletDetailTypeVO;
 import com.betterschool.domain.wallet.service.IWalletAccountService;
 import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCode;
@@ -58,12 +62,20 @@ public class ErrandOrderCase {
     }
 
     /**
-     * 支付（资金收口）：冻结悬赏与「待支付 → 已发布」翻转（含 outbox + feed 索引行）
-     * 已由 IErrandFundPort 并入一个物理事务（见 ErrandOrderServiceImpl.payOrder），
-     * 本层不再拆两步调用——「发布成功但钱没冻」的中间态由该事务消灭
+     * 支付（两段式 ADR-0016）：① 域服务 prepare 校验（作者/状态幂等，返回需冻结悬赏）→
+     * ② 本层资金段冻结悬赏（流水 uk_order_type 幂等，余额不足抛异常、订单留待支付）→
+     * ③ 域服务 confirm 翻转「待支付 → 已发布」（含 outbox + feed 索引行，单仓储事务）。
+     * 资金段恒先行（宁可长款不可短款）：翻转失败时订单留待支付、钱悬置冻结，
+     * 孤儿由 {@code errandFundOrphanScan} 扫描解冻收敛。客户端重试安全：prepare 幂等回放 +
+     * 冻结流水 uk 吸收重复冻结
      */
     public void payOrder(String orderId, String userId) {
-        errandOrderService.payOrder(orderId, userId);
+        ErrandPayResult payResult = errandOrderService.preparePayOrder(orderId, userId);
+        if (payResult.isAlreadyPublished()) {
+            return; // 幂等：上次支付已提交成功（重试场景），零副作用
+        }
+        walletAccountService.freeze(userId, payResult.getAmount(), orderId, WalletDetailTypeVO.FROZEN);
+        errandOrderService.confirmPayOrder(orderId, userId);
     }
 
     /** 保存草稿：私有停靠内容——不做同步初筛、不做信用分门槛（提交时才校验），字段可缺省 */
@@ -180,14 +192,18 @@ public class ErrandOrderCase {
     }
 
     /**
-     * 取消（资金收口）：发布方解冻退款与取消翻转已由 IErrandFundPort 并入一个物理事务
-     * （见 ErrandOrderServiceImpl.cancelByPublisher），本层不再拆两步调用——
-     * 「订单已取消但悬赏悬置冻结态」的中间态由该事务消灭。
+     * 取消（两段式 ADR-0016）：发布方取消的已冻结场景，域服务只做取消翻转（翻转段先行，长款中间态），
+     * 本层按结果对象的退款需求顺序执行解冻退款（流水 uk_order_type 幂等）；
+     * 翻转与解冻之间的宕机孤儿（订单已取消但悬赏悬置冻结态）由 {@code errandFundOrphanScan} 扫描收敛。
      * 接单方取消不涉资金（悬赏继续托管），仅扣信用分（流水 uk 幂等）。
      */
     public void cancelOrder(String orderId, String userId, String requestId) {
         // requestId 可空（请求级幂等键）：同一次点击的重放在 domain 层已被回放拦截，不会走到跨域动作
         ErrandCancelResult cancelResult = errandOrderService.cancelOrder(orderId, userId, requestId);
+        if (cancelResult.isNeedRefund()) {
+            walletAccountService.unfreeze(cancelResult.getPublisherId(), cancelResult.getReward(), orderId,
+                    WalletDetailTypeVO.UNFROZEN);
+        }
         if (cancelResult.isTakerCanceled()) {
             creditAccountService.applyChange(cancelResult.getTakerId(), CreditReasonTypeVO.ERRAND_TAKER_CANCEL, orderId);
         }
@@ -270,26 +286,45 @@ public class ErrandOrderCase {
     }
 
     /**
-     * 订单超时取消编排（超时中心回调，资金收口）：取消翻转 + 发布方解冻退款
-     * （开工场景另含接单方信用分扣减）已由 IErrandFundPort 并入一个物理事务
-     * （见 ErrandOrderServiceImpl.handleOrderTimeout），本层不再拆两步调用——
-     * 「订单已取消但悬赏悬置冻结态」「退了钱分没扣」的中间态由该事务消灭。
-     * 终态短路语义保持现状：重投一个已处理的回调，读到终态即安全返回；
-     * 早到回调仍按失败重投（资金动作随翻转失败整体回滚，零残留）。
+     * 订单超时取消编排（超时中心回调，两段式 ADR-0016）：域服务做翻转段（state + deadline 双守卫
+     * 条件 UPDATE，翻转未命中抛异常按失败重投），本层随后顺序执行资金段——发布方解冻退款
+     * （流水 uk_order_type 幂等）+ 开工场景接单方信用分扣减（流水 uk_user_reason_ref 幂等）。
+     * 翻转与资金动作之间的宕机孤儿（订单已取消但悬赏悬置冻结 / 退了钱分没扣）由
+     * {@code errandFundOrphanScan} 扫描收敛。终态短路语义保持现状：重投一个已处理的回调，
+     * 读到终态即安全返回（资金段的补齐由扫描兜底）。
      */
     public void handleOrderTimeout(String orderId) {
-        errandOrderService.handleOrderTimeout(orderId);
+        ErrandTimeoutResult timeoutResult = errandOrderService.handleOrderTimeout(orderId);
+        if (timeoutResult == null) {
+            return; // 幂等：已完成/已取消/仲裁中/待支付等不受超时影响，零副作用
+        }
+        // 资金段：发布方解冻退款（与取消/完成同一解冻口径）
+        walletAccountService.unfreeze(timeoutResult.getPublisherId(), timeoutResult.getReward(), orderId,
+                WalletDetailTypeVO.UNFROZEN);
+        // 开工场景（CONFIRMED/PICKED_UP 起算违约）另扣接单方信用分（流水 uk 幂等）
+        if (timeoutResult.isCommitted()) {
+            creditAccountService.applyChange(timeoutResult.getTakerId(), CreditReasonTypeVO.ERRAND_TIMEOUT, orderId);
+        }
     }
 
     /**
-     * 送达 24h 自动完成编排（超时中心回调，资金收口）：发布方解冻退款 + 接单方悬赏收入
-     * 与「已送达 → 已完成」翻转已由 IErrandFundPort 并入一个物理事务
-     * （见 ErrandOrderServiceImpl.handleAutoComplete），本层不再拆两步调用——
-     * 「订单已完成但接单方悬赏收入永久不结算」的中间态由该事务消灭。
-     * 终态短路语义保持现状：重投一个已处理的回调，读到终态即安全返回（资金已随终态完成过）。
+     * 送达 24h 自动完成编排（超时中心回调，两段式 ADR-0016）：域服务做翻转段（「已送达 → 已完成」
+     * 条件 UPDATE，翻转未命中抛异常按失败重投），本层随后顺序执行资金段——发布方解冻退款 +
+     * 接单方悬赏收入（与确认完成同一结算口径，各自流水 uk 幂等）。翻转与资金动作之间的宕机孤儿
+     * （订单已完成但悬赏悬置冻结 / 收入未结算）由 {@code errandFundOrphanScan} 扫描收敛。
+     * 终态短路语义保持现状：重投一个已处理的回调，读到终态即安全返回（资金段的补齐由扫描兜底）。
      */
     public void handleAutoComplete(String orderId) {
-        errandOrderService.handleAutoComplete(orderId);
+        ErrandAutoCompleteResult autoCompleteResult = errandOrderService.handleAutoComplete(orderId);
+        if (autoCompleteResult == null) {
+            return; // 幂等：非 DELIVERED 前态（终态短路），零副作用
+        }
+        // 资金段：发布方全额解冻退款 + 接单方得悬赏（总额），与 confirmOrder 同一结算口径
+        walletAccountService.unfreeze(autoCompleteResult.getPublisherId(), autoCompleteResult.getReward(), orderId,
+                WalletDetailTypeVO.UNFROZEN);
+        for (ErrandIncomeVO income : autoCompleteResult.getIncomes()) {
+            walletAccountService.income(income.getUserId(), income.getAmount(), orderId, WalletDetailTypeVO.INCOME);
+        }
     }
 
     /** 配图上限（直接发布与草稿共用同一口径，封顶 6 张） */

@@ -14,7 +14,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 跑腿支付资金收口（票 02）：冻结悬赏与「待支付 → 已发布」翻转经 IErrandFundPort 并入一个物理事务。
+ * 跑腿支付资金收口（票 02，ADR-0016 两段式）：case 层先冻结悬赏（资金段）再翻转「待支付 → 已发布」（翻转段）。
  * 只断言外显行为（HTTP 响应 + 数据库状态），不测事务内部编排：
  * <ul>
  *   <li>支付成功 ⇒ 订单已发布（对外可见）且悬赏已冻结托管（frozen_amount 增加、balance 不动，

@@ -16,4 +16,7 @@ public class ErrandOrderEventVO {
 
     /** 操作人用户 ID（SYSTEM 事件为 null） */
     private String actorId;
+
+    /** 迁移前状态（孤儿扫描的 committed 判据：TIMEOUT 事件 from_state ∈ {CONFIRMED, PICKED_UP} = 已开工违约需扣分） */
+    private String fromState;
 }

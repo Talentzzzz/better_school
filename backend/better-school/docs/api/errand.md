@@ -78,7 +78,7 @@
 
 ## POST /api/errand/orders/{orderId}/pay
 
-支付（冻结悬赏），成功事务内转 PUBLISHED（发布即对外可见）+ outbox（bs-errand-paid → 作者「您的跑腿订单已支付成功，现已对外可见」通知）。**本宣称随 fund-consistency 票 02 成真**：冻结流水（`uk_order_type` 幂等）+ 可用余额条件扣减 + 条件翻转 + outbox + feed 索引行经组合事务端口并入**一个物理事务**；余额不足整事务回滚、订单留待支付（fund-consistency 票 02）
+支付（冻结悬赏），成功后转 PUBLISHED（发布即对外可见）+ outbox（bs-errand-paid → 作者「您的跑腿订单已支付成功，现已对外可见」通知）。**两段式资金链路（ADR-0016）**：资金段冻结悬赏（流水先行，`uk_order_type` 幂等 + 可用余额条件扣减）由 case 层先行，余额不足直接失败、订单留待支付；翻转段「待支付 → 已发布」条件翻转 + outbox + feed 索引行为单仓储事务。翻转失败时订单留待支付、悬赏悬置冻结（长款中间态），由 `errandFundOrphanScan` 孤儿扫描解冻收敛（fund-consistency 票 02，组合事务端口已废止）
 
 ## POST /api/errand/orders/{orderId}/grab
 
@@ -117,7 +117,7 @@
 
 取消（**取货前**）：PENDING_PAYMENT（无冻结）/ PUBLISHED（解冻全额退款）/ **LOCKED** / CONFIRMED 可取消
 
-- 发布方取消：LOCKED 期**可取消**且解冻退款，**不扣接单方信用分**（锁单期还没开工，不是他的错）；已冻结态的取消翻转与解冻退款（`uk_order_type` 幂等）经组合事务端口并入**一个物理事务**，翻转未命中整事务回滚（fund-consistency 票 03）；PENDING_PAYMENT 无冻结、保持原单事务翻转
+- 发布方取消：LOCKED 期**可取消**且解冻退款，**不扣接单方信用分**（锁单期还没开工，不是他的错）；已冻结态为两段式（ADR-0016）：取消翻转先行（单仓储事务，翻转未命中抛业务异常、资金段尚未执行零残留），解冻退款（`uk_order_type` 幂等）由 case 层随后执行；翻转与解冻之间的宕机孤儿（订单已取消但悬赏悬置冻结）由 `errandFundOrphanScan` 收敛（fund-consistency 票 03）；PENDING_PAYMENT 无冻结、保持原单事务翻转
 - 接单方取消：仅 CONFIRMED 可退（回 PUBLISHED，扣 20 信用分 + 落 `TAKER_CANCELLED` 事件）；锁单中的接单方走 `POST /abandon`
 - 请求级幂等（可选 `requestId` 参数）：客户端**每次点击生成新 UUID、重试沿用同一编号**——同编号的取消重试直接回放成功、业务零执行（含「取消后重抢并再确认」窗口期的迟到重试，不会误伤新一轮）；不带该参数时退化为事件链判定
 - 重试幂等（事件链判定）：请求人非订单双方时，**最新事件是本人 `TAKER_CANCELLED` 且订单回 PUBLISHED** → 幂等成功返回（零副作用；重试触发的扣分入账由 `user_credit_detail` 流水唯一键去重）；订单已被他人再抢则 403
@@ -142,7 +142,7 @@
 
 - 结算（`ErrandConfirmResult`）：发布方 unfreeze 悬赏 + income 接单方（得全额）
 - 幂等：已完成重复确认按同一明细重放，`wallet_detail.uk_order_type` 幂等（不重复结算/不重复入账）
-- 24h 未确认由 bs-errand-auto-complete 消费方自动完成（`handleAutoComplete`）：**发布方解冻 + 接单方悬赏收入 + 终态翻转 + 事件/feed/搜索 outbox 经组合事务端口并入一个物理事务**，翻转未命中按失败重投、资金随之回滚；终态短路保留（重放读到终态直接返回，资金已随终态完成过）——确认收货仍按上方回放口径，两条路径并存（fund-consistency 票 05）
+- 24h 未确认由 bs-errand-auto-complete 消费方自动完成（`handleAutoComplete`）：**两段式（ADR-0016）**：终态翻转 + 事件/feed/搜索 outbox 为单仓储事务（翻转段），发布方解冻 + 接单方悬赏收入由 case 层随后执行（资金段，各自流水 `uk_order_type` 幂等）；翻转未命中按失败重投（此刻资金段尚未执行零残留）；翻转与资金动作之间的宕机孤儿由 `errandFundOrphanScan` 收敛；终态短路保留（重放读到终态直接返回，资金段的补齐由扫描兜底）——确认收货仍按上方回放口径，两条路径并存（fund-consistency 票 05）
 
 ## GET /api/errand/orders/mine
 

@@ -239,4 +239,11 @@ public interface IErrandRepository {
      * 尽力而为：不在线/失败静默放弃，漏推由客户端拉单兜底
      */
     void pushOrderStatus(String userId, ErrandOrderPushEvent event);
+
+    /**
+     * 孤儿扫描输入（ADR-0016 两段式）：近窗口内进入终态（CANCELLED / COMPLETED）的订单，
+     * 按 update_time 升序。单仓储自查；「该补哪些资金动作」（解冻/入账/扣分）由扫描用例
+     * 结合事件行裁决
+     */
+    List<ErrandOrderEntity> listRecentSettled(int windowMinutes, int limit);
 }
