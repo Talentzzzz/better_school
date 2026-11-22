@@ -57,7 +57,7 @@ public class RaffleDrawCountPurchaseServiceImpl implements IRaffleDrawCountPurch
         DrawCountPurchaseOrderEntity existing = raffleRepository.queryPurchaseOrder(purchaseOrderId);
         if (existing == null) {
             DrawCountPurchaseOrderEntity order = new DrawCountPurchaseOrderEntity(
-                    purchaseOrderId, userId, quantity, pointsCost,
+                    null, purchaseOrderId, userId, quantity, pointsCost,
                     DrawCountPurchaseState.DEDUCTED, 0, null, null, null, null);
             IPointsDeductPort.PointsDeductOutcome outcome;
             try {
