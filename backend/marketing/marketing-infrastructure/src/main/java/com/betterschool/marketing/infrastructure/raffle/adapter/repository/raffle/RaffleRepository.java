@@ -671,6 +671,8 @@ public class RaffleRepository implements IRaffleRepository {
         bucket.setCreateTime(bucketPO.getCreateTime());
         bucket.setUpdateTime(bucketPO.getUpdateTime());
         return bucket;
+    }
+
     // ---------------------------------------------------------------- 对账轮写面（每日全量对账轮，纯旁路）
 
     @Override
