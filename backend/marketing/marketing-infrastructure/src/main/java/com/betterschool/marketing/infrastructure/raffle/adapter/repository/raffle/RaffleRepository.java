@@ -610,6 +610,7 @@ public class RaffleRepository implements IRaffleRepository {
             return null;
         }
         DrawCountPurchaseOrderEntity order = new DrawCountPurchaseOrderEntity();
+        order.setId(po.getId());
         order.setPurchaseOrderId(po.getPurchaseOrderId());
         order.setUserId(po.getUserId());
         order.setQuantity(po.getQuantity());
