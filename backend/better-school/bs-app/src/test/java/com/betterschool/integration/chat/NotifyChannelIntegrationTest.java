@@ -62,7 +62,7 @@ class NotifyChannelIntegrationTest extends CommunityApiTestBase {
         assertThat(outboxPayloads(Constants.NOTIFY_CHAT_TOPIC))
                 .as("落库前不应有 CHAT 通道 outbox（落库时机=事件消费时）").isEmpty();
 
-        // 消费（真实链路直调 trigger 消费方，同 ChatWsIntegrationTest 口径）：落库 + 通道路由
+        // 消费（真实链路直调 trigger 消费方，同 WsIntegrationTest 口径）：落库 + 通道路由
         notifyEventConsumer.onMessage(eventPayloads.get(0));
 
         Integer notificationCount = jdbcTemplate.queryForObject(

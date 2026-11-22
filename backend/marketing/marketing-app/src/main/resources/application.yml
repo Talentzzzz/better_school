@@ -125,8 +125,7 @@ logging:
     # mapper SQL 日志走 slf4j 后在此关掉（MyBatis 日志名 = mapper 接口包名；
     # 域段插在 dao 前，没有假公共前缀可以扫，只能逐域列——与 @MapperScan 的清单保持一致）
     com.betterschool.marketing.infrastructure.points.dao: warn
-    com.betterschool.marketing.infrastructure.drawcount.dao: warn
-    com.betterschool.marketing.infrastructure.config.dao: warn
+    com.betterschool.marketing.infrastructure.rebate.dao: warn
     com.betterschool.marketing.infrastructure.raffle.dao: warn
     com.betterschool.marketing.infrastructure.inventory.dao: warn
     com.betterschool.marketing.infrastructure.common.dao: warn

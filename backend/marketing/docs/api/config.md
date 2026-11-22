@@ -5,6 +5,16 @@
 该端点已随旧奖池桶模型删除，这里的 role 判断是现存的 ADMIN 校验先例）。
 返回统一 `Response{code,info,data}` 信封。
 
+**归属**（没有「配置域」，一个后台面、三个域各管自己那份，HTTP 契约因此完全不变）：
+
+| 端点 | 归属域 | 表 |
+| --- | --- | --- |
+| `/points-validity` | points | points_validity_config |
+| `/draw-count-validity` | raffle（次数） | draw_count_config |
+| `/rebates` | rebate | action_rebate_config |
+
+每个端点只碰一个域，不构成跨域编排，控制器直接调域服务（不经 case）。
+
 ## GET /points-validity
 
 - Auth: 需要登录
@@ -45,6 +55,6 @@ ConfigMapper.xml（单行 UPDATE / `ON DUPLICATE KEY UPDATE`）。
 
 ## 谁在读这些配置
 
-- 有效期：points / drawcount 两域入账算 `expire_at` 时只读注入 `IConfigRepository`
+- 有效期：points / raffle 各读自己的 `I<域>Repository` 算 `expire_at`（次数有效期归 raffle 域，抽奖次数与抽奖同域）
 - 返利规则：`IPointsAccountService.creditForRebate`（POINTS 行）、
   `IDrawCountAccountService.creditForRebate`（DRAW_COUNT 行）只查 `state=open` 的规则值

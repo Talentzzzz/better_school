@@ -26,6 +26,11 @@
             <groupId>com.betterschool</groupId>
             <artifactId>bs-case</artifactId>
         </dependency>
+        <!-- WS 连接端（WsHandler）注入连接登记/票据契约：契约与实现同住 infra -->
+        <dependency>
+            <groupId>com.betterschool</groupId>
+            <artifactId>bs-infrastructure</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>

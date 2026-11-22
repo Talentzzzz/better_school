@@ -60,6 +60,12 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
+        <!-- WS 投递机器下沉（帧写出器/注册表骨架的 WebSocketSession API）：
+             对外只暴露 IWsPushPort / IWsConnectionRegistryPort 两个 domain 端口 -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-websocket</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-web</artifactId>

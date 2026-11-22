@@ -2,7 +2,11 @@ package com.betterschool.marketing.domain.inventory.service;
 
 import com.betterschool.marketing.domain.inventory.model.valobj.DeductOutcomeVO;
 import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductRequestVO;
+import com.betterschool.marketing.domain.inventory.model.valobj.OrphanPrereserveCandidateVO;
 import com.betterschool.marketing.types.inventory.AwardInventoryType;
+
+import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 库存配额服务（award-inventory 两层模型）：实物/虚拟**一条路径**，账户类型由
@@ -79,4 +83,34 @@ public interface IInventoryQuotaService {
      *              （可重试：MQ 重投撞唯一键回放或补上）
      */
     void confirmIssued(String awardId, String bizType, String bizId, long quantity);
+
+    // ---- 孤儿预扣对账（spec User Stories 14–16；低频对账动作，不进合并器） ----
+
+    /**
+     * 孤儿预扣候选扫描：预扣行（{@code flow_type = 1} + {@code LOTTERY_DRAW}）且
+     * {@code create_time} 早于 {@code before}（补偿阈值，调用方算好传入），其 {@code biz_id}
+     * （= 抽奖记录 id）在 {@code draw_record} 无对应行 = 主链路落库从未执行。
+     * 按 id 升序 FIFO，上限 {@code limit}。
+     *
+     * @param before 补偿阈值时点（孤儿判据：预扣发生时刻早于它且记录仍不在）
+     * @param limit  单轮扫描上限
+     */
+    List<OrphanPrereserveCandidateVO> listOrphanPrereserves(LocalDateTime before, int limit);
+
+    /**
+     * 回补一笔孤儿预扣（对账收敛的库存侧动作，低频直落不进合并器）：**一个事务**内完成
+     * 台账条件转移 + 预扣明细行删除——台账按账户 {@code type} 分支：PHYSICAL 走
+     * {@code waiting → surplus}（{@code waiting_qty >= qty} 守卫，照 {@code transferWaitingToIssued}
+     * 的反向转移形状），VIRTUAL 走 {@code issued → surplus}（{@code issued_qty >= qty} 守卫）。
+     * <p>
+     * 删明细行与转移同事务是守恒判据 B3（{@code waiting + issued = Σ flow_type=1 quantity}）的要求：
+     * 台账转回而不删行即破等式。幂等：行已删 / 量已回补的重复回补，守卫不过返回 false——
+     * 对账方按「已回补过」继续（不抛），只留 ERROR 日志供人工核对不变量。
+     *
+     * @param awardId 奖品位 id（= 台账行，类型由台账行现读）
+     * @param bizType 预扣明细的业务类型（抽奖 = {@code InventoryBizTypes.LOTTERY_DRAW}）
+     * @param bizId   抽奖记录 id（= 预扣明细的业务键）
+     * @return true = 台账已转回且明细行已删；false = 守卫不过（已回补过或不变量破坏，调用方留痕后继续）
+     */
+    boolean restitutePrereserve(String awardId, String bizType, String bizId, long quantity);
 }

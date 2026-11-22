@@ -4,6 +4,7 @@ import com.betterschool.marketing.infrastructure.inventory.dao.po.AwardInventory
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -50,4 +51,20 @@ public interface IAwardInventoryDetailDao {
      * 撞 {@code uk_award_biz} 静默跳过，返回 1 = 新增 / 0 = 本单已分配过（按成功回放）。
      */
     int insertIgnoreAllocateDetail(AwardInventoryDetailPO detailPO);
+
+    // ---- 孤儿预扣对账（spec User Stories 14–16） ----
+
+    /**
+     * 孤儿预扣候选扫描：预扣行（{@code flow_type = 1} + {@code LOTTERY_DRAW}）且
+     * {@code create_time} 早于补偿阈值，其 {@code biz_id}（= 抽奖记录 id）在 {@code draw_record}
+     * 无对应行 = 主链路落库从未执行。NOT EXISTS 反查对账判据的另一张域表（只读，先例：
+     * {@code ErrandViewCountMapper} 的 NOT EXISTS 守卫）——已落库的行在 SQL 里排除，
+     * 扫描窗口不被正常流水淹没。按 id 升序 FIFO。
+     */
+    List<AwardInventoryDetailPO> listOrphanDrawPrereserveDetails(@Param("before") LocalDateTime before,
+                                                                 @Param("limit") int limit);
+
+    /** 删除孤儿预扣明细行：随台账回补同事务执行（守恒判据 B3：回补不删行即破 waiting+issued=Σflow1）；按业务键删 */
+    int deleteDeductDetail(@Param("awardId") String awardId, @Param("bizType") String bizType,
+                           @Param("bizId") String bizId);
 }

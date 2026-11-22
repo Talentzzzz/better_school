@@ -1,6 +1,7 @@
 # 抽奖模块接口（/api/lottery）
 
-抽奖域（`backend/marketing/`，与积分 / 次数 / 配置 / 库存同属营销服务 marketing-app **8081**）。
+抽奖域（`backend/marketing/`，与积分 / 返利 / 库存同属营销服务 marketing-app **8081**；
+**抽奖次数与抽奖同域**，`draw_count_*` 三张表与次数账务都在 `raffle` 域内）。
 **票 13 起整域落在 `draw_*` 新模型**（决策侧票 11、库存票 12），旧域九张表与旧代码已整体删除。
 
 **免登录白名单只有两条**：`GET /activity` 与 `GET /prizes`（访客看 banner + 奖品目录）；其余都要登录。
@@ -11,6 +12,9 @@
 > 票 13 删除的三个端点：`POST /my-prizes/{id}/claim`（收件信息与状态推进归票 14 发货闭环）、
 > `POST /exchange/prize`（新模型没有「积分兑奖品」业务）、`POST /buckets/open`（旧奖池桶模型作废，
 > 库存改走票 12 的台账 + `inventoryBucketWarmup` 预热 job）。URL 与其余七个端点全部不变。
+>
+> 两条写入口口径互不交叉：**`POST /draw` 只扣抽奖次数、永不直接扣积分**；
+> **`POST /purchase/draw-count`（历史名 `POST /exchange/draw-count`）用积分买次数**。
 
 ## GET /activity
 
@@ -20,11 +24,11 @@
 - `status ∈ NOT_STARTED · ONGOING · ENDED`，由后端按 `draw_activity.state` / `begin_date_time` / `end_date_time` **现算**：
   `state = 'close'` 与「过了 `end_date_time`」都归 `ENDED`
 - **无活动数据时 `data` 为 `null`**（旧模型缺行抛异常，新模型按「没活动」返回 null，前端好判）
-- `drawCountPrice` = 兑一次抽奖次数的积分价（`types.raffle.Constants.DRAW_COUNT_EXCHANGE_PRICE = 100`；
+- `drawCountPrice` = 买一次抽奖次数的积分价（`types.raffle.Constants.DRAW_COUNT_PURCHASE_PRICE = 100`；
   旧模型活动表的价格列已随旧表删除，新模型无定价配置表，暂以常量承载）
-- `drawCountValidDays` 取自 `draw_count_config`（展示用）
+- `drawCountValidDays` 取自 `draw_count_config`（展示用；该表归**抽奖域**——抽奖次数与抽奖同域）
 - 流程图：Controller → `IRaffleQueryService.getActivity` → `IRaffleRepository.queryCurrentActivity`
-  （`draw_activity` 取 `id DESC LIMIT 1` 的当前活动行）+ `IRaffleConfigPort.drawCountValidDays`
+  （`draw_activity` 取 `id DESC LIMIT 1` 的当前活动行）+ 域内 `IDrawCountAccountService.getValidDays`
 
 ## GET /prizes
 
@@ -50,7 +54,7 @@
 
 - Auth: 需要登录
 - 成功: `{ available, todayDrawn }`
-  - `available` = **未过期桶的 `SUM(remain)`**（`draw_count_bucket`，没有余额列）
+  - `available` = **未过期桶的 `SUM(remain)`**（`draw_count_bucket`，没有余额列；次数与抽奖同域，直接读域内仓储）
   - `todayDrawn` = 当日 `draw_record` 行数（含谢谢参与——「今天抽了几次」按抽的动作算）
 
 ## POST /draw
@@ -68,8 +72,9 @@
 1. **幂等预检**：`record_id = SHA-256(userId + ":" + token) 截 63 位正整数` —— 确定性映射，**无重放表**；
    先查 `draw_record` 命中即回放（不扣次数、不预扣）
 2. **活动校验**：`state = open` + 窗口内，否则 `4301` / `4302`
-3. **扣次数**（`draw_count_bucket` Lua 原子，明细行 `ref_id = record_id`）：
-   扣不出 → 先查记录（并发同 token 的败者在此回放）→ 真没次数才是 `4303 NO_CHANCE`。**此时零副作用**
+3. **扣次数**（域内仓储 `deductDrawCountForDraw`：幂等预检 + FIFO 桶加锁 + 明细 `ref_id = record_id`，一个事务）：
+   扣不出 → 先查记录（并发同 token 的败者在此回放）→ 真没次数才是 `4303 NO_CHANCE`。**此时零副作用**。
+   **抽奖只扣次数**，任何情况下都不 `直接` 扣积分——积分换次数是上面那条独立入口
 4. **责任链出奖**（票 11）：黑名单 → 权重保底 → 默认（全量 `normal` 档概率表）；
    预热缺失（`4311`）**降级为 DB 直算**（`normal` 档 `award_rate ×10000` 归一化后随机）
 5. **库存预扣**（库存域的 port，走进程内合并 `InventoryMerger.submitAndWait`：等 5ms 窗口后
@@ -88,8 +93,10 @@
    - outbox 行与业务写**同事务**（票 14）：业务回滚时事件行随之消失，不会「没中奖却通知中奖」；
      事务提交后由 `afterCommit` 异步发送一次，失败由 `outboxScan` 兜底重发（见「事件」段）
 
-- **预扣成功而抽奖落库失败**的窗口**不补偿**：库存侧已扣（明细在库、台账已动），调用方同 token 重试
-  会撞明细唯一键按成功回放；用户放弃的部分就是「孤儿预扣」，靠人工 SQL 暴露（见 inventory.md）
+- **预扣成功而抽奖落库失败**的窗口由**孤儿预扣对账 job**（`orphanPrereserveScan`，cron `0/30`）在一个扫描周期内
+  收敛：决策可重放（活动仍有效）→ 以原幂等键重放落库后半段（不重复扣次数、不重复预扣）；决策不可重放
+  （活动已结束/下线）→ 库存回补 + 次数退还。同 token 重试仍会撞明细唯一键按成功回放（fund-consistency 票 08，
+  口径见 inventory.md「孤儿预扣」）
 - 「奖品抽完」不是失败态：配额不足走兜底奖品位，兜底也没有才是 `4313`
 - **Redis 故障**（概率表不可用）→ 抛异常落 `999`，**不假装发放**（库存域已不用 Redis，不再有「库存桶不可用」这个故障面）
 
@@ -162,27 +169,35 @@
   守卫落空（并发双击的败者）不报错，按幂等返回
 
 
-## POST /exchange/draw-count
+## POST /purchase/draw-count
 
-积分兑 1 次抽奖机会。
+**用积分购买抽奖次数**（抽奖只消耗次数，从不直接扣积分；次数不够时走这条换）。
 
+- 路径：`POST /api/lottery/purchase/draw-count`；**历史名 `POST /api/lottery/exchange/draw-count` 仍可用**
+  （同一实现，前端在调旧路径，故保留别名），下文字段名也沿用历史的 `redeemOrderId`
 - Auth: 需要登录
-- Body: `{ token }` —— 前端为**这一次兑换意图**生成的 uuid，`@NotBlank` / `@Size(max=64)`；
-  **同一意图重试必须带同一个**（与单抽同口径）
-- 成功: `{ redeemOrderId, drawCount }`（`drawCount` = 兑后的可用次数余额）
-- 失败: `4306` `LOTTERY_INSUFFICIENT_POINTS`（积分不足）
-- 定价：`Constants.DRAW_COUNT_EXCHANGE_PRICE = 100`（随 `GET /activity` 的 `drawCountPrice` 返回）
-- **幂等**：`redeemOrderId = SHA-256(userId + ":" + token)` 取 16 字节组 UUID 的 36 位规范形字符串（确定性映射，不落重放表；uuid-biz-id 票 07 起）——同一 token 重放恒映射同一单号，
-  两域各自的流水唯一键（积分 `(userId, REDEEM_DRAW_COUNT, refId)` / 次数 `(userId, REDEEM, refId)`
-  即幂等互斥）保证**只成功入账一次**：积分只扣一次、次数只加一次。换 token 才是新的一笔。
-- **事务边界**：**不跨域开事务**。case 层（`RaffleExchangeCase`）顺序调两次、各自域内原子：
-  ① 抽奖域扣积分（`IPointsDeductPort`，积分流水唯一键 = 兑换单号）② 次数域入账 1 次
-  （`IDrawCountPort`，入账桶唯一键 = 同一兑换单号）。两步都以上一步给出的确定性单号做幂等互斥，
-  因此「扣分成功、入账未成功」（进程崩溃 / 次数域短暂故障）时客户端带同一 token 重试即收敛：
-  第一步幂等跳过、第二步补上；反向不会发生（入账前必先扣分）。**积分不足**在第一步就抛 `4306`，
-  一分不扣、一桶不加
-- 旧模型「兑换单 + PENDING 残留 + `resume`」整套机制**已废除**（幂等由确定性单号 + 两域流水唯一键承担）；
-  「一个 MySQL 事务罩两域」自本票起改为上面的顺序调用 + 幂等重试（全仓统一的跨域口径）
+- Body: `{ token, quantity? }`
+  - `token`：前端为**这一次购买意图**生成的 uuid，`@NotBlank` / `@Size(max=64)`；**同一意图重试必须带同一个**（与单抽同口径）
+  - `quantity`：购买份数（1 次抽奖 = 1 份），`@Min(1)` / `@Max(10)`，**不传按 1 份**
+- 成功: `{ redeemOrderId, pointsCost, drawCount }`
+  - `pointsCost` = 份数 × 单价；`drawCount` = 买后的可用次数余额（未过期桶 `SUM(remain)`）
+- 失败: `4306` `LOTTERY_INSUFFICIENT_POINTS`（积分不足）；份数越界走 `400`（Bean Validation）
+- 定价：`Constants.DRAW_COUNT_PURCHASE_PRICE = 100`（随 `GET /activity` 的 `drawCountPrice` 返回）；
+  单次份数上限 `DRAW_COUNT_PURCHASE_MAX_QUANTITY = 10`
+- **领域归属**：抽奖次数是**抽奖域内的资产**（`domain.raffle.service.drawcount`），不再是独立领域；
+  购买是抽奖域内的一个用例（`IRaffleDrawCountPurchaseService`），与抽奖主链路并列、入口与幂等键各自独立
+- **幂等**：`redeemOrderId = SHA-256(userId + ":" + token)` 取 16 字节组 UUID 的 36 位规范形字符串
+  （确定性映射，不落重放表）——同一 token 重放恒映射同一单号，积分流水唯一键
+  `(userId, REDEEM_DRAW_COUNT, refId)` 与次数桶唯一键 `(userId, REDEEM, refId)` 各自吸收重复，
+  所以**只成功入账一次**：积分只扣一次、次数只加一次。换 token 才是新的一笔
+- **事务边界**：**不跨域开事务**。购买用例顺序做两次、各自域内原子：
+  ① 积分域扣分（`IPointsDeductPort` → `IPointsAccountService.deduct`，流水唯一键 = 购买单号）
+  ② 抽奖域次数入账（域内仓储 `creditDrawCountBucket`，桶唯一键 = 同一购买单号）。
+  两步共用同一个确定性单号做幂等互斥，因此「扣分成功、入账未成功」（进程崩溃 / 抽奖域短暂故障）时
+  客户端带同一 token 重试即收敛：第一步幂等跳过、第二步补上；反向不会发生（入账前必先扣分）。
+  **积分不足**在第一步就抛 `4306`，一分不扣、一桶不加
+- 旧模型「兑换单 + PENDING 残留 + `resume`」整套机制**已废除**；「一个 MySQL 事务罩两域」也已废除，
+  改为上面的顺序调用 + 幂等重试（全仓统一的跨域口径）
 
 ### 失败码（逐条固定文案）
 
@@ -191,11 +206,11 @@
 | `4301` `LOTTERY_ACTIVITY_NOT_STARTED` | 活动还没开始 | 现在 < `begin_date_time` |
 | `4302` `LOTTERY_ACTIVITY_ENDED` | 活动已结束 | 现在 > `end_date_time`，**或** `state = 'close'`（无活动行同码） |
 | `4303` `NO_CHANCE` | 抽奖次数不足 | 扣次 Lua 扣不出且无并发重放记录 |
-| `4306` `LOTTERY_INSUFFICIENT_POINTS` | 积分不足 | 兑次数时积分账扣不动（文案与积分侧 `4101` 逐字一致） |
+| `4306` `LOTTERY_INSUFFICIENT_POINTS` | 积分不足 | 购买次数时积分账扣不动（文案与积分侧 `4101` 逐字一致） |
 | `4311` `RAFFLE_WARMUP_MISSING` | 抽奖活动准备中，请稍后再试 | 概率表未预热**且** DB 直算也无 `normal` 档可算 |
 | `4313` `RAFFLE_ISSUE_FAILED` | 奖品发放失败，请稍后再试 | 奖品位库存与兜底库存都扣不出 |
 | `4314` `PRIZE_NOT_RECEIVABLE` | 该奖品不可确认收货 | 确认收货：记录不存在 / 非本人 / 状态不是已发货 |
-| `400` `PARAM_ERROR` | 参数不合法 | 缺 `token` / `token` 超 64 位 / `status` 取值不合法 |
+| `400` `PARAM_ERROR` | 参数不合法 | 缺 `token` / `token` 超 64 位 / `quantity` 越界 / `status` 取值不合法 |
 > `4310` 留空未占用（旧 `lottery` 段止于 `4309`，新段从 `4311` 起以便肉眼区分新旧模型）。
 > `4304 DAILY_LIMIT_REACHED` / `4305 PRIZE_NOT_FOUND` / `4307` / `4308` / `4309` 五个码随旧模型作废，
 > 常量保留但新链路不再产生（每日上限随旧域日限额表删除）。
@@ -218,15 +233,16 @@
 
 ## 定时任务（不是 HTTP）
 
-handler 共 **4 个**：`outboxScan` / `pointsExpireScan` / `drawCountBucketExpireScan` / `raffleCacheWarmup`
-（hot-row-merge-l2w256 票 09：`inventoryMergeBackstop` / `inventoryBucketWarmup` 随桶与兜底整条退休，
-代码里已无这两个 handler；uuid-biz-id 票 08 起存量库退役（删库重建），历史切换包已删除，重灌 seed 即无这两行）。
+handler 共 **2 个**：`outboxScan` / `raffleCacheWarmup`
+（桶过期清零的两个 handler 已下线：过期改纯读路径懒判，清零只写不读、且谓词走不了索引前缀；
+hot-row-merge-l2w256 票 09：`inventoryMergeBackstop` / `inventoryBucketWarmup` 随桶与兜底整条退休，
+代码里已无这两个 handler；uuid-biz-id 票 08 起存量库退役（删库重建），历史切换包已删除，重灌 seed 即无这些行）。
 
 | handler | 频率 | 干什么 |
 | --- | --- | --- |
 | `outboxScan` | `0/30 * * * * ?` | outbox 兜底重发：只捞 `state=0` 且 `update_time` 超过 `outbox.scan.timeout-seconds`（默认 60s）的行；重试计数到 5 次置 `state=2`（死信） |
-| `pointsExpireScan` | 调度中心配 | 积分过期桶清零落账 |
-| `drawCountBucketExpireScan` | 调度中心配 | 过期次数桶落账清理：`remain = 0`（不删行、留审计、不发事件） |
+| `pointsExpireScan` | 已下线 | 积分过期桶清零落账（过期改为纯读路径懒判，该任务连同 handler 一并删除） |
+| `drawCountBucketExpireScan` | 已下线 | 过期次数桶落账清理（同上） |
 | `raffleCacheWarmup` | 每天 02:00（配置变更后可手动重跑） | 概率表 + 特型奖品位预热（票 11）；参数 = `activityId` |
 
 > 票 13 删除了 `xxl-job-tasks.sql` 里的 `lotteryDeductMerge` / `lotteryDrawCountExpireScan` /

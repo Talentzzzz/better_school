@@ -130,10 +130,16 @@ UPDATE draw_strategy_award_inventory
   分配不写池明细，抽奖不写池明细。
 - 存量数据：未上线，清库重建（开放点④），无迁移 SQL。
 
-## 孤儿预扣（人工 SQL，不建 job、不建巡检）
+## 孤儿预扣（对账 job 自动收敛，fund-consistency 票 08）
 
 预扣提交、`draw_record` 没落库（抽奖不是一个大事务）⇒ 用户没成功但库存已扣。能自愈的靠同 token 重试
-撞 `uk_award_biz` 回放；用户放弃的部分永久挂账，只有人工 SQL 能找到：
+撞 `uk_award_biz` 回放；用户放弃的部分由**孤儿预扣对账 job**（`orphanPrereserveScan`，xxl cron `0/30`）在
+一个扫描周期内收敛：扫台账流水 `flow_type=1 AND biz_type='LOTTERY_DRAW'` 且 `biz_id`（= record_id）在
+`draw_record` 无行、超过补偿阈值（10 分钟）的孤儿，登记进状态表 `draw_orphan_prereserve_order` 后两条路径——
+决策可重放（活动仍有效）→ 以原幂等键重放抽奖落库后半段（不重复扣次数、不重复预扣；决策重跑奖品可能漂移，
+漂移时原奖品预扣回补）；决策不可重放（活动已结束/下线）→ 库存回补（PHYSICAL `waiting → surplus` 条件转移 /
+VIRTUAL `issued → surplus` 条件回退）+ 抽奖次数退还（`ORPHAN_REFUND`，桶 `uk_user_reason_ref` 幂等）。
+重试条件更新抢占、指数退避（1/2/4/8/16 分钟），耗尽进 `DEAD`（只 ERROR 日志 + 人工 SQL 重置）。排查用 SQL 保留：
 
 ```sql
 -- 有预扣明细、但没有对应 draw_record 的行（flow_type = 1，biz_id = record_id）
@@ -151,5 +157,5 @@ SELECT d.award_id, d.biz_id, d.quantity, d.create_time
 收窄为「投放池配置」：它是分配的转出来源，也是 `inv_id = '0'` 的不限量哨兵。预扣返回即账户台账已动
 （`surplus → waiting` / `issued`），目录查询（`GET /prizes` 的 `remaining` / `total`）读奖品库存账户，
 积分面额读池配置。兑换确认由发货消费驱动（`IQuotaConfirmPort` → `InventoryMerger` 确认重载），
-返回即 `waiting → issued` 已提交。预扣成功而 `draw_record` 没落库的窗口**不补偿**：明细在库、台账已扣，
-靠「孤儿预扣」人工 SQL 暴露。
+返回即 `waiting → issued` 已提交。预扣成功而 `draw_record` 没落库的窗口由孤儿预扣对账 job 在一个扫描周期内
+收敛（补落库或回补+退还，见上节「孤儿预扣」）。

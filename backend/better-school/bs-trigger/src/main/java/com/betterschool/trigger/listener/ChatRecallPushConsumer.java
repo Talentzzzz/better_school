@@ -1,7 +1,7 @@
 package com.betterschool.trigger.listener;
 
 import com.betterschool.domain.chat.model.valobj.ChatRecallPushEvent;
-import com.betterschool.trigger.ws.ChatWsPushService;
+import com.betterschool.usecase.chat.ChatWsPushCase;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -20,14 +20,14 @@ import org.springframework.stereotype.Component;
 @RocketMQMessageListener(topic = Constants.CHAT_RECALL_TOPIC, consumerGroup = "bs-chat-recall-group")
 public class ChatRecallPushConsumer implements RocketMQListener<String> {
 
-    private final ChatWsPushService chatWsPushService;
+    private final ChatWsPushCase chatWsPushCase;
     private final ObjectMapper objectMapper;
 
     @Override
     public void onMessage(String payload) {
         try {
             ChatRecallPushEvent chatRecallPushEvent = objectMapper.readValue(payload, ChatRecallPushEvent.class);
-            chatWsPushService.pushRecall(chatRecallPushEvent);
+            chatWsPushCase.pushRecall(chatRecallPushEvent);
         } catch (Exception e) {
             log.error("[ChatRecallPushConsumer] RECALL 推送失败 payload={}", payload, e);
         }

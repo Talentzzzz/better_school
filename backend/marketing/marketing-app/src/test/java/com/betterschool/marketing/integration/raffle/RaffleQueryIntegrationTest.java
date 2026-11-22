@@ -16,8 +16,9 @@ import java.time.LocalDateTime;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 抽奖读侧 + 兑换次数集成用例（票 13 验收「读侧接口接新表」）：
- * 活动信息三态、奖品目录台账口径、我的次数、中奖记录、我的奖品四段状态，以及兑换的积分扣分 + 次数入账。
+ * 抽奖读侧 + 购买次数集成用例（票 13 验收「读侧接口接新表」）：
+ * 活动信息三态、奖品目录台账口径、我的次数、中奖记录、我的奖品四段状态，以及
+ * 「用积分购买抽奖次数」的积分扣分 + 次数入账（抽奖本身只扣次数，见 RaffleDrawPipelineIntegrationTest）。
  */
 public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
 
@@ -152,6 +153,7 @@ public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
         JsonNode data = response.path("data");
         assertThat(data.path("redeemOrderId").asText()).matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
         assertThat(data.path("drawCount").asInt()).isEqualTo(1);
+        assertThat(data.path("pointsCost").asInt()).as("1 份 × 单价 100").isEqualTo(100);
         assertThat(remainingChancesOf(USER)).isEqualTo(1);
         Integer pointsBalance = pointsAccountService.getBalance(USER);
         assertThat(pointsBalance).as("积分扣 100").isEqualTo(400);
@@ -191,6 +193,20 @@ public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
     }
 
     @Test
+    @DisplayName("购买多份：花费 = 份数 × 单价，次数一次加够")
+    void exchangeDrawCount_multipleQuantities() {
+        prepareDefaultScenario();
+        pointsAccountService.addForLotteryWin(USER, UuidIdGenerator.INSTANCE.nextId(), 500);
+
+        JsonNode response = exchangeDrawCount(USER, EXCHANGE_TOKEN, 3);
+
+        TestingEnvironment.assertSuccess(response, "购买次数");
+        assertThat(response.path("data").path("pointsCost").asInt()).isEqualTo(300);
+        assertThat(response.path("data").path("drawCount").asInt()).isEqualTo(3);
+        assertThat(pointsAccountService.getBalance(USER)).isEqualTo(200);
+    }
+
+    @Test
     @DisplayName("积分不足：LOTTERY_INSUFFICIENT_POINTS，一分不扣、一桶不加")
     void exchangeDrawCount_insufficientPoints() {
         prepareDefaultScenario();
@@ -208,7 +224,7 @@ public class RaffleQueryIntegrationTest extends RaffleApiTestBase {
         prepareDefaultScenario();
         pointsAccountService.addForLotteryWin(USER, UuidIdGenerator.INSTANCE.nextId(), 500);
 
-        // 模拟「扣分已提交、入账还没发生」（进程崩溃 / 次数域短暂故障）：只走积分侧那半边，
+        // 模拟「扣分已提交、次数入账还没发生」（进程崩溃 / 抽奖域短暂故障）：只走积分侧那半边，
         // ref_id 用与兑换同一个确定性单号——正是 case 层两步共用的幂等键
         String redeemOrderId = IdempotencyKeys.of(USER, EXCHANGE_TOKEN);
         var deducted = pointsAccountService.deduct(USER, 100, PointsReasonType.REDEEM_DRAW_COUNT, redeemOrderId);

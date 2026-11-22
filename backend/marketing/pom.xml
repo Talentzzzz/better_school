@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <!-- backend/ 下只剩两个 Maven 工程：单体 better-school（超时中心已内嵌在此）、营销 marketing
-         （本工程，points + raffle 两业务域 + drawcount/config/inventory 三个支撑域）。两者是兄弟目录、
+         （本工程，points + raffle 两业务域 + rebate/inventory 两个支撑域；抽奖次数与抽奖同域）。两者是兄弟目录、
          各自独立的 project：没有 reactor 关系，跨 project 取契约只能经本地仓库（com.betterschool:bs-api）。
          本工程内部七个 marketing-* 模块同属一个 reactor，模块间契约走 dependencyManagement 的
          ${project.version}（票 07 起抽奖侧原跨 project 引的 com.betterschool:marketing-api 已收敛为同 reactor 模块）。

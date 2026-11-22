@@ -48,4 +48,11 @@ public interface INotificationRepository {
      * 调用方已有事务时并入（REQUIRED）
      */
     boolean insertOne(NotificationEntity notificationEntity);
+
+    /**
+     * WS 实时推送 NOTIF 帧（BANNER 通道，技术出站能力走仓储，同 outbox 待遇）：
+     * 实现组装帧并委托 infrastructure/ws 连接组件。
+     * 尽力而为：不在线/失败静默放弃，漏推由前端按 (scope, seq) 水位补拉重放兜底
+     */
+    void pushNotif(String userId, NotifyPushMessage message);
 }

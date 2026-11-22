@@ -51,7 +51,7 @@ scripts/test-env.sh up
 ## 营销服务的测试设施（营销票 05 建立，票 06 扩到积分外域，票 07 扩到抽奖并域合一，票 13 抽奖换 raffle 域段）
 
 营销服务是**独立 project**（与单体无 reactor），测试因此放服务的组装层，不挤进 `bs-app`。
-（票 07 起五个域段同属 `marketing` 工程一个 app：points / drawcount / config / raffle / inventory；
+（票 07 起多个域段同属 `marketing` 工程一个 app：points / raffle（含抽奖次数）/ rebate / inventory；
 票 13 起抽奖由 `raffle` 域承载，旧 `lottery` 域段与它的测试基类已删除。）
 
 ```bash
@@ -59,7 +59,7 @@ scripts/test-env.sh up
 mvn -o test -Dtest=RaffleDrawPipelineIntegrationTest -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
-| 项 | 单体（bs-app） | 营销服务（marketing-app，points + drawcount + config + raffle + inventory） |
+| 项 | 单体（bs-app） | 营销服务（marketing-app，points + raffle + rebate + inventory） |
 | --- | --- | --- |
 | 测试库 | `better_school_test` | `bs_marketing_test`（同一 MySQL 容器，库名隔离）+ **redis 逻辑库 1**（key 前缀 `bs:points:` / `bs:raffle:` / `bs:inventory:`） |
 | 基类 | `integration.support.CommunityApiTestBase` | `marketing.integration.support.{PointsApiTestBase, RaffleApiTestBase}`（两类按域共存；VT 两个 seam 测试跑在 `RaffleApiTestBase` 上） |
@@ -129,11 +129,11 @@ mvn -o test -Dtest=InventoryMergeDeliveryLatencyTest -Dsurefire.failIfNoSpecifie
 
 ## WS 全链路测试（chat 票 07 建立）
 
-- **真客户端直连**：`StandardWebSocketClient`（`spring-boot-starter-websocket` 传递引入的 tomcat-embed-websocket 自带客户端容器）连 `ws://localhost:{RANDOM_PORT}/ws/chat?ticket=`，入站帧反序列化为协议信封 `ChatWsFrame`；票据走真实 REST `POST /api/chat/ws-ticket`
+- **真客户端直连**：`StandardWebSocketClient`（`spring-boot-starter-websocket` 传递引入的 tomcat-embed-websocket 自带客户端容器）连 `ws://localhost:{RANDOM_PORT}/ws?ticket=`，入站帧反序列化为协议信封 `WsFrame`；票据走真实 REST `POST /api/ws-ticket`
 - **推送触发不经 MQ**：读 `outbox_message` 的载荷后直调消费者（`ChatPushConsumer` / `ChatReadPushConsumer` / `ChatRecallPushConsumer`）——namesrv 必须起、broker 刻意不启，MQ→消费者一跳由 outbox 骨架背书
 - **握手拒绝断言**：Tomcat 客户端把被拒响应码包进 `jakarta.websocket.DeploymentException` 消息，断言 `hasMessageContaining("401")`——只断言"抛异常"会把服务未起/超时放过
 - **建连同步**：握手 future 完成早于服务端 `afterConnectionEstablished`（注册表写入），建连后 PING→PONG 同步一次往返，互踢/推送时序才稳定
-- **注入时钟代替真等待**：`ChatSessionRegistry.sweep(now, ChatSessionRegistry.DEAD_THRESHOLD_MS)` 注入未来时间驱动判死清扫（常量已公开供对齐），不真等 60s；活跃会话不受影响的逆向分支同用例覆盖
+- **注入时钟代替真等待**：`WsSessionRegistry.sweep(now, WsSessionRegistry.DEAD_THRESHOLD_MS)` 注入未来时间驱动判死清扫（常量已公开供对齐），不真等 60s；活跃会话不受影响的逆向分支同用例覆盖
 - **清理**：`@AfterEach` 关闭本用例所有连接——注册表/会话表是共享上下文单例，连接不关会污染后续用例
 
 ## 文件
@@ -144,6 +144,6 @@ mvn -o test -Dtest=InventoryMergeDeliveryLatencyTest -Dsurefire.failIfNoSpecifie
 | `bs-app/src/test/java/com/betterschool/integration/community/PostCountMergeIntegrationTest.java` | 计数链路先例（hot-row-merge 票 03/04）：点赞返回即窄表精确、浏览 fire-and-forget 只判单调不减 + 丢弃可读 |
 | `bs-app/src/test/java/com/betterschool/integration/community/PostCommentBaselineIntegrationTest.java` | 评论区现状基线（发布/列表/删除） |
 | `bs-app/src/test/java/com/betterschool/integration/community/AnonymousRemovalIntegrationTest.java` | 匿名移除固化（v2 票 02）：旧客户端字段忽略、全实名 |
-| `bs-app/src/test/java/com/betterschool/integration/chat/ChatWsIntegrationTest.java` | WS 全链路行为测试先例（chat 票 07）：真客户端 + 直调消费者 + 注入时钟 |
+| `bs-app/src/test/java/com/betterschool/integration/ws/WsIntegrationTest.java` | WS 全链路行为测试先例（chat 票 07）：真客户端 + 直调消费者 + 注入时钟 |
 | `bs-app/src/test/java/com/betterschool/integration/errand/ErrandFullChainIntegrationTest.java` | 跑腿全链路先例：支付 → 消费者通知 → 裁决 → 解冻退款 + 订单事件流水断言 |
 | `bs-app/src/test/resources/application-test.yml` | 测试 profile：只写覆盖项与日志降噪 |

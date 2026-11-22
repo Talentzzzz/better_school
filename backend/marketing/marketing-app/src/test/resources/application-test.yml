@@ -54,8 +54,7 @@ logging:
   level:
     com.betterschool.marketing: info
     com.betterschool.marketing.infrastructure.points.dao: warn
-    com.betterschool.marketing.infrastructure.drawcount.dao: warn
-    com.betterschool.marketing.infrastructure.config.dao: warn
+    com.betterschool.marketing.infrastructure.rebate.dao: warn
     com.betterschool.marketing.infrastructure.raffle.dao: warn
     com.betterschool.marketing.infrastructure.inventory.dao: warn
     com.betterschool.marketing.infrastructure.common.dao: warn

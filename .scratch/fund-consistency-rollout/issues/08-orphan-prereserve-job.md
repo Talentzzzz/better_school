@@ -1,0 +1,38 @@
+Type: task
+Status: resolved
+
+## Comments
+
+- 2026-11-20 完成：状态表 `draw_orphan_prereserve_order`（孤儿预扣登记，entry-point 幂等）+ `OrphanPrereserveScanJob`（xxl-job `0/30`，注册进 `sql/xxl-job-tasks.sql`）+ `RaffleOrphanPrereserveService`（条件更新抢占、1/2/4/8/16 分钟退避、耗尽 DEAD 只 ERROR 日志）。收敛路径：决策可重放 → 原幂等键重放落库后半段；不可重放 → 库存回补 + 次数退还（`DrawCountReasonType.ORPHAN_REFUND`，桶 uk 幂等，不产生新两步缝）。提交 `2bf738f`，合并 `2ef6da7`。测试随交付（job 触发→域扫描入口 + 域层收敛行为/死信，未执行）。
+Blocked by: （无，独立）
+
+# 08 孤儿预扣对账 job（抽奖「预扣→落库」缝的收敛）
+
+## 问题
+
+spec User Stories 14–16、18：抽奖「预扣 → 落库」跨库存合并器事务，无法并成一个物理事务（合并器 5ms 批量窗口是有意设计）。预扣成功但中奖记录未落库时，这次抽奖凭空消失、库存白占一份。
+
+## 事实修正（2026-11-20，research.md §4）
+
+库存明细表 `draw_strategy_award_inventory_detail` **没有 status 列**，「等待态」只存在于台账 `waiting_qty`（仅 PHYSICAL）；VIRTUAL 预扣直接进 `issued_qty`。因此：
+
+- 孤儿判定口径 = 台账流水 `flow_type=1 AND biz_type='LOTTERY_DRAW'` 且 `biz_id` 在 `draw_record` 无对应行，且超过补偿阈值（10 分钟）；
+- 「回补转移」只对 PHYSICAL 台账成立（`waiting_qty` → `remaining_qty` 条件转移）；VIRTUAL 预扣回补按其台账语义对 `issued_qty` 条件回退。
+
+## 交付
+
+新增**孤儿预扣对账 job**，扫库存预扣明细中「预扣型（等待态）且对应抽奖记录不存在、且超过补偿阈值（10 分钟）」的行，两条收敛路径：
+
+1. **决策可重放**（活动仍有效）→ 以原幂等键重放抽奖落库后半段（不重复扣次数、不重复预扣，撞唯一键视为回放已扣）。决策重跑可能得到与原决策不同的奖品，**接受该漂移**。
+2. **决策不可重放**（活动已结束 / 下线）→ 库存回补（等待态 → 剩余量的条件转移）+ 抽奖次数退还（次数桶幂等键入账，退还本身幂等）。
+
+重试口径照 `drawCountPurchaseScan`：0/30 cron、条件更新抢占、指数退避（1/2/4/8/16 分钟）、耗尽进死信（只日志 ERROR + 人工 SQL 重置，不建告警通路）。job 注册进既有营销侧任务 seed。
+
+## 约束
+
+- 测试两层缝：job 触发 → 调用域扫描入口一条断言；扫描收敛行为在域层缝上测（决策可重放补落库 / 不可重放回补+退还 / 重试耗尽进死信）。**不运行测试套件**。
+- 调度形态复用既有 xxl-job 注册口径与任务 seed 模式（User Story 18）。
+
+## 验收
+
+- 孤儿预扣在一个扫描周期内收敛，不重复扣次数、不重复预扣；耗尽后进死信留日志。

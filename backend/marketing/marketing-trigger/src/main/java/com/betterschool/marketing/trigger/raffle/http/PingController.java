@@ -2,8 +2,8 @@ package com.betterschool.marketing.trigger.raffle.http;
 
 import com.betterschool.marketing.api.common.dto.UserBasicResponseDTO;
 import com.betterschool.marketing.api.common.response.Response;
-import com.betterschool.marketing.domain.common.adapter.port.marketing.IUserQueryPort;
-import com.betterschool.marketing.domain.common.model.valobj.marketing.UserBasicVO;
+import com.betterschool.marketing.domain.raffle.adapter.port.marketing.IUserQueryPort;
+import com.betterschool.marketing.domain.raffle.model.valobj.RaffleUserVO;
 import com.betterschool.marketing.trigger.common.http.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,15 +25,15 @@ public class PingController {
 
     @GetMapping("/ping")
     public Response<UserBasicResponseDTO> ping() {
-        UserBasicVO userBasicVO = userQueryPort.getBasic(SecurityUtils.currentUserId());
-        if (userBasicVO == null) {
+        RaffleUserVO raffleUserVO = userQueryPort.getBasic(SecurityUtils.currentUserId());
+        if (raffleUserVO == null) {
             return Response.ok(null);
         }
         UserBasicResponseDTO dto = new UserBasicResponseDTO();
-        dto.setUserId(userBasicVO.getUserId());
-        dto.setNickname(userBasicVO.getNickname());
-        dto.setAvatar(userBasicVO.getAvatar());
-        dto.setCreatedAt(userBasicVO.getCreatedAt());
+        dto.setUserId(raffleUserVO.getUserId());
+        dto.setNickname(raffleUserVO.getNickname());
+        dto.setAvatar(raffleUserVO.getAvatar());
+        dto.setCreatedAt(raffleUserVO.getCreatedAt());
         return Response.ok(dto);
     }
 }

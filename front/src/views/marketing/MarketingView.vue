@@ -109,7 +109,7 @@ const drawBtnDisabled = computed(
 const drawBtnText = computed(() => {
   if (visitor.value) return '登录后参与'
   if (ended.value) return '活动已结束'
-  if (chances.value !== null && chances.value.available <= 0) return '用积分兑换次数'
+  if (chances.value !== null && chances.value.available <= 0) return '用积分购买次数'
   return '抽 一 次'
 })
 
@@ -151,7 +151,7 @@ const winTint = computed(() => {
   return i >= 0 ? PRIZE_TINTS[i % PRIZE_TINTS.length] : '#fff0f3'
 })
 
-// ---------- 兑换次数（唯一一条兑换边：积分 → 抽奖次数） ----------
+// ---------- 购买次数（唯一一条积分→次数的边：抽奖本身只扣次数） ----------
 
 const exchangeFail = ref<{ title: string; sub: string } | null>(null)
 
@@ -176,12 +176,12 @@ function guardExchange(): boolean {
 async function onExchangeChances() {
   if (!guardExchange()) return
   const price = activity.value?.drawCountPrice ?? 100
-  const ok = await confirmDialog('兑换抽奖次数', `用 ${price} 积分兑换 1 次抽奖机会？`)
+  const ok = await confirmDialog('购买抽奖次数', `用 ${price} 积分购买 1 次抽奖机会？`)
   if (!ok) return
   try {
     // token 幂等：重试带同一个，服务端不会重复扣积分（单号由 token 确定性映射）
     await exchangeDrawCount(crypto.randomUUID())
-    toast('兑换成功，抽奖次数 +1')
+    toast('购买成功，抽奖次数 +1')
     loadChances()
     loadPoints()
   } catch (e) {
@@ -227,10 +227,10 @@ const tintAt = (p: LotteryPrize) => PRIZE_TINTS[p.prizeId % PRIZE_TINTS.length]
           </button>
           <div class="m-draw-foot">
             <span>{{ activity?.drawCountPrice ?? '…' }} 积分 = 1 次</span>
-            <button class="m-link" @click="onExchangeChances">用积分兑换次数 ›</button>
+            <button class="m-link" @click="onExchangeChances">用积分购买次数 ›</button>
           </div>
           <div v-if="activity?.drawCountValidDays" class="m-draw-hint">
-            兑换的次数 {{ activity.drawCountValidDays }} 天内有效
+            购买的次数 {{ activity.drawCountValidDays }} 天内有效
           </div>
         </template>
       </div>
@@ -293,14 +293,14 @@ const tintAt = (p: LotteryPrize) => PRIZE_TINTS[p.prizeId % PRIZE_TINTS.length]
         <template v-else>
           <div class="m-modal-art m-modal-art--gray">🎟️</div>
           <div class="m-modal-name">抽奖次数不足</div>
-          <div class="m-modal-sub">可用积分兑换次数，攒够再来</div>
-          <button class="m-modal-btn" @click="drawOutcome = null; onExchangeChances()">用积分兑换次数</button>
+          <div class="m-modal-sub">可用积分购买次数，攒够再来</div>
+          <button class="m-modal-btn" @click="drawOutcome = null; onExchangeChances()">用积分购买次数</button>
           <button class="m-modal-btn-ghost" @click="drawOutcome = null">知道了</button>
         </template>
       </div>
     </div>
 
-    <!-- 兑换失败：居中弹窗 -->
+    <!-- 购买次数失败：居中弹窗 -->
     <div v-if="exchangeFail" class="m-mask" @click.self="exchangeFail = null">
       <div class="m-modal">
         <div class="m-modal-art m-modal-art--gray">🪙</div>

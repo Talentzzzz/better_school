@@ -6,6 +6,7 @@ import com.betterschool.marketing.domain.inventory.model.valobj.ClaimOutcome;
 import com.betterschool.marketing.domain.inventory.model.valobj.DeductResult;
 import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductRequestVO;
 import com.betterschool.marketing.domain.inventory.model.valobj.InventoryLedgerVO;
+import com.betterschool.marketing.domain.inventory.model.valobj.OrphanPrereserveCandidateVO;
 import com.betterschool.marketing.infrastructure.inventory.dao.IAwardInventoryDao;
 import com.betterschool.marketing.infrastructure.inventory.dao.IAwardInventoryDetailDao;
 import com.betterschool.marketing.infrastructure.inventory.dao.IPhysicalQuotaDao;
@@ -25,6 +26,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -197,6 +199,21 @@ public class InventoryRepository implements IInventoryRepository {
     @Override
     public List<ClaimOutcome> flushClaimGroup(List<InventoryClaimRequestVO> items) {
         return flushService.flushClaimGroup(items);
+    }
+
+    // ---------------------------------------------------------------- 孤儿预扣对账（低频直落，不进合并器）
+
+    @Override
+    public List<OrphanPrereserveCandidateVO> listOrphanPrereserveDetails(LocalDateTime before, int limit) {
+        return awardInventoryDetailDao.listOrphanDrawPrereserveDetails(before, limit).stream()
+                .map(po -> new OrphanPrereserveCandidateVO(po.getAwardId(), po.getBizId(), po.getQuantity()))
+                .toList();
+    }
+
+    /** 委托 {@link InventoryQuotaFlushService#restitutePrereserve}：回补与预扣/确认共用同一落库组件 */
+    @Override
+    public boolean restitutePrereserve(String awardId, String bizType, String bizId, long quantity) {
+        return flushService.restitutePrereserve(awardId, bizType, bizId, quantity);
     }
 
     // ---------------------------------------------------------------- PO → 公共形状

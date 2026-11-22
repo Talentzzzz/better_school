@@ -11,8 +11,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 过期（桶模型验收，读路径懒过期语义）：
- * 余额读 = 未过期桶 SUM(remain)——过期桶被读路径 {@code expire_at > NOW()} 滤掉，过期瞬间读数即扣；
- * 扫描任务只做账务收拾（置 0、不删行、留审计、不发事件），其快慢不影响任何读数。
+ * 余额读 = 未过期桶 SUM(remain)——过期桶被读路径 {@code expire_at > NOW()} 滤掉，过期瞬间读数即扣。
+ * 没有过期清理任务：过期判定与过期资产的失效全在读路径，过期行不删、不置零、不发事件。
  */
 @DisplayName("积分 · 桶过期")
 class PointsExpireIntegrationTest extends PointsApiTestBase {
@@ -35,25 +35,7 @@ class PointsExpireIntegrationTest extends PointsApiTestBase {
         JsonNode page = getJson("/api/points/transactions?page=1&pageSize=10", USER_ID).path("data");
         assertThat(page.path("total").asLong()).isEqualTo(2);
 
-        // 落账前读路径不写库
+        // 读路径不写库：过期桶的余量原样留着
         assertThat(bucketRemainOf(expiredBucketId)).as("读路径不改数据").isEqualTo(50);
-    }
-
-    @Test
-    @DisplayName("过期落账清理：置 0，不删行、不发事件")
-    void expireScan_zeroesRemainWithoutDeletingRowOrEmittingEvent() {
-        long expiredBucketId = insertBucket(USER_ID, 50, 50, LocalDateTime.now().minusDays(1), "LOTTERY_WIN", "80011");
-        long validBucketId = insertBucket(USER_ID, 30, 30, LocalDateTime.now().plusDays(10), "LOTTERY_WIN", "80012");
-
-        int cleaned = pointsAccountService.expireBuckets();
-
-        assertThat(cleaned).as("只清理过期且仍有余量的一行").isEqualTo(1);
-        assertThat(bucketRemainOf(expiredBucketId)).as("置零但行还在（留审计）").isZero();
-        assertThat(bucketRemainOf(validBucketId)).as("未过期的桶不动").isEqualTo(30);
-        assertThat(bucketCountOf(USER_ID)).as("不删行").isEqualTo(2);
-        assertThat(outboxPayloads("bs-points-changed")).as("过期不是积分变动，不发事件").isEmpty();
-
-        // 置 0 前后余额读同值（过期桶本来就被读路径滤掉），清理只是账务收拾
-        assertThat(pointsAccountService.getBalance(USER_ID)).isEqualTo(30);
     }
 }

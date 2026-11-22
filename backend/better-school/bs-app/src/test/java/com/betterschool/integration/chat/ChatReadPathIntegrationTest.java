@@ -274,7 +274,7 @@ public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
         assertThat(postJson("/api/chat/rooms/" + roomId + "/read", Map.of(), outsider).path("code").asText()).isEqualTo("403");
 
         // ws-ticket：一次性原子取删
-        JsonNode ticketResp = postJson("/api/chat/ws-ticket", Map.of(), userA);
+        JsonNode ticketResp = postJson("/api/ws-ticket", Map.of(), userA);
         assertSuccess(ticketResp, "签发票据");
         String ticket = ticketResp.path("data").path("ticket").asText();
         assertThat(ticket).isNotBlank();

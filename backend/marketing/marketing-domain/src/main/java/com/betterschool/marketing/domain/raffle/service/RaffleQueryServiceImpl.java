@@ -1,7 +1,5 @@
 package com.betterschool.marketing.domain.raffle.service;
 
-import com.betterschool.marketing.domain.raffle.adapter.port.config.IRaffleConfigPort;
-import com.betterschool.marketing.domain.raffle.adapter.port.drawcount.IDrawCountPort;
 import com.betterschool.marketing.domain.raffle.adapter.repository.IRaffleRepository;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawActivityEntity;
 import com.betterschool.marketing.domain.raffle.model.valobj.ActivityInfoVO;
@@ -9,22 +7,22 @@ import com.betterschool.marketing.domain.raffle.model.valobj.DrawChanceVO;
 import com.betterschool.marketing.domain.raffle.model.valobj.DrawRecordVO;
 import com.betterschool.marketing.domain.raffle.model.valobj.PrizeCatalogVO;
 import com.betterschool.marketing.domain.raffle.model.valobj.UserPrizeVO;
+import com.betterschool.marketing.domain.raffle.service.drawcount.IDrawCountAccountService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 
 /**
- * 抽奖读侧实现（票 13）：全部落 draw_* 新表；次数余额经 {@link IDrawCountPort} 读次数域，
- * 有效期配置经 {@link IRaffleConfigPort} 只读配置域（一域一仓储：域层不认识他域仓储）。
+ * 抽奖读侧实现（票 13）：全部落 draw_* 新表；次数余额与次数有效期同属抽奖域（抽奖次数与抽奖同域），
+ * 直接读域内次数服务与仓储，不再给他域开 port。
  */
 @Service
 @RequiredArgsConstructor
 public class RaffleQueryServiceImpl implements IRaffleQueryService {
 
     private final IRaffleRepository raffleRepository;
-    private final IRaffleConfigPort raffleConfigPort;
-    private final IDrawCountPort drawCountPort;
+    private final IDrawCountAccountService drawCountAccountService;
 
     @Override
     public ActivityInfoVO getActivity() {
@@ -38,7 +36,7 @@ public class RaffleQueryServiceImpl implements IRaffleQueryService {
         vo.setStartAt(activity.getBeginDateTime());
         vo.setEndAt(activity.getEndDateTime());
         vo.setState(activity.getState());
-        vo.setDrawCountValidDays(raffleConfigPort.drawCountValidDays());
+        vo.setDrawCountValidDays(drawCountAccountService.getValidDays());
         return vo;
     }
 
@@ -53,7 +51,7 @@ public class RaffleQueryServiceImpl implements IRaffleQueryService {
 
     @Override
     public DrawChanceVO getDrawChances(String userId) {
-        return new DrawChanceVO(drawCountPort.getBalance(userId), raffleRepository.countTodayDrawn(userId));
+        return new DrawChanceVO(drawCountAccountService.getBalance(userId), raffleRepository.countTodayDrawn(userId));
     }
 
     @Override

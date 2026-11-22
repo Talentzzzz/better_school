@@ -52,7 +52,13 @@ public interface ILotteryService {
      */
     Response<PageResult<UserPrizeResponseDTO>> listMyPrizes(String status, int page, int pageSize);
 
-    /** 积分兑抽奖次数（与积分扣分同事务、按 token 幂等），返回兑换单 id 与兑后的次数余额 */
+    /**
+     * **用积分购买抽奖次数**（抽奖只消耗次数，从不直接扣积分；积分不够时走这条换次数）：
+     * 扣分与次数入账两步各自域内原子、共用 token 确定性映射出的购买单号做幂等，
+     * 返回购买单 id、本次花费与买后余额。份数不传按 1 份。
+     * <p>
+     * 路径：{@code POST /api/lottery/purchase/draw-count}（历史名 {@code /exchange/draw-count} 仍可用）。
+     */
     Response<RedeemDrawCountResponseDTO> exchangeDrawCount(RedeemDrawCountRequestDTO request);
 
     /**

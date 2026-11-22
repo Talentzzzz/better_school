@@ -50,29 +50,6 @@
         WHERE user_id = #{userId} AND remain &gt; 0 AND expire_at &gt; NOW()
     </select>
 
-    <!-- 懒过期落账清理：只置零不删行（留审计），且不发事件 -->
-    <update id="expireBuckets">
-        UPDATE points_bucket
-        SET remain = 0, update_time = NOW()
-        WHERE expire_at &lt;= NOW() AND remain &gt; 0
-    </update>
-
-    <!--
-      过期桶加锁分组读：FOR UPDATE 锁住扫描到的桶行，并发任务在桶行锁上串行
-      （后到者重读时余量已置 0、分组为空）。过期清零目前单条 UPDATE 即可（见上方 expireBuckets），
-      本查询与桶合并的 selectSmallBucketsForUpdate 同构，供分组读模式的批量任务参考/复用。
-      分组顺序无意义，仅为结果稳定。
-    -->
-    <select id="selectExpiredRemainGroups"
-            resultType="com.betterschool.marketing.infrastructure.points.dao.po.PointsExpiredGroupPO">
-        SELECT user_id, SUM(remain) AS total, COUNT(*) AS bucketCount
-        FROM points_bucket
-        WHERE expire_at &lt;= NOW() AND remain &gt; 0
-        GROUP BY user_id
-        ORDER BY user_id
-        FOR UPDATE
-    </select>
-
     <!--
       桶合并候选用户批（points-compaction 票）：每用户聚合「有效小额桶」（remain > 0、未过期、
       remain <= MERGE_BUCKET_THRESHOLD），数量 >= MERGE_MIN_BUCKETS 才算候选。

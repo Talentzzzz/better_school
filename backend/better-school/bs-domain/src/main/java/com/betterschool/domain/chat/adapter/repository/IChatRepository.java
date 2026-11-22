@@ -182,4 +182,16 @@ public interface IChatRepository {
 
     /** 撤回事务内写 RECALL 轻事件（outbox）：载荷只带 roomId+seq 定位，内容终态以拉取为准 */
     void saveRecallMessage(ChatRecallPushEvent chatRecallPushEvent);
+
+    /**
+     * WS 实时推送 MSG 帧（技术出站能力走仓储，同 outbox 待遇）：实现组装帧并委托 infrastructure/ws 连接组件。
+     * 尽力而为：不在线/失败静默放弃，漏推由客户端判重 + timeline 补拉兜底
+     */
+    void pushMessage(String userId, ChatMessagePushEvent chatMessagePushEvent);
+
+    /** WS 实时推送 READ 帧（已读水位事件）：同上尽力而为，漏推由客户端判重 + timeline 补拉兜底 */
+    void pushRead(String userId, ChatReadPushEvent chatReadPushEvent);
+
+    /** WS 实时推送 RECALL 帧（撤回轻事件，只带定位）：同上尽力而为，漏推接受退化（内容终态以拉取为准） */
+    void pushRecall(String userId, ChatRecallPushEvent chatRecallPushEvent);
 }

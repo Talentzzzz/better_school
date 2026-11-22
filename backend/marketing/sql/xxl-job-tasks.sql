@@ -11,7 +11,8 @@
 -- 票 09 下线该域：对应 outbox 扫描名的注册语句与 handler 一并删除，
 -- xxl_job_info 里已注册的旧行需在 admin 里停用/删除（本脚本幂等重灌不会再建出它）。
 -- cron 口径：admin 库当时无可核对的现配置（xxl_job_info 无营销执行器行），按 spec §3.1-D 建议值落：
--- outbox 类 0/30（单体先例）、pointsExpireScan / lotteryDeductMerge / lotteryDrawCountExpireScan 每分钟。
+-- outbox 类 0/30（单体先例）；曾经的 pointsExpireScan / lotteryDeductMerge / lotteryDrawCountExpireScan
+-- 每分钟已全部下线（handler 同删，见下方 DELETE 注记）。
 -- author 口径：两工程原值（marketing-asset / marketing-activity）随工程合并统一取 'marketing'。
 
 USE xxl_job;
@@ -38,33 +39,44 @@ SELECT @group_id, 'outbox PENDING 消息补发', NOW(), NOW(), 'marketing', '',
 WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'outboxScan'
                   AND job_group = @group_id);
 
+-- ADR-0014：购买单补偿扫描——「已扣分待入账」的购买单收敛到 DONE（入账桶唯一键幂等，从不碰扣分）
 INSERT INTO xxl_job_info
 (job_group, job_desc, add_time, update_time, author, alarm_email,
  schedule_type, schedule_conf, misfire_strategy, executor_route_strategy,
  executor_handler, executor_param, executor_block_strategy, executor_timeout,
  executor_fail_retry_count, glue_type, glue_source, glue_remark, glue_updatetime,
  child_jobid, trigger_status, trigger_last_time, trigger_next_time)
-SELECT @group_id, '积分桶到期懒过期兜底扫描', NOW(), NOW(), 'marketing', '',
-       'CRON', '0 * * * * ?', 'DO_NOTHING', 'FIRST',
-       'pointsExpireScan', '', 'SERIAL_EXECUTION', 0,
+SELECT @group_id, '购买单补偿扫描（DEDUCTED 单补入账）', NOW(), NOW(), 'marketing', '',
+       'CRON', '0/30 * * * * ?', 'DO_NOTHING', 'FIRST',
+       'drawCountPurchaseScan', '', 'SERIAL_EXECUTION', 0,
        0, 'BEAN', '', '', NOW(),
        '', 1, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'pointsExpireScan'
+WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'drawCountPurchaseScan'
                   AND job_group = @group_id);
 
+-- 孤儿预扣对账扫描——「预扣在、抽奖记录不在、超过 10 分钟」的孤儿预扣收敛：
+-- 决策可重放以原幂等键补落库（不重复扣次数、预扣撞唯一键按已扣回放，决策漂移接受）；
+-- 不可重放（活动已结束/下线）库存回补 + 次数退还。重试口径与购买单补偿同（0/30、抢占、1/2/4/8/16 退避、死信）。
 INSERT INTO xxl_job_info
 (job_group, job_desc, add_time, update_time, author, alarm_email,
  schedule_type, schedule_conf, misfire_strategy, executor_route_strategy,
  executor_handler, executor_param, executor_block_strategy, executor_timeout,
  executor_fail_retry_count, glue_type, glue_source, glue_remark, glue_updatetime,
  child_jobid, trigger_status, trigger_last_time, trigger_next_time)
-SELECT @group_id, '抽奖次数桶（新模型）到期懒过期兜底扫描', NOW(), NOW(), 'marketing', '',
-       'CRON', '0 * * * * ?', 'DO_NOTHING', 'FIRST',
-       'drawCountBucketExpireScan', '', 'SERIAL_EXECUTION', 0,
+SELECT @group_id, '孤儿预扣对账扫描（补落库或回补+退还）', NOW(), NOW(), 'marketing', '',
+       'CRON', '0/30 * * * * ?', 'DO_NOTHING', 'FIRST',
+       'orphanPrereserveScan', '', 'SERIAL_EXECUTION', 0,
        0, 'BEAN', '', '', NOW(),
        '', 1, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'drawCountBucketExpireScan'
+WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'orphanPrereserveScan'
                   AND job_group = @group_id);
+
+-- 桶过期清零任务下线：过期是读路径懒判（所有读路径都带 expire_at > NOW()），清零只写不读；
+-- 且它的谓词 expire_at <= NOW() AND remain > 0 走不了 idx_user_expire 的最左前缀，等于每分钟
+-- 全表扫一遍 + 按 InnoDB 当前读规则把扫过的行都锁住，与入账/消费互斥——净负收益，handler 已随代码删除。
+-- 先幂等清理旧注册：否则调度仍会派给一个已删的 handler、日志刷「找不到执行器任务」。
+DELETE FROM xxl_job_info WHERE executor_handler IN ('pointsExpireScan', 'drawCountBucketExpireScan')
+                          AND job_group = @group_id;
 
 -- 票 10（库存合并触发换轨）：每秒的 inventoryMerge 已删除。
 -- 先幂等清理旧注册：否则调度仍会派给一个已删的 handler、日志刷「找不到执行器任务」

@@ -81,6 +81,8 @@ Provider：`marketing-trigger/.../trigger/points/rpc/PointsExchangeDubboService`
 
 | 任务 | handler | 作用 |
 | --- | --- | --- |
-| 积分过期落账 | `pointsExpireScan` | 把已过期桶 `remain` 置 0（不删行、留审计、不发事件） |
 | 桶合并 | `pointsBucketCompaction` | 同用户小额桶（remain ≤ 10 且 ≥ 2 张）并成一桶：`expire_at` 取合并集最大值、旧桶归零留审计、余额守恒；每 10 分钟，对用户不可见 |
 | outbox 兜底扫描 | `outboxScan` | 重发 PENDING 消息 |
+
+> 过期没有定时任务：过期是读路径懒判（`expire_at > NOW()`），过期行不删不置零。
+> 曾有的每分钟清零（`pointsExpireScan`）已下线——只写不读，且谓词走不了索引前缀，净负收益。

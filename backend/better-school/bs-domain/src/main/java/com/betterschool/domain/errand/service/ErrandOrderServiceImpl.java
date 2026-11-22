@@ -1,5 +1,6 @@
 package com.betterschool.domain.errand.service;
 
+import com.betterschool.domain.errand.adapter.port.IErrandFundPort;
 import com.betterschool.domain.errand.adapter.port.IErrandGrabAbusePort;
 import com.betterschool.domain.errand.adapter.repository.IErrandRepository;
 import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
@@ -63,6 +64,8 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
 
     private final IErrandRepository errandRepository;
     private final IErrandGrabAbusePort errandGrabAbusePort;
+    /** 支付资金收口端口：冻结悬赏与本域状态翻转收进一个物理事务（基础设施层编排，本域不写钱包表） */
+    private final IErrandFundPort errandFundPort;
 
     /** 状态迁移成功后的 WS 推送事件（outbox → ORDER 帧）：推送是加速路径，失败/漏推由详情页拉取兜底 */
     private void pushOrderStatus(String orderId, ErrandStatusVO status) {
@@ -159,10 +162,11 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (orderEntity.getStatus() != ErrandStatusVO.PENDING_PAYMENT) {
             throw new BusinessException(ResponseCode.NOT_FOUND, "订单不存在或不可支付");
         }
-        // 状态迁移跟着钱走：支付事务内转 PUBLISHED（冻结悬赏、即对外可见进入大厅），
+        // 状态迁移跟着钱走：支付组合事务内先冻结悬赏再转 PUBLISHED（即对外可见进入大厅），
+        // 冻结与翻转同生共死（IErrandFundPort 端口编排，余额不足整事务回滚、订单留待支付），
         // bs-errand-paid outbox 消息只承担"支付成功"通知，不承载状态迁移；
         // deadline 已随单落库（payById WHERE deadline > NOW() 拒绝已过期单）
-        errandRepository.payWithPaidMessage(orderId, userId);
+        errandFundPort.payWithFundFreeze(orderId, userId, orderEntity.getTotalReward());
         pushOrderStatus(orderId, ErrandStatusVO.PUBLISHED);
         return new ErrandPayResult(orderEntity.getTotalReward());
     }
@@ -438,7 +442,16 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         }
         // 待支付未冻结无需退款；已发布/锁单中/已确认需解冻退回
         boolean needRefund = orderEntity.getStatus() != ErrandStatusVO.PENDING_PAYMENT;
-        errandRepository.cancelByPublisherWithSearchSync(orderEntity.getOrderId(), orderEntity.getPublisherId());
+        if (needRefund) {
+            // 取消翻转与解冻退款并入一个物理事务（IErrandFundPort 端口编排）：
+            // 「订单已取消 ⇒ 悬赏已解冻回余额」，宕机中间态无处存活；
+            // 重复执行由解冻流水 uk_order_type 幂等吸收
+            errandFundPort.cancelWithRefund(orderEntity.getOrderId(), orderEntity.getPublisherId(),
+                    orderEntity.getTotalReward());
+        } else {
+            // 待支付取消无资金动作，取消翻转（含事件 + feed 索引 + 搜索同步）单事务即可
+            errandRepository.cancelByPublisherWithSearchSync(orderEntity.getOrderId(), orderEntity.getPublisherId());
+        }
         pushOrderStatus(orderEntity.getOrderId(), ErrandStatusVO.CANCELLED);
         return new ErrandCancelResult(needRefund, orderEntity.getPublisherId(), orderEntity.getTotalReward(),
                 false, null);
@@ -601,11 +614,12 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
         if (orderEntity.getDeadline() != null && orderEntity.getDeadline().isAfter(LocalDateTime.now())) {
             throw new IllegalStateException("订单超时任务早于 deadline 触发，按失败重投：orderId=" + orderId);
         }
-        // 条件 UPDATE（状态 + deadline 双校验）防并发重复处理；未命中可能是并发重复回调
-        // （另一实例刚提交取消）或时钟偏差——同样按失败重投，下一轮读到终态即幂等成功
-        if (!errandRepository.markTimeoutWithSearchSync(orderId)) {
-            throw new IllegalStateException("订单超时回调条件 UPDATE 未命中，按失败重投：orderId=" + orderId);
-        }
+        // 超时取消资金收口（IErrandFundPort 端口编排）：发布方解冻退款（开工场景另含接单方信用分扣减）
+        // 与超时取消条件翻转并入一个物理事务——「订单已取消但悬赏悬置冻结态」「退了钱分没扣」的
+        // 中间态无处存活；条件翻转未命中（并发重复回调 / 时钟偏差）在端口内抛异常按失败重投，
+        // 解冻与扣分随之回滚，重投下一轮读到终态即幂等成功（终态短路语义保持现状）
+        errandFundPort.timeoutCancelWithRefund(orderId, orderEntity.getPublisherId(),
+                orderEntity.getTakerId(), orderEntity.getTotalReward(), committed);
         pushOrderStatus(orderId, ErrandStatusVO.CANCELLED);
         log.info("[ErrandTimeout] 订单超时取消 orderId={}, wasStatus={}", orderId, status);
         return new ErrandTimeoutResult(orderEntity.getPublisherId(), orderEntity.getTakerId(),
@@ -616,12 +630,15 @@ public class ErrandOrderServiceImpl implements IErrandOrderService {
     public ErrandAutoCompleteResult handleAutoComplete(String orderId) {
         ErrandOrderEntity orderEntity = errandRepository.findById(orderId);
         if (orderEntity == null || orderEntity.getStatus() != ErrandStatusVO.DELIVERED) {
-            // 已确认/已仲裁/其他：幂等忽略
+            // 已完成/已取消/其他：终态短路——资金已随终态在同一事务内完成过，重投幂等无害
             return null;
         }
-        if (!errandRepository.autoCompleteWithSearchSync(orderId)) {
-            return null;
-        }
+        // 自动完成资金收口（IErrandFundPort 端口编排）：发布方解冻退款 + 接单方悬赏收入
+        // 与「已送达 → 已完成」条件翻转并入一个物理事务——「订单已完成但接单方收入永久不结算」的
+        // 中间态无处存活；条件翻转未命中（并发重复回调）在端口内抛异常按失败重投，
+        // 解冻与入账随之回滚，重投下一轮读到终态即幂等成功（终态短路语义保持现状）
+        errandFundPort.completeWithIncome(orderId, orderEntity.getPublisherId(),
+                orderEntity.getTakerId(), orderEntity.getTotalReward());
         pushOrderStatus(orderId, ErrandStatusVO.COMPLETED);
         log.info("[ErrandAutoComplete] 送达超时自动完成 orderId={}", orderId);
         // 与发布方确认同一结算口径

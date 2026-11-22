@@ -19,7 +19,7 @@ import { createDirectRoom } from '@/api/chat'
 import type { ErrandOrder } from '@/types/api'
 import { useAuthStore } from '@/stores/auth'
 import { useChatRoomsStore } from '@/stores/chatRooms'
-import { chatWs } from '@/utils/chatWs'
+import { wsClient } from '@/utils/ws'
 import { toast } from '@/components/Toast'
 import { confirmDialog } from '@/components/ConfirmDialog'
 import { formatDateTime, formatMoney, formatRemaining, formatTime } from '@/utils/format'
@@ -132,7 +132,7 @@ let unbindOrder: (() => void) | null = null
 
 onMounted(() => {
   void load()
-  unbindOrder = chatWs.on('ORDER', (env) => {
+  unbindOrder = wsClient.on('ORDER', (env) => {
     const payload = env.payload as { orderId: number; status: string } | undefined
     if (payload?.orderId !== orderId) return
     if (order.value && order.value.status === payload.status) return

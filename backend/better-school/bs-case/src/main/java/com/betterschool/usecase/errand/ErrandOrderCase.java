@@ -4,19 +4,18 @@ import com.betterschool.domain.notification.model.valobj.NotificationEventMessag
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.domain.notification.service.INotificationService;
+import com.betterschool.domain.errand.adapter.repository.IErrandRepository;
 import com.betterschool.domain.credit.model.valobj.CreditReasonTypeVO;
 import com.betterschool.domain.credit.service.ICreditAccountService;
 import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
 import com.betterschool.domain.errand.model.valobj.ErrandArbitrateResult;
-import com.betterschool.domain.errand.model.valobj.ErrandAutoCompleteResult;
 import com.betterschool.domain.errand.model.valobj.ErrandCancelResult;
 import com.betterschool.domain.errand.model.valobj.ErrandConfirmResult;
+import com.betterschool.domain.errand.model.valobj.ErrandOrderPushEvent;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedPageVO;
 import com.betterschool.domain.errand.model.valobj.ErrandIncomeVO;
 import com.betterschool.domain.errand.model.valobj.ErrandLockTimeoutResult;
 import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
-import com.betterschool.domain.errand.model.valobj.ErrandPayResult;
-import com.betterschool.domain.errand.model.valobj.ErrandTimeoutResult;
 import com.betterschool.domain.errand.service.IErrandOrderService;
 import com.betterschool.domain.wallet.service.IWalletAccountService;
 import com.betterschool.types.common.Constants;
@@ -47,6 +46,7 @@ public class ErrandOrderCase {
     private final ICreditAccountService creditAccountService;
     private final IWalletAccountService walletAccountService;
     private final INotificationService notificationService;
+    private final IErrandRepository errandRepository;
 
     public String createOrder(String userId, String title, String type, String description, String pickupLocation,
                             String deliveryLocation, BigDecimal reward,
@@ -57,10 +57,13 @@ public class ErrandOrderCase {
                 reward, images, deadline);
     }
 
-    /** 冻结悬赏，由 domain 返回口径 */
+    /**
+     * 支付（资金收口）：冻结悬赏与「待支付 → 已发布」翻转（含 outbox + feed 索引行）
+     * 已由 IErrandFundPort 并入一个物理事务（见 ErrandOrderServiceImpl.payOrder），
+     * 本层不再拆两步调用——「发布成功但钱没冻」的中间态由该事务消灭
+     */
     public void payOrder(String orderId, String userId) {
-        ErrandPayResult payResult = errandOrderService.payOrder(orderId, userId);
-        walletAccountService.freeze(userId, payResult.getAmount(), orderId);
+        errandOrderService.payOrder(orderId, userId);
     }
 
     /** 保存草稿：私有停靠内容——不做同步初筛、不做信用分门槛（提交时才校验），字段可缺省 */
@@ -122,9 +125,27 @@ public class ErrandOrderCase {
         return errandOrderService.orderDetail(orderId, currentUserId);
     }
 
-    /** 按 id 裸取订单实体（无权限口径）：触发层消费者（OrderPushConsumer）推送 ORDER 帧前查双方 id 用 */
-    public ErrandOrderEntity loadOrder(String orderId) {
-        return errandOrderService.loadOrder(orderId);
+    /**
+     * 订单状态推送编排（bs-order-push 消费落地）：定位订单双方后逐个投递 ORDER 推送
+     * （帧 payload={orderId, status}，组装归 infrastructure/ws）。草稿态（DELETED/DRAFT）无「双方」概念，不推；
+     * 推送是加速路径：不做事务、不做重试，不在线/失败由仓储出站（infrastructure/ws 连接组件）静默放弃——
+     * 漏推由详情页下次拉取与通知中心兜底
+     */
+    public void pushStatus(ErrandOrderPushEvent event) {
+        ErrandOrderEntity orderEntity = errandOrderService.loadOrder(event.getOrderId());
+        if (orderEntity == null) {
+            return;
+        }
+        deliverTo(orderEntity.getPublisherId(), event);
+        if (orderEntity.getTakerId() != null) {
+            deliverTo(orderEntity.getTakerId(), event);
+        }
+    }
+
+    /** 向单个收件人投递一帧 ORDER 通知（订单双方由 pushStatus 逐个调用） */
+    private void deliverTo(String userId, ErrandOrderPushEvent event) {
+        errandRepository.pushOrderStatus(userId, event);
+>>>>>>> chat-ws-layering-rollout
     }
 
     public void grabOrder(String orderId, String userId) {
@@ -159,12 +180,15 @@ public class ErrandOrderCase {
         }
     }
 
+    /**
+     * 取消（资金收口）：发布方解冻退款与取消翻转已由 IErrandFundPort 并入一个物理事务
+     * （见 ErrandOrderServiceImpl.cancelByPublisher），本层不再拆两步调用——
+     * 「订单已取消但悬赏悬置冻结态」的中间态由该事务消灭。
+     * 接单方取消不涉资金（悬赏继续托管），仅扣信用分（流水 uk 幂等）。
+     */
     public void cancelOrder(String orderId, String userId, String requestId) {
         // requestId 可空（请求级幂等键）：同一次点击的重放在 domain 层已被回放拦截，不会走到跨域动作
         ErrandCancelResult cancelResult = errandOrderService.cancelOrder(orderId, userId, requestId);
-        if (cancelResult.isNeedRefund()) {
-            walletAccountService.unfreeze(cancelResult.getPublisherId(), cancelResult.getReward(), orderId);
-        }
         if (cancelResult.isTakerCanceled()) {
             creditAccountService.applyChange(cancelResult.getTakerId(), CreditReasonTypeVO.ERRAND_TAKER_CANCEL, orderId);
         }
@@ -246,27 +270,27 @@ public class ErrandOrderCase {
                 .build());
     }
 
+    /**
+     * 订单超时取消编排（超时中心回调，资金收口）：取消翻转 + 发布方解冻退款
+     * （开工场景另含接单方信用分扣减）已由 IErrandFundPort 并入一个物理事务
+     * （见 ErrandOrderServiceImpl.handleOrderTimeout），本层不再拆两步调用——
+     * 「订单已取消但悬赏悬置冻结态」「退了钱分没扣」的中间态由该事务消灭。
+     * 终态短路语义保持现状：重投一个已处理的回调，读到终态即安全返回；
+     * 早到回调仍按失败重投（资金动作随翻转失败整体回滚，零残留）。
+     */
     public void handleOrderTimeout(String orderId) {
-        ErrandTimeoutResult timeoutResult = errandOrderService.handleOrderTimeout(orderId);
-        if (timeoutResult == null) {
-            return;
-        }
-        walletAccountService.unfreeze(timeoutResult.getPublisherId(), timeoutResult.getReward(), orderId);
-        if (timeoutResult.isCommitted()) {
-            creditAccountService.applyChange(timeoutResult.getTakerId(), CreditReasonTypeVO.ERRAND_TIMEOUT, orderId);
-        }
+        errandOrderService.handleOrderTimeout(orderId);
     }
 
+    /**
+     * 送达 24h 自动完成编排（超时中心回调，资金收口）：发布方解冻退款 + 接单方悬赏收入
+     * 与「已送达 → 已完成」翻转已由 IErrandFundPort 并入一个物理事务
+     * （见 ErrandOrderServiceImpl.handleAutoComplete），本层不再拆两步调用——
+     * 「订单已完成但接单方悬赏收入永久不结算」的中间态由该事务消灭。
+     * 终态短路语义保持现状：重投一个已处理的回调，读到终态即安全返回（资金已随终态完成过）。
+     */
     public void handleAutoComplete(String orderId) {
-        ErrandAutoCompleteResult autoCompleteResult = errandOrderService.handleAutoComplete(orderId);
-        if (autoCompleteResult == null) {
-            return;
-        }
-        walletAccountService.unfreeze(autoCompleteResult.getPublisherId(), autoCompleteResult.getReward(), orderId);
-        // 与发布方确认同一结算口径：接单方得悬赏
-        for (ErrandIncomeVO income : autoCompleteResult.getIncomes()) {
-            walletAccountService.income(income.getUserId(), income.getAmount(), orderId);
-        }
+        errandOrderService.handleAutoComplete(orderId);
     }
 
     /** 配图上限（直接发布与草稿共用同一口径，封顶 6 张） */

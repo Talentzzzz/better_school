@@ -2,6 +2,8 @@ package com.betterschool.infrastructure.adapter.repository.notification;
 
 import com.betterschool.domain.notification.adapter.port.IBroadcastRecipientPort;
 import com.betterschool.domain.notification.adapter.repository.INotificationRepository;
+import com.betterschool.infrastructure.ws.IWsConnectionHub;
+import com.betterschool.infrastructure.ws.wsframe.WsFrameFactory;
 import com.betterschool.domain.notification.model.entity.NotificationEntity;
 import com.betterschool.domain.notification.model.valobj.NotificationBroadcastMessage;
 import com.betterschool.domain.notification.model.valobj.NotificationEventMessage;
@@ -36,6 +38,7 @@ public class NotificationRepository implements INotificationRepository {
     private final OutboxMessageStore outboxMessageStore;
     private final IBroadcastRecipientPort broadcastRecipientPort;
     private final TransactionTemplate transactionTemplate;
+    private final IWsConnectionHub wsConnectionHub;
 
     @Override
     public List<NotificationEntity> pageList(String userId, NotificationScopeVO scope, int offset, int limit) {
@@ -196,5 +199,10 @@ public class NotificationRepository implements INotificationRepository {
         notificationEntity.setRefId(notification.getRefId());
         notificationEntity.setCreatedAt(notification.getCreateTime());
         return notificationEntity;
+    }
+
+    @Override
+    public void pushNotif(String userId, NotifyPushMessage message) {
+        wsConnectionHub.push(userId, WsFrameFactory.notif(message));
     }
 }

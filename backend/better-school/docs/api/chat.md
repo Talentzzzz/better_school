@@ -23,8 +23,9 @@ chat 域接口（room / user_room + room_member 名册 / message / timeline 模�
 ### GET /rooms/{roomId}/members
 成员列表（恒两行）：含 `lastReadSeq`（详情页已读头像推导，已读判定 = 消息 seq ≤ 水位线纯前端推导）与 `memberCount`。非成员 403。
 
-### POST /ws-ticket
-WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只有一次生效机会，重放失败。返回 `{ticket}`，握手连 `GET /ws/chat?ticket=`（归票 04）。
+### POST /api/ws-ticket
+WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只有一次生效机会，重放失败。返回 `{ticket}`，握手连 `GET /ws?ticket=`（归票 04）。
+**已迁出 chat**：WS 连接层是全站共享基础设施（一用户一连接，多业务按帧类型复用），票据端点独立为 `WsTicketController`（`/api/ws-ticket`），不再归属 `/api/chat`。
 
 ### POST /rooms/direct
 建/取 1v1 会话（「联系 TA」入口）。Body: `targetUserId`（必填，不能是自己，用户须存在）、`source?`（市集两入口分别传 ERRAND/PRODUCT，首页与用户主页私信入口不传；非法值 400）。
@@ -63,17 +64,17 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
 - 已撤回消息重复撤回幂等静默成功，不重复投递事件
 - 事务内：message 三件套（state=RECALLED + recalled_at + recalled_by=USER）——**零 user_room 写**（列表「[已撤回]」由读时现算呈现，无预览维护写）→ outbox RECALL 轻事件（outbox `destination` = `bs-chat-recall`，载荷 `{roomId, seq}`，WS 推送归票 04）
 
-## WS 长连接（票 04，spec §3）
+## WS 长连接（票 04，spec §3；连接层为全站共享，类名与端口不带 chat 前缀）
 
-### GET /ws/chat?ticket=
+### GET /ws?ticket=
 
-裸 WebSocket 端点（`spring-boot-starter-websocket`）。浏览器 WS 不能带自定义 header，JWT 不进 URL——先 `POST /ws-ticket` 换 60s 一次性票据再握手；拦截器对票据**原子取删**校验，无效/过期/重放返回 HTTP 401，客户端重新要票。连接存续期内不再鉴权。
+裸 WebSocket 端点（`spring-boot-starter-websocket`）。浏览器 WS 不能带自定义 header，JWT 不进 URL——先 `POST /api/ws-ticket` 换 60s 一次性票据再握手；拦截器对票据**原子取删**校验，无效/过期/重放返回 HTTP 401，客户端重新要票。连接存续期内不再鉴权。
 
-- 安全链：`/ws/chat` 在 Spring Security 白名单，鉴权完全由握手拦截器承担
+- 安全链：`/ws` 在 Spring Security 白名单，鉴权完全由握手拦截器承担
 - 连接注册表 `Map<userId, session>`：单设备互踢——新连接先占位，旧连接收 `KICK` + close(4001)；close 回调两参注销，迟到 close 不误删新连接
 - 心跳：客户端 25s 一次 `PING`；服务端任何入站帧刷新活跃时间，60s 无入站判死清理（close 1001）
 - 服务端无业务路由、无 ACK：C→S 仅 `PING`；发送/已读/撤回全走 REST，WS 纯下行
-- **多实例推送路由（Redis 路由表 + HTTP 转发）**：握手注册 `bs:ws-route:{userId} = 端点|sessionId`（TTL 90s，入站帧续期，断连 CAS 注销）；推送消费方经 `WsPushRouter`——本地注册表优先 → 路由不是自己则 HTTP 转发目标实例 `/internal/ws/push`（共享密钥 fail-closed，目标对本机注册表二次确认）；miss/失败 CAS 清理路由条目后放弃。`better-school.ws.route.self-endpoint` 留空 = 单机形态，不注册路由、推送只走本地
+- **多实例推送路由（Redis 路由表 + pub/sub 定向频道）**：推送决策在 case 推送服务（按会话成员扇出、组帧），投递统一经本域仓储 `deliverWsFrame`（技术能力走仓储）收口，仓储实现委托 `infrastructure/ws/` 连接组件（Redis 路由表与 pub/sub 频道均为其内部细节）：握手注册 `bs:ws-route:{userId} = 端点标识|sessionId`（TTL 90s，入站帧续期，断连 CAS 注销）；每个实例启动即订阅自己的定向频道 `bs:ws-push:{端点标识}`，适配器投递——本地注册表优先 → 路由不是自己则发布到目标实例频道（fire-and-forget，目标实例对本机注册表二次确认后推帧）；订阅者数为 0 / 本地 miss / 发布失败都清理路由条目后放弃。`better-school.ws.route.self-endpoint` 留空 = 单机形态，不注册路由、推送只走本地
 - 推送失败不重试，漏推合法——重连后 `GET /timeline` 补拉兜底，客户端按 `(roomId, seq)` 判重合流
 
 协议信封（JSON 文本帧）`{type, roomId?, seq?, payload?, ts}`：

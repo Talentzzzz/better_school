@@ -249,7 +249,13 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
     }
 
     protected JsonNode exchangeDrawCount(String userId, String token) {
-        return postJson("/api/lottery/exchange/draw-count", tokenOf(userId), "{\"token\":\"" + token + "\"}");
+        return exchangeDrawCount(userId, token, 1);
+    }
+
+    /** 购买次数：{@code quantity} 份（路径与字段名沿用历史的兑换口径，语义是「用积分买次数」） */
+    protected JsonNode exchangeDrawCount(String userId, String token, int quantity) {
+        return postJson("/api/lottery/exchange/draw-count", tokenOf(userId),
+                "{\"token\":\"" + token + "\",\"quantity\":" + quantity + "}");
     }
 
     /** 确认收货（票 14）：走 HTTP 入口，{@code id} = draw_record.record_id */

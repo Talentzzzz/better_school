@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS points_bucket (
     bucket_id   VARCHAR(36)      NOT NULL COMMENT '业务 ID（对外唯一标识）',
     user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID（跨 schema 只存 id，不 join 单体库）',
     amount      INT         NOT NULL COMMENT '入账积分数（恒正；方向由「在哪张表 + 哪个 reason_type」表达）',
-    remain      INT         NOT NULL COMMENT '该桶剩余可用积分（消费按 FIFO 递减，过期清理置 0）',
+    remain      INT         NOT NULL COMMENT '该桶剩余可用积分（消费按 FIFO 递减；过期桶不计入读数，由 expire_at 懒判）',
     expire_at   DATETIME    NOT NULL COMMENT '过期时间 = 入账时点 + points_validity_config.points_valid_days',
     reason_type VARCHAR(30) NOT NULL COMMENT '积分来源 LOTTERY_WIN(抽奖中奖) / REBATE(行为返利：签到/支付等，规则见 action_rebate_config，ref_id=发放幂等键)',
     ref_id      VARCHAR(36)      NOT NULL COMMENT '来源业务 ID（LOTTERY_WIN = 抽奖记录 id）',
@@ -50,10 +50,10 @@ CREATE TABLE IF NOT EXISTS draw_count_bucket (
     bucket_id   VARCHAR(36)      NOT NULL COMMENT '业务 ID（对外唯一标识）',
     user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID',
     amount      INT         NOT NULL COMMENT '入账次数（恒正）',
-    remain      INT         NOT NULL COMMENT '该桶剩余可用次数（消费按 FIFO 递减，过期清理置 0）',
+    remain      INT         NOT NULL COMMENT '该桶剩余可用次数（消费按 FIFO 递减；过期桶不计入读数，由 expire_at 懒判）',
     expire_at   DATETIME    NOT NULL COMMENT '过期时间 = 入账时点 + draw_count_config.draw_count_valid_days',
-    reason_type VARCHAR(20) NOT NULL COMMENT '次数来源 REDEEM(积分兑换) / REBATE(行为返利：签到/支付等，规则见 action_rebate_config，ref_id=发放幂等键)',
-    ref_id      VARCHAR(36)      NOT NULL COMMENT '来源业务 ID（REDEEM = 兑换单 id，与 points_detail.ref_id 的 REDEEM_DRAW_COUNT 同值、同事务写入）',
+    reason_type VARCHAR(20) NOT NULL COMMENT '次数来源 PURCHASE(积分购买) / REBATE(行为返利：签到/支付等，规则见 action_rebate_config，ref_id=发放幂等键)',
+    ref_id      VARCHAR(36)      NOT NULL COMMENT '来源业务 ID（PURCHASE = 购买单 id，与 points_detail.ref_id 的 REDEEM_DRAW_COUNT 同值、同事务写入）',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -73,6 +73,41 @@ CREATE TABLE IF NOT EXISTS draw_count_detail (
     UNIQUE KEY uk_bucket_ref (bucket_id, ref_id) COMMENT '同一桶同一笔抽奖不重复扣',
     KEY idx_ref (ref_id) COMMENT '按抽奖记录反查扣次明细'
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '抽奖次数消费明细';
+
+CREATE TABLE IF NOT EXISTS draw_count_purchase_order (
+    id                BIGINT       NOT NULL AUTO_INCREMENT,
+    purchase_order_id VARCHAR(36)      NOT NULL COMMENT '购买单业务 ID（= hash(userId, token) 幂等键，贯穿 points_detail.ref_id 与 draw_count_bucket.ref_id）',
+    user_id           VARCHAR(36)      NOT NULL COMMENT '用户 ID',
+    quantity          INT          NOT NULL COMMENT '购买次数份数',
+    points_cost       INT          NOT NULL COMMENT '本次扣减积分 = 份数 × 单价（Constants.DRAW_COUNT_PURCHASE_PRICE）',
+    state             TINYINT      NOT NULL DEFAULT 0 COMMENT '0已扣分待入账(DEDUCTED) 1已完成(DONE) 2死信(DEAD,重试耗尽，人工介入)',
+    retry_count       INT          NOT NULL DEFAULT 0 COMMENT '补偿重试次数（抢占时递增）',
+    next_retry_at     DATETIME         NULL COMMENT '下次补偿重试时间（指数退避 1/2/4/8/16 分钟）；NULL = 立即可扫',
+    finish_time       DATETIME         NULL COMMENT '入账完成时间',
+    create_time       DATETIME     NOT NULL COMMENT '创建时间',
+    update_time       DATETIME     NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_purchase_order_id (purchase_order_id) COMMENT '购买幂等键：同 token 重放恒同一单号，撞键即重放',
+    KEY idx_state_next_retry (state, next_retry_at) COMMENT '补偿扫描（WHERE state=0 AND next_retry_at <= NOW()）',
+    KEY idx_user_time (user_id, create_time) COMMENT '购买历史（读侧后置）'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '抽奖次数购买单（订单兼 outbox：与扣积分同事务落库，单在即分已扣，入账幂等可重试收敛）';
+
+CREATE TABLE IF NOT EXISTS draw_orphan_prereserve_order (
+    id            BIGINT       NOT NULL AUTO_INCREMENT,
+    record_id     VARCHAR(36)      NOT NULL COMMENT '孤儿抽奖记录业务 ID（= 库存预扣明细 biz_id = hash(userId, token) 幂等键，对账幂等键）',
+    award_id      VARCHAR(36)      NOT NULL COMMENT '预扣奖品位 id 快照（种单时自孤儿预扣明细行）',
+    user_id       VARCHAR(36)      NOT NULL COMMENT '用户 ID 快照（种单时自 draw_count_detail.idx_ref 反查；孤儿口径下扣次必然已发生）',
+    quantity      BIGINT           NOT NULL COMMENT '预扣份数快照（种单时自孤儿预扣明细行）',
+    state         TINYINT          NOT NULL DEFAULT 0 COMMENT '0待收敛(ORPHAN) 1已收敛(DONE) 2死信(DEAD,重试耗尽，人工介入)',
+    retry_count   INT              NOT NULL DEFAULT 0 COMMENT '补偿重试次数（抢占时递增）',
+    next_retry_at DATETIME         NULL COMMENT '下次补偿重试时间（指数退避 1/2/4/8/16 分钟）；NULL = 立即可扫',
+    finish_time   DATETIME         NULL COMMENT '收敛完成时间',
+    create_time   DATETIME         NOT NULL COMMENT '种单时间',
+    update_time   DATETIME         NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_record_id (record_id) COMMENT '对账幂等键：一次孤儿预扣一张对账单，种单 INSERT IGNORE（DONE/DEAD 后扫描重种按幂等跳过）',
+    KEY idx_state_next_retry (state, next_retry_at) COMMENT '补偿扫描（WHERE state=0 AND next_retry_at <= NOW()）'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '孤儿预扣对账单（扫描「预扣在、抽奖记录不在」种单；重试状态机 + 死信，收敛两条路：可重放补落库 / 不可重放回补+退还）';
 
 CREATE TABLE IF NOT EXISTS points_validity_config (
     id                BIGINT   NOT NULL AUTO_INCREMENT,

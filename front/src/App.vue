@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useChatRoomsStore } from '@/stores/chatRooms'
 import { useNoticesStore } from '@/stores/notices'
-import { chatWs } from '@/utils/chatWs'
+import { wsClient } from '@/utils/ws'
 import TabBar from '@/components/TabBar.vue'
 import ToastHost from '@/components/ToastHost.vue'
 import ConfirmHost from '@/components/ConfirmHost.vue'
@@ -24,11 +24,11 @@ watch(
     if (v) {
       chatRooms.init()
       notices.init()
-      chatWs.connect()
+      wsClient.connect()
     } else {
       chatRooms.reset()
       notices.reset()
-      chatWs.disconnect()
+      wsClient.disconnect()
     }
   },
   { immediate: true }

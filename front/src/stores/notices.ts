@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { getNotificationsUnreadCount, listNotifications } from '@/api/chat'
 import type { Notification } from '@/types/api'
 import { useAuthStore } from '@/stores/auth'
-import { chatWs } from '@/utils/chatWs'
+import { wsClient } from '@/utils/ws'
 
 /**
  * 站内通知呈现层 store：
@@ -48,12 +48,12 @@ export const useNoticesStore = defineStore('notices', {
 
     bindWs() {
       this.unbindFns.push(
-        chatWs.on('NOTIF', (env) => {
+        wsClient.on('NOTIF', (env) => {
           const payload = env.payload as NoticeNotifPayload | undefined
           if (payload) this.handleNotif(payload)
         }),
         // 断线重连对齐：未读以服务端为准，横幅补放水位之后的部分
-        chatWs.onOpen(() => {
+        wsClient.onOpen(() => {
           void this.refreshUnread()
           void this.replayBanners()
         })

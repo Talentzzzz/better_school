@@ -1,7 +1,6 @@
 package com.betterschool.marketing.domain.points.service;
 
-import com.betterschool.marketing.domain.config.model.valobj.RebateTypeVO;
-import com.betterschool.marketing.domain.points.adapter.port.config.IPointsConfigPort;
+import com.betterschool.marketing.domain.points.adapter.port.rebate.IPointsRebatePort;
 import com.betterschool.marketing.domain.points.adapter.repository.IPointsRepository;
 import com.betterschool.marketing.domain.points.model.valobj.PointsDeductResultVO;
 import com.betterschool.marketing.domain.points.model.valobj.PointsTransactionVO;
@@ -22,9 +21,8 @@ import java.util.List;
  * <p>
  * 事务：一次入账 / 一次消费的原子边界在仓储方法里（{@code insertBucketWithChanged} / {@code deduct}），
  * 本类只做入参校验与业务口径判断，不注入 {@code TransactionTemplate}。
- * 有效期天数与行为返利规则是配置域的表（points_validity_config / action_rebate_config），
- * 经 {@link IPointsConfigPort} 只读（入账算 expire_at 的那一次读在仓储事务内）；
- * 写配置归 {@code IConfigService}。
+ * 有效期是**本域自己的表**（points_validity_config，入账算 expire_at 的那次读在仓储事务内）；
+ * 行为返利规则归返利域（action_rebate_config），经 {@link IPointsRebatePort} 只读。
  */
 @Slf4j
 @Service
@@ -32,7 +30,7 @@ import java.util.List;
 public class PointsAccountServiceImpl implements IPointsAccountService {
 
     private final IPointsRepository pointsRepository;
-    private final IPointsConfigPort pointsConfigPort;
+    private final IPointsRebatePort pointsRebatePort;
 
     @Override
     public void addForLotteryWin(String userId, String recordId, int pointsAmount) {
@@ -51,7 +49,7 @@ public class PointsAccountServiceImpl implements IPointsAccountService {
         if (actionType == null || actionType.isBlank() || userId == null || refId == null) {
             throw new AppException(ResponseCode.POINTS_PARAM_ERROR);
         }
-        Integer rebateValue = pointsConfigPort.findOpenRebateValue(actionType, RebateTypeVO.POINTS);
+        Integer rebateValue = pointsRebatePort.findOpenRebateValue(actionType);
         if (rebateValue == null) {
             return false;
         }
@@ -91,12 +89,20 @@ public class PointsAccountServiceImpl implements IPointsAccountService {
     }
 
     @Override
-    public int expireBuckets() {
-        return pointsRepository.expireBuckets();
+    public int compactSmallBuckets() {
+        return pointsRepository.compactSmallBuckets();
     }
 
     @Override
-    public int compactSmallBuckets() {
-        return pointsRepository.compactSmallBuckets();
+    public int getValidDays() {
+        return pointsRepository.validDays();
+    }
+
+    @Override
+    public void updateValidDays(int days) {
+        if (days <= 0) {
+            throw new AppException(ResponseCode.CONFIG_PARAM_ERROR, "有效期天数必须为正");
+        }
+        pointsRepository.updateValidDays(days);
     }
 }

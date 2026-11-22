@@ -4,6 +4,7 @@ import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedCursorVO;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO;
 import com.betterschool.domain.errand.model.valobj.ErrandOrderEventVO;
+import com.betterschool.domain.errand.model.valobj.ErrandOrderPushEvent;
 import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
 
 import java.time.LocalDateTime;
@@ -230,4 +231,12 @@ public interface IErrandRepository {
      * userId 为 null（未登录）或集合为空返回空集
      */
     List<String> selectViewedOrderIds(String userId, List<String> orderIdList);
+
+
+    /**
+     * WS 实时推送 ORDER 帧（订单状态变化，技术出站能力走仓储，同 outbox 待遇）：
+     * 实现组装帧并委托 infrastructure/ws 连接组件。
+     * 尽力而为：不在线/失败静默放弃，漏推由客户端拉单兜底
+     */
+    void pushOrderStatus(String userId, ErrandOrderPushEvent event);
 }

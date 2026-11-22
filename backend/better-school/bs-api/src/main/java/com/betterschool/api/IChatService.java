@@ -7,7 +7,6 @@ import com.betterschool.api.dto.ChatRoomResponseDTO;
 import com.betterschool.api.dto.ChatTimelineResponseDTO;
 import com.betterschool.api.dto.CreateDirectRoomRequestDTO;
 import com.betterschool.api.dto.SendMessageRequestDTO;
-import com.betterschool.api.dto.WsTicketResponseDTO;
 import com.betterschool.api.response.Response;
 
 import java.util.List;
@@ -47,7 +46,4 @@ public interface IChatService {
 
     /** 成员列表：含 last_read_seq 与成员数（恒两行）；非成员拒绝 */
     Response<ChatMembersResponseDTO> listMembers(String roomId);
-
-    /** WS 连接票据：60s 一次性，握手原子取删 */
-    Response<WsTicketResponseDTO> createWsTicket();
 }
