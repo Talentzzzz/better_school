@@ -145,7 +145,6 @@ public class ErrandOrderCase {
     /** 向单个收件人投递一帧 ORDER 通知（订单双方由 pushStatus 逐个调用） */
     private void deliverTo(String userId, ErrandOrderPushEvent event) {
         errandRepository.pushOrderStatus(userId, event);
->>>>>>> chat-ws-layering-rollout
     }
 
     public void grabOrder(String orderId, String userId) {
