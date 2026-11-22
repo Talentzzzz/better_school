@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Type: task
 Blocked by: 03
 
@@ -26,4 +26,21 @@ Blocked by: 03
 
 ## Answer
 
-（完成后在此追加要点）
+实现者：t05（分支 `draw-recon-round-t05-xxl-job`）。完全镜像 `OrphanPrereserveScanJob` 薄壳模式。
+
+### 新增/改动文件清单
+
+| 文件 | 内容 |
+| --- | --- |
+| `marketing-trigger/.../raffle/job/DrawReconScanJob.java` | 新增：`@XxlJob("drawReconScan")` 薄壳，只转调 `IRaffleDrawReconService.scan(LocalDate.now().toString())`（轮次号 = 当日 `yyyy-MM-dd`，job 层生成）；不调 `XxlJobHelper`、代码里无 cron；处理数 > 0 时 log.info。javadoc 声明薄壳纪律与每日 03:00 低峰调度 |
+| `marketing/sql/xxl-job-tasks.sql` | 追加幂等 INSERT（WHERE NOT EXISTS，判重键 executor_handler='drawReconScan' + job_group）：cron `0 0 3 * * ?`、app_name `marketing-executor`（经 @group_id）、trigger_status=1 直接启用，形状照 raffleCacheWarmup 每日任务行 |
+
+### 关键口径
+
+- 服务入口签名以域层代码为准：`IRaffleDrawReconService.scan(String roundNo)` 返回本轮处理差错数（二次核对确认数 + 复查证伪数 + DEAD 点名数），与票 03 Answer 一致。
+- cron 由 seed SQL 配置（`0 0 3 * * ?`），触发层代码不出现 cron；`misfire_strategy=DO_NOTHING` 与既有行一致。
+- 未写/未跑任何测试（spec Testing Decisions）。
+
+### 编译结果
+
+`mvn -q compile`（marketing 工程，JDK 21）通过，EXIT=0。
