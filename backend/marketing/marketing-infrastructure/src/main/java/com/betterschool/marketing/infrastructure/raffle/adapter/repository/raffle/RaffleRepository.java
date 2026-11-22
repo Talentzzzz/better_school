@@ -8,6 +8,8 @@ import com.betterschool.marketing.domain.raffle.model.entity.DrawCountPurchaseOr
 import com.betterschool.marketing.domain.raffle.model.entity.DrawOrphanPrereserveOrderEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawRecordDetailEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawRecordEntity;
+import com.betterschool.marketing.domain.raffle.model.entity.DrawReconRoundEntity;
+import com.betterschool.marketing.domain.raffle.model.entity.DrawReconVarianceEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawStrategyAwardEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawStrategyEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawStrategyWeightEntity;
@@ -25,6 +27,8 @@ import com.betterschool.marketing.infrastructure.raffle.dao.IDrawCountDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawCountDetailDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawCountPurchaseOrderDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawOrphanPrereserveOrderDao;
+import com.betterschool.marketing.infrastructure.raffle.dao.IDrawReconRoundDao;
+import com.betterschool.marketing.infrastructure.raffle.dao.IDrawReconVarianceDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawRecordDetailDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawStrategyAwardDao;
 import com.betterschool.marketing.infrastructure.raffle.dao.IDrawStrategyDao;
@@ -38,6 +42,8 @@ import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawOrphanPrerese
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordDetailPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawRecordViewPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawReconRoundPO;
+import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawReconVariancePO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyAwardPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyPO;
 import com.betterschool.marketing.infrastructure.raffle.dao.po.DrawStrategyWeightPO;
@@ -49,6 +55,8 @@ import com.betterschool.marketing.types.id.IIdGenerator;
 import com.betterschool.marketing.types.raffle.DrawCountPurchaseState;
 import com.betterschool.marketing.types.raffle.DrawCountReasonType;
 import com.betterschool.marketing.types.raffle.DrawOrphanPrereserveState;
+import com.betterschool.marketing.types.raffle.DrawReconCheckType;
+import com.betterschool.marketing.types.raffle.DrawReconVarianceState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBucket;
@@ -91,6 +99,8 @@ public class RaffleRepository implements IRaffleRepository {
     private final IDrawCountPurchaseOrderDao drawCountPurchaseOrderDao;
     private final IDrawOrphanPrereserveOrderDao drawOrphanPrereserveOrderDao;
     private final IDrawCountConfigDao drawCountConfigDao;
+    private final IDrawReconVarianceDao drawReconVarianceDao;
+    private final IDrawReconRoundDao drawReconRoundDao;
     private final IVirtualInventoryQuotaDao virtualInventoryQuotaDao;
     private final IAwardInventoryDao awardInventoryDao;
     private final RedissonClient redissonClient;
@@ -660,6 +670,59 @@ public class RaffleRepository implements IRaffleRepository {
         bucket.setCreateTime(bucketPO.getCreateTime());
         bucket.setUpdateTime(bucketPO.getUpdateTime());
         return bucket;
+    // ---------------------------------------------------------------- 对账轮写面（每日全量对账轮，纯旁路）
+
+    @Override
+    public boolean insertReconVariance(DrawReconVarianceEntity varianceEntity) {
+        // INSERT IGNORE 撞 uk_round_check_biz 返回 0 = 本轮已登记过（调度重复触发 / 重跑零副作用）
+        return drawReconVarianceDao.insertIgnoreVariance(toVariancePO(varianceEntity)) > 0;
+    }
+
+    @Override
+    public List<DrawReconVarianceEntity> listPendingReconVariancesByRound(String roundNo) {
+        return drawReconVarianceDao.listPendingByRound(roundNo).stream().map(this::toVarianceEntity).toList();
+    }
+
+    @Override
+    public boolean confirmReconVariance(Long id) {
+        return drawReconVarianceDao.confirm(id) > 0;
+    }
+
+    @Override
+    public boolean markReconVarianceAutoFixed(Long id) {
+        return drawReconVarianceDao.markAutoFixed(id) > 0;
+    }
+
+    @Override
+    public boolean markReconVarianceFalseAlarm(Long id) {
+        return drawReconVarianceDao.markFalseAlarm(id) > 0;
+    }
+
+    @Override
+    public boolean markReconVarianceResolvedManual(Long id) {
+        return drawReconVarianceDao.markResolvedManual(id) > 0;
+    }
+
+    @Override
+    public long countReconVariancesByRound(String roundNo) {
+        return drawReconVarianceDao.countByRound(roundNo);
+    }
+
+    @Override
+    public long countReconVariancesByRoundAndState(String roundNo, DrawReconVarianceState state) {
+        return drawReconVarianceDao.countByRoundAndState(roundNo, state.getCode());
+    }
+
+    @Override
+    public boolean insertReconRound(DrawReconRoundEntity roundEntity) {
+        // INSERT IGNORE 撞 uk_round_no 返回 0 = 本轮已起过
+        return drawReconRoundDao.insertIgnoreRound(toRoundPO(roundEntity)) > 0;
+    }
+
+    @Override
+    public boolean finishReconRound(String roundNo, LocalDateTime scanEndTime,
+                                    int varianceTotal, int confirmedTotal, int autoFixedTotal) {
+        return drawReconRoundDao.finishRound(roundNo, scanEndTime, varianceTotal, confirmedTotal, autoFixedTotal) > 0;
     }
 
     // ---------------------------------------------------------------- Redis key 口径
@@ -737,5 +800,65 @@ public class RaffleRepository implements IRaffleRepository {
         entity.setCreateTime(awardPO.getCreateTime());
         entity.setUpdateTime(awardPO.getUpdateTime());
         return entity;
+    }
+
+    private DrawReconVariancePO toVariancePO(DrawReconVarianceEntity varianceEntity) {
+        DrawReconVariancePO variancePO = new DrawReconVariancePO();
+        variancePO.setId(varianceEntity.getId());
+        variancePO.setRoundNo(varianceEntity.getRoundNo());
+        variancePO.setCheckType(varianceEntity.getCheckType() == null ? null : varianceEntity.getCheckType().name());
+        variancePO.setScopeKey(varianceEntity.getScopeKey());
+        variancePO.setBizId(varianceEntity.getBizId());
+        variancePO.setExpectSnapshot(varianceEntity.getExpectSnapshot());
+        variancePO.setActualSnapshot(varianceEntity.getActualSnapshot());
+        variancePO.setState(varianceEntity.getState() == null ? null : varianceEntity.getState().getCode());
+        variancePO.setFixedTime(varianceEntity.getFixedTime());
+        variancePO.setFinishTime(varianceEntity.getFinishTime());
+        variancePO.setCreateTime(varianceEntity.getCreateTime());
+        variancePO.setUpdateTime(varianceEntity.getUpdateTime());
+        return variancePO;
+    }
+
+    private DrawReconVarianceEntity toVarianceEntity(DrawReconVariancePO variancePO) {
+        DrawReconVarianceEntity varianceEntity = new DrawReconVarianceEntity();
+        varianceEntity.setId(variancePO.getId());
+        varianceEntity.setRoundNo(variancePO.getRoundNo());
+        varianceEntity.setCheckType(variancePO.getCheckType() == null ? null : DrawReconCheckType.valueOf(variancePO.getCheckType()));
+        varianceEntity.setScopeKey(variancePO.getScopeKey());
+        varianceEntity.setBizId(variancePO.getBizId());
+        varianceEntity.setExpectSnapshot(variancePO.getExpectSnapshot());
+        varianceEntity.setActualSnapshot(variancePO.getActualSnapshot());
+        varianceEntity.setState(toVarianceState(variancePO.getState()));
+        varianceEntity.setFixedTime(variancePO.getFixedTime());
+        varianceEntity.setFinishTime(variancePO.getFinishTime());
+        varianceEntity.setCreateTime(variancePO.getCreateTime());
+        varianceEntity.setUpdateTime(variancePO.getUpdateTime());
+        return varianceEntity;
+    }
+
+    private DrawReconRoundPO toRoundPO(DrawReconRoundEntity roundEntity) {
+        DrawReconRoundPO roundPO = new DrawReconRoundPO();
+        roundPO.setId(roundEntity.getId());
+        roundPO.setRoundNo(roundEntity.getRoundNo());
+        roundPO.setScanStartTime(roundEntity.getScanStartTime());
+        roundPO.setScanEndTime(roundEntity.getScanEndTime());
+        roundPO.setVarianceTotal(roundEntity.getVarianceTotal());
+        roundPO.setConfirmedTotal(roundEntity.getConfirmedTotal());
+        roundPO.setAutoFixedTotal(roundEntity.getAutoFixedTotal());
+        roundPO.setCreateTime(roundEntity.getCreateTime());
+        roundPO.setUpdateTime(roundEntity.getUpdateTime());
+        return roundPO;
+    }
+
+    private DrawReconVarianceState toVarianceState(Integer code) {
+        if (code == null) {
+            return null;
+        }
+        for (DrawReconVarianceState state : DrawReconVarianceState.values()) {
+            if (state.getCode() == code) {
+                return state;
+            }
+        }
+        throw new IllegalArgumentException("未知差错状态码: " + code);
     }
 }
