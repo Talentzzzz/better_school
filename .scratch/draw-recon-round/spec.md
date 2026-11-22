@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: implemented
 
 # 抽奖库存全量对账轮（drawReconScan）：逐笔孤儿收敛之上的总量兜底
 
