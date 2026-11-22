@@ -28,4 +28,17 @@ Blocked by: 03, 04
 
 ## Answer
 
-（待执行后记录 commit hash 与要点）
+已完成（2026-11-23）。
+
+- Commit hash：`8af97ca`（分支 `chat-ws-layering-rollout`，作者 TalentXD666 <a13683639985@163.com>）
+- 验证：全 reactor `compile` + `test-compile` 绿（Z:/wt-draw-recon/tools Maven 3.9.9 + Temurin JDK21）；不跑测试、不冒烟
+- 执行要点：
+  - 自底向上 types→api→domain→case→infrastructure→trigger→app 逐层 `git mv` 并入，根 reactor 收敛为单组 bs-* 七模块；marketing 工程整体退役（docs → backend/docs/marketing、sql → backend/sql/marketing，供票 07 使用）
+  - 包平级化：`com.betterschool.marketing.*` → `com.betterschool.*`，四域铺开 `domain/{inventory,points,raffle,rebate}`；infra 侧按 bs 包序压平（`adapter.{port,repository}.<域>` / `dao.<域>(.po)`，RaffleRepository 多层 raffle 子包一并压平）
+  - 冲突归并：config 六对同职责归并（SecurityConfig 取白名单并集、VirtualThreadRocketMQListenerContainerRegistrar 取单体演进版）；Response 补 `fail(AppException)` 重载、ResponseCode 并入营销码（四个 400 段域别名保留）、OutboxStatus/消息体（LotteryDrawnMessage/PointsChangedMessage）收敛归 types；rocketmq 补丁类与 security 三件取单体份；GlobalExceptionHandler 并入 AppException 分支；PageResult 取单体超集（含 cursor）
+  - 反向依赖清退：IUserQueryPort 生产用点核实为**仅两个探活 PingController**（case 层零引用，测试桩是死代码）——删 domain 两处接口 + infra 两处 Dubbo 实现 + 两测试桩；PingController 留一份（points 域），改进程内直调 `IUserRepository`；bs-infrastructure 未补 bs-api 依赖
+  - outbox 基座切换：marketing 侧 OutboxDao/OutboxPO/OutboxMessageSender/OutboxMessageStore 落位 `infrastructure/{dao/}outbox`（含 delay 支持 + timeout-seconds 兜底 + `@XxlJob("outboxScan")`），bs 侧实现退役；OutboxMapper.xml 取 marketing 形状，命名空间平级化后与 bs 目标契合；bs 仓储调用面（`save(dest, payload)`）零改动，仅测试 import 改一行
+  - merge 引擎两套不归并：`infrastructure.adapter.merge`（计数）与 `infrastructure.merge`（库存配额）并存；启动类全局启用 `FqcnAnnotationBeanNameGenerator`（@SpringBootApplication + @MapperScan）兜底跨包同名 bean
+  - application.yml 合并：mapper-locations 改 `**`、redis timeout/connect-timeout 取营销超集、`outbox.scan.timeout-seconds: 60`、`merge.batch.*` 与 `lottery.bucket.degrade-cooldown` 并入、dubbo `consumer.check=false` 保留；producer group / xxl appname / 端口 / log-path 归一取单体值；test yml 同步营销侧测试键（send-message-timeout / outbox 超时 2s / 降级冷却 300ms）
+- 实施偏差说明：拍板注 3「case 用例编排直接调用用户域能力」——勘察发现 case 层并无 IUserQueryPort 用点，实际清退面收窄为探活链路（PingController → IUserRepository），语义不变
+- 遗留给票 06/07/08：Dubbo 双 Provider（bs UserQueryDubboService、营销 PointsExchangeDubboService）现状保留（无边未删）；营销 schema/xxl seed 合并归票 07；backend/CLAUDE.md 与 docs 口径同步归票 08
