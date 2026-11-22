@@ -1,6 +1,6 @@
 package com.betterschool.integration.ws;
 
-import com.betterschool.infrastructure.ws.WsSessionRegistry;
+import com.betterschool.infrastructure.ws.WsLocalSessions;
 import com.betterschool.infrastructure.ws.wsframe.WsFrame;
 import com.betterschool.infrastructure.ws.wsframe.WsFrameType;
 import com.betterschool.integration.support.CommunityApiTestBase;
@@ -68,7 +68,7 @@ public class WsIntegrationTest extends CommunityApiTestBase {
     private ChatRecallPushConsumer chatRecallPushConsumer;
 
     @Resource
-    private WsSessionRegistry sessionRegistry;
+    private WsLocalSessions localSessions;
 
     private StandardWebSocketClient wsClient;
 
@@ -156,12 +156,12 @@ public class WsIntegrationTest extends CommunityApiTestBase {
         assertThat(awaitFrame(connection, WsFrameType.PONG, 5_000)).as("PING 应得 PONG 应答").isNotNull();
 
         // 正向：刚入站（PING 刷新过活跃时间）的会话不被清扫误杀
-        sessionRegistry.sweepExpired(System.currentTimeMillis(), WsSessionRegistry.DEAD_THRESHOLD_MS);
+        localSessions.sweepExpired(System.currentTimeMillis(), WsLocalSessions.DEAD_THRESHOLD_MS);
         assertThat(connection.isOpen()).as("入站刷新过的会话不判死").isTrue();
 
         // 判死=阈值内无入站：注入未来时钟驱动清扫，等价 60s 静默（真实等待不做）
-        sessionRegistry.sweepExpired(System.currentTimeMillis() + WsSessionRegistry.DEAD_THRESHOLD_MS + 1_000,
-                WsSessionRegistry.DEAD_THRESHOLD_MS);
+        localSessions.sweepExpired(System.currentTimeMillis() + WsLocalSessions.DEAD_THRESHOLD_MS + 1_000,
+                WsLocalSessions.DEAD_THRESHOLD_MS);
 
         CloseStatus status = connection.awaitClose(5_000);
         assertThat(status.getCode()).as("判死清理用 GOING_AWAY").isEqualTo(CloseStatus.GOING_AWAY.getCode());

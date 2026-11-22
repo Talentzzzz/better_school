@@ -2,7 +2,7 @@ package com.betterschool.trigger.http;
 
 import com.betterschool.api.dto.WsTicketResponseDTO;
 import com.betterschool.api.response.Response;
-import com.betterschool.infrastructure.ws.IWsTicketStore;
+import com.betterschool.infrastructure.ws.IWsService;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,12 +18,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class WsTicketController {
 
-    private final IWsTicketStore ticketStore;
+    private final IWsService wsService;
 
     @PostMapping("/ws-ticket")
     public Response<WsTicketResponseDTO> createWsTicket() {
         WsTicketResponseDTO dto = new WsTicketResponseDTO();
-        dto.setTicket(ticketStore.createTicket(SecurityUtils.currentUserId()));
+        dto.setTicket(wsService.createTicket(SecurityUtils.currentUserId()));
         return Response.ok(dto);
     }
 }

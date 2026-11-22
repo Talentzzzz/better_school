@@ -6,7 +6,7 @@ import java.util.Objects;
  * 一件计数写事件：动作 + 目标行 + 谁干的。
  *
  * <p>{@code targetId} 是<b>业务行主键</b>（帖子 / 评论 / 商品 / 跑腿）；分片键由调用方另外显式给
- * （{@code submitAndWait(shardKey, event)}），合并器不从 payload 推导 key——否则将来网关按 key
+ * （{@code commit(shardKey, event)}），合并器不从 payload 推导 key——否则将来网关按 key
  * 分流时两层路由会分叉（spec §2.8）。
  *
  * <p><b>业务行主键是字符串</b>（uuid-biz-id 票 05）：帖/评/商品/跑腿的业务 id 统一是 UUID 字符串。

@@ -74,7 +74,7 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
 - 连接注册表 `Map<userId, session>`：单设备互踢——新连接先占位，旧连接收 `KICK` + close(4001)；close 回调两参注销，迟到 close 不误删新连接
 - 心跳：客户端 25s 一次 `PING`；服务端任何入站帧刷新活跃时间，60s 无入站判死清理（close 1001）
 - 服务端无业务路由、无 ACK：C→S 仅 `PING`；发送/已读/撤回全走 REST，WS 纯下行
-- **多实例推送路由（Redis 路由表 + pub/sub 定向频道）**：推送决策在 case 推送服务（按会话成员扇出、组帧），投递统一经本域仓储 `deliverWsFrame`（技术能力走仓储）收口，仓储实现委托 `infrastructure/ws/` 连接组件（Redis 路由表与 pub/sub 频道均为其内部细节）：握手注册 `bs:ws-route:{userId} = 端点标识|sessionId`（TTL 90s，入站帧续期，断连 CAS 注销）；每个实例启动即订阅自己的定向频道 `bs:ws-push:{端点标识}`，适配器投递——本地注册表优先 → 路由不是自己则发布到目标实例频道（fire-and-forget，目标实例对本机注册表二次确认后推帧）；订阅者数为 0 / 本地 miss / 发布失败都清理路由条目后放弃。`better-school.ws.route.self-endpoint` 留空 = 单机形态，不注册路由、推送只走本地
+- **多实例推送路由（Redis 路由表 + pub/sub 定向频道）**：推送决策在 case 推送服务（按会话成员扇出、组帧），投递统一经本域仓储 `deliverWsFrame`（技术能力走仓储）收口，仓储实现委托 `infrastructure/ws/` 连接组件（Redis 路由表与 pub/sub 频道均为其内部细节）：握手注册 `bs:ws-route:{userId} = 实例 URL|sessionId`（TTL 90s，入站帧续期，断连 CAS 注销）；每个实例启动即订阅自己的定向频道 `bs:ws-push:{实例 URL}`，适配器投递——本地注册表优先 → 路由不是自己则发布到目标实例频道（fire-and-forget，目标实例对本机注册表二次确认后推帧）；订阅者数为 0 / 本地 miss / 发布失败都清理路由条目后放弃。`better-school.ws.route.instance-url` 留空 = 单机形态，不注册路由、推送只走本地
 - 推送失败不重试，漏推合法——重连后 `GET /timeline` 补拉兜底，客户端按 `(roomId, seq)` 判重合流
 
 协议信封（JSON 文本帧）`{type, roomId?, seq?, payload?, ts}`：

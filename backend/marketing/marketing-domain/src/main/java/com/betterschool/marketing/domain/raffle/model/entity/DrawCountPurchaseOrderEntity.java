@@ -19,6 +19,8 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class DrawCountPurchaseOrderEntity {
 
+    /** 物理自增 id（抢占 claim / 死信 markDead 按 id 条件更新） */
+    private Long id;
     /** 购买单业务 ID（= hash(userId, token)，贯穿 points_detail.ref_id 与 draw_count_bucket.ref_id） */
     private String purchaseOrderId;
     private String userId;

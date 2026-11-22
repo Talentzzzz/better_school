@@ -38,13 +38,13 @@ import java.util.List;
  *       实物/虚拟一张表，flush 落库按 {@link AwardInventoryType} 在 SQL 层分支。</li>
  * </ul>
  * <p>
- * 批量落库（预扣 / 确认「一组一个事务」的 SQL）已拆到 {@link InventoryQuotaFlushService}：
- * 本类的 {@link #flushDeductGroup} / {@link #flushClaimGroup} 只是委托——
- * 域服务的降级路径（合并器缓冲满 / 停机时同步落库）与合并器内的 flush 复用同一套 SQL。
- * 本类不认识合并器：合并器（domain 层 {@code InventoryMerger}）经领域端口回调落库，
- * 入队由域服务直接注入引擎——依赖单向（域服务 → 引擎 → 端口 ← 本类），无循环依赖。
+ * 预扣 / 确认的写入口只呈现「一件」语义（{@link #deduct} / {@link #claim}）：
+ * 一件是并进一批落库还是单件落库、合并器忙时怎么降级，全部交给注入的合并写入组件
+ * {@link InventoryQuotaMergeWriter}——它内部是「入队 → 等窗口 → 一组一事务落库 → 降级」，
+ * 落库 SQL 在 {@link InventoryQuotaFlushService}。域因此不认识合并器：域只调本类的一件方法，
+ * 拿一个业务结论。
  * <p>
- * 分配（{@link #allocate}）：低频运营操作，不进合并器——本类用 {@code TransactionTemplate}（REQUIRED）
+ * 分配（{@link #allocate}）：低频运营操作，不进合并——本类用 {@code TransactionTemplate}（REQUIRED）
  * 收一个事务：池 surplus 守卫转出 + 奖品库存 surplus 转入 + 奖品侧 {@code AWARD_ALLOCATE} 明细 +
  * 池侧分配流水（独立流水表），双侧流水唯一键都以分配单号为锚，撞单号 = 本单已执行，按成功回放。
  */
@@ -59,6 +59,8 @@ public class InventoryRepository implements IInventoryRepository {
     private final IAwardInventoryDetailDao awardInventoryDetailDao;
     private final IQuotaAllocateFlowDao quotaAllocateFlowDao;
     private final InventoryQuotaFlushService flushService;
+    /** 合并写入组件：仓储要用合并就注入它，域看不到这个依赖 */
+    private final InventoryQuotaMergeWriter mergeWriter;
     private final TransactionTemplate transactionTemplate;
 
     // ---------------------------------------------------------------- 池层：台账查询
@@ -179,13 +181,15 @@ public class InventoryRepository implements IInventoryRepository {
         return awardInventoryDao.selectOpenAwardInventories().stream().map(this::toAwardLedger).toList();
     }
 
-    // ---------------------------------------------------------------- 预扣落库（委托落库组件）
+    // ---------------------------------------------------------------- 预扣 / 确认（交合并写入组件）
 
-    /** 委托 {@link InventoryQuotaFlushService#flushDeductGroup}：降级路径与合并器 flush 共用同一套 SQL */
+    /**
+     * 预扣一件：交给 {@link InventoryQuotaMergeWriter}（入队等一批 / 缓冲满或停机时同步落一件 / 等不到回可重试）。
+     * 本类只做转发——「要不要合并」是基础设施的装配选择，不是本方法契约的一部分。
+     */
     @Override
-    public List<DeductResult> flushDeductGroup(AwardInventoryType type, String awardId,
-                                               List<InventoryDeductRequestVO> requests) {
-        return flushService.flushDeductGroup(type, awardId, requests);
+    public DeductResult deduct(InventoryDeductRequestVO request) {
+        return mergeWriter.deduct(request);
     }
 
     @Override
@@ -193,12 +197,10 @@ public class InventoryRepository implements IInventoryRepository {
         return awardInventoryDetailDao.existsDeductDetail(awardId, bizType, bizId);
     }
 
-    // ---------------------------------------------------------------- 兑换确认（委托落库组件）
-
-    /** 委托 {@link InventoryQuotaFlushService#flushClaimGroup}：降级路径与合并器 flush 共用同一套 SQL */
+    /** 兑换确认一件：同 {@link #deduct}，走同一个合并组件（同分片，撞片无害且是顺序的前提） */
     @Override
-    public List<ClaimOutcome> flushClaimGroup(List<InventoryClaimRequestVO> items) {
-        return flushService.flushClaimGroup(items);
+    public ClaimOutcome claim(InventoryClaimRequestVO request) {
+        return mergeWriter.claim(request);
     }
 
     // ---------------------------------------------------------------- 孤儿预扣对账（低频直落，不进合并器）

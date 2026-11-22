@@ -67,7 +67,7 @@ public class PointsDeductPort implements IPointsDeductPort {
     /** 落库形态：状态固定 DEDUCTED、审计时间取事务内时点（调用方传入的草稿态字段不落库） */
     private DrawCountPurchaseOrderEntity toCommittedShape(DrawCountPurchaseOrderEntity order) {
         LocalDateTime now = LocalDateTime.now();
-        return new DrawCountPurchaseOrderEntity(order.getPurchaseOrderId(), order.getUserId(),
+        return new DrawCountPurchaseOrderEntity(null, order.getPurchaseOrderId(), order.getUserId(),
                 order.getQuantity(), order.getPointsCost(),
                 DrawCountPurchaseState.DEDUCTED,
                 0, null, null, now, now);

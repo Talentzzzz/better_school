@@ -1,19 +1,21 @@
 package com.betterschool.infrastructure.adapter.merge;
 
 /**
- * 等结果的那条入口（{@code submitAndWait}）能拿到的五种终态——合并器只说这五句。
+ * 合并器终态：等结果的那条入口（{@code commit}）<b>只会说出三句</b>——{@code COMPLETED} /
+ * {@code TIMEOUT} / {@code FAILED}。
  *
- * <p>刻意<b>不出现 {@code REJECTED}</b>：降级动作（缓冲满 / 停机中 → 调用方线程同步调同一个落库方法）
- * 发生在 case 层，不在引擎里（spec §2.6）。引擎把「没接住」如实分成
- * {@code BUFFER_FULL} / {@code CLOSED} 两种，剩下的交给调用方决定怎么说给用户听。
+ * <p>刻意<b>不出现 {@code REJECTED}</b>：合并器的「没接住」不再交给调用方处理。缓冲满 / 停机中意味着
+ * 件从未入队、必未落库，引擎当场用<b>同一个落库方法</b>在本线程落组大小 1
+ * （{@code CountMerger#degrade}），结论仍是下面三态之一——降级只写一份，调用方不必自己判断。
+ * 剩下两个「未入队」常量留着，是为了让这件事在读代码时有名字，也让 {@code switch} 保持穷尽。
  *
  * <ul>
  *   <li>{@link #COMPLETED}：落库方法已回填业务结果（点赞成功 / 撞唯一键 / 取消失败等）；</li>
  *   <li>{@link #TIMEOUT}：件还在缓冲或正在落库，<b>之后大概率仍会落库</b>——库存侧必须表达为
- *       「处理中」而不是失败，计数侧回 {@code RETRYABLE}；</li>
- *   <li>{@link #BUFFER_FULL}：分片满，件<b>从未入队</b>，可以安全地同步降级；</li>
- *   <li>{@link #CLOSED}：停机窗口，件<b>从未入队</b>；</li>
- *   <li>{@link #FAILED}：落库抛异常、落库漏回填被补齐、或排空超时被显式回填。</li>
+ *       「处理中」而不是失败，计数侧回 {@code RETRYABLE}；同步降级漏回填（事务可能已提交）也归这一态；</li>
+ *   <li>{@link #BUFFER_FULL}：分片满，件<b>从未入队</b>——引擎内部态，{@code commit} 就地降级，不外返；</li>
+ *   <li>{@link #CLOSED}：停机窗口，件<b>从未入队</b>——同上；</li>
+ *   <li>{@link #FAILED}：落库抛异常、落库漏回填被补齐、或排空超时被显式回填（含降级时抛异常）。</li>
  * </ul>
  */
 public enum MergeState {

@@ -164,7 +164,7 @@ class ViewMergeWriterTest {
     }
 
     @Test
-    @DisplayName("只接受浏览动作：点赞类走 submitAndWait，不许从这里溜进去")
+    @DisplayName("只接受浏览动作：点赞类走 commit，不许从这里溜进去")
     void rejectsNonViewAction() {
         ProbeHandler handler = new ProbeHandler();
         ViewMergeWriter writer = start(hotConfig(), handler);

@@ -14,6 +14,7 @@ import com.betterschool.marketing.domain.raffle.model.valobj.PrizeCatalogVO;
 import com.betterschool.marketing.domain.raffle.model.valobj.UserPrizeVO;
 import com.betterschool.marketing.types.raffle.DrawCountReasonType;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 

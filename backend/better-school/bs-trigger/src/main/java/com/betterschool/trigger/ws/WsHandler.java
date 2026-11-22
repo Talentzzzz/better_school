@@ -1,6 +1,6 @@
 package com.betterschool.trigger.ws;
 
-import com.betterschool.infrastructure.ws.IWsConnectionHub;
+import com.betterschool.infrastructure.ws.IWsService;
 import com.betterschool.infrastructure.ws.wsframe.WsFrameFactory;
 import com.betterschool.infrastructure.ws.wsframe.WsFrameType;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,7 +15,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 /**
  * WS 连接处理器：服务端无业务路由——C→S 仅 PING（任意入站帧刷新活跃时间），
  * 全部业务下行由各业务域仓储出站（pushMessage/pushNotif/pushOrderStatus → infrastructure/ws 连接组件）投递；推送语义与判重见 spec §2。
- * 连接交接走组件 API：建连/入站/断连把 session 交给 IWsConnectionHub 登记/续期/注销
+ * 连接交接走组件 API：建连/入站/断连把 session 交给 IWsService 登记/续期/注销
  * （装饰、心跳跟踪、互踢、多实例路由表的注册/续期/CAS 注销都封装在 infrastructure/ws 组件内），
  * trigger 不自己持有注册表
  */
@@ -24,7 +24,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 @RequiredArgsConstructor
 public class WsHandler extends TextWebSocketHandler {
 
-    private final IWsConnectionHub connectionHub;
+    private final IWsService wsService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -35,7 +35,7 @@ public class WsHandler extends TextWebSocketHandler {
             closeQuietly(session, CloseStatus.SERVER_ERROR);
             return;
         }
-        connectionHub.register(userId, session);
+        wsService.register(userId, session);
         log.info("[WsHandler] 连接建立 session={}, userId={}", session.getId(), userId);
     }
 
@@ -43,12 +43,12 @@ public class WsHandler extends TextWebSocketHandler {
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
         String userId = (String) session.getAttributes().get(WsConnectionConstants.ATTR_USER_ID);
         // 任何入站帧（含解析失败）都刷新活跃时间（多实例形态下顺带续期路由条目）
-        connectionHub.renew(userId, session);
+        wsService.refresh(userId, session);
         try {
             // 入站不反序列化出站信封：C→S 仅 PING，readTree 取 type 识别即可
             String type = objectMapper.readTree(message.getPayload()).path("type").asText("");
             if (WsFrameType.PING.name().equals(type) && userId != null) {
-                connectionHub.push(userId, WsFrameFactory.pong());
+                wsService.push(userId, WsFrameFactory.pong());
             }
             // C→S 仅 PING，其余类型无业务路由，静默忽略
         } catch (Exception e) {
@@ -59,7 +59,7 @@ public class WsHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         String userId = (String) session.getAttributes().get(WsConnectionConstants.ATTR_USER_ID);
-        connectionHub.revoke(userId, session);
+        wsService.clear(userId, session);
         log.info("[WsHandler] 连接关闭 session={}, userId={}, status={}", session.getId(), userId, status);
     }
 

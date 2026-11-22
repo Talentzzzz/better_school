@@ -81,7 +81,7 @@ public class MergeConsumer implements RocketMQListener<String> {
         try {
             int limit = Math.max(1, properties.getMerge().getMaxCellsPerWake());
             for (int i = 0; i < limit; i++) {
-                MergeEngine.MergeOutcome outcome;
+                MergeEngine.MergeResult outcome;
                 try {
                     outcome = mergeEngine.mergeOldestCell(skuId, bucketId);
                 } catch (MergeEngine.CellStolenException e) {

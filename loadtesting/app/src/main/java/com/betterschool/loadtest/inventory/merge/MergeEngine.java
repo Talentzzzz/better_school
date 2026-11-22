@@ -26,14 +26,14 @@ public class MergeEngine {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public MergeOutcome mergeOldestCell(long skuId, int bucketId) {
+    public MergeResult mergeOldestCell(long skuId, int bucketId) {
         Timestamp cell = repository.oldestCell(skuId, bucketId);
         if (cell == null) {
-            return MergeOutcome.none();
+            return MergeResult.none();
         }
         InventoryRepository.CellStat stat = repository.cellStat(skuId, bucketId, cell);
         if (stat.rows() == 0) {
-            return MergeOutcome.none();
+            return MergeResult.none();
         }
 
         int marked = repository.markMerged(skuId, bucketId, cell, stat.maxId());
@@ -45,23 +45,23 @@ public class MergeEngine {
 
         repository.applyWaiting(skuId, stat.qty());
         repository.decBucketCopy(skuId, bucketId, stat.qty());
-        return new MergeOutcome(true, stat.rows(), stat.qty());
+        return new MergeResult(true, stat.rows(), stat.qty());
     }
 
-    public static final class MergeOutcome {
+    public static final class MergeResult {
 
         private final boolean merged;
         private final long rows;
         private final long qty;
 
-        private MergeOutcome(boolean merged, long rows, long qty) {
+        private MergeResult(boolean merged, long rows, long qty) {
             this.merged = merged;
             this.rows = rows;
             this.qty = qty;
         }
 
-        public static MergeOutcome none() {
-            return new MergeOutcome(false, 0, 0);
+        public static MergeResult none() {
+            return new MergeResult(false, 0, 0);
         }
 
         public boolean merged() {
@@ -79,7 +79,7 @@ public class MergeEngine {
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
-            if (!(o instanceof MergeOutcome other)) return false;
+            if (!(o instanceof MergeResult other)) return false;
             return merged == other.merged && rows == other.rows && qty == other.qty;
         }
 
@@ -90,7 +90,7 @@ public class MergeEngine {
 
         @Override
         public String toString() {
-            return "MergeOutcome[merged=" + merged + ", rows=" + rows + ", qty=" + qty + "]";
+            return "MergeResult[merged=" + merged + ", rows=" + rows + ", qty=" + qty + "]";
         }
     }
 

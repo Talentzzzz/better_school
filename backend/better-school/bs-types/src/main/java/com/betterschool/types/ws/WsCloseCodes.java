@@ -3,7 +3,7 @@ package com.betterschool.types.ws;
 /**
  * WS 互踢关闭口径（WS 连接层共享常量）：各端点共用同一关闭码与 KICK 原因，
  * 客户端据此停止自动重连（由用户重新登录）。
- * 入站侧（握手/端点协议常量）与投递侧（帧写出器互踢）都要引用，故落 types 供两模块共享
+ * 入站侧（握手/端点协议常量）与投递侧（帧发送器互踢）都要引用，故落 types 供两模块共享
  */
 public final class WsCloseCodes {
 

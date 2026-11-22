@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * （{@code user_view_history} / {@code post_view_count}、{@code product_view_history} /
  * {@code product_view_count}、{@code errand_view_history} / {@code errand_view_count}）。
  *
- * <h2>为什么浏览走 submitAsync 而不是 submitAndWait</h2>
+ * <h2>为什么浏览走 submitAsync 而不是 commit</h2>
  * 浏览没有关系行、没有真相表可对账——<b>它自己就是唯一记录</b>，所以语义是「异步 +1，允许丢」
  * （spec §1.2）。既然允许丢，就没有任何理由让请求线程等那 5ms 窗口：{@code submitAsync} 连
  * future 都不分配，10k/s 的浏览不会每秒造一万个 {@code CompletableFuture} + park/unpark。
@@ -23,7 +23,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * 合并器的异步入口只回 {@code ACCEPTED / BUFFER_FULL / CLOSED}（没有 {@code TIMEOUT}——不等的人
  * 不会超时）。后两种由本类兜成<b>调用方线程上的组大小 1 落库</b>（帖子浏览 = 完整的 UV 三步事务）；那一次也失败，
  * 就丢弃并计入 {@link #droppedViews()}——<b>不告警、不回补、不影响请求结果</b>（spec §2.6、
- * §3.4：至多一次）。
+ * §3.4：至多一次）。同步入口（{@code commit}）的降级在引擎里做，这里之所以留着这一份，是因为
+ * 浏览允许丢、而且「丢了几个」必须是 case 层的读数，引擎不替它数。
  *
  * <p><b>降级必须复用同一个落库方法</b>（{@link ICountFlushHandler}，也就是合并器自己用的那个）：
  * 另写一套「同步版」SQL，两套迟早漂移，而漂移只在压力最大时暴露——那正是降级生效的时刻。
@@ -76,7 +77,7 @@ public class ViewMergeWriter {
     public void write(CountAction action, String rowId, String userId) {
         if (action != CountAction.POST_VIEW && action != CountAction.PRODUCT_VIEW
                 && action != CountAction.ERRAND_VIEW) {
-            // 点赞类必须等结果（submitAndWait），从这里溜进去会被当成「没人等」而静默丢弃结果
+            // 点赞类必须等结果（commit），从这里溜进去会被当成「没人等」而静默丢弃结果
             throw new IllegalArgumentException("ViewMergeWriter 只处理浏览动作，收到：" + action);
         }
         if (userId == null || userId.isBlank()) {

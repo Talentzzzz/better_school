@@ -21,40 +21,43 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <h2>一件请求的一生</h2>
  * <pre>
- *   submitAndWait(postId, event)
+ *   commit(postId, event)
  *     ├─ 按 shardOf(postId) 路由到分片
  *     ├─ 塞进该分片缓冲区（首件起算 maxFlushDelayMillis 合并窗口，攒满 maxBatch 提前唤醒摘批）
- *     └─ park 在自己的 future 上，最多等 waitTimeoutMs
+ *     ├─ park 在自己的 future 上，最多等 waitTimeoutMs
+ *     └─ 缓冲满 / 停机中 → 本线程用同一个落库方法落「组大小 1」（{@link #degrade}）
  *                    ↓（窗口到点 / 攒满，由分片自己的常驻线程接管）
  *   flush：锁内整块摘批 → 锁外按「动作 × 行主键」二次分组 → 一组一个事务落库 → 回填 → 有积压背靠背续跑
  * </pre>
  *
  * <h2>两个入口，不做合并签名</h2>
- * {@link #submitAndWait} 返回 {@link MergeOutcome}（点赞 / 取消赞 / 评论赞），
- * {@link #submitAsync} 只返回 {@link SubmitOutcome}（浏览）。<b>不等的人连 future 都不分配</b>：
- * 10k/s 的浏览若每人一个 future，每秒就是一万次分配 + park/unpark，比落库本身还贵。
+ * {@link #commit} 等结果并返回 {@link MergeResult}（点赞 / 取消赞 / 评论赞），入队失败、超时、落库失败
+ * 都由它自己兜成三态；{@link #submitAsync} 只返回 {@link SubmitOutcome}（浏览）。<b>不等的人连 future
+ * 都不分配</b>：10k/s 的浏览若每人一个 future，每秒就是一万次分配 + park/unpark，比落库本身还贵。
  *
  * <h2>一条实例</h2>
  * 点赞（等）与浏览（不等）共用同一份分片与线程——两个实例要 2×N 条常驻线程，而它们打的是
  * 同一批热点帖（同一条业务行必须落同一片，才能合并成一条 UPDATE）。
  *
- * <h2>背压与降级：引擎不说 {@code REJECTED}</h2>
- * 引擎只回答 {@code ACCEPTED / BUFFER_FULL / CLOSED}，<b>降级动作全在 case 层</b>：
- * 缓冲满或停机中 → 调用方线程用<b>同一个落库方法</b>扣组大小 1；等超时 → {@code RETRYABLE}。
+ * <h2>背压与降级：同步入口引擎自己兜，异步入口交给 case 层</h2>
+ * 引擎不说 {@code REJECTED}。同步入口 {@link #commit} 在缓冲满 / 停机中时，用<b>同一个落库方法</b>
+ * 在本线程落「组大小 1」——这两种情况件从未入队、必未落库，就地补一次是安全的；对调用方而言它只会
+ * 看到 {@code COMPLETED / TIMEOUT / FAILED}，不必自己判断要不要降级。异步入口不做这件事：浏览允许丢，
+ * 而「丢了几个」是 case 层的读数（{@code ViewMergeWriter.droppedViews}），引擎不替它数。
  * 两套 SQL 迟早漂移，而漂移只在压力最大时暴露，所以降级必须复用同一个落库方法（spec §2.6）。
  *
  * <h2>五条不变量</h2>
  * I1 不丢件且恰一个终态（{@link Pending#complete} 幂等 + 漏回填补 {@code FAILED}）、
  * I2 同分片单飞（分片串行化落在「同一分片恰一条线程」上，结构即保证）、
  * I3 锁不跨 DB（临界区只碰内存）、I4 停机三步（停收 → 排空 → signal + join）、
- * I5 背压有界（满即拒，不扩容、不挤掉已入队件）。
+ * I5 背压有界（满即不入队：同步入口就地降级、异步入口如实回 {@code CLOSED}；不扩容、不挤掉已入队件）。
  *
  * <h2>装配</h2>
  * {@code @Component}：参数来自 {@code bs-app} 的 {@code CountMergeConfig}，出口是
  * {@link CountFlushDispatcher}（按动作把一组交给拥有那张表的域仓储：社区仓储的点赞 / 取消赞 /
  * 评论赞 / 帖子浏览，交易仓储的商品浏览）。调用方有两个：{@link CountMergeWriter}（点赞类，等结果）
- * 与 {@link ViewMergeWriter}（浏览，不等结果）——降级、超时翻译、丢弃计数都在那两个类里，
- * 本类不认识 HTTP 语义。
+ * 与 {@link ViewMergeWriter}（浏览，不等结果）——同步入口的降级在本类里，case 层只做「三态 → 域出口」
+ * 的翻译；异步入口的丢弃计数在 {@link ViewMergeWriter} 里。本类不认识 HTTP 语义。
  */
 @Slf4j
 @Component
@@ -112,29 +115,70 @@ public class CountMerger {
     }
 
     /**
-     * 等结果的入口（点赞 / 取消赞 / 评论赞）。
+     * 提交一笔并等结果（点赞 / 取消赞 / 评论赞）：本类<b>等结果那条入口</b>，入队、等待、兜底在
+     * 一处闭环。叫 {@code commit} 而不是 {@code write}/{@code submit}：返回时这笔要么已随组提交、
+     * 要么确定没提交，是「提交语义」；而 {@code submitAsync} 在本类里已经占了「只管投、不等结果」。
+     *
+     * <p>缓冲满 / 停机中<b>不会返给调用方</b>：件从未入队、必未落库，就地用同一个落库方法落
+     * 「组大小 1」（{@link #degrade}）。所以返回值只有三态——{@code COMPLETED} / {@code TIMEOUT} /
+     * {@code FAILED}，调用方不必自己判断要不要降级。
      *
      * @param shardKey 这组要更新的那一行的<b>业务主键</b>（postId / commentId 等字符串），<b>由调用方显式给</b>
      * @param event    事件本体；合并器不解析它来推导 key
      */
-    public MergeOutcome<LikeState> submitAndWait(String shardKey, CountEvent event) {
+    public MergeResult<LikeState> commit(String shardKey, CountEvent event) {
         Pending item = Pending.waiting(shardKey, event);
         SubmitOutcome outcome = enqueue(item);
         if (outcome != SubmitOutcome.ACCEPTED) {
-            // 未入队：满了或停机中。件从未进过缓冲区，必未 settle，交给调用方降级
-            return outcome == SubmitOutcome.BUFFER_FULL ? MergeOutcome.bufferFull() : MergeOutcome.closed();
+            // 未入队：满了或停机中。件从未进过缓冲区，必未 settle ⇒ 本线程就地落一组
+            return degrade(shardKey, event, outcome == SubmitOutcome.BUFFER_FULL ? "缓冲满" : "停机中");
         }
         try {
             return item.await(config.waitTimeoutMs());
         } catch (TimeoutException e) {
             // 件仍在缓冲区里，之后大概率仍会落库 —— 对外表达为「结果未知」，不是失败
             timedOut.incrementAndGet();
-            return MergeOutcome.timeout();
+            return MergeResult.timeout();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             // 件没有丢（还在缓冲里），只是这个线程不再等了
-            return MergeOutcome.failed();
+            return MergeResult.failed();
         }
+    }
+
+    /**
+     * 同步降级：组大小 1 调<b>同一个落库方法</b>（与 {@link #flushOneGroup} 共用
+     * {@link ICountFlushHandler}，不另写一套「同步版」SQL）。
+     *
+     * <p>结论映射与批量路径同口径：抛异常 = 整组回滚（确定没落）→ {@code FAILED}；
+     * 漏回填（null / 长度不足）= 事务可能已提交 → {@code TIMEOUT}（结果未知，不等于失败）。
+     *
+     * <p><b>不计入 {@code accepted} / {@code flushed} / {@code batches}</b>：这笔从未入队，塞进去会
+     * 破坏「{@code accepted == flushed + failed + drainedFailed + 在途}」的守恒；想知道降级了多少，
+     * 看 {@link #metrics()} 的 {@code rejectedFull} / {@code rejectedClosed}。{@code maxFlushNanos}
+     * 照记——降级也是一次落库，而且它的耗时直接就是调用方的时延。
+     */
+    private MergeResult<LikeState> degrade(String shardKey, CountEvent event, String reason) {
+        log.warn("合并未接住（{}），降级为同步落库（组大小 1）：action={}, shardKey={}",
+                reason, event.action(), shardKey);
+        List<LikeState> resultList;
+        long startNanos = System.nanoTime();
+        try {
+            resultList = flushHandler.flushGroup(event.action(), shardKey, List.of(event));
+        } catch (RuntimeException e) {
+            log.error("同步降级落库失败（整组回滚，确定没落）：action={}, shardKey={}, reason={}",
+                    event.action(), shardKey, reason, e);
+            return MergeResult.failed();
+        } finally {
+            maxFlushNanos.accumulateAndGet(System.nanoTime() - startNanos, Math::max);
+        }
+        if (resultList == null || resultList.size() != 1 || resultList.get(0) == null) {
+            // 事务可能已提交：不给调用方一个「成功但没有结果」，也不谎报「确定没落」
+            log.error("同步降级落库漏回填（事务可能已提交，按结果未知处理）：action={}, shardKey={}",
+                    event.action(), shardKey);
+            return MergeResult.timeout();
+        }
+        return MergeResult.completed(resultList.get(0));
     }
 
     /**

@@ -95,7 +95,11 @@ UPDATE draw_strategy_award_inventory                                  -- upsert�
 
 ## 落库：进程内合并，一组一个事务（口径不变，目标表换成统一台账）
 
-预扣与兑换确认都走 `InventoryMerger.submitAndWait`（两个重载，**不合成一个方法**——两个失败域的语义不同）：
+预扣与兑换确认都走仓储的单件入口（`IInventoryRepository#deduct` / `#claim`）。
+合并组件（`infrastructure/merge` 的通用引擎 `MergeEngine`：库存侧写入组件
+`InventoryQuotaMergeWriter` → 落库函数 `InventoryQuotaFlushService`；设计与接入方式见
+[`../architecture/merge.md`](../architecture/merge.md)）是**实现细节**：域只看到「一件扣没扣成」，
+不知道这一件是并进一批落的还是单件落的。两个动作仍是两个落库方法（**不合成一条 SQL**——两个失败域语义不同）：
 
 ```sql
 -- 预扣（PHYSICAL 行；VIRTUAL 行 surplus → issued，无 waiting）
@@ -111,8 +115,9 @@ UPDATE draw_strategy_award_inventory
  WHERE award_id = ? AND type = 'PHYSICAL' AND waiting_qty >= c;
 ```
 
-- **成功 = 已提交**：三个出口不变——成功 / `INSUFFICIENT`（确定没扣，切兜底奖品位）/
-  `TIMEOUT_UNKNOWN`（大概率会扣，不切兜底、抛可重试，用户凭同 token 重放）；
+- **成功 = 已提交**：域的入口仍是三条——`DEDUCTED` / `INSUFFICIENT`（确定没扣，切兜底奖品位）/
+  `RETRY_LATER`（结果未知或确定未落：不切兜底、抛可重试，用户凭同 token 重放）；
+  「未知」与「失败」的区分只留在基础设施（`MergeResult.State.TIMEOUT` / `FAILED`）与日志里；
 - **扣不动再探再切**（不二分）：`affected = 0` 时回读 `surplus_qty`，`k = min(剩余, 批内笔数)`；
   `k > 0` 扣 `k`、前 `k` 笔成功其余 `INSUFFICIENT`；`k = 0` 整批 `INSUFFICIENT`；
 - **撞键快照按 `uk_award_biz (award_id, biz_type, biz_id)` 回查**：主档与兜底是两个账户（两个 awardId
@@ -156,6 +161,6 @@ SELECT d.award_id, d.biz_id, d.quantity, d.create_time
 虚拟 `preDeduct`），**预扣锚在奖品位 id（奖品库存账户）**；奖品位配置 `draw_strategy_award.inv_id`
 收窄为「投放池配置」：它是分配的转出来源，也是 `inv_id = '0'` 的不限量哨兵。预扣返回即账户台账已动
 （`surplus → waiting` / `issued`），目录查询（`GET /prizes` 的 `remaining` / `total`）读奖品库存账户，
-积分面额读池配置。兑换确认由发货消费驱动（`IQuotaConfirmPort` → `InventoryMerger` 确认重载），
+积分面额读池配置。兑换确认由发货消费驱动（`IQuotaConfirmPort` → 仓储 `claim` → 合并组件），
 返回即 `waiting → issued` 已提交。预扣成功而 `draw_record` 没落库的窗口由孤儿预扣对账 job 在一个扫描周期内
 收敛（补落库或回补+退还，见上节「孤儿预扣」）。

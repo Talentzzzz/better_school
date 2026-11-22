@@ -1,7 +1,6 @@
 package com.betterschool.marketing.domain.inventory.service;
 
 import com.betterschool.marketing.domain.inventory.adapter.repository.IInventoryRepository;
-import com.betterschool.marketing.domain.inventory.service.merge.InventoryMerger;
 import com.betterschool.marketing.domain.inventory.model.valobj.InventoryClaimRequestVO;
 import com.betterschool.marketing.domain.inventory.model.valobj.ClaimOutcome;
 import com.betterschool.marketing.domain.inventory.model.valobj.DeductOutcomeVO;
@@ -25,22 +24,24 @@ import java.util.List;
  * 池只被「分配」转移（见 {@code InventoryAllocationServiceImpl}），抽奖链路永远不碰池。
  * <pre>
  * 预扣：查奖品库存台账（不存在 → INVENTORY_PARAM_ERROR；非 open → 走重放预检）
- *       → 进进程内合并器等结果（一组一事务：明细 INSERT IGNORE + 台账一条 UPDATE），
- *         成功 = 已提交，返回时台账已动，没有第二步
- *       → 缓冲满 / 停机中：调用方线程同步扣一批（组大小 1，复用同一个落库方法）
+ *       → 仓储扣一件（成功 = 已提交：明细 INSERT IGNORE + 台账一条 UPDATE，返回时台账已动，没有第二步）
+ *       → 三条业务出口：DEDUCTED / INSUFFICIENT / RETRY_LATER
  * 确认：awardId 空（不限量档）短路为「无事可做」
- *       → 进同一个合并器的确认重载（一组一事务：flow_type = 2 明细逐行 INSERT IGNORE +
- *         waiting→issued 一条 UPDATE），成功 = 转移已提交，返回即落账，没有第二步
- *       → 缓冲满 / 停机中：调用方线程同步确认一件（组大小 1，复用同一个落库方法）
+ *       → 仓储确认一件（成功 = 转移已提交：flow_type = 2 明细 + waiting→issued 一条 UPDATE）
+ *       → 两条业务出口：CONFIRMED / RETRY_LATER
  * </pre>
+ * <b>本类不认识「合并」</b>：一件扣减是并进一批落库还是单件落库、合并器忙时怎么降级，
+ * 都在仓储实现内部（{@code infrastructure/merge}）。域只回答业务问题——
+ * 扣到了没有、确没确认、要不要让调用方重试。
+ * <p>
  * 业务身份：明细带 {@code bizType} 与 {@code bizId = recordId}，唯一键保证同一笔业务在同一账户上
  * 只落一行。**撞键不是错误**——撞键 = 这条流转已落过（同 token 并发双击的第二笔），落库方法按
  * 「成功回放」处理；主档与兜底是两个账户（两个 awardId），互不撞键。
  * <p>
  * 预扣三出口的翻译（spec §4.4）：{@code DEDUCTED → true}；{@code INSUFFICIENT → false}（调用方切兜底）；
- * {@code TIMEOUT_UNKNOWN} / {@code FAILED → 抛可重试}（不切兜底、不落库——切兜底会扣两份库存发两个奖）。
- * 确认只有两条业务出口（spec §4.5）：{@code CONFIRMED → 返回}；
- * {@code TIMEOUT_UNKNOWN} / {@code FAILED → 抛可重试}（MQ 重投撞唯一键回放或补上）。
+ * {@code RETRY_LATER → 抛可重试}（不切兜底、不落库——切兜底会扣两份库存发两个奖）。
+ * 确认只有两条业务出口（spec §4.5）：{@code CONFIRMED → 返回}；{@code RETRY_LATER → 抛可重试}
+ * （MQ 重投撞唯一键回放或补上）。
  */
 @Slf4j
 @Service
@@ -48,7 +49,6 @@ import java.util.List;
 public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
 
     private final IInventoryRepository inventoryRepository;
-    private final InventoryMerger inventoryMerger;
 
     @Override
     public boolean preDeduct(AwardInventoryType type, String awardId, long quantity, String bizType, String bizId) {
@@ -62,7 +62,7 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
             return alreadyDeducted(awardId, bizType, bizId);
         }
         InventoryDeductRequestVO request = new InventoryDeductRequestVO(type, awardId, quantity, bizType, bizId);
-        DeductResult result = inventoryMerger.submitAndWait(request);
+        DeductResult result = inventoryRepository.deduct(request);
         return switch (result) {
             case DEDUCTED -> {
                 log.info("奖品库存预扣已提交 type={} awardId={} quantity={} bizType={} bizId={}",
@@ -74,12 +74,10 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
                         type.getCode(), awardId, quantity, bizType, bizId);
                 yield false;
             }
-            // 还在缓冲 / 落库中，大概率会扣：不切兜底、不落库，抛可重试（用户凭同 token 重放）
-            case TIMEOUT_UNKNOWN, FAILED -> throw new AppException(ResponseCode.SYSTEM_ERROR,
+            // 还在处理中或已回滚：不切兜底、不落库，抛可重试（用户凭同 token 重放）
+            case RETRY_LATER -> throw new AppException(ResponseCode.SYSTEM_ERROR,
                     "库存处理中，请稍后重试 type=" + type.getCode() + " awardId=" + awardId
-                            + " bizId=" + bizId + " result=" + result);
-            // 件未入队：调用方线程同步扣一批（组大小 1），复用同一个落库方法（spec §2.6）
-            case BUFFER_FULL, CLOSED -> degradeFlush(type, awardId, request);
+                            + " bizId=" + bizId);
         };
     }
 
@@ -99,7 +97,7 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
                     fallback.type().getCode(), fallback.awardId(), fallback.bizId());
             return DeductOutcomeVO.FALLBACK;
         }
-        // 主档不足（业务事实）：改落兜底账户。TIMEOUT_UNKNOWN / 落库失败已在 preDeduct 里抛出，不会走到这
+        // 主档不足（业务事实）：改落兜底账户。RETRY_LATER 已在 preDeduct 里抛出，不会走到这
         if (preDeduct(fallback.type(), fallback.awardId(), fallback.quantity(),
                 fallback.bizType(), fallback.bizId())) {
             log.info("主档不足，已落兜底 type={} awardId={} fallbackType={} fallbackAwardId={}"
@@ -116,10 +114,9 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
     }
 
     /**
-     * 兑换确认（同步合并，spec §4.5）：进与预扣同一个 {@code InventoryMerger}（同分片）的
-     * 确认重载，落库是「{@code flow_type = 2} 明细逐行 {@code INSERT IGNORE} + {@code waiting → issued}
-     * 一条 {@code UPDATE}」的另一组（与预扣不合成一条三列 {@code UPDATE}——两个失败域不能混在一句里）。
-     * 返回即 {@code waiting -= c, issued += c} 已提交，**没有第二步**。
+     * 兑换确认（spec §4.5）：仓储确认一件——{@code flow_type = 2} 明细 {@code INSERT IGNORE} +
+     * {@code waiting → issued} 一条 {@code UPDATE}，一个事务。返回即 {@code waiting -= c, issued += c}
+     * 已提交，**没有第二步**。
      * <p>
      * {@code awardId} 空（不限量档，{@code draw_record.inv_id} 落 {@code NULL}）先短路为
      * 「无事可做」，不与「账不平」共用异常。
@@ -139,52 +136,21 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
             return;
         }
         InventoryClaimRequestVO request = new InventoryClaimRequestVO(awardId, bizType, bizId, quantity);
-        ClaimOutcome outcome = inventoryMerger.submitAndWait(request);
+        ClaimOutcome outcome = inventoryRepository.claim(request);
         switch (outcome) {
             case CONFIRMED -> log.info("兑换确认已提交（waiting -= c, issued += c 随返回生效）"
                     + " awardId={} bizType={} bizId={} quantity={}", awardId, bizType, bizId, quantity);
-            // 还在缓冲 / 落库中，或整组回滚：件可能已落 ⇒ 抛可重试，MQ 重投撞唯一键回放或补上
-            case TIMEOUT_UNKNOWN, FAILED -> throw new AppException(ResponseCode.SYSTEM_ERROR,
+            // 可能已确认、也可能整组回滚：抛可重试，MQ 重投撞唯一键回放或补上
+            case RETRY_LATER -> throw new AppException(ResponseCode.SYSTEM_ERROR,
                     "库存确认处理中，请稍后重试 awardId=" + awardId + " bizType=" + bizType
-                            + " bizId=" + bizId + " outcome=" + outcome);
-            // 件未入队：调用方线程同步确认一件（组大小 1），复用同一个落库方法（spec §2.6）
-            case BUFFER_FULL, CLOSED -> degradeConfirm(request);
+                            + " bizId=" + bizId);
         }
-    }
-
-    /**
-     * 降级：合并器缓冲满 / 停机中，本线程同步确认一件（组大小 1）。
-     * **复用同一个落库方法**（{@code flushClaimGroup}）——两套 SQL 迟早漂移，而漂移只在压力最大时暴露
-     * （spec §2.6）。落库事务失败（含 waiting 不足的整组回滚）原样抛给调用方 ⇒ MQ 重投。
-     */
-    private void degradeConfirm(InventoryClaimRequestVO request) {
-        log.warn("合并器缓冲满或已停机，降级为同步确认（组大小 1） awardId={} bizId={}",
-                request.awardId(), request.bizId());
-        List<ClaimOutcome> results = inventoryRepository.flushClaimGroup(List.of(request));
-        if (results.size() != 1 || results.get(0) != ClaimOutcome.CONFIRMED) {
-            // 落库方法的契约是「返回即 CONFIRMED、失败即抛」，这里只是把漏回填也当失败兜住
-            throw new AppException(ResponseCode.SYSTEM_ERROR,
-                    "库存确认降级落库未确认（可重试） awardId=" + awardId + " bizId=" + item.bizId());
-        }
-    }
-
-    /**
-     * 降级：合并器缓冲满 / 停机中，本线程同步扣一批（组大小 1）。
-     * **复用同一个落库方法**（{@code flushDeductGroup}）——两套 SQL 迟早漂移，而漂移只在压力最大时暴露
-     * （spec §2.6）。落库事务失败原样抛给调用方（ERROR，凭 bizId 重试不双扣）。
-     */
-    private boolean degradeFlush(AwardInventoryType type, String awardId, InventoryDeductRequestVO request) {
-        log.warn("合并器缓冲满或已停机，降级为同步落库（组大小 1） type={} awardId={} bizId={}",
-                type.getCode(), awardId, request.bizId());
-        List<DeductResult> results =
-                inventoryRepository.flushDeductGroup(type, awardId, List.of(request));
-        return results.get(0) == DeductResult.DEDUCTED;
     }
 
     /**
      * 本账户扣不出时的业务幂等预检：这场流转在本账户上已经落过明细 = 重放，按成功回放。
      * 只在失败路径调用（成功路径靠唯一键撞键，不多付一次查询）——覆盖
-     * 「台账已 exhausted / closed，压根进不了合并器」窗口内的同 {@code bizId} 重放。
+     * 「台账已 exhausted / closed，压根进不了落库」窗口内的同 {@code bizId} 重放。
      */
     private boolean alreadyDeducted(String awardId, String bizType, String bizId) {
         if (!inventoryRepository.existsDeductDetail(awardId, bizType, bizId)) {
@@ -195,7 +161,7 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
         return true;
     }
 
-    // ---- 孤儿预扣对账（spec User Stories 14–16；低频对账动作，不进合并器） ----
+    // ---- 孤儿预扣对账（spec User Stories 14–16；低频对账动作，不进合并） ----
 
     @Override
     public List<OrphanPrereserveCandidateVO> listOrphanPrereserves(LocalDateTime before, int limit) {
@@ -203,7 +169,7 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
     }
 
     /**
-     * 回补一笔孤儿预扣：低频直落（对账扫描每轮至多 {@code limit} 行，不值得进合并器），
+     * 回补一笔孤儿预扣：低频直落（对账扫描每轮至多 {@code limit} 行，不值得并批），
      * 台账转移 + 明细行删除的原子性交给仓储的「一个事务」（落库真身同在
      * {@code InventoryQuotaFlushService}）。守卫不过（0 行）按「已回补过」回 false，
      * 不抛——对账方据此留 ERROR 后继续收敛次数退还，不再重试这条。

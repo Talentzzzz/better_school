@@ -24,10 +24,10 @@ final class Pending {
     private final String shardKey;
     private final CountEvent event;
     /** 等待者的 future；{@code null} = fire-and-forget（浏览类），回填是空操作 */
-    private final CompletableFuture<MergeOutcome<LikeState>> future;
+    private final CompletableFuture<MergeResult<LikeState>> future;
     private final AtomicBoolean settled = new AtomicBoolean();
 
-    private Pending(String shardKey, CountEvent event, CompletableFuture<MergeOutcome<LikeState>> future) {
+    private Pending(String shardKey, CountEvent event, CompletableFuture<MergeResult<LikeState>> future) {
         this.shardKey = shardKey;
         this.event = event;
         this.future = future;
@@ -70,7 +70,7 @@ final class Pending {
             return false;
         }
         if (future != null) {
-            future.complete(new MergeOutcome<>(state, result));
+            future.complete(new MergeResult<>(state, result));
         }
         return true;
     }
@@ -81,20 +81,20 @@ final class Pending {
     }
 
     /**
-     * 阻塞等结果（只有 {@code submitAndWait} 会调）。
+     * 阻塞等结果（只有 {@code commit} 会调）。
      *
      * <p>{@link ExecutionException} 不该出现（引擎只用 {@code complete} 回填，从不用
      * {@code completeExceptionally}），真出现也按 {@link MergeState#FAILED} 兜住——不把技术细节
      * 泄给调用方。
      */
-    MergeOutcome<LikeState> await(long timeoutMs) throws TimeoutException, InterruptedException {
+    MergeResult<LikeState> await(long timeoutMs) throws TimeoutException, InterruptedException {
         if (future == null) {
             throw new IllegalStateException("fire-and-forget 的件不该有人等结果");
         }
         try {
             return future.get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (ExecutionException e) {
-            return MergeOutcome.failed();
+            return MergeResult.failed();
         }
     }
 }

@@ -21,7 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>纯内存：合并器是真的（参数调到能人为制造 {@code BUFFER_FULL} / {@code TIMEOUT}），落库方法是
  * 一个记账用的替身。断言的核心是<b>降级复用了同一个落库方法</b>——替身收到的组必须正好是「组大小 1」，
- * 事件也必须是那一笔，否则就是悄悄换了条 SQL。
+ * 事件也必须是那一笔，否则就是悄悄换了条 SQL。降级本身已下沉到 {@code CountMerger#commit}，
+ * 本类不再持有落库方法，所以这些用例端到端地验「引擎降级 → 本类翻译」这一段。
  */
 class CountMergeWriterTest {
 
@@ -42,7 +43,7 @@ class CountMergeWriterTest {
     /** 单分片、单件一批、够长的窗口：分片容量 1 ⇒ 第二笔必然 BUFFER_FULL */
     private CountMergeWriter startFullBufferScenario() {
         merger = new CountMerger(new MergeConfig(1, 1_000, 1, 2_000, 1, 1_000), handler);
-        writer = new CountMergeWriter(merger, handler);
+        writer = new CountMergeWriter(merger);
         return writer;
     }
 
@@ -50,7 +51,7 @@ class CountMergeWriterTest {
     private CountMergeWriter startTimeoutScenario(long handlerSleepMs) {
         handler.sleepMillis = handlerSleepMs;
         merger = new CountMerger(new MergeConfig(1, 1, 10, 60, 100, 1_000), handler);
-        writer = new CountMergeWriter(merger, handler);
+        writer = new CountMergeWriter(merger);
         return writer;
     }
 
@@ -58,7 +59,7 @@ class CountMergeWriterTest {
     @DisplayName("COMPLETED：业务结果原样上抛（LIKED / DUPLICATE 都走这条）")
     void completedPassesBusinessResultThrough() {
         merger = new CountMerger(new MergeConfig(1, 1, 10, 2_000, 100, 1_000), handler);
-        writer = new CountMergeWriter(merger, handler);
+        writer = new CountMergeWriter(merger);
 
         handler.nextState = LikeState.DUPLICATE;
 
@@ -88,7 +89,7 @@ class CountMergeWriterTest {
     @DisplayName("停机中（CLOSED）：同样降级同步落库，COMPLETED/CLOSED 都不回 REJECTED")
     void closedDegradesToSameFlushMethodWithSingleItem() {
         merger = new CountMerger(new MergeConfig(1, 1, 10, 2_000, 100, 1_000), handler);
-        writer = new CountMergeWriter(merger, handler);
+        writer = new CountMergeWriter(merger);
         merger.close();
 
         assertEquals(LikeStateVO.LIKED, writer.write(POST_LIKE, POST_ID, "7"));
@@ -116,7 +117,7 @@ class CountMergeWriterTest {
     void flushFailureIsRetryable() {
         handler.failNext = true;
         merger = new CountMerger(new MergeConfig(1, 1, 10, 2_000, 100, 1_000), handler);
-        writer = new CountMergeWriter(merger, handler);
+        writer = new CountMergeWriter(merger);
 
         BusinessException e = assertThrows(BusinessException.class, () -> writer.write(POST_LIKE, POST_ID, "11"));
 
@@ -128,7 +129,7 @@ class CountMergeWriterTest {
     @DisplayName("降级也失败：仍是可重试（行一定没动），不抛出内部异常类型")
     void degradeFailureIsRetryable() {
         merger = new CountMerger(new MergeConfig(1, 1, 10, 2_000, 100, 1_000), handler);
-        writer = new CountMergeWriter(merger, handler);
+        writer = new CountMergeWriter(merger);
         merger.close();
         handler.failNext = true;
 

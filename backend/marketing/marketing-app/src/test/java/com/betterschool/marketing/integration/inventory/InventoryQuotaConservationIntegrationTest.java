@@ -3,7 +3,8 @@ package com.betterschool.marketing.integration.inventory;
 import com.betterschool.marketing.domain.inventory.model.valobj.DeductResult;
 import com.betterschool.marketing.domain.inventory.model.valobj.InventoryDeductRequestVO;
 import com.betterschool.marketing.domain.inventory.service.IInventoryQuotaService;
-import com.betterschool.marketing.domain.inventory.service.merge.InventoryMerger;
+import com.betterschool.marketing.infrastructure.inventory.adapter.repository.InventoryQuotaFlushService;
+import com.betterschool.marketing.infrastructure.inventory.adapter.repository.InventoryQuotaMergeWriter;
 import com.betterschool.marketing.infrastructure.inventory.adapter.repository.InventoryRepository;
 import com.betterschool.marketing.integration.support.TestingEnvironment;
 import com.betterschool.marketing.types.common.AppException;
@@ -74,7 +75,10 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
     @Autowired
     private InventoryRepository inventoryRepository;
     @Autowired
-    private InventoryMerger inventoryMerger;
+    private InventoryQuotaMergeWriter mergeWriter;
+    /** 落库真身：B3/B4 断的是「一组一个事务」的 SQL 语义，直接打落库层（合并只是它的调用者之一） */
+    @Autowired
+    private InventoryQuotaFlushService quotaFlushService;
 
     @BeforeEach
     void resetFixtures() {
@@ -243,7 +247,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
     }
 
     /**
-     * 按三出口的调用方契约驱动一笔预扣：{@code TIMEOUT_UNKNOWN} / {@code FAILED} 不算失败也不算成功——
+     * 按三出口的调用方契约驱动一笔预扣：{@code RETRY_LATER} 不算失败也不算成功——
      * **不切兜底、凭同一 {@code recordId} 重放**（{@code recordId} 由「用户 + token」确定性映射），
      * 唯一键兜底不双扣；重放撞键按成功回放。只重试「库存处理中」这条可重试出口，
      * 参数错等业务异常原样抛出。
@@ -257,7 +261,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
                 assertThat(retryable.getCode())
                         .as("只有 SYSTEM_ERROR（999）是可重试出口，其余异常原样上抛")
                         .isEqualTo(ResponseCode.SYSTEM_ERROR.getCode());
-                // TIMEOUT_UNKNOWN / FAILED：还在缓冲或落库中，等一下再重放
+                // RETRY_LATER：还在处理中或已回滚，等一下再重放
                 Thread.sleep(20);
             }
         }
@@ -275,9 +279,9 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
                     InventoryBizTypes.LOTTERY_DRAW, String.valueOf(RECORD_SEQ.incrementAndGet()));
         }
         // 读数前等合并器排空：B2 / B3 是台账断言，不能带在途 flush
-        assertThat(inventoryMerger.awaitIdle(5000))
+        assertThat(mergeWriter.awaitIdle(5000))
                 .as("合并器已排空").isTrue();
-        assertThat(inventoryMerger.pending()).isZero();
+        assertThat(mergeWriter.pending()).isZero();
 
         long surplus = surplusOf(PHYSICAL_AWARD_ID);
         long waiting = waitingOf(PHYSICAL_AWARD_ID);
@@ -304,7 +308,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
                 .toList();
 
         List<DeductResult> results =
-                inventoryRepository.flushDeductGroup(AwardInventoryType.PHYSICAL, PHYSICAL_AWARD_ID, batch);
+                quotaFlushService.flushDeductGroup(AwardInventoryType.PHYSICAL, PHYSICAL_AWARD_ID, batch);
 
         assertThat(results).as("逐件结果，前 k 笔成功").hasSize(5);
         assertThat(results.subList(0, 2)).containsExactly(DeductResult.DEDUCTED, DeductResult.DEDUCTED);
@@ -336,7 +340,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
         List<InventoryDeductRequestVO> replay = List.of(new InventoryDeductRequestVO(
                 AwardInventoryType.VIRTUAL, VIRTUAL_AWARD_ID, 3, InventoryBizTypes.LOTTERY_DRAW, recordId));
         List<DeductResult> results =
-                inventoryRepository.flushDeductGroup(AwardInventoryType.VIRTUAL, VIRTUAL_AWARD_ID, replay);
+                quotaFlushService.flushDeductGroup(AwardInventoryType.VIRTUAL, VIRTUAL_AWARD_ID, replay);
 
         assertThat(results).containsExactly(DeductResult.DEDUCTED);
         assertThat(detailCount(VIRTUAL_AWARD_ID)).as("分配 1 行 + 预扣仍 1 行").isEqualTo(2);
@@ -364,7 +368,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
                         InventoryBizTypes.LOTTERY_DRAW, String.valueOf(RECORD_SEQ.incrementAndGet())));
 
         List<DeductResult> results =
-                inventoryRepository.flushDeductGroup(AwardInventoryType.PHYSICAL, PHYSICAL_AWARD_ID, batch);
+                quotaFlushService.flushDeductGroup(AwardInventoryType.PHYSICAL, PHYSICAL_AWARD_ID, batch);
 
         assertThat(results).containsExactly(DeductResult.DEDUCTED, DeductResult.DEDUCTED, DeductResult.DEDUCTED);
         assertThat(detailCount(PHYSICAL_AWARD_ID)).as("分配 1 行 + 预扣 3 行").isEqualTo(4);
@@ -386,7 +390,7 @@ class InventoryQuotaConservationIntegrationTest extends TestingEnvironment {
                 PHYSICAL_AWARD_ID);
         List<InventoryDeductRequestVO> batch = List.of(new InventoryDeductRequestVO(
                 AwardInventoryType.PHYSICAL, PHYSICAL_AWARD_ID, 1, InventoryBizTypes.LOTTERY_DRAW, recordId));
-        assertThat(inventoryRepository.flushDeductGroup(AwardInventoryType.PHYSICAL, PHYSICAL_AWARD_ID, batch))
+        assertThat(quotaFlushService.flushDeductGroup(AwardInventoryType.PHYSICAL, PHYSICAL_AWARD_ID, batch))
                 .as("确定没扣：全组 INSUFFICIENT，不落明细")
                 .containsExactly(DeductResult.INSUFFICIENT);
         assertThat(detailSum(PHYSICAL_AWARD_ID, 1))

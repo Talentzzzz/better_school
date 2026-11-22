@@ -8,7 +8,7 @@ marketing 侧库存合并器重构落地：`ShardBuffer` 的"调度器任务 + c
 
 ## Notes
 
-- 领域：marketing-domain `com.betterschool.marketing.domain.inventory.service.merge` 包。
+- 领域：marketing-infrastructure `com.betterschool.marketing.infrastructure.merge` 包（合并属基础设施，后已从 domain 迁出）。
 - 验收线 = `QuotaMergeBufferTest` / `MergeConfigTest` / `QuotaMergeConfigTest` / inventory 集成测试全绿；测试只适配、不改断言语义。
 - 实施前先读 `research/001-rocketmq-reference.md`（RocketMQ 参照实现）。
 - 常设偏好（用户授权）：大胆重构，不考虑现有配置兼容；线程用**普通平台线程**（不用虚拟线程）；只改 marketing，不碰 bs-infrastructure。

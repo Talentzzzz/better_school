@@ -1,6 +1,6 @@
 package com.betterschool.trigger.ws;
 
-import com.betterschool.infrastructure.ws.IWsTicketStore;
+import com.betterschool.infrastructure.ws.IWsService;
 import com.betterschool.types.ws.WsHandshakeAttributes;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,7 +25,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class WsHandshakeInterceptor implements HandshakeInterceptor {
 
-    private final IWsTicketStore ticketStore;
+    private final IWsService wsService;
 
     @Override
     public boolean beforeHandshake(ServerHttpRequest request, ServerHttpResponse response,
@@ -34,7 +34,7 @@ public class WsHandshakeInterceptor implements HandshakeInterceptor {
                 .build()
                 .getQueryParams()
                 .getFirst("ticket");
-        String userId = ticketStore.validateAndConsume(ticket);
+        String userId = wsService.validateAndConsume(ticket);
         if (userId == null) {
             log.info("[WsHandshakeInterceptor] 票据校验失败，拒绝握手 uri={}", request.getURI());
             response.setStatusCode(HttpStatus.UNAUTHORIZED);

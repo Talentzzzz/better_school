@@ -107,15 +107,16 @@ xxl:
 
 # 库存合并器（spec §2.4：与计数侧同一套窗口 / 批 / 超时；全部未经扫参）。
 # 调参看日志里的分片积压与 flush 批大小，调参不改代码结构。
+# 通用攒批引擎（infrastructure/merge）：任何仓储都能用，调用方传「分片键 + 落库函数」即可。
 # shard-count 的硬上限是「连接池 - 2」（per-shard 常驻 flush 线程模型，flush 并发 = shard-count），
-# 由 marketing-app/config/InventoryMergeConfig 启动时校验并把两个数打进日志。
-# shardCapacity 比计数侧小是刻意的：库存资金敏感 ⇒ 满了立刻降级为同步单条扣减，队列别长。
+# 由 marketing-app/config/MergeEngineConfig 启动时校验并把两个数打进日志。
+# shardCapacity 取 2000 是刻意的：库存扣减资金敏感 ⇒ 满了立刻降级为同步单条落库，队列别长。
 merge:
-  inventory:
+  batch:
     shard-count: 8          # 2 的幂；分片本职是路由桶，8 片够摊平 offer 争抢；per-shard 线程 ⇒ 必须 <= 连接池上限 - 2（池 10 ⇒ 上限 8）
     max-flush-delay-millis: 5            # 合并窗口：分片首个请求起算 5ms 后 flush，攒满可提前触发
     max-batch: 200          # 200 行 ≈ 8ms 落库；再大 wait-timeout-ms 就吃紧
-    wait-timeout-ms: 100    # 必须 > max-flush-delay-millis：5ms 窗口 + 8ms 落库 + 抖动；超时 = TIMEOUT_UNKNOWN
+    wait-timeout-ms: 100    # 必须 > max-flush-delay-millis：5ms 窗口 + 8ms 落库 + 抖动；超时 = TIMEOUT（结果未知）
     shard-capacity: 2000    # 只当「降级触发点 + 内存上界」，满了就拒（调用方同步降级），不扩容
     drain-timeout-ms: 5000  # 停机排空（停收 → 排空 → signal + join）的等待上限
 

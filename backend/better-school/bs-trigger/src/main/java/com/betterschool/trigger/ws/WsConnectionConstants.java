@@ -15,9 +15,6 @@ public final class WsConnectionConstants {
     /** 握手拦截器写入的登录用户 id 属性键 */
     public static final String ATTR_USER_ID = WsHandshakeAttributes.ATTR_USER_ID;
 
-    /** Handler 建连时写入的并发写保护包装 session 属性键（close 回调据此取回注销） */
-    public static final String ATTR_DECORATED_SESSION = WsHandshakeAttributes.ATTR_DECORATED_SESSION;
-
     /** 互踢关闭码：RFC 6455 私有段 4000~4999，客户端收到即停止自动重连 */
     public static final int CLOSE_CODE_TAKEN_OVER = WsCloseCodes.CLOSE_CODE_TAKEN_OVER;
 

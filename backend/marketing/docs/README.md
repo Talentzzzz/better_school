@@ -39,6 +39,8 @@ HTTP **8081**，Dubbo 50052，xxl 执行器 `marketing-executor`（9998），库
 
 ## 架构与规格
 
+- [进程内合并（攒批）通用组件](architecture/merge.md)：`infrastructure/merge` 只做分片路由 / 攒批窗口 /
+  单飞落库 + 五态回填，**落库函数由调用方传入**；接新用途三步、不改 `merge` 包。
 - [超时中心接入规格](architecture/timeout.md)：营销侧超时的**将来落法**（当前零接入方，本期不落表、不落代码）
   —— 库表 / 域段落位 / 路由 / 调度并行 / 与既有扫描 job（及已删除的每秒合并 job）的边界。
 

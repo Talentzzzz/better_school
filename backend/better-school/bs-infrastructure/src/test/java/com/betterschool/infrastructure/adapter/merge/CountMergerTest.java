@@ -97,17 +97,17 @@ class CountMergerTest {
         RecordingFlushHandler handler = new RecordingFlushHandler();
         CountMerger engine = start(hotConfig(20), handler);
 
-        List<MergeOutcome<LikeState>> outcomes = Collections.synchronizedList(new ArrayList<>());
+        List<MergeResult<LikeState>> outcomes = Collections.synchronizedList(new ArrayList<>());
         runConcurrently(threads, threadNo -> {
             long base = threadNo * 1_000L;
             for (int i = 0; i < perThread; i++) {
-                outcomes.add(engine.submitAndWait(POST_ID, like(String.valueOf(base + i))));
+                outcomes.add(engine.commit(POST_ID, like(String.valueOf(base + i))));
             }
         });
 
         assertEquals(threads * perThread, outcomes.size(), "每个提交都必须有一个返回值，不能悬空");
         assertEquals(threads * perThread,
-                outcomes.stream().filter(MergeOutcome::isCompleted).count(),
+                outcomes.stream().filter(MergeResult::isCompleted).count(),
                 "等待预算 5s 足够，不该出现超时/失败");
         assertTrue(engine.awaitIdle(5_000), "缓冲必须排空");
         assertEquals(0, engine.pending());
@@ -134,12 +134,12 @@ class CountMergerTest {
         handler.fillOnlyTotal = 1;
         CountMerger engine = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 2_000), handler);
 
-        List<MergeOutcome<LikeState>> outcomes = submitBurst(engine, 5);
+        List<MergeResult<LikeState>> outcomes = submitBurst(engine, 5);
 
-        assertEquals(1, outcomes.stream().filter(MergeOutcome::isCompleted).count());
+        assertEquals(1, outcomes.stream().filter(MergeResult::isCompleted).count());
         assertEquals(4, outcomes.stream()
                 .filter(o -> o.state() == MergeState.FAILED).count(), "漏回填的件必须补 FAILED");
-        for (MergeOutcome<LikeState> outcome : outcomes) {
+        for (MergeResult<LikeState> outcome : outcomes) {
             if (outcome.state() == MergeState.FAILED) {
                 assertNull(outcome.result(), "FAILED 不带业务结果");
             }
@@ -155,7 +155,7 @@ class CountMergerTest {
         handler.throwOnFlush = true;
         CountMerger engine = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 2_000), handler);
 
-        List<MergeOutcome<LikeState>> outcomes = submitBurst(engine, 3);
+        List<MergeResult<LikeState>> outcomes = submitBurst(engine, 3);
 
         assertEquals(3, outcomes.stream().filter(o -> o.state() == MergeState.FAILED).count(),
                 "事务回滚 ⇒ 组内每件都是 FAILED，不是超时");
@@ -169,9 +169,9 @@ class CountMergerTest {
      * 线程在同一道闸门后起跑，落库前一定都已在缓冲区里——这样「一组 N 件」是确定性的，
      * 不靠「谁先被调度」的运气。
      */
-    private List<MergeOutcome<LikeState>> submitBurst(CountMerger engine, int count) throws Exception {
-        List<MergeOutcome<LikeState>> outcomes = Collections.synchronizedList(new ArrayList<>(count));
-        runConcurrently(count, threadNo -> outcomes.add(engine.submitAndWait(POST_ID, like(String.valueOf(threadNo)))));
+    private List<MergeResult<LikeState>> submitBurst(CountMerger engine, int count) throws Exception {
+        List<MergeResult<LikeState>> outcomes = Collections.synchronizedList(new ArrayList<>(count));
+        runConcurrently(count, threadNo -> outcomes.add(engine.commit(POST_ID, like(String.valueOf(threadNo)))));
         assertEquals(count, outcomes.size(), "每个等待者都必须拿到终态");
         return outcomes;
     }
@@ -187,16 +187,16 @@ class CountMergerTest {
         handler.delayMs = 5;
         CountMerger engine = start(hotConfig(10), handler);
 
-        List<MergeOutcome<LikeState>> outcomes = Collections.synchronizedList(new ArrayList<>());
+        List<MergeResult<LikeState>> outcomes = Collections.synchronizedList(new ArrayList<>());
         runConcurrently(threads, threadNo -> {
             long base = threadNo * 1_000L;
             for (int i = 0; i < perThread; i++) {
-                outcomes.add(engine.submitAndWait(POST_ID, like(String.valueOf(base + i))));
+                outcomes.add(engine.commit(POST_ID, like(String.valueOf(base + i))));
             }
         });
 
         assertEquals(1, handler.maxInFlight(), "同一分片两条 flush 同时跑 = 行锁重新排队，合并收益归零");
-        assertEquals(threads * perThread, outcomes.stream().filter(MergeOutcome::isCompleted).count());
+        assertEquals(threads * perThread, outcomes.stream().filter(MergeResult::isCompleted).count());
         assertEquals(threads * perThread, handler.seenCount(), "单飞不等于丢件");
         assertTrue(engine.awaitIdle(5_000));
     }
@@ -250,21 +250,21 @@ class CountMergerTest {
     }
 
     @Test
-    @DisplayName("A4 停收：close() 之后提交拿 CLOSED，且件从未入队")
+    @DisplayName("A4 停收：close() 之后不再入队 —— 等结果的走同步降级，不等的如实拿 CLOSED")
     void closeRejectsNewSubmissions() {
         RecordingFlushHandler handler = new RecordingFlushHandler();
         CountMerger engine = start(hotConfig(200), handler);
         engine.close();
 
-        MergeOutcome<LikeState> waited = engine.submitAndWait(POST_ID, like("1"));
+        MergeResult<LikeState> waited = engine.commit(POST_ID, like("1"));
         SubmitOutcome async = engine.submitAsync(POST_ID, view(POST_ID, "2"));
 
-        assertEquals(MergeState.CLOSED, waited.state());
-        assertNull(waited.result());
-        assertEquals(SubmitOutcome.CLOSED, async);
-        assertEquals(0, handler.seenCount(), "停机后提交的件不该被落库");
+        assertEquals(MergeState.COMPLETED, waited.state(), "停机后 commit 照样有结论：本线程就地落一组");
+        assertEquals(LikeState.LIKED, waited.result());
+        assertEquals(SubmitOutcome.CLOSED, async, "异步入口不降级，如实回 CLOSED 由 case 层丢弃");
+        assertEquals(1, handler.seenCount(), "只有 commit 那一笔落库；浏览件从未入队");
         assertEquals(2, engine.metrics().rejectedClosed());
-        assertEquals(0, engine.metrics().accepted());
+        assertEquals(0, engine.metrics().accepted(), "两笔都没进缓冲，accepted 保持 0");
     }
 
     @Test

@@ -26,9 +26,9 @@ import java.util.Set;
  * 奖品库存批量落库真身：预扣与确认「一组一个事务」的 SQL 都在这里（award-inventory 两层模型——
  * 目标表是统一台账 {@code draw_strategy_award_inventory} / 统一明细，实物/虚拟一张表，按
  * {@code type} 分支两条 UPDATE）。
- * 合并器（domain 层 {@code InventoryMerger}）flush 经领域端口 {@code IInventoryRepository}
- * → {@code InventoryRepository} 委托到本类；域侧降级路径（缓冲满 / 停机时同步落库）走同一条路——
- * 两套 SQL 迟早漂移，而漂移只在压力最大时暴露。
+ * 本类的两个组方法是库存域交给通用合并引擎的<b>落库函数</b>（由 {@code InventoryQuotaMergeWriter}
+ * 在 {@code MergeStrategy} 里绑定）：攒批引擎一组一次调它们，降级路径（缓冲满 / 停机时同步落库组大小 1）
+ * 调的还是它们——两套 SQL 迟早漂移，而漂移只在压力最大时暴露。
  * <p>
  * 之所以从 {@code InventoryRepository} 拆出：落库只依赖 DAO + TransactionTemplate，与仓储门面无关；
  * 拆成独立组件后「攒批引擎 / 落库 SQL / 仓储门面」各一个类，依赖单向、无一环。

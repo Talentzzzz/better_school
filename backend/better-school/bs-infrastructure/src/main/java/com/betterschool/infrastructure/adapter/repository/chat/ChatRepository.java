@@ -1,7 +1,7 @@
 package com.betterschool.infrastructure.adapter.repository.chat;
 
 import com.betterschool.domain.chat.adapter.repository.IChatRepository;
-import com.betterschool.infrastructure.ws.IWsConnectionHub;
+import com.betterschool.infrastructure.ws.IWsService;
 import com.betterschool.infrastructure.ws.wsframe.WsFrameFactory;
 import com.betterschool.domain.chat.model.entity.MessageEntity;
 import com.betterschool.domain.chat.model.entity.RoomEntity;
@@ -69,7 +69,7 @@ public class ChatRepository implements IChatRepository {
     private final IUserSeqDao chatUserSeqDao;
     private final OutboxMessageStore outboxMessageStore;
     private final TransactionTemplate transactionTemplate;
-    private final IWsConnectionHub wsConnectionHub;
+    private final IWsService wsService;
 
     // ===== 原子用例（仓储内事务，PROPAGATION_REQUIRED：与调用方既有事务合流） =====
 
@@ -568,16 +568,16 @@ public class ChatRepository implements IChatRepository {
 
     @Override
     public void pushMessage(String userId, ChatMessagePushEvent event) {
-        wsConnectionHub.push(userId, WsFrameFactory.msg(event));
+        wsService.push(userId, WsFrameFactory.msg(event));
     }
 
     @Override
     public void pushRead(String userId, ChatReadPushEvent event) {
-        wsConnectionHub.push(userId, WsFrameFactory.read(event));
+        wsService.push(userId, WsFrameFactory.read(event));
     }
 
     @Override
     public void pushRecall(String userId, ChatRecallPushEvent event) {
-        wsConnectionHub.push(userId, WsFrameFactory.recall(event));
+        wsService.push(userId, WsFrameFactory.recall(event));
     }
 }
