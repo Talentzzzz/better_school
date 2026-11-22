@@ -122,6 +122,11 @@ public class ErrandOrderCase {
         return errandOrderService.orderDetail(orderId, currentUserId);
     }
 
+    /** 按 id 裸取订单实体（无权限口径）：触发层消费者（OrderPushConsumer）推送 ORDER 帧前查双方 id 用 */
+    public ErrandOrderEntity loadOrder(String orderId) {
+        return errandOrderService.loadOrder(orderId);
+    }
+
     public void grabOrder(String orderId, String userId) {
         creditAccountService.ensureOperable(userId);
         errandOrderService.grabOrder(orderId, userId);
