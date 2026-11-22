@@ -7,7 +7,7 @@ import org.apache.ibatis.annotations.Param;
 import java.util.List;
 
 /**
- * 本服务自己的 outbox 消息表 Mapper：SQL 定义在 marketing-app 模块 resources/mybatis/mapper/OutboxMapper.xml
+ * outbox 消息表 Mapper（合并后以 marketing 侧为基座）：SQL 定义在 app 模块 resources/mybatis/mapper/OutboxMapper.xml
  */
 @Mapper
 public interface IOutboxDao {

@@ -136,6 +136,7 @@ xxl:
       log-path: ./logs/xxl-job
       log-retention-days: 30
 
+# 合并器参数（两套引擎并存，各一个子键；YAML 同文档顶层键不允许重复定义）
 # 计数合并器（per-shard 常驻线程模型，与 marketing 侧同构）：窗口 / 批 / 分片都是模型推导，
 # 上线后只按 MergeMetrics 的 flushed ÷ batches（合并比）、timedOut、rejectedFull 调，调参不改代码结构。
 # shard-count 既是分片数也是 flush 常驻线程数，硬上限是「连接池 - 2」，
@@ -154,7 +155,6 @@ merge:
 # shard-count 的硬上限是「连接池 - 2」（per-shard 常驻 flush 线程模型，flush 并发 = shard-count），
 # 由 config/MergeEngineConfig 启动时校验并把两个数打进日志。
 # shardCapacity 取 2000 是刻意的：库存扣减资金敏感 ⇒ 满了立刻降级为同步单条落库，队列别长。
-merge:
   batch:
     shard-count: 8          # 2 的幂；= flush 常驻线程数，必须 <= 连接池上限 - 2（池 10 ⇒ 上限 8）
     max-flush-delay-millis: 5            # 合并窗口：分片首个请求起算 5ms 后 flush，攒满可提前触发
