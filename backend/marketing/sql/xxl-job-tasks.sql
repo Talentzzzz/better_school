@@ -101,3 +101,21 @@ SELECT @group_id, '抽奖决策表预热（参数 = activityId；配置变更后
        '', 1, 0, 0
 WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'raffleCacheWarmup'
                   AND job_group = @group_id);
+
+-- 抽奖库存全量对账轮——每日 03:00 低峰兜底：四条不变量（B1/B3/正向配对/反向配对）全量轧账，
+-- 差异进差错表状态机（PENDING → CONFIRMED → AUTO_FIXED/RESOLVED_MANUAL/FALSE_ALARM）。
+-- 与孤儿收敛 0/30 高频轮互补：逐笔链路收敛单笔残留，本任务回答「账到底平不平」。
+-- 轮次号 = 当日 yyyy-MM-dd（job 层生成），同日重跑幂等。
+INSERT INTO xxl_job_info
+(job_group, job_desc, add_time, update_time, author, alarm_email,
+ schedule_type, schedule_conf, misfire_strategy, executor_route_strategy,
+ executor_handler, executor_param, executor_block_strategy, executor_timeout,
+ executor_fail_retry_count, glue_type, glue_source, glue_remark, glue_updatetime,
+ child_jobid, trigger_status, trigger_last_time, trigger_next_time)
+SELECT @group_id, '抽奖库存全量对账轮（每日 03:00 差异轧账进差错表）', NOW(), NOW(), 'marketing', '',
+       'CRON', '0 0 3 * * ?', 'DO_NOTHING', 'FIRST',
+       'drawReconScan', '', 'SERIAL_EXECUTION', 0,
+       0, 'BEAN', '', '', NOW(),
+       '', 1, 0, 0
+WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'drawReconScan'
+                  AND job_group = @group_id);
