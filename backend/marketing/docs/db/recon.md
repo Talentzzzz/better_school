@@ -12,16 +12,16 @@
 | `draw_recon_round` | 对账轮次观测表：每轮起止与计数（一轮一行，纯观测用，最小列） |
 | （只读）`draw_strategy_award_inventory` / `draw_strategy_award_inventory_detail` / `draw_record` / `draw_orphan_prereserve_order` | 四条不变量与 DEAD 点名的取数面，见 [inventory.md](inventory.md) / [draw.md](draw.md) |
 
-调度：xxl-job handler `drawReconScan`，执行器 `marketing-executor`，cron `0 0 3 * * ?`（每日 03:00 低峰），注册在 `sql/xxl-job-tasks.sql`。轮次号口径 = `yyyy-MM-dd` 日期字符串；同日重跑零副作用（起轮与差错登记均 INSERT IGNORE 撞唯一键跳过）。数据窗口：对账数据集只取 `update_time < now - 10min` 的行（与孤儿种单阈值对齐，避开主链路在途窗口）；扫描上限 `SCAN_LIMIT = 100`（照 `OrphanPrereserveScanJob` 口径）。
+调度：xxl-job handler `drawReconScan`，执行器 `marketing-executor`，cron `0 0 3 * * ?`（每日 03:00 低峰），注册在 `sql/xxl-job-tasks.sql`。轮次号口径 = `yyyy-MM-dd` 日期字符串；同日重跑零副作用（起轮与差错登记均 INSERT IGNORE 撞唯一键跳过）。数据窗口：对账数据集只取 `update_time < now - 10min` 的行（与孤儿种单阈值对齐，避开主链路在途窗口）；扫描上限 `SCAN_LIMIT = 100`（照 `OrphanPrereserveScanJob` 口径）。四条不变量按台账账户（`draw_strategy_award_inventory`）`award_id` 分页逐批跑：批大小 `AWARD_BATCH_SIZE = 100`（与孤儿扫描口径一致），批内 `award_id` / `inv_id` IN 过滤（反向配对按 `inv_id` 过滤，发放来源快照口径不变），全部只读。
 
 ## 一轮五段（编排口径）
 
 实现：`RaffleDrawReconServiceImpl.scan(roundNo)`（编排与口径判断归抽奖域一个对账服务——不注入事务模板，每一步都是仓储/端口自带的原子用例；四条不变量以只读聚合查询落基础设施层 mapper，触发层 xxl-job 薄壳照 `OrphanPrereserveScanJob`——不调 `XxlJobHelper`，handler 正常返回即成功）。
 
 1. **起轮**：`draw_recon_round` 起轮 INSERT IGNORE（撞 `uk_round_no` 幂等跳过）。
-2. **轧账登记**：四条不变量只读聚合，差异行逐条 INSERT IGNORE 登记差错表，一律 `PENDING`（快照带期望/实际读数）；本轮出现过的 `(检查类型, biz_id)` 收进比对集（撞键被幂等跳过的键也算「出现」——比对对象是轧账结果，不是插入结果）。
+2. **轧账登记**：四条不变量按台账账户 `award_id` 分页（批大小 100）逐批只读聚合（批内 IN 过滤），批间差异行合并成一份清单后统一逐条 INSERT IGNORE 登记差错表，一律 `PENDING`（快照带期望/实际读数）；本轮出现过的 `(检查类型, biz_id)` 收进比对集（撞键被幂等跳过的键也算「出现」——比对对象是轧账结果，不是插入结果）。
 3. **DEAD 孤儿单点名**：死信是逐笔链路重试耗尽后的**已确认事实**（不存在日切误报），不走二次核对——登记即 `CONFIRMED` + 直接告警；每轮新轮次号 → 每轮一条新差错行 → 周期性点名，人工处置死信后下轮自然消停。
-4. **二次核对与平账分流**：复查上一轮的 `PENDING` 差错——同键（检查类型 + biz_id）本轮仍在 → 条件更新确认并按分流表处置；未再出现 → `FALSE_ALARM`（消化取数时刻两侧快照不一致的日切假差错）。
+4. **二次核对与平账分流**：复查**全部轮次**的 `PENDING` 差错（不分轮次——调度中断停跑多日后，更早轮次的滞留 PENDING 也能收口，登记轮次保留在差错行快照与日志里供人工溯源）——同键（检查类型 + biz_id）本轮仍在 → 条件更新确认并按分流表处置；未再出现 → `FALSE_ALARM`（消化取数时刻两侧快照不一致的日切假差错）。
 5. **终轮回填**：按轮次号回填登记 / 确认 / 自动修复三项计数（一轮一行无状态机，重跑按计数覆盖无害）。
 
 ## 四条不变量公式
@@ -45,7 +45,7 @@ PENDING(0) ── 下轮复查仍在 ──▶ CONFIRMED(1) ──┬─ 正向�
     └── 下轮复查消失 ──▶ FALSE_ALARM(4)         └─ 守恒破坏/反向缺失：保持 CONFIRMED 等人工
 ```
 
-- 所有推进都是**按 id + 起点状态的条件更新**（confirm `0→1`、autoFixed `1→2`、falseAlarm `0→4`、resolvedManual `1→3`），0 行 = 状态漂移，调用方跳过。
+- 所有推进都是**按 id + 起点状态的条件更新**（confirm `0→1`、autoFixed `1→2`、falseAlarm `0→4`），0 行 = 状态漂移，调用方跳过；`RESOLVED_MANUAL` 无 Java 侧条件更新语句——人工核对收口走 SQL 直更（见下「排查 SQL 示例」），Java 链路不暴露人工置态入口。
 - 幂等：`uk_round_check_biz (round_no, check_type, biz_id)`，登记 INSERT IGNORE——调度重复触发 / 同日重跑零副作用。
 - `DEAD_ORPHAN_PATROL`（第五类检查）登记即 `CONFIRMED`，不进二次核对（见「一轮五段」段三）。
 
@@ -53,7 +53,7 @@ PENDING(0) ── 下轮复查仍在 ──▶ CONFIRMED(1) ──┬─ 正向�
 
 | 差异情形（检查类型） | CONFIRMED 后处置 | 终态 |
 | --- | --- | --- |
-| 正向漏结、查无孤儿对账单（`FORWARD_PAIRING`） | 复用现有孤儿种单入口 `seedOrphanPrereserves` 补种（扫描以 NOT EXISTS + 10 分钟阈值圈定候选，INSERT IGNORE 幂等，不复制种单逻辑），逐笔链路接管 | `AUTO_FIXED` |
+| 正向漏结、查无孤儿对账单（`FORWARD_PAIRING`） | 复用现有孤儿种单入口 `seedOrphanPrereserves` 补种（扫描以 NOT EXISTS + 10 分钟阈值圈定候选，INSERT IGNORE 幂等，不复制种单逻辑），**补种后按 record_id 回查对账单**——种单扫描有 limit 截断且候选可能被跳过，回查真种上才置 `AUTO_FIXED` 关单；未命中保持 CONFIRMED 告警人工（虚假关单的差错不再复查） | 回查命中 `AUTO_FIXED`；未命中人工处置后 `RESOLVED_MANUAL` |
 | 正向漏结、对账单已死信（`FORWARD_PAIRING`） | 告警人工（逐笔链路救不回），差错保持 CONFIRMED | 人工处置后 `RESOLVED_MANUAL` |
 | 正向漏结、对账单在途（ORPHAN）/已收敛（DONE） | 逐笔收敛链路已接管或闭环，保持 CONFIRMED 留观测（置 AUTO_FIXED 会谎报「对账轮修好了」） | 保持 CONFIRMED |
 | 守恒破坏（`B1_CONSERVATION` / `B3_CONSERVATION`）、反向缺失（`REVERSE_PAIRING`） | **只告警人工，绝不自动修**（数据破坏级；自动动作会放大事故） | 人工核对后 `RESOLVED_MANUAL` |
