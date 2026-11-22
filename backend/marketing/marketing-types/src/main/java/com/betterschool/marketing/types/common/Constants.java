@@ -17,6 +17,9 @@ public final class Constants {
     /** 积分变动 topic：生产方 = 积分域，消费方 = 单体（落 notification） */
     public final static String POINTS_CHANGED_TOPIC = "bs-points-changed";
 
+    /** 库存对账告警 topic：生产方 = 抽奖域对账轮（drawReconScan），消费方 = 单体（落维护者告警通知） */
+    public final static String RECON_ALERT_TOPIC = "bs-marketing-recon-alert";
+
     private Constants() {
     }
 }

@@ -4,6 +4,7 @@ import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedCursorVO;
 import com.betterschool.domain.errand.model.valobj.ErrandFeedIndexItemVO;
 import com.betterschool.domain.errand.model.valobj.ErrandOrderEventVO;
+import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
 
 import java.time.LocalDateTime;
 import java.util.List;

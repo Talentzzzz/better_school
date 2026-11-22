@@ -162,7 +162,7 @@ public class InventoryQuotaServiceImpl implements IInventoryQuotaService {
         if (results.size() != 1 || results.get(0) != ClaimOutcome.CONFIRMED) {
             // 落库方法的契约是「返回即 CONFIRMED、失败即抛」，这里只是把漏回填也当失败兜住
             throw new AppException(ResponseCode.SYSTEM_ERROR,
-                    "库存确认降级落库未确认（可重试） awardId=" + awardId + " bizId=" + item.bizId());
+                    "库存确认降级落库未确认（可重试） awardId=" + request.awardId() + " bizId=" + request.bizId());
         }
     }
 

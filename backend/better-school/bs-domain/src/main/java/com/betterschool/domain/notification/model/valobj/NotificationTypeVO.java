@@ -22,7 +22,10 @@ public enum NotificationTypeVO {
     /** 营销：抽奖中奖（bs-lottery-drawn 事件；谢谢参与不发事件不落通知）——只落通知中心，不推送 */
     LOTTERY_WON("抽奖中奖", Channel.NONE),
     /** 营销：积分变动（bs-points-changed 事件）——只落通知中心，不推送 */
-    POINTS_CHANGED("积分变动", Channel.NONE);
+    POINTS_CHANGED("积分变动", Channel.NONE),
+    /** 营销：库存对账告警（bs-marketing-recon-alert 事件，对账轮 CONFIRMED 差错 / DEAD 孤儿单点名）——
+     *  维护者告警，收件人 = 系统助手账号，只落通知中心，不推送 */
+    RECON_ALERT("对账告警", Channel.NONE);
 
     /** 投递通道（通知落库是唯一真相源，通道只是呈现方式的路由） */
     public enum Channel {
