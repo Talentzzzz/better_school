@@ -322,6 +322,38 @@ CREATE TABLE IF NOT EXISTS outbox_message (
     KEY idx_state (state)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '本地消息表(outbox)';
 
+CREATE TABLE IF NOT EXISTS draw_recon_variance (
+    id              BIGINT       NOT NULL AUTO_INCREMENT,
+    round_no        VARCHAR(32)  NOT NULL COMMENT '对账轮次号（= draw_recon_round.round_no，本轮扫描开始时刻文本）',
+    check_type      VARCHAR(32)  NOT NULL COMMENT '检查类型 B1_CONSERVATION(B1 台账守恒) / B3_CONSERVATION(B3 预扣守恒) / FORWARD_PAIRING(正向配对) / REVERSE_PAIRING(反向配对) / DEAD_ORPHAN_PATROL(DEAD 孤儿单点名)',
+    scope_key       VARCHAR(36)  NOT NULL COMMENT '定位键：award_id（守恒类，按奖品位账户定位）/ record_id（配对类与点名，按抽奖记录/对账单定位）',
+    biz_id          VARCHAR(36)  NOT NULL COMMENT '业务单号（守恒类 = award_id；配对/点名类 = record_id）',
+    expect_snapshot VARCHAR(255) NOT NULL COMMENT '期望值快照（不变量期望侧读数文本）',
+    actual_snapshot VARCHAR(255) NOT NULL COMMENT '实际值快照（不变量实际侧读数文本）',
+    state           TINYINT      NOT NULL DEFAULT 0 COMMENT '0 待复查(PENDING) / 1 已确认(CONFIRMED) / 2 已自动修复(AUTO_FIXED) / 3 已人工处理(RESOLVED_MANUAL) / 4 假差错(FALSE_ALARM)',
+    fixed_time      DATETIME     NULL COMMENT '自动修复时间（置 AUTO_FIXED 时写）',
+    finish_time     DATETIME     NULL COMMENT '人工处理/复查完成时间（置 RESOLVED_MANUAL / FALSE_ALARM 时写）',
+    create_time     DATETIME     NOT NULL COMMENT '创建时间',
+    update_time     DATETIME     NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_round_check_biz (round_no, check_type, biz_id) COMMENT '对账幂等键：同一轮次同一检查类型同一业务单号一条差错，登记 INSERT IGNORE（调度重复触发/重跑零副作用）',
+    KEY idx_state_round (state, round_no) COMMENT '下一轮复查扫描：取前轮 PENDING 差错做二次核对（仍在 → CONFIRMED，消失 → FALSE_ALARM）'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '对账差错表（每日全量对账轮发现的不一致登记，纯旁路只写此表；PENDING → CONFIRMED → AUTO_FIXED / RESOLVED_MANUAL / FALSE_ALARM）';
+
+CREATE TABLE IF NOT EXISTS draw_recon_round (
+    id               BIGINT      NOT NULL AUTO_INCREMENT,
+    round_no         VARCHAR(32) NOT NULL COMMENT '轮次号（本轮扫描开始时刻文本）',
+    scan_start_time  DATETIME    NOT NULL COMMENT '本轮扫描开始时间',
+    scan_end_time    DATETIME    NULL COMMENT '本轮扫描结束时间（终轮回填）',
+    variance_total   INT         NULL COMMENT '本轮登记差错数（终轮回填）',
+    confirmed_total  INT         NULL COMMENT '本轮确认差异数（终轮回填）',
+    auto_fixed_total INT         NULL COMMENT '本轮自动修复数（终轮回填）',
+    create_time      DATETIME    NOT NULL COMMENT '创建时间',
+    update_time      DATETIME    NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_round_no (round_no) COMMENT '一轮一行：起轮 INSERT IGNORE，调度重复触发按幂等跳过'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '对账轮次观测表（每轮起止与计数，纯观测用，最小列）';
+
 -- ===========================================================================
 -- 种子（幂等可重跑）：单行配置表必须有行，入账算 expire_at 才有依据。
 -- 只放新模型表的种子；旧表种子随 schema-legacy.sql 在票 13 一起删除。

@@ -4,13 +4,17 @@ import com.betterschool.marketing.domain.raffle.model.aggregate.DrawRecordAggreg
 import com.betterschool.marketing.domain.raffle.model.entity.DrawActivityEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawRecordDetailEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawRecordEntity;
+import com.betterschool.marketing.domain.raffle.model.entity.DrawReconRoundEntity;
+import com.betterschool.marketing.domain.raffle.model.entity.DrawReconVarianceEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawStrategyAwardEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawStrategyEntity;
 import com.betterschool.marketing.domain.raffle.model.entity.DrawStrategyWeightEntity;
 import com.betterschool.marketing.domain.raffle.model.valobj.DrawRecordVO;
 import com.betterschool.marketing.domain.raffle.model.valobj.PrizeCatalogVO;
 import com.betterschool.marketing.domain.raffle.model.valobj.UserPrizeVO;
+import com.betterschool.marketing.types.raffle.DrawReconVarianceState;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -127,4 +131,40 @@ public interface IRaffleRepository {
      * @return true = 本次真的推进了；false = 起点状态不匹配（重复投递 / 已终态）
      */
     boolean advanceState(String userId, String recordId, String fromState, List<DrawRecordDetailEntity> details);
+
+    // ---- 对账轮写面（每日全量对账轮，纯旁路：只读业务表、只写差错表/轮次表） ----
+
+    /**
+     * 登记差错：INSERT IGNORE，撞 uk_round_check_biz（轮次, 检查类型, 业务单号）返回 false =
+     * 本轮已登记过（调度重复触发 / 重跑零副作用）。
+     */
+    boolean insertReconVariance(DrawReconVarianceEntity varianceEntity);
+
+    /** 该轮次的全部 PENDING 差错（下一轮复查的二次核对输入），按 id 升序 */
+    List<DrawReconVarianceEntity> listPendingReconVariancesByRound(String roundNo);
+
+    /** 二次核对确认：state PENDING→CONFIRMED；false = 已不在 PENDING（并发推进 / 复查已消失），调用方跳过 */
+    boolean confirmReconVariance(Long id);
+
+    /** 平账分流·自动修复（复用孤儿种单入口补种完成后调用）：state CONFIRMED→AUTO_FIXED，写 fixed_time */
+    boolean markReconVarianceAutoFixed(Long id);
+
+    /** 复查消失（日切边界假差错）：state PENDING→FALSE_ALARM，写 finish_time */
+    boolean markReconVarianceFalseAlarm(Long id);
+
+    /** 平账分流·人工处理完成（守恒破坏 / 反向缺失告警后人工核对）：state CONFIRMED→RESOLVED_MANUAL，写 finish_time */
+    boolean markReconVarianceResolvedManual(Long id);
+
+    /** 该轮次登记差错总数（终轮回填 variance_total） */
+    long countReconVariancesByRound(String roundNo);
+
+    /** 该轮次指定状态的差错数（终轮回填 confirmed_total / auto_fixed_total 等计数） */
+    long countReconVariancesByRoundAndState(String roundNo, DrawReconVarianceState state);
+
+    /** 起轮：INSERT IGNORE，撞 uk_round_no 返回 false = 本轮已起过 */
+    boolean insertReconRound(DrawReconRoundEntity roundEntity);
+
+    /** 终轮：按 round_no 回填结束时间与三项计数（一轮一行，无状态机） */
+    boolean finishReconRound(String roundNo, LocalDateTime scanEndTime,
+                             int varianceTotal, int confirmedTotal, int autoFixedTotal);
 }
