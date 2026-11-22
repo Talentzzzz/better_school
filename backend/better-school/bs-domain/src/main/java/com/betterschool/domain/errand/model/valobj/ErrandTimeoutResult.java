@@ -4,8 +4,8 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 
-/** 订单超时处理结果（null = 幂等忽略）：资金动作（解冻退款 + 开工场景扣分）已随取消翻转
- *  在 IErrandFundPort 组合事务内完成，结果对象供编排层观察（committed 口径等） */
+/** 订单超时处理结果（null = 幂等忽略）：取消翻转已在本域仓储事务内完成（翻转段先行），
+ *  资金动作（解冻退款 + 开工场景扣分）由 case 层按本结果对象顺序执行（两段式 ADR-0016），committed 口径等随行 */
 @Data
 public class ErrandTimeoutResult {
 
