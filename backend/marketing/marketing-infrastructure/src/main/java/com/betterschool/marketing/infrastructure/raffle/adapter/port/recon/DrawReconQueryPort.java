@@ -19,8 +19,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 对账轮只读查询端口的实现：纯透传委托两条聚合 DAO，在这里填库存侧口径
+ * 对账轮只读查询端口的实现：纯透传委托聚合 DAO，在这里填库存侧口径
  * （{@code biz_type = LOTTERY_DRAW}，抽奖域不认识库存的表列），PO 翻成对账轮自己的值对象。
+ * 四条不变量与账户分页全部透传批次 {@code awardIds}（B1/B3/正向按 award_id IN、反向按 inv_id IN）。
  */
 @Component
 @RequiredArgsConstructor
@@ -30,27 +31,33 @@ public class DrawReconQueryPort implements IDrawReconQueryPort {
     private final IDrawRecordReconQueryDao drawRecordReconQueryDao;
 
     @Override
-    public List<InventoryLedgerConservationVO> queryLedgerConservation(LocalDateTime before) {
-        return inventoryReconQueryDao.queryLedgerConservation(before).stream().map(this::toLedgerConservation).toList();
+    public List<String> listLedgerAwardIds(String cursorAwardId, int limit) {
+        return inventoryReconQueryDao.listLedgerAwardIds(cursorAwardId, limit);
     }
 
     @Override
-    public List<InventoryPrereserveConservationVO> queryPrereserveConservation(LocalDateTime before) {
-        return inventoryReconQueryDao.queryPrereserveConservation(before).stream()
+    public List<InventoryLedgerConservationVO> queryLedgerConservation(LocalDateTime before, List<String> awardIds) {
+        return inventoryReconQueryDao.queryLedgerConservation(before, awardIds).stream()
+                .map(this::toLedgerConservation).toList();
+    }
+
+    @Override
+    public List<InventoryPrereserveConservationVO> queryPrereserveConservation(LocalDateTime before, List<String> awardIds) {
+        return inventoryReconQueryDao.queryPrereserveConservation(before, awardIds).stream()
                 .map(this::toPrereserveConservation).toList();
     }
 
     @Override
-    public List<UnmatchedDeductDetailVO> listUnmatchedDeductDetails(LocalDateTime before) {
+    public List<UnmatchedDeductDetailVO> listUnmatchedDeductDetails(LocalDateTime before, List<String> awardIds) {
         return inventoryReconQueryDao
-                .listUnmatchedDeductDetails(before, InventoryBizTypes.LOTTERY_DRAW).stream()
+                .listUnmatchedDeductDetails(before, InventoryBizTypes.LOTTERY_DRAW, awardIds).stream()
                 .map(this::toUnmatchedDeductDetail).toList();
     }
 
     @Override
-    public List<RecordMissingDeductVO> listRecordsMissingDeduct(LocalDateTime before) {
+    public List<RecordMissingDeductVO> listRecordsMissingDeduct(LocalDateTime before, List<String> awardIds) {
         return drawRecordReconQueryDao
-                .listRecordsMissingDeduct(before, InventoryBizTypes.LOTTERY_DRAW).stream()
+                .listRecordsMissingDeduct(before, InventoryBizTypes.LOTTERY_DRAW, awardIds).stream()
                 .map(this::toRecordMissingDeduct).toList();
     }
 

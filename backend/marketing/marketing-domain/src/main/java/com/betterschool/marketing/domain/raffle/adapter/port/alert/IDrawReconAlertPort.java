@@ -1,5 +1,7 @@
 package com.betterschool.marketing.domain.raffle.adapter.port.alert;
 
+import com.betterschool.marketing.types.common.DrawReconAlertMessage;
+
 /**
  * 抽奖域对账轮 → 通知通路的告警端口（CLAUDE.md §1：跨域写组合不在域服务间直接注入）。
  * 实现在 infrastructure，经 outbox 落库 + RocketMQ 投递（复用既有营销通知链路，
@@ -16,17 +18,9 @@ public interface IDrawReconAlertPort {
 
     /**
      * 发送一条对账告警（经 outbox → RocketMQ {@code bs-marketing-recon-alert} → 单体消费落通知）。
-     * 通知幂等键由消费侧拼装为 {@code MARKETING:RECON:<roundNo>:<checkType>:<bizId>}，
+     * 载荷即 wire 消息 {@link DrawReconAlertMessage} 本体（轮次、检查类型、定位键、期望/实际快照、
+     * 告警文案）；通知幂等键由消费侧拼装为 {@code MARKETING:RECON:<roundNo>:<checkType>:<bizId>}，
      * 同轮次同检查同单号的重复点名只落一条通知。
-     *
-     * @param roundNo       对账轮次号（差错表 round_no）
-     * @param checkType     检查类型（差错表 check_type，如 B1 台账守恒 / B3 预扣守恒 / 正向配对 / 反向配对 / 孤儿单死信）
-     * @param scopeKey      定位键（award_id 或 record_id；无自然定位键的检查传 null）
-     * @param bizId         定位单号（= 差错表 biz_id；消费侧 dedupKey 的一员，不可为空）
-     * @param expectSummary 期望值快照摘要（公式左侧，如「waiting + issued = 25」）
-     * @param actualSummary 实际值快照摘要（公式右侧实读数）
-     * @param alertText     告警文案（完整话术，消费侧直接呈现；null 时消费侧按其余字段拼装）
      */
-    void sendReconAlert(String roundNo, String checkType, String scopeKey, String bizId,
-                        String expectSummary, String actualSummary, String alertText);
+    void sendReconAlert(DrawReconAlertMessage alertMessage);
 }

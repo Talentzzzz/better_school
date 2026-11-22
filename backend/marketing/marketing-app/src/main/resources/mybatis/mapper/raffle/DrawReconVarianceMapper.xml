@@ -16,12 +16,13 @@
              #{state}, #{fixedTime}, #{finishTime}, #{createTime}, #{updateTime})
     </insert>
 
-    <!-- 该轮次的全部 PENDING 差错（下一轮复查的二次核对输入） -->
-    <select id="listPendingByRound" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawReconVariancePO">
+    <!-- 全部轮次的 PENDING 差错（下一轮复查的二次核对输入，不分轮次——调度中断停跑多日后
+         更早轮次的滞留 PENDING 也能收口；登记轮次随行带出，供证伪日志/人工溯源） -->
+    <select id="listAllPending" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawReconVariancePO">
         SELECT id, round_no, check_type, scope_key, biz_id, expect_snapshot, actual_snapshot,
                state, fixed_time, finish_time, create_time, update_time
         FROM draw_recon_variance
-        WHERE state = 0 AND round_no = #{roundNo}
+        WHERE state = 0
         ORDER BY id ASC
     </select>
 
@@ -44,13 +45,6 @@
         UPDATE draw_recon_variance
         SET state = 4, finish_time = NOW(), update_time = NOW()
         WHERE id = #{id} AND state = 0
-    </update>
-
-    <!-- 平账分流·人工处理完成：state 1→3，写 finish_time -->
-    <update id="markResolvedManual">
-        UPDATE draw_recon_variance
-        SET state = 3, finish_time = NOW(), update_time = NOW()
-        WHERE id = #{id} AND state = 1
     </update>
 
     <!-- 该轮次登记差错总数 -->

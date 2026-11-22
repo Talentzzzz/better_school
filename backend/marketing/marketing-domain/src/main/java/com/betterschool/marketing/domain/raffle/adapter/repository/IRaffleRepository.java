@@ -252,8 +252,8 @@ public interface IRaffleRepository {
      */
     boolean insertReconVariance(DrawReconVarianceEntity varianceEntity);
 
-    /** 该轮次的全部 PENDING 差错（下一轮复查的二次核对输入），按 id 升序 */
-    List<DrawReconVarianceEntity> listPendingReconVariancesByRound(String roundNo);
+    /** 全部轮次的 PENDING 差错（下一轮复查的二次核对输入，不分轮次——调度中断滞留的更早轮次也能收口），按 id 升序 */
+    List<DrawReconVarianceEntity> listPendingReconVariances();
 
     /** 二次核对确认：state PENDING→CONFIRMED；false = 已不在 PENDING（并发推进 / 复查已消失），调用方跳过 */
     boolean confirmReconVariance(Long id);
@@ -263,9 +263,6 @@ public interface IRaffleRepository {
 
     /** 复查消失（日切边界假差错）：state PENDING→FALSE_ALARM，写 finish_time */
     boolean markReconVarianceFalseAlarm(Long id);
-
-    /** 平账分流·人工处理完成（守恒破坏 / 反向缺失告警后人工核对）：state CONFIRMED→RESOLVED_MANUAL，写 finish_time */
-    boolean markReconVarianceResolvedManual(Long id);
 
     /** 该轮次登记差错总数（终轮回填 variance_total） */
     long countReconVariancesByRound(String roundNo);

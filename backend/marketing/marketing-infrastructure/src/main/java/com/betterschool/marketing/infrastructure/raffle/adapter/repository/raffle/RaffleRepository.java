@@ -693,8 +693,8 @@ public class RaffleRepository implements IRaffleRepository {
     }
 
     @Override
-    public List<DrawReconVarianceEntity> listPendingReconVariancesByRound(String roundNo) {
-        return drawReconVarianceDao.listPendingByRound(roundNo).stream().map(this::toVarianceEntity).toList();
+    public List<DrawReconVarianceEntity> listPendingReconVariances() {
+        return drawReconVarianceDao.listAllPending().stream().map(this::toVarianceEntity).toList();
     }
 
     @Override
@@ -710,11 +710,6 @@ public class RaffleRepository implements IRaffleRepository {
     @Override
     public boolean markReconVarianceFalseAlarm(Long id) {
         return drawReconVarianceDao.markFalseAlarm(id) > 0;
-    }
-
-    @Override
-    public boolean markReconVarianceResolvedManual(Long id) {
-        return drawReconVarianceDao.markResolvedManual(id) > 0;
     }
 
     @Override

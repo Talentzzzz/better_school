@@ -19,8 +19,8 @@ public interface IDrawReconVarianceDao {
     /** 撞 uk_round_check_biz 返回 0 = 本轮该检查类型该业务单号已登记过（调度重复触发/重跑幂等） */
     int insertIgnoreVariance(DrawReconVariancePO variancePO);
 
-    /** 该轮次的全部 PENDING 差错（下一轮复查的二次核对输入） */
-    List<DrawReconVariancePO> listPendingByRound(@Param("roundNo") String roundNo);
+    /** 全部轮次的 PENDING 差错（下一轮复查的二次核对输入，不分轮次——调度中断滞留的更早轮次也能收口） */
+    List<DrawReconVariancePO> listAllPending();
 
     /** 二次核对确认：state 0→1；0 行 = 已不在 PENDING（复查时已消失置 FALSE_ALARM 等），调用方跳过 */
     int confirm(@Param("id") Long id);
@@ -30,9 +30,6 @@ public interface IDrawReconVarianceDao {
 
     /** 复查消失：state 0→4，写 finish_time（日切边界假差错收口） */
     int markFalseAlarm(@Param("id") Long id);
-
-    /** 平账分流·人工处理完成：state 1→3，写 finish_time（数据破坏级告警后人工核对收口） */
-    int markResolvedManual(@Param("id") Long id);
 
     /** 该轮次登记差错总数（轮次表终轮回填 variance_total） */
     long countByRound(@Param("roundNo") String roundNo);
