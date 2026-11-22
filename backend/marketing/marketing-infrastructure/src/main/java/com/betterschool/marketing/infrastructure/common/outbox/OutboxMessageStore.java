@@ -57,6 +57,29 @@ public class OutboxMessageStore {
             throw new IllegalArgumentException(
                     "delayMs 必须为正且与 delayLevel 互斥：delayLevel=" + delayLevel + ", delayMs=" + delayMs);
         }
+        OutboxPO outboxPO = insertPending(destination, payload, delayLevel, delayMs);
+        // 事务提交后立即异步发送一次（降延迟）；事务回滚时 afterCommit 不触发，记录随回滚消失
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                messageSender.sendAsync(outboxPO);
+            }
+        });
+    }
+
+    /**
+     * 独立落库发送（**不经业务事务**）：给无事务模板的旁路 job 用（如对账轮告警）。
+     * 单行 insert 自带隐式事务，插入后立即异步首发一次；发送失败由 {@code outboxScan}
+     * 扫描兜底重发（行保持 PENDING），消费侧按业务幂等键吸收重投。
+     * 没有回滚语义——调用方在插入前自行保证「这条消息本来就该发」。
+     */
+    public void saveStandalone(String destination, Object payload) {
+        OutboxPO outboxPO = insertPending(destination, payload, 0, null);
+        messageSender.sendAsync(outboxPO);
+    }
+
+    /** 构造 PENDING 行并插入（无发送动作）：save 走 afterCommit 首发，saveStandalone 直发 */
+    private OutboxPO insertPending(String destination, Object payload, int delayLevel, Integer delayMs) {
         OutboxPO outboxPO = new OutboxPO();
         outboxPO.setMsgId(UUID.randomUUID().toString());
         outboxPO.setDestination(destination);
@@ -68,13 +91,7 @@ public class OutboxMessageStore {
         outboxPO.setCreateTime(LocalDateTime.now());
         outboxPO.setUpdateTime(LocalDateTime.now());
         outboxDao.insert(outboxPO);
-        // 事务提交后立即异步发送一次（降延迟）；事务回滚时 afterCommit 不触发，记录随回滚消失
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                messageSender.sendAsync(outboxPO);
-            }
-        });
+        return outboxPO;
     }
 
     private String toJson(Object payload) {
