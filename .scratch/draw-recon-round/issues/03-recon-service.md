@@ -35,4 +35,36 @@ Blocked by: 01, 02, 04
 
 ## Answer
 
-（完成后在此追加要点）
+实现者：t03（分支 `draw-recon-round-t03-recon-service`）。未动主链路、合并器、孤儿收敛 job 自身任何代码。
+
+### 新增/改动文件清单
+
+| 文件 | 内容 |
+| --- | --- |
+| `marketing-domain/.../raffle/service/recon/IRaffleDrawReconService.java` | 新增：对账轮域服务接口，唯一入口 `int scan(String roundNo)` |
+| `marketing-domain/.../raffle/service/recon/RaffleDrawReconServiceImpl.java` | 新增：编排实现（起轮 → 轧账登记 → DEAD 点名 → 二次核对与分流 → 终轮回填） |
+| `marketing-domain/.../raffle/adapter/repository/IRaffleRepository.java` | 追加两个只读方法：`queryOrphanPrereserveOrderByRecordId`（正向分流判单）、`listDeadOrphanPrereserveOrders`（DEAD 点名扫描） |
+| `marketing-infrastructure/.../raffle/adapter/repository/raffle/RaffleRepository.java` | 实现上述两方法（复用既有 `toOrphanPrereserveOrderEntity` 转换器） |
+| `marketing-infrastructure/.../raffle/dao/IDrawOrphanPrereserveOrderDao.java` | 追加 `selectByRecordId` / `listDead` 两个只读 DAO 方法 |
+| `marketing-app/.../mybatis/mapper/raffle/DrawOrphanPrereserveOrderMapper.xml` | 追加对应两条只读 select（零表别名，只读不写该表） |
+
+### 关键决定与理由
+
+- **轮次号口径**：`yyyy-MM-dd` 日期字符串（票内给定），入口 `scan(String roundNo)`，job 薄壳传 `LocalDate.now().toString()` 即可。同日重跑幂等由撞 `uk_round_no` / `uk_round_check_biz` 的 INSERT IGNORE 承担；二次核对的"上一轮次"= `LocalDate.parse(roundNo).minusDays(1)`。
+- **二次核对判据**：轧账阶段把本轮出现过的 `(checkType, bizId)` 收进 Set（撞 uk 幂等跳过的键也算"出现"——比对对象是轧账结果不是插入结果）；复查上一轮 PENDING 时同键仍在 → `confirm`（条件更新 0→1，false 跳过）→ 按分流表处置；消失 → `markFalseAlarm`。
+- **DEAD 点名不走复查**：死信是逐笔链路重试耗尽后的已确认事实，不存在日切误报，二次核对只会把点名推迟一轮而无收益——登记即 `CONFIRMED` + 直接告警。每轮新轮次号 → 每轮一条新差错行 → 周期性点名（dedupKey 含轮次，持续可见不重复打扰）；人工处置死信后下轮自然消停。
+- **正向漏结复用种单入口**：CONFIRMED 的 FORWARD_PAIRING 先查 `queryOrphanPrereserveOrderByRecordId`：查无对账单 → 调 `IRaffleOrphanPrereserveService.seedOrphanPrereserves(SCAN_LIMIT)`（扫描本身以 NOT EXISTS + 10 分钟阈值圈定候选，INSERT IGNORE 幂等，逐笔链路接管）→ `markAutoFixed`；对账单 DEAD → 告警人工、保持 CONFIRMED；对账单 ORPHAN/DONE → 逐笔链路在途/已闭环，保持 CONFIRMED 留观测（置 AUTO_FIXED 会谎报"对账轮修好了"）。种单调用按差错逐条触发（每次全量扫描幂等无害），未复制任何种单逻辑。
+- **守恒破坏（B1/B3）与反向缺失**：只告警（scopeKey/bizId/期望/实际快照全量入文案），绝不自动修，差错保持 CONFIRMED 等人工置 RESOLVED_MANUAL。
+- **告警投递失败不中断轧账**：照票 04 端口 javadoc 的约定，`sendAlert` 内 try/catch 留 ERROR，下轮重新点名兜住。
+- **分批口径**：票 02 端口的四条查询本身不 paginate——B1/B3 天然按 award_id 一行（行数 = 台账账户数，有界）、正向/反向只返回差异行（正常为空），结果集天然有界；`SCAN_LIMIT=100`（照 `OrphanPrereserveScanJob` 口径）用于种单入口与 DEAD 点名扫描的上限。台账账户数增长后如需真分页，扩展端口签名即可，编排不变。
+- **返回值口径**：本轮处理的差错数 = 二次核对确认数 + 复查证伪数 + DEAD 点名数；新登记的 PENDING 尚未"处理"不计入。
+- **快照文案**：B1 按限量/不限量分流拼（`surplus(x)+waiting(y)+issued(z)=n` / `waiting+issued=n（不限量户跳过 surplus）`），B3/正向/反向/点名各拼带读数的短文案（VARCHAR(255) 内）。
+
+### 编译结果
+
+`mvn -q compile`（`backend/marketing/`，JDK 21）**通过**（EXIT=0）。未写未跑任何测试（spec Testing Decisions）。
+
+### 遗留风险
+
+- 调度跨日中断（某日 job 未跑）时，更早轮次的 PENDING 差错不会被复查（复查只看"上一日"），会悬置——按票口径实现；如需兜底可改为复查"当前轮之前的全部 PENDING"，属一行查询条件的变化。
+- 正向漏结补种后直接 `markAutoFixed`：若种单扫描与确认之间记录恰好落库（候选消失），种单不会覆盖该单但差错仍置 AUTO_FIXED——窗口极窄（10 分钟在途期外 + 确认后瞬时），下轮反向配对会给出真实读数。

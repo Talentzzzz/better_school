@@ -556,6 +556,17 @@ public class RaffleRepository implements IRaffleRepository {
         return detailPO == null ? null : detailPO.getUserId();
     }
 
+    @Override
+    public DrawOrphanPrereserveOrderEntity queryOrphanPrereserveOrderByRecordId(String recordId) {
+        return toOrphanPrereserveOrderEntity(drawOrphanPrereserveOrderDao.selectByRecordId(recordId));
+    }
+
+    @Override
+    public List<DrawOrphanPrereserveOrderEntity> listDeadOrphanPrereserveOrders(int limit) {
+        return drawOrphanPrereserveOrderDao.listDead(limit).stream()
+                .map(this::toOrphanPrereserveOrderEntity).toList();
+    }
+
     private DrawOrphanPrereserveOrderPO toOrphanPrereserveOrderPO(DrawOrphanPrereserveOrderEntity order) {
         DrawOrphanPrereserveOrderPO po = new DrawOrphanPrereserveOrderPO();
         po.setRecordId(order.getRecordId());

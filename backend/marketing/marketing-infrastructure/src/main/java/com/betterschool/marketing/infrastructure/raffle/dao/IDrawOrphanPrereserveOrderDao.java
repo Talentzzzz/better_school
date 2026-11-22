@@ -32,4 +32,10 @@ public interface IDrawOrphanPrereserveOrderDao {
 
     /** 置 DEAD：state=0 才生效；0 行 = 状态已变，跳过 */
     int markDead(@Param("id") Long id);
+
+    /** 按抽奖记录业务 ID 查对账单（对账轮正向配对分流判据：单在即逐笔收敛链路已接管）；不存在返回 null */
+    DrawOrphanPrereserveOrderPO selectByRecordId(@Param("recordId") String recordId);
+
+    /** 死信单点名扫描：state=2（重试耗尽待人工），按 id 升序，上限 limit（对账轮 DEAD 巡检读入口） */
+    List<DrawOrphanPrereserveOrderPO> listDead(@Param("limit") int limit);
 }

@@ -232,6 +232,12 @@ public interface IRaffleRepository {
     /** 重试耗尽置 {@code DEAD}（条件更新 {@code state = ORPHAN}）；返回 false = 状态已变，跳过 */
     boolean markOrphanPrereserveOrderDead(Long id);
 
+    /** 按抽奖记录业务 ID 查孤儿对账单（对账轮正向配对分流判据：单在即逐笔收敛链路已接管）；不存在返回 null */
+    DrawOrphanPrereserveOrderEntity queryOrphanPrereserveOrderByRecordId(String recordId);
+
+    /** 死信单点名扫描：state=DEAD，按 id 升序，上限 limit（对账轮周期性点名的读入口） */
+    List<DrawOrphanPrereserveOrderEntity> listDeadOrphanPrereserveOrders(int limit);
+
     /**
      * 按抽奖记录反查扣次明细的用户 ID（走 {@code draw_count_detail.idx_ref}）：
      * 孤儿种单时取 {@code user_id} 快照——孤儿口径下扣次必然已发生（主链路先扣次后预扣），
