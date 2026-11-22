@@ -1,6 +1,6 @@
 package com.betterschool.integration.errand;
 
-import com.betterschool.infrastructure.mq.OutboxMessageSender;
+import com.betterschool.infrastructure.outbox.OutboxMessageSender;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.betterschool.trigger.listener.ErrandPaidConsumer;
 import com.betterschool.types.common.Constants;

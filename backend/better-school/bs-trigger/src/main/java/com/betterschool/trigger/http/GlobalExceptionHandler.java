@@ -1,6 +1,7 @@
 package com.betterschool.trigger.http;
 
 import com.betterschool.api.response.Response;
+import com.betterschool.types.common.AppException;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import com.betterschool.types.exception.FrameworkException;
@@ -18,6 +19,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     public Response<Void> handleBusinessException(BusinessException e) {
         return Response.fail(e.getCode(), e.getMessage());
+    }
+
+    /** 营销域业务异常（合并前 marketing trigger 侧 GlobalExceptionHandler 的 AppException 分支，归并进本类） */
+    @ExceptionHandler(AppException.class)
+    public Response<Void> handleAppException(AppException e) {
+        return Response.fail(e.getCode(), e.getInfo());
     }
 
     /** multipart 容器上限（6MB）超限在进 Controller 前抛出，返回业务提示而非系统错误 */

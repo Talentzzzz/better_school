@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.raffle.IDrawStrategyAwardDao">
+
+    <select id="selectAwardListByStrategyId"
+            resultType="com.betterschool.infrastructure.dao.raffle.po.DrawStrategyAwardPO">
+        SELECT id, strategy_id, award_id, award_name, award_desc, award_type, award_rate, level, inv_id, type, sort,
+               create_time, update_time
+        FROM draw_strategy_award
+        WHERE strategy_id = #{strategyId}
+        ORDER BY sort ASC, id ASC
+    </select>
+
+    <!-- 特型奖品位：blacklist / fallback 各取第一行（sort,id 最小）；没有该型行返回 null -->
+    <select id="selectAwardIdBySlot" resultType="java.lang.String">
+        SELECT award_id
+        FROM draw_strategy_award
+        WHERE strategy_id = #{strategyId} AND type = #{type}
+        ORDER BY sort ASC, id ASC
+        LIMIT 1
+    </select>
+
+    <!-- 奖品位行的投放池配置（award-inventory 两层模型下 inv_id 只作分配来源与「不限量」哨兵） -->
+    <select id="selectInvIdByAwardId" resultType="java.lang.String">
+        SELECT inv_id
+        FROM draw_strategy_award
+        WHERE award_id = #{awardId}
+        LIMIT 1
+    </select>
+
+    <!-- 按 award_id 集批量回查（读侧 award_id → inv_id 映射的拼装源） -->
+    <select id="selectAwardsByAwardIds"
+            resultType="com.betterschool.infrastructure.dao.raffle.po.DrawStrategyAwardPO">
+        SELECT id, strategy_id, award_id, award_name, award_desc, award_type, award_rate, level, inv_id, type, sort,
+               create_time, update_time
+        FROM draw_strategy_award
+        WHERE award_id IN
+        <foreach collection="awardIds" item="awardId" open="(" separator="," close=")">#{awardId}</foreach>
+    </select>
+
+    <!-- 奖品位是否存在（分配 usecase 的入参校验用） -->
+    <select id="existsByAwardId" resultType="boolean">
+        SELECT EXISTS(SELECT 1 FROM draw_strategy_award WHERE award_id = #{awardId})
+    </select>
+
+</mapper>

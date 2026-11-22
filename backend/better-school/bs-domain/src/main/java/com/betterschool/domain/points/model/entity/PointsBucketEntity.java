@@ -1,0 +1,32 @@
+package com.betterschool.domain.points.model.entity;
+
+import com.betterschool.types.points.PointsReasonType;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+/**
+ * 积分桶（points_bucket）：每笔入账一行，带自己的过期时间。
+ * 它同时是「发放流水」与「事实源」——没有余额列，余额由未过期桶的 remain 求和得出。
+ * <p>
+ * * {@code bucketId} 是业务标识（统一 IdGenerator 发号，uuid-biz-id 票 07），
+ * 消费明细与对外引用挂它，不挂物理自增 id。
+ */
+@Data
+public class PointsBucketEntity {
+
+    private Long id;
+    /** 业务 ID（对外唯一标识） */
+    private String bucketId;
+    private String userId;
+    /** 入账积分数（恒正） */
+    private Integer amount;
+    /** 该桶剩余可用（消费按 FIFO 递减；过期桶不计入读数，由 expire_at 懒判） */
+    private Integer remain;
+    private LocalDateTime expireAt;
+    private PointsReasonType reasonType;
+    /** 来源业务 id：LOTTERY_WIN = 抽奖记录 id；REBATE = 发放幂等键 */
+    private String refId;
+    private LocalDateTime createTime;
+    private LocalDateTime updateTime;
+}

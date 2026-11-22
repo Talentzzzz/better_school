@@ -3,19 +3,19 @@
 <mapper namespace="com.betterschool.infrastructure.dao.outbox.IOutboxDao">
 
     <sql id="baseColumns">
-        id, msg_id, destination, payload, state, retry_count, create_time
+        id, msg_id, destination, payload, delay_level, delay_ms, state, retry_count, create_time, update_time
     </sql>
 
-    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.outbox.po.Outbox"
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.outbox.po.OutboxPO"
             useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO outbox_message (msg_id, destination, payload, state, retry_count, create_time, update_time)
-        VALUES (#{msgId}, #{destination}, #{payload}, #{state}, #{retryCount}, NOW(), NOW())
+        INSERT INTO outbox_message (msg_id, destination, payload, delay_level, delay_ms, state, retry_count, create_time, update_time)
+        VALUES (#{msgId}, #{destination}, #{payload}, #{delayLevel}, #{delayMs}, #{state}, #{retryCount}, #{createTime}, #{updateTime})
     </insert>
 
-    <select id="selectPendingList" resultType="com.betterschool.infrastructure.dao.outbox.po.Outbox">
+    <select id="selectPendingList" resultType="com.betterschool.infrastructure.dao.outbox.po.OutboxPO">
         SELECT <include refid="baseColumns"/>
         FROM outbox_message
-        WHERE state = 0
+        WHERE state = 0 AND update_time &lt;= DATE_SUB(NOW(), INTERVAL #{timeoutSeconds} SECOND)
         ORDER BY id
         LIMIT #{limit}
     </select>

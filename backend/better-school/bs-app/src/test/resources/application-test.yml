@@ -28,6 +28,20 @@ spring:
 
 rocketmq:
   name-server: localhost:19876
+  producer:
+    # 营销侧测试键（合并前 marketing application-test.yml）：发送超时压短，
+    # 免得每条写入白等默认 3s（测试 namesrv 无 broker，发送必然失败由 outbox 兜底，正是可观察形态）
+    send-message-timeout: 1000
+
+# outbox 重发超时压到 2s（营销侧测试键）：用例要验「只重发超时的行」，真等默认 60s 不可行。生产值见 application.yml
+outbox:
+  scan:
+    timeout-seconds: 2
+
+# 降级冷却压到 300ms（营销侧测试键）：用例要验「冷却内不反复试 redis、冷却过后回到 redis 路径」。生产值见 application.yml
+lottery:
+  bucket:
+    degrade-cooldown-millis: 300
 
 dubbo:
   registry:

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.inventory.IAwardInventoryDetailDao">
+
+    <!-- ============ 预扣落库（一组一事务） ============ -->
+
+    <!-- 流水先行：批量 INSERT IGNORE 撞 uk_award_biz 时静默跳过，返回值 = 实际新增行数。
+         幂等裁决完全交给唯一键——这是跨实例、跨重启、跨重放都能成立的唯一做法；
+         create_time/update_time 由 DB NOW() 写 -->
+    <insert id="batchInsertIgnoreDeductDetails">
+        INSERT IGNORE INTO draw_strategy_award_inventory_detail
+            (award_id, flow_type, quantity, biz_type, biz_id, create_time, update_time)
+        VALUES
+        <foreach collection="details" item="d" separator=",">
+            (#{awardId}, 1, #{d.quantity}, #{d.bizType}, #{d.bizId}, NOW(), NOW())
+        </foreach>
+    </insert>
+
+    <!-- 仅在批量 INSERT 后发现新增行数 &lt; 批大小时调用：捞回本账户上已存在的预扣行（它们的量已经扣过），
+         调用方据此从本次扣减量里剔除。按 (award_id, biz_type, biz_id) 查：唯一键就带 award_id 前缀，
+         落在别的账户（主档 vs 兜底）上的同业务行不算「已落过」 -->
+    <select id="listExistingDeductDetails"
+            resultType="com.betterschool.infrastructure.dao.inventory.po.AwardInventoryDetailPO">
+        SELECT biz_type, biz_id, quantity
+        FROM draw_strategy_award_inventory_detail
+        WHERE award_id = #{awardId} AND flow_type = 1 AND biz_type = #{bizType}
+          AND biz_id IN
+        <foreach collection="bizIds" item="bizId" separator="," open="(" close=")">
+            #{bizId}
+        </foreach>
+    </select>
+
+    <!-- 业务幂等预检（台账非 open 时的重放窗口）：本账户上 flow_type = 1 + biz_type + biz_id 命中 = 已落过 -->
+    <select id="existsDeductDetail" resultType="boolean">
+        SELECT EXISTS(SELECT 1
+                      FROM draw_strategy_award_inventory_detail
+                      WHERE award_id = #{awardId} AND flow_type = 1
+                        AND biz_type = #{bizType} AND biz_id = #{bizId})
+    </select>
+
+    <!-- ============ 兑换确认（同步合并：逐行 INSERT IGNORE + waiting→issued） ============ -->
+
+    <!-- 逐行 INSERT IGNORE 确认明细（flow_type = 2）：撞 uk_award_biz 静默跳过，返回值 = 是否新增（1/0）。
+         确认批天然小（一份实物出库），逐行插不批插——「哪几行是新增」没有歧义，
+         转移量精确等于新增量。create_time/update_time 由 DB NOW() 写 -->
+    <insert id="insertIgnoreClaimDetail" parameterType="com.betterschool.infrastructure.dao.inventory.po.AwardInventoryDetailPO">
+        INSERT IGNORE INTO draw_strategy_award_inventory_detail
+            (award_id, flow_type, quantity, biz_type, biz_id, create_time, update_time)
+        VALUES (#{awardId}, 2, #{quantity}, #{bizType}, #{bizId}, NOW(), NOW())
+    </insert>
+
+    <!-- ============ 分配转入（池 → 奖品） ============ -->
+
+    <!-- 逐行 INSERT IGNORE 分配转入明细（flow_type = 0，biz_id = 分配单号）：撞 uk_award_biz 静默跳过，
+         返回 1 = 新增 / 0 = 本单已分配过（按成功回放）。create_time/update_time 由 DB NOW() 写 -->
+    <insert id="insertIgnoreAllocateDetail" parameterType="com.betterschool.infrastructure.dao.inventory.po.AwardInventoryDetailPO">
+        INSERT IGNORE INTO draw_strategy_award_inventory_detail
+            (award_id, flow_type, quantity, biz_type, biz_id, create_time, update_time)
+        VALUES (#{awardId}, 0, #{quantity}, #{bizType}, #{bizId}, NOW(), NOW())
+    </insert>
+
+    <!-- ============ 孤儿预扣对账（spec User Stories 14–16） ============ -->
+
+    <!-- 孤儿预扣候选扫描：预扣行（flow_type=1 + LOTTERY_DRAW）且超过补偿阈值，其 biz_id（= 抽奖记录 id）
+         在 draw_record 无对应行 = 主链路落库从未执行。NOT EXISTS 反查的是对账判据的另一张域表
+         （只读反查，不写；先例：ErrandViewCountMapper 的 NOT EXISTS upsert 守卫）——
+         落库已发生的行在 SQL 里排除，扫描窗口不被正常流水淹没。按 id 升序 FIFO -->
+    <select id="listOrphanDrawPrereserveDetails"
+            resultType="com.betterschool.infrastructure.dao.inventory.po.AwardInventoryDetailPO">
+        SELECT id, award_id, flow_type, quantity, biz_type, biz_id, create_time, update_time
+        FROM draw_strategy_award_inventory_detail
+        WHERE flow_type = 1 AND biz_type = 'LOTTERY_DRAW'
+          AND create_time &lt; #{before}
+          AND NOT EXISTS (SELECT 1 FROM draw_record WHERE record_id = biz_id)
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 删除孤儿预扣明细行：随回补同事务执行（守恒判据 B3：waiting + issued = Σ flow_type=1 quantity，
+         台账转回而不删行即破等式）。按业务键删，返回 0 = 行已不在（幂等） -->
+    <delete id="deleteDeductDetail">
+        DELETE FROM draw_strategy_award_inventory_detail
+        WHERE award_id = #{awardId} AND flow_type = 1 AND biz_type = #{bizType} AND biz_id = #{bizId}
+    </delete>
+
+</mapper>

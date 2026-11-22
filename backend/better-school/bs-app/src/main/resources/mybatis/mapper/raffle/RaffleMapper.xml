@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.raffle.IRaffleDao">
+
+    <!-- 累计抽数 = draw_record 行数：权重档「count ≤ 累计抽数」的命中判据 -->
+    <select id="countUserRecords" resultType="int">
+        SELECT COUNT(*)
+        FROM draw_record
+        WHERE strategy_id = #{strategyId} AND user_id = #{userId}
+    </select>
+
+    <insert id="insertDrawRecord"
+            parameterType="com.betterschool.infrastructure.dao.raffle.po.DrawRecordPO">
+        INSERT INTO draw_record (record_id, user_id, activity_id, strategy_id, award_id, award_name, award_desc,
+                                 award_type, level, inv_id, state, create_time, update_time)
+        VALUES (#{recordId}, #{userId}, #{activityId}, #{strategyId}, #{awardId}, #{awardName}, #{awardDesc},
+                #{awardType}, #{level}, #{invId}, #{state}, #{createTime}, #{updateTime})
+    </insert>
+
+    <!-- =============== 读侧（票 13） =============== -->
+
+    <select id="selectRecordByRecordId" resultType="com.betterschool.infrastructure.dao.raffle.po.DrawRecordPO">
+        SELECT id, record_id, user_id, activity_id, strategy_id, award_id, award_name, award_desc,
+               award_type, level, inv_id, state, create_time, update_time
+        FROM draw_record
+        WHERE record_id = #{recordId}
+    </select>
+
+    <select id="countTodayDrawn" resultType="int">
+        SELECT COUNT(*)
+        FROM draw_record
+        WHERE user_id = #{userId} AND create_time >= CURDATE()
+    </select>
+
+    <select id="countDrawRecords" resultType="int">
+        SELECT COUNT(*)
+        FROM draw_record
+        WHERE user_id = #{userId} AND award_type != 'THANKS'
+    </select>
+
+    <!-- 我的中奖记录（恒过滤 THANKS）：draw_record 单表分页；积分面额由仓储按 inv_id 集批量回查
+         虚拟台账（selectPointValuesByInvIds，仅 type=POINTS）拼装，缺行 = null（原 LEFT JOIN 口径） -->
+    <select id="selectDrawRecordRows" resultType="com.betterschool.infrastructure.dao.raffle.po.DrawRecordViewPO">
+        SELECT r.record_id AS recordId,
+               r.award_id  AS awardId,
+               r.award_name AS awardName,
+               r.award_type AS awardType,
+               r.level     AS level,
+               r.inv_id    AS invId,
+               r.create_time AS createTime
+        FROM draw_record r
+        WHERE r.user_id = #{userId} AND r.award_type != 'THANKS'
+        ORDER BY r.create_time DESC, r.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countMyPrizes" resultType="int">
+        SELECT COUNT(*)
+        FROM draw_record
+        WHERE user_id = #{userId} AND award_type != 'THANKS'
+        <if test="states != null and states.size() > 0">
+            AND state IN
+            <foreach item="s" collection="states" open="(" separator="," close=")">#{s}</foreach>
+        </if>
+    </select>
+
+    <!-- 我的奖品（恒过滤 THANKS）：draw_record 单表分页；claimedAt（EXCHANGE 动作明细落库时刻）由仓储
+         按 record_id 集批量回查 draw_record_detail 拼装（缺行 = 还没兑换，null，原 LEFT JOIN 口径） -->
+    <select id="selectMyPrizeRows" resultType="com.betterschool.infrastructure.dao.raffle.po.DrawUserPrizeViewPO">
+        SELECT r.record_id AS recordId,
+               r.award_id  AS awardId,
+               r.award_name AS awardName,
+               r.award_type AS awardType,
+               r.level     AS level,
+               r.state     AS state,
+               r.create_time AS createTime
+        FROM draw_record r
+        WHERE r.user_id = #{userId} AND r.award_type != 'THANKS'
+        <if test="states != null and states.size() > 0">
+            AND r.state IN
+            <foreach item="s" collection="states" open="(" separator="," close=")">#{s}</foreach>
+        </if>
+        ORDER BY r.create_time DESC, r.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <!-- =============== 发货状态机写面（票 14） =============== -->
+
+    <!--
+        条件更新是状态机的幂等根：守卫 = 起点状态，重投 / 并发重放时返回 0（不推进、不落明细）。
+        不加 user_id 守卫：归属校验在域服务里做（查无 / 非本人都不给推进），这里只保证状态单调。
+    -->
+    <update id="updateRecordState">
+        UPDATE draw_record
+        SET state = #{toState}, update_time = NOW()
+        WHERE record_id = #{recordId} AND state = #{fromState}
+    </update>
+</mapper>

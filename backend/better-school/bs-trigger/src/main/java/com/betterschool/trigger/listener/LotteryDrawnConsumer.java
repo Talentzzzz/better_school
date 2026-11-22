@@ -1,7 +1,7 @@
 package com.betterschool.trigger.listener;
 
 import com.betterschool.types.common.Constants;
-import com.betterschool.usecase.marketing.LotteryDrawnMessage;
+import com.betterschool.types.common.LotteryDrawnMessage;
 import com.betterschool.usecase.marketing.MarketingNoticeCase;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;

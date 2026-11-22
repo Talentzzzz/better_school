@@ -1,5 +1,7 @@
 package com.betterschool.usecase.marketing;
 
+import com.betterschool.types.common.LotteryDrawnMessage;
+import com.betterschool.types.common.PointsChangedMessage;
 import com.betterschool.domain.notification.model.valobj.NotificationEventMessage;
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;

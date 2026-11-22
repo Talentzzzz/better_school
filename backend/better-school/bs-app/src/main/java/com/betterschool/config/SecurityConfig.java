@@ -20,7 +20,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 /**
- * 无状态 JWT 安全配置：白名单接口放行，其余需登录；401/403 返回统一 Response JSON
+ * 无状态 JWT 安全配置：白名单接口放行，其余需登录；401/403 返回统一 Response JSON。
+ * 白名单 = 单体既有放行项 + 营销侧两条（合并前 marketing SecurityConfig：
+ * GET /api/lottery/activity、GET /api/lottery/prizes——访客看 banner 与奖品目录）。
  */
 @Configuration
 @EnableWebSecurity
@@ -46,6 +48,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/trade/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/errand/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/search/**").permitAll()
+                        // 营销域免登录（合并前 marketing SecurityConfig）：抽奖 banner 与奖品目录访客可见
+                        .requestMatchers(HttpMethod.GET, "/api/lottery/activity", "/api/lottery/prizes").permitAll()
                         // WS 握手鉴权不走 JWT：query 一次性票据由端点握手拦截器原子取删校验（票 04）
                         .requestMatchers(WsConnectionConstants.ENDPOINT).permitAll()
                         .anyRequest().authenticated())

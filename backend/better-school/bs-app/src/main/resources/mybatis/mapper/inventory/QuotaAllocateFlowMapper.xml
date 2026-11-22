@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.inventory.IQuotaAllocateFlowDao">
+
+    <!-- INSERT IGNORE 分配流水（池侧幂等裁决 + 池 surplus 对账依据）：
+         撞 uk_alloc_biz（分配单号）静默跳过，返回 1 = 新增 / 0 = 本单已执行过（按成功回放） -->
+    <insert id="insertIgnoreAllocateFlow" parameterType="com.betterschool.infrastructure.dao.inventory.po.QuotaAllocateFlowPO">
+        INSERT IGNORE INTO inventory_allocation_flow
+            (pool_segment, pool_inv_id, award_id, quantity, alloc_biz_id, create_time, update_time)
+        VALUES (#{poolSegment}, #{poolInvId}, #{awardId}, #{quantity}, #{allocBizId}, NOW(), NOW())
+    </insert>
+
+    <!-- 分配单号是否已落过流水（幂等预检用） -->
+    <select id="existsAllocateFlow" resultType="boolean">
+        SELECT EXISTS(SELECT 1
+                      FROM inventory_allocation_flow
+                      WHERE alloc_biz_id = #{allocBizId})
+    </select>
+
+</mapper>

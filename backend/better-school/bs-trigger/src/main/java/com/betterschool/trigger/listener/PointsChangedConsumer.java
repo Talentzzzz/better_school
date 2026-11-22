@@ -2,7 +2,7 @@ package com.betterschool.trigger.listener;
 
 import com.betterschool.types.common.Constants;
 import com.betterschool.usecase.marketing.MarketingNoticeCase;
-import com.betterschool.usecase.marketing.PointsChangedMessage;
+import com.betterschool.types.common.PointsChangedMessage;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

@@ -51,13 +51,25 @@ spring:
       port: 6379
       database: 0
       password: bs123456   # compose redis 容器 requirepass bs123456
+      # 营销域两行（合并前 marketing application.yml）：抽奖概率表与库存桶走 redis，
+      # 连接超时压到 1s——redis 挂掉时快速失败，不拖垮抽奖主链路（每次抽奖吃满默认超时会炸）
+      timeout: 1000ms
+      connect-timeout: 1000ms
   elasticsearch:
     uris: http://localhost:9200   # compose bs-es 容器（需先执行 WSL2 vm.max_map_count 调整）
 
 rocketmq:
   name-server: localhost:9876   # 联调时改真实地址
   producer:
+    # 合并前单体与 marketing 各一个 producer group，合并后归一取单体值
     group: better-school-producer
+
+# outbox 兜底重发（营销侧超集语义，合并后全工程统一口径）：outboxScan 只捞 state=0 且
+# update_time 超过该秒数的行——刚提交的那批由 afterCommit 的首次异步发送负责，扫描只兜底，
+# 不抢在前面重复投递
+outbox:
+  scan:
+    timeout-seconds: 60
 
 # 同步边（Dubbo）：单体作为 Provider 暴露 bs-api 的 IUserQueryService，
 # 营销 app 作为 Consumer（tri 协议，两 app 同机跑故端口错开）。jwt.* 见 better-school-shared.yml
@@ -75,6 +87,10 @@ dubbo:
     # 会隐式连带此值，这里显式写不吃默认——自文档 + 抗将来只改一边。与 Tomcat 翻开关同构：
     # 消平台线程上限（threads=200 成死参数，不许写 threads/queues），DB 侧由连接池兜。
     threadpool: virtual
+  consumer:
+    # 营销侧合并前对 IUserQueryService 是 check=false 的 Consumer（端口未起不影响启动）；
+    # 合并后消费边退役，保留该键防将来再引入 Consumer 时启动期强校验
+    check: false
   # 没有这一行 @DubboService 不会被打扫到（starter 只在配了 base-packages 时才注册
   # ServiceAnnotationPostProcessor），表现是应用正常启动但服务一条都没导出、consumer 解析不到
   scan:
@@ -133,8 +149,29 @@ merge:
     shard-capacity: 2000    # 只当「降级触发点 + 内存上界」，满了就拒，不扩容
     drain-timeout-ms: 5000  # 停机排空（停收 → 排空 → signal + join）的等待上限
 
+# 库存合并器（合并前 marketing 侧 merge.batch.*，与计数侧同一套窗口 / 批 / 超时；全部未经扫参）。
+# 通用攒批引擎（infrastructure/merge）：任何仓储都能用，调用方传「分片键 + 落库函数」即可。
+# shard-count 的硬上限是「连接池 - 2」（per-shard 常驻 flush 线程模型，flush 并发 = shard-count），
+# 由 config/MergeEngineConfig 启动时校验并把两个数打进日志。
+# shardCapacity 取 2000 是刻意的：库存扣减资金敏感 ⇒ 满了立刻降级为同步单条落库，队列别长。
+merge:
+  batch:
+    shard-count: 8          # 2 的幂；= flush 常驻线程数，必须 <= 连接池上限 - 2（池 10 ⇒ 上限 8）
+    max-flush-delay-millis: 5            # 合并窗口：分片首个请求起算 5ms 后 flush，攒满可提前触发
+    max-batch: 200          # 200 行 ≈ 8ms 落库；再大 wait-timeout-ms 就吃紧
+    wait-timeout-ms: 100    # 必须 > max-flush-delay-millis：5ms 窗口 + 8ms 落库 + 抖动；超时 = TIMEOUT（结果未知）
+    shard-capacity: 2000    # 只当「降级触发点 + 内存上界」，满了就拒（调用方同步降级），不扩容
+    drain-timeout-ms: 5000  # 停机排空（停收 → 排空 → signal + join）的等待上限
+
+# redis 奖池降级冷却（营销侧）：连不上后这段时间内直接走 DB 直扣，不再每请求吃一次连接超时
+lottery:
+  bucket:
+    degrade-cooldown-millis: 10000
+
 mybatis:
-  mapper-locations: classpath:/mybatis/mapper/*.xml
+  # 营销域 mapper 分域子目录（points/raffle/inventory/rebate），必须 ** 递归；
+  # ** 对单体平铺目录向后兼容
+  mapper-locations: classpath:/mybatis/mapper/**/*.xml
   configuration:
     map-underscore-to-camel-case: true
     log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
