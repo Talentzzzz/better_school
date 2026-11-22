@@ -101,7 +101,7 @@
 下单（需登录，信用可操作账号）：商品锁定进订单，返回 `data = orderId`。
 
 ### POST /api/trade/orders/{orderId}/pay
-支付（买家）：钱包冻结 `PRODUCT_FROZEN` 托管款，订单进入已付款——**冻结流水（`uk_order_type` 幂等）+ 余额条件扣减与「待支付 → 已支付」条件翻转经组合事务端口并入一个物理事务**；余额不足整事务回滚、订单留待支付（fund-consistency 票 06）。
+支付（买家）：钱包冻结 `PRODUCT_FROZEN` 托管款，订单进入已付款——**两段式资金链路（ADR-0016）**：资金段冻结（流水先行，`uk_order_type` 幂等 + 可用余额条件扣减）由 case 层先行，余额不足直接失败、订单留待支付；翻转段「待支付 → 已支付」条件翻转为单仓储事务。翻转失败时订单留待支付、货款悬置冻结（长款中间态），由 `productFundOrphanScan` 孤儿扫描解冻收敛（fund-consistency 票 06，组合事务端口已废止）。
 
 ### POST /api/trade/orders/{orderId}/mark-delivered
 卖家标记已发货。
@@ -110,7 +110,7 @@
 买家确认收货：托管款解冻（`PRODUCT_UNFROZEN`）并入卖家余额（`PRODUCT_INCOME`），订单完成。
 
 ### POST /api/trade/orders/{orderId}/cancel
-买家取消订单：已支付的解冻托管款退回（未支付的不动钱包），订单关闭——已支付态的取消翻转与解冻退款（`uk_order_type` 幂等）经组合事务端口并入**一个物理事务**，翻转未命中整事务回滚（fund-consistency 票 07）。
+买家取消订单：已支付的解冻托管款退回（未支付的不动钱包），订单关闭——**已支付态为两段式（ADR-0016）**：取消翻转（含台账回补 + 搜索同步，单仓储事务）先行，翻转未命中抛业务异常、资金段尚未执行零残留；解冻退款（`uk_order_type` 幂等）由 case 层随后执行；翻转与解冻之间的宕机孤儿（订单已取消但货款悬置冻结）由 `productFundOrphanScan` 收敛（fund-consistency 票 07）；待支付取消无冻结、保持原单事务翻转。
 
 ### GET /api/trade/orders/{orderId}
 订单详情（参与者可见），返回 `ProductOrderResponseDTO`。

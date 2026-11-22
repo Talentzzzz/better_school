@@ -5,6 +5,7 @@ import com.betterschool.domain.trade.model.entity.ProductOrderEntity;
 import com.betterschool.domain.trade.model.valobj.ProductCategoryVO;
 import com.betterschool.domain.trade.model.valobj.ProductFeedCursorVO;
 import com.betterschool.domain.trade.model.valobj.ProductFeedIndexItemVO;
+import com.betterschool.domain.trade.model.valobj.ProductOrderEventVO;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -175,6 +176,15 @@ public interface ITradeRepository {
      * + 回补翻态 + 搜索同步消息，同一事务；返回 false = 0 行（已支付/已取消，幂等跳过）
      */
     boolean cancelPendingPaymentWithSearchSync(String orderId);
+
+    /**
+     * 孤儿扫描输入（ADR-0016 两段式）：近窗口进入终态的订单（按 update_time 升序），
+     * 供扫描用例结合事件行裁决补解冻；窗口重扫幂等（资金动作全部流水唯一键吸收）
+     */
+    List<ProductOrderEntity> listRecentSettled(int windowMinutes, int limit);
+
+    /** 订单最新一条状态流转事件（同订单 id 递增即状态变更顺序）：孤儿扫描的已支付取消判据事实源 */
+    ProductOrderEventVO latestEventOf(String orderId);
 
     // ---------- 商品状态变更 + 搜索同步（实现内编程式事务，REQUIRED） ----------
 

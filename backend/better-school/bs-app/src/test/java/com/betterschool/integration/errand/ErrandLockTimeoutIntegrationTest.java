@@ -322,8 +322,8 @@ class ErrandLockTimeoutIntegrationTest extends CommunityApiTestBase {
 
     private int creditScoreOf(Session user) {
         Integer score = jdbcTemplate.queryForObject(
-                "SELECT credit_score FROM bs_user WHERE user_id = ?", Integer.class, user.userId());
-        return score == null ? -1 : score;
+                "SELECT credit_score FROM user_credit WHERE user_id = ?", Integer.class, user.userId());
+        return score == null ? 100 : score;
     }
 
     private int creditDetailCount(Session user, String reasonType) {

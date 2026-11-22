@@ -167,3 +167,21 @@ SELECT @group_id, '跑腿资金孤儿扫描（补解冻/入账/扣分）', NOW()
        0, 'BEAN', '', '', NOW(),
        '', 1, 0, 0
 WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'errandFundOrphanScan');
+
+-- 商品资金孤儿扫描（ADR-0016 两段式资金链路的收敛入口，票 B）：与跑腿同口径的窗口重扫——
+--   schedule_conf             = '0/30 * * * * ?'    30s 周期（照 errandFundOrphanScan 口径）
+--   executor_route_strategy   = 'FIRST'             单点执行即可：扫描是幂等重放，无需分片
+--   executor_block_strategy   = 'SERIAL_EXECUTION'  tick 重叠时串行排队（孤儿是异常路径，常态 0 行）
+--   executor_fail_retry_count = 0                   调度层不重试（周期重扫即重试）
+INSERT INTO xxl_job_info
+(job_group, job_desc, add_time, update_time, author, alarm_email,
+ schedule_type, schedule_conf, misfire_strategy, executor_route_strategy,
+ executor_handler, executor_param, executor_block_strategy, executor_timeout,
+ executor_fail_retry_count, glue_type, glue_source, glue_remark, glue_updatetime,
+ child_jobid, trigger_status, trigger_last_time, trigger_next_time)
+SELECT @group_id, '商品资金孤儿扫描（补解冻）', NOW(), NOW(), 'better-school', '',
+       'CRON', '0/30 * * * * ?', 'DO_NOTHING', 'FIRST',
+       'productFundOrphanScan', '', 'SERIAL_EXECUTION', 0,
+       0, 'BEAN', '', '', NOW(),
+       '', 1, 0, 0
+WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'productFundOrphanScan');

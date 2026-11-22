@@ -481,7 +481,8 @@ public class RaffleRepository implements IRaffleRepository {
 
     @Override
     public boolean insertPurchaseOrder(DrawCountPurchaseOrderEntity order) {
-        // REQUIRED：并入调用方（port 适配器）的组合事务，与积分扣分同提交同回滚
+        // 第一段的本地事务（ADR-0016 票 C）：购买单 INSERT 自成一个 raffle 仓储事务，
+        // 不再有调用方（port 组合事务）可并入
         return Boolean.TRUE.equals(transactionTemplate.execute(status ->
                 drawCountPurchaseOrderDao.insertOrder(toPurchaseOrderPO(order)) > 0));
     }
@@ -507,8 +508,8 @@ public class RaffleRepository implements IRaffleRepository {
     }
 
     @Override
-    public boolean markPurchaseOrderDead(Long id) {
-        return drawCountPurchaseOrderDao.markDead(id) > 0;
+    public boolean markPurchaseOrderDead(String purchaseOrderId) {
+        return drawCountPurchaseOrderDao.markDead(purchaseOrderId) > 0;
     }
 
     // ---------------------------------------------------------------- 孤儿预扣对账单（扫描种单 + 重试状态机）

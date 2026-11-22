@@ -14,11 +14,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 商品支付组合事务收口集成测试（资金一致性票 06）：在主缝（商品订单用例层公开支付方法
- * {@link ProductOrderCase#payOrder}）上断言「订单待支付→已支付翻转」与「货款 PRODUCT_FROZEN 冻结」
- * 在同一物理事务内的外显行为——只断言外部可观察状态（订单状态 / 钱包流水 / 余额），
- * 不断言事务内部编排。失败注入点 = 端口委托的钱包动作边界（余额不足即真实失败注入）。
- * 只断言外显行为：支付成功三态同生、余额不足整事务回滚、幂等重放无害。
+ * 商品支付资金链路集成测试（资金一致性票 06，ADR-0016 两段化后口径同步）：在主缝（商品订单用例层
+ * 公开支付方法 {@link ProductOrderCase#payOrder}）上断言两段式资金链路的外显行为——资金段
+ * 「货款 PRODUCT_FROZEN 冻结」（流水 uk_order_type 幂等 + 余额条件扣减）由 case 层先行，
+ * 翻转段「订单待支付→已支付」条件翻转为单仓储事务；只断言外部可观察状态
+ * （订单状态 / 钱包流水 / 余额），不断言段落编排。失败注入点 = 资金段的钱包动作边界
+ * （余额不足即真实失败注入，翻转段尚未执行）。只断言外显行为：支付成功三态齐备、
+ * 余额不足支付失败订单留待支付、幂等重放无害。
  */
 class ProductPayCompositeTxIntegrationTest extends CommunityApiTestBase {
 
@@ -28,7 +30,7 @@ class ProductPayCompositeTxIntegrationTest extends CommunityApiTestBase {
     /** 注册赠送初始余额（WalletRepository.INITIAL_BALANCE）——低余额买家的资金注入基线 */
     private static final String INITIAL_BALANCE = "1000";
 
-    // ---------- 支付成功：订单已支付 + 货款真实冻结（同一物理事务的外显三态） ----------
+    // ---------- 支付成功：订单已支付 + 货款真实冻结（两段式成功路径的外显三态） ----------
 
     @Test
     void 支付成功_订单转已支付且货款同事务冻结() {
@@ -51,20 +53,21 @@ class ProductPayCompositeTxIntegrationTest extends CommunityApiTestBase {
         assertThat(frozenAmountOf(buyer.userId())).as("冻结额抬升货款").isEqualByComparingTo("39.80");
     }
 
-    // ---------- 余额不足：整事务回滚，订单留待支付 ----------
+    // ---------- 余额不足：资金段先行失败，翻转段未执行，订单留待支付 ----------
 
     @Test
     void 余额不足_支付整事务回滚订单留待支付() {
         Session seller = registerAndLogin("13800010003", "卖家B");
         Session buyer = registerAndLogin("13800010004", "买家B");
-        // 标价 2000 > 注册初始余额 1000：冻结（钱包动作）必败，即端口委托边界的真实失败注入
+        // 标价 2000 > 注册初始余额 1000：冻结（资金段钱包动作）必败，即资金段边界的真实失败注入
         String productId = createProduct(seller, "高价古董花瓶", "2000.00");
         String orderId = createProductOrder(buyer, productId, 1);
 
         assertThatThrownBy(() -> productOrderCase.payOrder(orderId, buyer.userId()))
                 .as("余额不足支付直接失败").isInstanceOf(BusinessException.class);
 
-        // 整事务回滚：订单停在待支付，冻结流水不诞生，余额纹丝不动，PAID 事件也未落
+        // 资金段失败（流水与余额条件扣减随其本地事务回滚），翻转段尚未执行：订单停在待支付，
+        // 冻结流水不诞生，余额纹丝不动，PAID 事件也未落
         assertThat(orderState(orderId)).as("订单留待支付").isEqualTo("PENDING_PAYMENT");
         assertThat(freezeFlowCount(orderId)).as("不产生冻结流水").isZero();
         assertThat(balanceOf(buyer.userId())).as("余额不变").isEqualByComparingTo(INITIAL_BALANCE);

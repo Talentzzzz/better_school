@@ -243,7 +243,7 @@ class ErrandTimeoutFundConsistencyIntegrationTest extends CommunityApiTestBase {
 
     private int creditScoreOf(String userId) {
         Integer score = jdbcTemplate.queryForObject(
-                "SELECT credit_score FROM bs_user WHERE user_id = ?", Integer.class, userId);
-        return score == null ? -1 : score;
+                "SELECT credit_score FROM user_credit WHERE user_id = ?", Integer.class, userId);
+        return score == null ? 100 : score;
     }
 }

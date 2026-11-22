@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS draw_count_purchase_order (
     user_id           VARCHAR(36)      NOT NULL COMMENT '用户 ID',
     quantity          INT          NOT NULL COMMENT '购买次数份数',
     points_cost       INT          NOT NULL COMMENT '本次扣减积分 = 份数 × 单价（Constants.DRAW_COUNT_PURCHASE_PRICE）',
-    state             TINYINT      NOT NULL DEFAULT 0 COMMENT '0已扣分待入账(DEDUCTED) 1已完成(DONE) 2死信(DEAD,重试耗尽，人工介入)',
+    state             TINYINT      NOT NULL DEFAULT 0 COMMENT '0已落单待收敛(CREATED,扣分结果未知) 1已完成(DONE) 2死信(DEAD,重试耗尽或积分不足,人工介入/原token重放自愈)',
     retry_count       INT          NOT NULL DEFAULT 0 COMMENT '补偿重试次数（抢占时递增）',
     next_retry_at     DATETIME         NULL COMMENT '下次补偿重试时间（指数退避 1/2/4/8/16 分钟）；NULL = 立即可扫',
     finish_time       DATETIME         NULL COMMENT '入账完成时间',
@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS draw_count_purchase_order (
     UNIQUE KEY uk_purchase_order_id (purchase_order_id) COMMENT '购买幂等键：同 token 重放恒同一单号，撞键即重放',
     KEY idx_state_next_retry (state, next_retry_at) COMMENT '补偿扫描（WHERE state=0 AND next_retry_at <= NOW()）',
     KEY idx_user_time (user_id, create_time) COMMENT '购买历史（读侧后置）'
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '抽奖次数购买单（订单兼 outbox：与扣积分同事务落库，单在即分已扣，入账幂等可重试收敛）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '抽奖次数购买单（订单兼 outbox：三段式「落单→扣分→推进」的状态机载体与对账源，扣分结果未知由扫描收敛，入账幂等可重试）';
 
 CREATE TABLE IF NOT EXISTS draw_orphan_prereserve_order (
     id            BIGINT       NOT NULL AUTO_INCREMENT,

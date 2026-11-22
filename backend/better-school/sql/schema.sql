@@ -22,21 +22,19 @@ CREATE TABLE IF NOT EXISTS bs_user (
     show_liked    TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '隐私开关：公开我的"赞过"（1 公开 / 0 仅自己，仅他视生效）',
     show_comments TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '隐私开关：公开我的"评论"（1 公开 / 0 仅自己，仅他视生效）',
     role          VARCHAR(20)  NOT NULL DEFAULT 'USER' COMMENT '角色 USER/ADMIN',
-    state         VARCHAR(20)  NOT NULL DEFAULT 'NORMAL' COMMENT '状态 NORMAL/BANNED',
-    credit_score  INT          NOT NULL DEFAULT 100 COMMENT '信用分',
     last_login_at DATETIME     NULL COMMENT '最近登录时间',
     create_time   DATETIME     NOT NULL COMMENT '创建时间',
     update_time   DATETIME     NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
     UNIQUE KEY uk_user_id (user_id),
     UNIQUE KEY uk_phone (phone)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '用户表';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '用户表（user 域独占写；state/credit_score 已迁 user_credit，归 credit 域）';
 
 -- 系统助手账号（通知 CHAT 通道发送者，Constants.SYSTEM_USER_ID 固定 ID）：
 -- 订单动态/信用分等留档类通知由它经 chat 发送管线落进用户「系统助手」1v1 会话；
 -- phone 占位不参与登录，role=ADMIN 避免被普通用户维度枚举逻辑误伤
-INSERT INTO bs_user (user_id, phone, nickname, role, state, credit_score, create_time, update_time)
-SELECT '00000000-0000-0000-0000-000000000001', '00000000000', '系统助手', 'ADMIN', 'NORMAL', 100, NOW(), NOW()
+INSERT INTO bs_user (user_id, phone, nickname, role, create_time, update_time)
+SELECT '00000000-0000-0000-0000-000000000001', '00000000000', '系统助手', 'ADMIN', NOW(), NOW()
 WHERE NOT EXISTS (SELECT 1 FROM bs_user WHERE user_id = '00000000-0000-0000-0000-000000000001');
 
 CREATE TABLE IF NOT EXISTS post (
@@ -874,6 +872,21 @@ CREATE TABLE IF NOT EXISTS wallet_detail (
     UNIQUE KEY uk_order_type (order_id, type, biz_round, user_id),
     KEY idx_user (user_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '钱包流水表';
+
+-- 信用账户表：credit 域独占读写（表所有权原则：一张表只归一个领域写）。
+-- score/state 原寄生在 bs_user 列上，为满足所有权原则迁出为独立表；
+-- user/search 域只读本表（读跨域，拆库后走 credit 域 API）。
+-- 行懒创建：注册不插行，首次信用变动前 INSERT IGNORE 播种（撞 uk 忽略）；
+-- 无行 = 默认分 100 / 状态 NORMAL（与原列 DEFAULT 语义一致）。
+CREATE TABLE IF NOT EXISTS user_credit (
+    id           BIGINT      NOT NULL AUTO_INCREMENT,
+    user_id      VARCHAR(36)      NOT NULL COMMENT '用户 ID',
+    credit_score INT         NOT NULL DEFAULT 100 COMMENT '信用分 0~100',
+    state        VARCHAR(20) NOT NULL DEFAULT 'NORMAL' COMMENT '状态 NORMAL/BANNED',
+    update_time  DATETIME    NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_user_id (user_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '信用账户表（credit 域独占写）';
 
 CREATE TABLE IF NOT EXISTS user_credit_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,

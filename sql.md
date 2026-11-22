@@ -1,7 +1,7 @@
 # 全库建表语句（SQL DDL 汇总）
 
 > 收录 2 个工程的建表语句：better-school 单体（库 better_school，超时中心已内嵌在此）、marketing 营销（库 bs_marketing；points / raffle（含抽奖次数）/ rebate / inventory 同属 `backend/marketing/` 一个工程）。XXL-Job 调度库（原 backend/sql/xxl-job.sql 的 8 张表）不在本文档范围内。
-> **超时中心内嵌化（2026-10-16 起，[`.scratch/timeout-inline/`](.scratch/timeout-inline/map.md)）已完成**：原独立超时工程与独立库已下线，16 张 `timeout_task_00..15` 分表在 `better_school` / `better_school_test` 里（见 §1 末），与业务表同库、同事务。全库物理表数 = **38（单体业务）+ 16（单体超时分表）+ 18（营销）= 72**。
+> **超时中心内嵌化（2026-10-16 起，[`.scratch/timeout-inline/`](.scratch/timeout-inline/map.md)）已完成**：原独立超时工程与独立库已下线，16 张 `timeout_task_00..15` 分表在 `better_school` / `better_school_test` 里（见 §1 末），与业务表同库、同事务。全库物理表数 = **39（单体业务）+ 16（单体超时分表）+ 18（营销）= 73**。
 > **业务 ID 全面 UUID 化（2026-11-02 起，[`.scratch/uuid-biz-id/`](.scratch/uuid-biz-id/spec.md)）已完成**：全部业务对象的对外唯一标识统一为 **UUID 字符串**（DB 列 `VARCHAR(36)`，由应用层统一 `IIdGenerator` 在 insert 前发号、随行一次写入），Java 实体/PO/DTO 全链路 String；marketing 的雪花发号器退役。**存量数据不迁移——开发/测试库删库重建**，历史上按 BIGINT 体系书写的割接/回填脚本（`sql/backfill/`、`sql/cutover/` 全目录）已随收口整体退役删除。
 > 不含种子数据 `INSERT`（schema 内置的敏感词/单行配置种子除外）；开发库与测试库共用同一份 DDL，建库语句在各自的 `init-dev.sql` / `init-test.sql`。
 > 命名口径：每张表固定以 `create_time DATETIME NOT NULL COMMENT '创建时间'` 与 `update_time DATETIME NOT NULL COMMENT '更新时间'` 收尾（不带默认值，由应用写入），全库不再出现 `created_at` / `updated_at`。例外共两处：**① §1 的 `timeout_task_00..15`**（`created_at` / `updated_at`）：那是分批表从原独立超时库迁入时的既有形态、且已进 16 张分表与 mapper XML，本口径不回溯改它（见 §1 说明）；**② §1 的各域 feed 索引表与浏览明细表**（feed-index-uv 票 01 的 `post_feed_index` / `user_view_history`，market-feed-uv 票 01 的 `product_feed_index` / `errand_feed_index` / `product_view_history` / `errand_view_history`）：时间列按各自需要收窄——索引表只留 `update_time`（`feed_time` 承担行诞生时刻），明细表只留 `viewed_at`（首刷建行、重复浏览全量刷新），见 §1 对应表注释。
@@ -29,18 +29,16 @@ CREATE TABLE IF NOT EXISTS bs_user (
     show_liked    TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '隐私开关：公开我的"赞过"（1 公开 / 0 仅自己，仅他视生效）',
     show_comments TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '隐私开关：公开我的"评论"（1 公开 / 0 仅自己，仅他视生效）',
     role          VARCHAR(20)  NOT NULL DEFAULT 'USER' COMMENT '角色 USER/ADMIN',
-    state         VARCHAR(20)  NOT NULL DEFAULT 'NORMAL' COMMENT '状态 NORMAL/BANNED',
-    credit_score  INT          NOT NULL DEFAULT 100 COMMENT '信用分',
     last_login_at DATETIME     NULL COMMENT '最近登录时间',
     create_time   DATETIME     NOT NULL COMMENT '创建时间',
     update_time   DATETIME     NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
     UNIQUE KEY uk_user_id (user_id),
     UNIQUE KEY uk_phone (phone)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '用户表';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '用户表（user 域独占写；state/credit_score 已迁 user_credit，归 credit 域）';
 ```
 
-说明：`user_id` 由注册事务内应用层 `IIdGenerator` 发号（uuid-biz-id 票 02 起），与物理 `id` 永不同值。
+说明：`user_id` 由注册事务内应用层 `IIdGenerator` 发号（uuid-biz-id 票 02 起），与物理 `id` 永不同值。原 `state`/`credit_score` 列已迁出至 `user_credit`（credit 域独占写，见下）。
 
 ### post
 
@@ -736,6 +734,25 @@ CREATE TABLE IF NOT EXISTS wallet_detail (
     UNIQUE KEY uk_order_type (order_id, type, biz_round, user_id),
     KEY idx_user (user_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '钱包流水表';
+```
+
+### user_credit
+
+```sql
+-- 信用账户表：credit 域独占读写（表所有权原则：一张表只归一个领域写）。
+-- score/state 原寄生在 bs_user 列上，为满足所有权原则迁出为独立表；
+-- user/search 域只读本表（读跨域，拆库后走 credit 域 API）。
+-- 行懒创建：注册不插行，首次信用变动前 INSERT IGNORE 播种（撞 uk 忽略）；
+-- 无行 = 默认分 100 / 状态 NORMAL（与原列 DEFAULT 语义一致）。
+CREATE TABLE IF NOT EXISTS user_credit (
+    id           BIGINT      NOT NULL AUTO_INCREMENT,
+    user_id      VARCHAR(36)      NOT NULL COMMENT '用户 ID',
+    credit_score INT         NOT NULL DEFAULT 100 COMMENT '信用分 0~100',
+    state        VARCHAR(20) NOT NULL DEFAULT 'NORMAL' COMMENT '状态 NORMAL/BANNED',
+    update_time  DATETIME    NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_user_id (user_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '信用账户表（credit 域独占写）';
 ```
 
 ### user_credit_detail

@@ -1,6 +1,5 @@
 package com.betterschool.domain.trade.service.productorder;
 
-import com.betterschool.domain.trade.adapter.port.IProductPayCompositeTxPort;
 import com.betterschool.domain.trade.adapter.repository.ITradeRepository;
 import com.betterschool.domain.trade.model.entity.ProductEntity;
 import com.betterschool.domain.trade.model.entity.ProductOrderEntity;
@@ -23,8 +22,9 @@ import java.util.List;
  * 商品托管订单服务：5 态订单状态机 + 库存台账扣减/回补（multi-quantity-listing，同域仓储同事务），
  * 全部条件 UPDATE 防并发（防超卖唯一闸门在台账 remaining 的条件扣减上）；
  * 跨表原子写（订单 + 台账扣减 + 流水 + 搜索同步 + 超时注册）收成 ITradeRepository 的原子用例，事务在仓储实现内；
- * 支付与取消的跨域资金动作经组合事务端口与订单翻转并入一个物理事务（票 06 支付 / 票 07 取消），
- * 其余跨域动作（确认收货的解冻/入账）仍通过结果对象返回，由 case 层编排
+ * 支付/取消的资金链路为两段式（ADR-0016）：本域只做判据与状态翻转（翻转段，单仓储事务），
+ * 资金段（冻结/解冻）由 case 层按结果对象顺序执行——支付资金段先行（余额不足订单留待支付），
+ * 取消翻转段先行（翻转未命中零残留），宕机窗口的长款中间态由 {@code productFundOrphanScan} 收敛
  */
 @Slf4j
 @Service
@@ -37,9 +37,6 @@ public class ProductOrderServiceImpl implements IProductOrderService {
     private static final int MAX_ORDER_QUANTITY = 999;
 
     private final ITradeRepository tradeRepository;
-
-    /** 商品支付 / 取消组合事务端口：翻转 + 冻结（支付）/ 解冻退款（取消）一个物理事务（票 06 / 票 07） */
-    private final IProductPayCompositeTxPort productPayCompositeTxPort;
 
     @Override
     public String createOrder(String buyerId, String productId, int quantity) {
@@ -56,21 +53,33 @@ public class ProductOrderServiceImpl implements IProductOrderService {
     }
 
     @Override
-    public ProductPayResult payOrder(String orderId, String buyerId) {
+    public ProductPayResult preparePayOrder(String orderId, String buyerId) {
         ProductOrderEntity orderEntity = getOrder(orderId);
         if (!orderEntity.isBuyer(buyerId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只能支付自己的订单");
         }
-        // 幂等判定：已支付（PAID）视为上次支付已提交成功（重试场景），跳过直接返回
+        // 幂等判定：已支付（PAID）及其后态视为上次支付已提交成功（重试场景），alreadyPaid 零副作用
         if (orderEntity.getStatus() == ProductOrderStatusVO.PAID
                 || orderEntity.getStatus() == ProductOrderStatusVO.DELIVERED
                 || orderEntity.getStatus() == ProductOrderStatusVO.COMPLETED) {
-            return new ProductPayResult(totalAmount(orderEntity));
+            return new ProductPayResult(totalAmount(orderEntity), true);
         }
-        // 支付只翻订单状态：库存已在下单时扣减（售罄已随行翻 SOLD），无商品状态联动与搜索同步。
-        // 组合事务端口收口（票 06）：订单「待支付 → 已支付」翻转 + 货款 PRODUCT_FROZEN 冻结
-        // 在一个物理事务内——余额不足整事务回滚，订单留待支付
-        return productPayCompositeTxPort.payOrder(orderId, buyerId, totalAmount(orderEntity));
+        if (orderEntity.getStatus() != ProductOrderStatusVO.PENDING_PAYMENT) {
+            throw new BusinessException(ResponseCode.NOT_FOUND, "订单不存在或不可支付");
+        }
+        // 支付只翻订单状态：库存已在下单时扣减（售罄已随行翻 SOLD），无商品状态联动与搜索同步
+        return new ProductPayResult(totalAmount(orderEntity), false);
+    }
+
+    @Override
+    public void confirmPayOrder(String orderId, String buyerId) {
+        // 两段式 ADR-0016 翻转段（资金段冻结已由 case 层先行完成，流水 uk 幂等）：
+        // 「待支付 → 已支付」条件翻转（守卫买家 + 前态，PAID 事件随行落表，单仓储事务）。
+        // 翻转未命中 → 抛业务异常；此刻货款可能已冻结（订单留待支付的长款中间态），
+        // 孤儿由 productFundOrphanScan 扫描解冻收敛
+        if (!tradeRepository.payOrderById(orderId, buyerId)) {
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
+        }
     }
 
     @Override
@@ -110,7 +119,8 @@ public class ProductOrderServiceImpl implements IProductOrderService {
         if (!orderEntity.isBuyer(buyerId)) {
             throw new BusinessException(ResponseCode.FORBIDDEN, "只有买家可以取消订单");
         }
-        // 幂等判定（重试场景）：已取消/已完成视为本次取消已提交成功
+        // 幂等判定（重试场景）：已取消/已完成视为本次取消已提交成功（终态短路，零副作用；
+        // 资金段的补齐由 productFundOrphanScan 扫描兜底）
         if (orderEntity.getStatus() == ProductOrderStatusVO.CANCELLED
                 || orderEntity.getStatus() == ProductOrderStatusVO.COMPLETED) {
             return new ProductCancelResult(false, orderEntity.getBuyerId(), totalAmount(orderEntity));
@@ -120,17 +130,11 @@ public class ProductOrderServiceImpl implements IProductOrderService {
         }
         // 待支付未冻结无需退款；已支付需解冻退回
         boolean needRefund = orderEntity.getStatus() == ProductOrderStatusVO.PAID;
-        if (needRefund) {
-            // 取消翻转与解冻退款并入一个物理事务（IProductPayCompositeTxPort 端口编排，票 07，
-            // 与跑腿取消同型）：「订单已取消 ⇒ 货款已解冻回余额」，宕机中间态无处存活；
-            // 重复执行由解冻流水 uk_order_type 幂等吸收
-            productPayCompositeTxPort.cancelWithRefund(orderId, orderEntity.getBuyerId(),
-                    totalAmount(orderEntity));
-        } else {
-            // 待支付取消无资金动作，取消翻转（含台账回补 + 搜索同步）单事务即可
-            if (!tradeRepository.cancelOrderWithSearchSync(orderId, buyerId)) {
-                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
-            }
+        // 翻转段先行（两段式 ADR-0016，与跑腿取消同型）：取消翻转（含台账回补 + 搜索同步）
+        // 单仓储事务，未命中抛异常——资金段尚未执行，零残留；翻转与 case 层解冻之间的宕机孤儿
+        // （订单已取消但货款悬置冻结，长款中间态）由 productFundOrphanScan 扫描收敛
+        if (!tradeRepository.cancelOrderWithSearchSync(orderId, buyerId)) {
+            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
         }
         return new ProductCancelResult(needRefund, orderEntity.getBuyerId(), totalAmount(orderEntity));
     }

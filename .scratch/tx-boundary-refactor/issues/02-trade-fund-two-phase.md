@@ -1,5 +1,5 @@
 Type: task
-Status: ready-for-agent
+Status: resolved
 
 # 02 商品订单资金链路两段化（ProductPayCompositeTxPort 退役 + 商品孤儿扫描）
 

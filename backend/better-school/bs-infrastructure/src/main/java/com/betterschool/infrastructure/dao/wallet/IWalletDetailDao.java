@@ -21,6 +21,8 @@ public interface IWalletDetailDao {
 
     long countDetails(@Param("userId") String userId);
 
-    /** 孤儿扫描输入（ADR-0016 两段式）：有 FROZEN 无对应 UNFROZEN（同订单同轮次同人）且冻结已超阈值的流水，按 id 升序 */
-    List<WalletDetail> selectOrphanFrozen(@Param("thresholdMinutes") int thresholdMinutes, @Param("limit") int limit);
+    /** 孤儿扫描输入（ADR-0016 两段式）：有指定类型冻结无对应类型解冻（同订单同轮次同人）且冻结已超阈值的流水，按 id 升序 */
+    List<WalletDetail> selectOrphanFrozen(@Param("frozenType") String frozenType,
+                                          @Param("unfrozenType") String unfrozenType,
+                                          @Param("thresholdMinutes") int thresholdMinutes, @Param("limit") int limit);
 }

@@ -19,7 +19,7 @@ import java.util.List;
 /**
  * 积分 HTTP 入口：**只有两个只读接口、零写接口**——
  * 兑抽奖次数的写入口挂在抽奖服务上（`POST /api/lottery/exchange/draw-count`），
- * 票 13 起走进程内 port（`IPointsDeductPort`）+ 同库同事务，不再经 Dubbo。
+ * 票 13 起走进程内调用（票 C 起为 case 层三段式顺序编排，无跨域事务），不再经 Dubbo。
  */
 @RestController
 @RequestMapping("/api/points")

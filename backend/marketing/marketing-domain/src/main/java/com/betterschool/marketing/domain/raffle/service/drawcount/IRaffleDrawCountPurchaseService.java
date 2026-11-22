@@ -1,38 +1,59 @@
 package com.betterschool.marketing.domain.raffle.service.drawcount;
 
+import com.betterschool.marketing.domain.raffle.model.entity.DrawCountPurchaseOrderEntity;
 import com.betterschool.marketing.domain.raffle.model.valobj.DrawCountPurchaseResultVO;
 
+import java.util.List;
+
 /**
- * 用积分购买抽奖次数（抽奖域内的次数资产，购买是它唯一的「进」口之一，另一条是行为返利）。
+ * 购买单的抽奖域面（ADR-0014 表形态 + ADR-0016 票 C 三段式）：购买单是这条链路的
+ * 幂等入口、状态机载体与对账源。本服务只承担**抽奖域内**的单据操作（落单 / 推进 / 认领），
+ * 跨域的三段顺序编排（落单 CREATED → 积分域扣分 → 入账置 DONE）在 case 层
+ * {@code DrawCountPurchaseCase}——事务边界 = 仓储，每段各自仓储本地事务。
  * <p>
- * **抽奖本身只消耗次数**（{@link IDrawCountAccountService#deductForDraw}），任何情况下都不直接扣积分；
- * 积分不足时前端引导用户走本能力换次数，再回到抽奖。两条路径互不交叉。
- * <p>
- * **一致性（ADR-0014）**：购买单与扣积分**同事务**落库（单在 ⇒ 分已扣），次数入账幂等
- * （桶唯一键 {@code (userId, PURCHASE, refId)}）。收敛靠三路重试踩同一单号：
- * 客户端带同 token 重放（Stripe 语义：DONE 返回原结果、中间态顺势补齐）、
- * {@link #compensateDueOrders} 定时补偿（扫描 job 调）、T+1 对账兜底（另开票）。
+ * 与抽奖主链路的关系：**抽奖只扣次数**（{@link IDrawCountAccountService#deductForDraw}），
+ * 从不碰积分；积分不足 / 扣分失败等跨域结果由 case 层裁决后回到本服务的状态机。
  */
 public interface IRaffleDrawCountPurchaseService {
 
+    /** 补偿重试上限：第 5 次尝试（retry_count 达 4 时认领）仍失败即置 DEAD，人工介入 */
+    int COMPENSATE_MAX_RETRY = 5;
+
     /**
-     * 用积分购买 {@code quantity} 次抽奖次数：单价见
-     * {@link com.betterschool.marketing.types.raffle.Constants#DRAW_COUNT_PURCHASE_PRICE}。
-     * 同 token 重放不重复扣分、不重复加次数（购买单唯一键 + 桶唯一键双层吸收）。
+     * 第一段：校验参数 + 幂等落单（{@code state = CREATED}，raffle 仓储本地事务）。
+     * {@code purchaseOrderId = hash(userId, token)}——同 token 重放先查单：
+     * 已存在直接返回原单（Stripe 幂等入口，状态由 case 层裁决推进）；
+     * 并发同 token 撞 {@code uk_purchase_order_id} 转重查，同样返回胜出的那一行。
      *
      * @param token    前端为「这一次购买意图」生成的 uuid；重试必须带同一个（幂等键来源）
      * @param quantity 购买份数（1..{@code DRAW_COUNT_PURCHASE_MAX_QUANTITY}）
-     * @throws com.betterschool.marketing.types.common.AppException 积分不足抛
-     *         {@code LOTTERY_INSUFFICIENT_POINTS}（一分不扣、一单不落）；份数不合法抛 {@code LOTTERY_PARAM_ERROR}
+     * @throws com.betterschool.marketing.types.common.AppException 份数不合法抛 {@code LOTTERY_PARAM_ERROR}
      */
-    DrawCountPurchaseResultVO purchaseDrawCount(String userId, String token, int quantity);
+    DrawCountPurchaseOrderEntity createOrder(String userId, String token, int quantity);
 
     /**
-     * 购买单补偿（xxl {@code drawCountPurchaseScan} 调度）：扫到点的 {@code DEDUCTED} 单，
-     * 抢占式认领（条件更新 + 退避 {@code next_retry_at}）后补「次数入账 + 置 DONE」——
-     * 从不碰扣分（单在即分已扣）。重试耗尽（{@code COMPENSATE_MAX_RETRY}）置 DEAD 等人工介入。
-     *
-     * @return 本轮真正收敛（置 DONE）的单数
+     * 第三段（raffle 仓储侧）：次数入账（桶 {@code uk_user_reason_ref} 幂等，重放不重复加）
+     * + 条件更新置 {@code DONE}（守卫 {@code state <> 1}，从 CREATED 与 DEAD 都可达）。
+     * 纯幂等收敛动作，重试 / 重放安全。
      */
-    int compensateDueOrders(int max);
+    void completeOrder(String purchaseOrderId, String userId, int quantity);
+
+    /**
+     * 积分不足等业务永久失败：条件更新置 {@code DEAD}（守卫 {@code state = 0}）。
+     * DEAD 行不再被扫描，只被带原 token 的重放收敛（充值后重放即自愈）。
+     */
+    void markOrderDead(String purchaseOrderId);
+
+    /** 扫描面：到期待收敛单（{@code state = 0} 且 {@code next_retry_at} 为空或已到点，FIFO），上限 {@code limit} */
+    List<DrawCountPurchaseOrderEntity> listDueOrders(int limit);
+
+    /**
+     * 抢占式认领一笔待收敛单：条件更新（{@code state = 0} 且到点）递增 {@code retry_count}
+     * 并按退避档（1/2/4/8/16 分钟）写 {@code next_retry_at}。
+     * 返回 false = 已被其他实例抢先 / 状态漂移，跳过即可。
+     */
+    boolean claimDueOrder(DrawCountPurchaseOrderEntity order);
+
+    /** 结果视图：购买单号 + 扣分 + 次数余额（余额现读未过期桶 SUM(remain)） */
+    DrawCountPurchaseResultVO resultOf(DrawCountPurchaseOrderEntity order);
 }

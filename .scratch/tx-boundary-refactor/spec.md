@@ -10,8 +10,8 @@
 | 票 | 对象 | 状态 |
 |---|---|---|
 | issues/01 | better-school `ErrandFundPort` 四链路 + `errandFundOrphanScan` | **resolved**（2026-11-22，`cbfc61a`/`5c2152e`） |
-| issues/02 | better-school `ProductPayCompositeTxPort` 两链路 + 商品扫描 | ready-for-agent |
-| issues/03 | marketing `PointsDeductPort` 三段化 | needs-triage |
+| issues/02 | better-school `ProductPayCompositeTxPort` 两链路 + 商品扫描 | **resolved**（2026-11-22，未提交） |
+| issues/03 | marketing `PointsDeductPort` 三段化 | **resolved**（2026-11-23，未提交） |
 
 ## 硬约束（全票共用）
 

@@ -7,7 +7,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * 信用分仓储：直操 bs_user（credit_score/state 列）、user_credit_detail 流水，
+ * 信用分仓储：直操 user_credit（信用账户：分数/封禁状态，credit 域独占写）、user_credit_detail 流水，
  * 全部条件 UPDATE / INSERT IGNORE；每个变更动作由仓储方法自身用事务（REQUIRED）收成一个原子用例
  */
 public interface ICreditRepository {

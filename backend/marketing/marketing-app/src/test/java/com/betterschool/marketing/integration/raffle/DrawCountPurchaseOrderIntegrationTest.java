@@ -1,10 +1,10 @@
 package com.betterschool.marketing.integration.raffle;
 
-import com.betterschool.marketing.domain.raffle.service.drawcount.IRaffleDrawCountPurchaseService;
 import com.betterschool.marketing.domain.raffle.model.valobj.DrawCountPurchaseResultVO;
 import com.betterschool.marketing.integration.support.TestingEnvironment;
 import com.betterschool.marketing.types.common.AppException;
 import com.betterschool.marketing.types.common.IdempotencyKeys;
+import com.betterschool.marketing.usecase.raffle.DrawCountPurchaseCase;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,8 +23,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 购买次数链路集成用例（ADR-0014）：组合事务「落单 + 扣分」、Stripe 幂等重放、
- * 宕机态被补偿收敛、死信与人工自愈——购买单（订单兼 outbox）作为整条链路的台账面。
+ * 购买次数链路集成用例（ADR-0014 表形态 + ADR-0016 票 C 三段式）：落单 CREATED → 扣分 →
+ * 推进 DONE 三段各自仓储本地事务（「单在 ⇒ 分已扣」降级为「扣分结果未知、扫描收敛」）、
+ * Stripe 幂等重放、宕机态被补偿收敛（补扣 + 入账）、死信与人工自愈——购买单（订单兼 outbox）
+ * 作为整条链路的台账面。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -46,7 +48,7 @@ class DrawCountPurchaseOrderIntegrationTest extends TestingEnvironment {
     @Autowired
     protected JdbcTemplate jdbcTemplate;
     @Autowired
-    protected IRaffleDrawCountPurchaseService raffleDrawCountPurchaseService;
+    protected DrawCountPurchaseCase drawCountPurchaseCase;
 
     /** 表隔离：购买单 + 两域账务表（points_validity_config 是种子单行，不动） */
     @BeforeEach
@@ -107,11 +109,11 @@ class DrawCountPurchaseOrderIntegrationTest extends TestingEnvironment {
     // ---------- 用例 ----------
 
     @Test
-    @DisplayName("正常购买：单与扣分同事务落库（单在即分已扣），入账桶 PURCHASE 来源")
+    @DisplayName("正常购买：三段收敛到 DONE（单在、分已扣、次数已入），入账桶 PURCHASE 来源")
     void purchase_success_commitsOrderAndDeductionTogether() {
         long bucketRowId = insertPointsBucket(USER_ID, 500, 500);
 
-        DrawCountPurchaseResultVO result = raffleDrawCountPurchaseService.purchaseDrawCount(USER_ID, "token-ok", 3);
+        DrawCountPurchaseResultVO result = drawCountPurchaseCase.purchaseDrawCount(USER_ID, "token-ok", 3);
 
         assertThat(result.getPointsCost()).isEqualTo(3 * PRICE);
         assertThat(result.getDrawCount()).isEqualTo(3);
@@ -120,7 +122,7 @@ class DrawCountPurchaseOrderIntegrationTest extends TestingEnvironment {
         assertThat(pointsDetailCountOf(USER_ID)).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT ref_id FROM points_detail WHERE user_id = ?", String.class, USER_ID))
-                .as("积分流水引用购买单号（同事务写入）").isEqualTo(result.getPurchaseOrderId());
+                .as("积分流水引用购买单号（扣分段写入）").isEqualTo(result.getPurchaseOrderId());
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT remain FROM draw_count_bucket WHERE user_id = ?", Integer.class, USER_ID)).isEqualTo(3);
         assertThat(jdbcTemplate.queryForObject(
@@ -133,16 +135,18 @@ class DrawCountPurchaseOrderIntegrationTest extends TestingEnvironment {
     }
 
     @Test
-    @DisplayName("积分不足：整事务回滚——一分不扣、一单不落")
-    void purchase_insufficient_rollsBackEverything() {
+    @DisplayName("积分不足：一分不扣，单即置死信（充值后带原 token 重放自愈）")
+    void purchase_insufficient_marksOrderDeadWithoutDeduction() {
         insertPointsBucket(USER_ID, 100, 100);
 
-        assertThatThrownBy(() -> raffleDrawCountPurchaseService.purchaseDrawCount(USER_ID, "token-poor", 3))
+        assertThatThrownBy(() -> drawCountPurchaseCase.purchaseDrawCount(USER_ID, "token-poor", 3))
                 .isInstanceOfSatisfying(AppException.class,
                         e -> assertThat(e.getCode()).isEqualTo("4306"));
 
-        assertThat(orderCountOf(USER_ID)).as("购买单随扣分一起回滚").isZero();
-        assertThat(pointsRemainOf(USER_ID)).isEqualTo(100);
+        assertThat(orderCountOf(USER_ID)).as("落单段先提交（CREATED），扣分段判出不足").isEqualTo(1);
+        assertThat(orderStateOf(IdempotencyKeys.of(USER_ID, "token-poor")))
+                .as("业务永久失败直接进死信，不占补偿重试").isEqualTo(2);
+        assertThat(pointsRemainOf(USER_ID)).as("一分未扣").isEqualTo(100);
         assertThat(pointsDetailCountOf(USER_ID)).isZero();
     }
 
@@ -151,8 +155,8 @@ class DrawCountPurchaseOrderIntegrationTest extends TestingEnvironment {
     void purchase_sameToken_replaysWithoutDoubleEffect() {
         insertPointsBucket(USER_ID, 500, 500);
 
-        DrawCountPurchaseResultVO first = raffleDrawCountPurchaseService.purchaseDrawCount(USER_ID, "token-retry", 2);
-        DrawCountPurchaseResultVO replay = raffleDrawCountPurchaseService.purchaseDrawCount(USER_ID, "token-retry", 2);
+        DrawCountPurchaseResultVO first = drawCountPurchaseCase.purchaseDrawCount(USER_ID, "token-retry", 2);
+        DrawCountPurchaseResultVO replay = drawCountPurchaseCase.purchaseDrawCount(USER_ID, "token-retry", 2);
 
         assertThat(replay.getPurchaseOrderId()).isEqualTo(first.getPurchaseOrderId());
         assertThat(replay.getPointsCost()).isEqualTo(first.getPointsCost());
@@ -165,20 +169,21 @@ class DrawCountPurchaseOrderIntegrationTest extends TestingEnvironment {
     }
 
     @Test
-    @DisplayName("宕机残留（已扣分未入账）被补偿收敛：入账 + 置 DONE，从不碰扣分")
+    @DisplayName("宕机残留（已落单、扣分结果未知）被补偿收敛：补扣 + 入账 + 置 DONE")
     void crashedOrder_convergedByCompensation() {
         insertPointsBucket(USER_ID, 500, 500);
         String orderId = IdempotencyKeys.of(USER_ID, "token-crash");
-        // 模拟「扣分事务已提交、进程在入账前宕机」：只留一行 state=0 的单
+        // 模拟「落单段已提交、进程在扣分段前宕机」：只留一行 state=0（CREATED）且无扣分流水的单
         insertPurchaseOrder(orderId, USER_ID, 2, 2 * PRICE, 0, 0);
 
-        int completed = raffleDrawCountPurchaseService.compensateDueOrders(100);
+        int completed = drawCountPurchaseCase.compensateDueOrders(100);
 
         assertThat(completed).isEqualTo(1);
         assertThat(orderStateOf(orderId)).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT remain FROM draw_count_bucket WHERE ref_id = ?", Integer.class, orderId)).isEqualTo(2);
-        assertThat(pointsRemainOf(USER_ID)).as("补偿只入账，不重复扣分").isEqualTo(500);
+        assertThat(pointsRemainOf(USER_ID)).as("扣分段幂等补上（此前从未扣过）").isEqualTo(500 - 2 * PRICE);
+        assertThat(pointsDetailCountOf(USER_ID)).isEqualTo(1);
     }
 
     @Test
@@ -186,11 +191,11 @@ class DrawCountPurchaseOrderIntegrationTest extends TestingEnvironment {
     void deadLetter_afterMaxRetry_thenHealedByReplay() {
         String token = "token-dead";
         String orderId = IdempotencyKeys.of(USER_ID, token);
-        // quantity=0 会撞 creditForPurchase 的参数守卫，模拟「第二步持续失败」
+        // points_cost=0 会撞积分域扣分的参数守卫，模拟「扣分段持续失败」
         insertPurchaseOrder(orderId, USER_ID, 0, 0, 0, 0);
 
         for (int attempt = 1; attempt <= 5; attempt++) {
-            raffleDrawCountPurchaseService.compensateDueOrders(100);
+            drawCountPurchaseCase.compensateDueOrders(100);
             // 模拟时间流逝：退避时点清零让下一轮扫描立刻可见
             jdbcTemplate.update(
                     "UPDATE draw_count_purchase_order SET next_retry_at = NULL WHERE purchase_order_id = ?", orderId);
@@ -206,7 +211,7 @@ class DrawCountPurchaseOrderIntegrationTest extends TestingEnvironment {
                 "UPDATE draw_count_purchase_order SET quantity = 1, points_cost = ? WHERE purchase_order_id = ?",
                 PRICE, orderId);
         insertPointsBucket(USER_ID, PRICE, PRICE);
-        DrawCountPurchaseResultVO healed = raffleDrawCountPurchaseService.purchaseDrawCount(USER_ID, token, 1);
+        DrawCountPurchaseResultVO healed = drawCountPurchaseCase.purchaseDrawCount(USER_ID, token, 1);
 
         assertThat(healed.getPurchaseOrderId()).isEqualTo(orderId);
         assertThat(orderStateOf(orderId)).as("死信被重放收敛到 DONE").isEqualTo(1);

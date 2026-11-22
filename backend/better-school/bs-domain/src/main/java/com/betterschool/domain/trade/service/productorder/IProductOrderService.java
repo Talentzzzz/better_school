@@ -20,8 +20,19 @@ public interface IProductOrderService {
      */
     String createOrder(String buyerId, String productId, int quantity);
 
-    /** 支付确认：PENDING_PAYMENT → PAID（幂等：已支付静默返回），返回需冻结金额（单价 × 件数） */
-    ProductPayResult payOrder(String orderId, String buyerId);
+    /**
+     * 支付确认准备（两段式 ADR-0016 第一段，纯校验无副作用）：买家校验 + 幂等判定
+     * （已越过待支付视为上次支付已提交成功，alreadyPaid=true 零副作用），返回需冻结金额（单价 × 件数）；
+     * 资金冻结由 case 层在 prepare 与 confirm 之间顺序执行
+     */
+    ProductPayResult preparePayOrder(String orderId, String buyerId);
+
+    /**
+     * 支付确认翻转（两段式 ADR-0016 第二段）：「待支付 → 已支付」条件翻转（守卫买家 + 前态，
+     * PAID 事件随行落表，单仓储事务）；翻转未命中抛业务异常——此刻货款可能已冻结
+     * （订单留待支付的长款中间态），孤儿由 {@code productFundOrphanScan} 扫描解冻收敛
+     */
+    void confirmPayOrder(String orderId, String buyerId);
 
     /** 卖家标记交付：PAID → DELIVERED */
     void markDelivered(String orderId, String sellerId);
@@ -29,7 +40,11 @@ public interface IProductOrderService {
     /** 买家确认收货：DELIVERED → COMPLETED（域内事务），返回解冻/入账需求（单价 × 件数） */
     ProductConfirmResult confirmReceived(String orderId, String buyerId);
 
-    /** 买家取消：PENDING_PAYMENT/PAID → CANCELLED + 库存台账回补（域内事务），返回退款需求（单价 × 件数） */
+    /**
+     * 买家取消（两段式 ADR-0016 翻转段先行）：PENDING_PAYMENT/PAID → CANCELLED + 库存台账回补 +
+     * 搜索同步（单仓储事务，未命中抛异常零残留——资金段尚未执行）；返回退款需求（单价 × 件数），
+     * 解冻退款（needRefund=true 时）由 case 层随后执行
+     */
     ProductCancelResult cancelOrder(String orderId, String buyerId);
 
     ProductOrderEntity orderDetail(String orderId, String currentUserId);

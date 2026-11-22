@@ -109,19 +109,26 @@ RocketMQ dashboard 在 **8089**（避免与各服务的 HTTP 端口撞）。票 
 | 积分兑换 | `IPointsExchangeService` | `marketing-api`（**同 reactor 模块**） | marketing `-trigger/points/rpc/PointsExchangeDubboService` | 票 13 起**无 Dubbo consumer**（见下） |
 
 **票 13 把「兑换」从 Dubbo 边折叠成进程内调用**：买抽奖次数是「积分扣分 + 次数入账」，
-两域同进程同库，走 RPC 反而要在同进程里做跨「服务」的分布式一致性。现由
-`domain/raffle/adapter/port/` 的 `IPointsDeductPort` 声明、`infrastructure/raffle/adapter/port/`
-承担**组合事务**（ADR-0014）：**INSERT 购买单（`draw_count_purchase_order`）与扣积分
-同一物理事务——「单在 ⇒ 分已扣」**；次数入账幂等（桶 uk），收敛靠三路重试踩同一
+两域同进程同库，走 RPC 反而要在同进程里做跨「服务」的分布式一致性。票 C（ADR-0016）起
+组合事务端口 `IPointsDeductPort` / `PointsDeductPort` 退役，链路改**三段式顺序编排**
+（编排落 `marketing-case` 的 `DrawCountPurchaseCase`，每段各自仓储本地事务，无跨域事务）：
+① 落单段——购买单 `CREATED`（raffle 仓储，`IRaffleDrawCountPurchaseService.createOrder`），
+购买单仍是订单兼幂等键与对账源（ADR-0014 的表形态、唯一键、Stripe 幂等入口全保留）；
+② 扣分段——积分域 `deduct`（points 仓储，流水先行，唯一键 `(userId, REDEEM_DRAW_COUNT, 购买单号)`
+幂等），资金段先行、余额不足直接失败（单置 DEAD 等充值后原 token 重放自愈）；
+③ 推进段——次数入账（桶唯一键幂等）+ 条件更新置 `DONE`（`IRaffleDrawCountPurchaseService.completeOrder`）。
+「单在 ⇒ 分已扣」降级为「单在 ⇒ 扣分结果未知、扫描收敛」；收敛靠三路重试踩同一
 `hash(userId, token)` 购买单号：客户端带 token 重放（Stripe 语义：DONE 返回原结果、
-中间态顺势补齐）、xxl `drawCountPurchaseScan` 定时补偿（条件更新抢占 + 退避
-1/2/4/8/16 分钟，5 次耗尽进死信）、T+1 对账兜底（另开票）。决策依据与否决项见
-[`docs/adr/0014-draw-count-purchase-eventual-consistency.md`](../../../docs/adr/0014-draw-count-purchase-eventual-consistency.md)。
-**drawcount 域并入 raffle 后这条边只剩两段**：`IRaffleDrawCountPurchaseService`（抽奖域）编排
-「组合事务落单扣分」与经域内 `IDrawCountAccountService.creditForPurchase` 入账，不再有跨域 case 编排；
+中间态顺势补齐三段）、xxl `drawCountPurchaseScan` 定时补偿（条件更新抢占 + 退避
+1/2/4/8/16 分钟，5 次耗尽进死信；收敛动作 = 三段全量重放，两态分叉被幂等吸收）、
+T+1 对账兜底（另开票）。决策依据与否决项见
+[`docs/adr/0014-draw-count-purchase-eventual-consistency.md`](../../../docs/adr/0014-draw-count-purchase-eventual-consistency.md)
+（其组合事务一条被 ADR-0016 修正）与 [`docs/adr/0016`](../../../docs/adr/0016-tx-boundary-is-repository.md)。
+**drawcount 域并入 raffle 后这条边只剩两段**：case 层编排「落单 + 推进」（抽奖域
+`IRaffleDrawCountPurchaseService`）与积分域扣分（`IPointsAccountService`），域服务不再互相注入；
 抽奖主链路则**只扣次数**（同域 `IDrawCountAccountService.deductForDraw`），从不碰积分。
 `IPointsExchangeService` 的 Dubbo Provider 仍在（对外契约不删），但**域内不再有 consumer**；
-集成测试用的 `@Primary StubPointsExchangePort` 随之删除。跨域写组合的 port 模式照 `backend/CLAUDE.md` §1
+集成测试用的 `@Primary StubPointsExchangePort` 随之删除。跨域只读的 port 模式照 `backend/CLAUDE.md` §1
 （domain 服务禁止互相注入）：抽奖域另有 `IInventoryDeductPort`（库存域，票 12）与
 `IQuotaConfirmPort`（库存域兑换确认面，票 14）两条边。
 

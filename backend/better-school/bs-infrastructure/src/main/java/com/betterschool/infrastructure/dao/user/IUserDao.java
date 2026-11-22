@@ -45,16 +45,4 @@ public interface IUserDao {
     List<UserBrief> selectBriefByIds(@Param("ids") List<String> userIdList);
 
     int existsUser(@Param("userId") String userId);
-
-    String selectStatus(@Param("userId") String userId);
-
-    Integer selectCreditScore(@Param("userId") String userId);
-
-    int updateCreditScore(@Param("userId") String userId, @Param("delta") int delta);
-
-    /** 返回影响行数：1 = 本次刚封禁（幂等依据） */
-    int banIfLowScore(@Param("userId") String userId);
-
-    /** 封禁/解封通用（条件 state <> 目标值），返回影响行数 */
-    int updateStatus(@Param("userId") String userId, @Param("state") String state);
 }

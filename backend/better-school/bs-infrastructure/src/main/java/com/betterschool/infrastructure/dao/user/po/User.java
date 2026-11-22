@@ -22,8 +22,6 @@ public class User {
     /** 隐私开关：公开我的评论（1 公开 / 0 仅自己） */
     private Boolean showComments;
     private String role;
-    private String state;
-    private Integer creditScore;
     private LocalDateTime lastLoginAt;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;

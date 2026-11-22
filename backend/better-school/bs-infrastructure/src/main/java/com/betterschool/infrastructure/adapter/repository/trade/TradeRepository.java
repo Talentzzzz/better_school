@@ -10,6 +10,7 @@ import com.betterschool.domain.trade.model.entity.ProductOrderEntity;
 import com.betterschool.domain.trade.model.valobj.ProductCategoryVO;
 import com.betterschool.domain.trade.model.valobj.ProductFeedCursorVO;
 import com.betterschool.domain.trade.model.valobj.ProductFeedIndexItemVO;
+import com.betterschool.domain.trade.model.valobj.ProductOrderEventVO;
 import com.betterschool.domain.trade.model.valobj.ProductOrderStatusVO;
 import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
 import com.betterschool.infrastructure.adapter.merge.CountAction;
@@ -686,6 +687,19 @@ public class TradeRepository implements ITradeRepository {
             saveSearchSyncMessage(order.getProductId());
             return true;
         }));
+    }
+
+    /** 孤儿扫描输入（ADR-0016 两段式）：只读，无事务 */
+    @Override
+    public List<ProductOrderEntity> listRecentSettled(int windowMinutes, int limit) {
+        return productOrderDao.selectRecentSettled(windowMinutes, limit).stream().map(this::toOrderEntity).toList();
+    }
+
+    /** 订单最新一条状态流转事件（只读，无事务） */
+    @Override
+    public ProductOrderEventVO latestEventOf(String orderId) {
+        ProductOrderEvent latest = productOrderEventDao.selectLatestEvent(orderId);
+        return latest == null ? null : new ProductOrderEventVO(latest.getEventType(), latest.getFromState());
     }
 
     /**

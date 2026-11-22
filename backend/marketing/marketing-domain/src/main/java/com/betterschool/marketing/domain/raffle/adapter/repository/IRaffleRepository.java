@@ -165,10 +165,10 @@ public interface IRaffleRepository {
     // ---- 购买单（ADR-0014，订单兼 outbox：幂等入口 + 状态机载体 + 对账源） ----
 
     /**
-     * 落一行购买单（{@code state = DEDUCTED}）。事务边界在调用方（port 适配器的组合事务）：
-     * 本方法用 {@code TransactionTemplate} REQUIRED 并入外层，与积分扣分同一物理事务提交/回滚——
-     * 「单在 ⇒ 分已扣」由调用方保证，本方法不单独兜底。
-     * 撞 {@code uk_purchase_order_id} 抛 {@code DuplicateKeyException}（并发同 token 的唯一互斥点）。
+     * 落一行购买单（{@code state = CREATED}，ADR-0016 票 C 三段式的第一段）：本方法自身的
+     * {@code TransactionTemplate}（REQUIRED）就是这一段的本地事务——没有调用方事务可并入
+     * （跨仓储组合事务已废止），撞 {@code uk_purchase_order_id} 抛 {@code DuplicateKeyException}
+     * （并发同 token 的唯一互斥点）。
      */
     boolean insertPurchaseOrder(DrawCountPurchaseOrderEntity order);
 
@@ -176,27 +176,27 @@ public interface IRaffleRepository {
     DrawCountPurchaseOrderEntity queryPurchaseOrder(String purchaseOrderId);
 
     /**
-     * 到期待补偿的购买单：{@code state = DEDUCTED} 且 {@code next_retry_at} 为空或已到点，
+     * 到期待收敛的购买单：{@code state = CREATED} 且 {@code next_retry_at} 为空或已到点，
      * 按 id 升序（FIFO），上限 {@code limit}。走 {@code idx_state_next_retry}，正常时点扫描只碰分钟级窗口内的少量行。
      */
     List<DrawCountPurchaseOrderEntity> listDuePurchaseOrders(int limit);
 
     /**
-     * 抢占式认领一笔待补偿单：条件更新 {@code state = DEDUCTED 且到点} 才生效，
+     * 抢占式认领一笔待收敛单：条件更新 {@code state = CREATED 且到点} 才生效，
      * 同时递增 {@code retry_count}、写 {@code next_retry_at}（退避到下一轮）。
      * 返回 false = 已被其他实例抢占或状态已不在起点，跳过即可。
      */
     boolean claimPurchaseOrder(Long id, LocalDateTime nextRetryAt);
 
     /**
-     * 入账完成置 {@code DONE}（条件更新 {@code state <> DONE} 才生效）——
-     * 从 DEDUCTED 与 DEAD 都可达：DEAD 行被人工重置或客户端重试补齐后同样收敛。
+     * 收敛完成置 {@code DONE}（条件更新 {@code state <> DONE} 才生效）——
+     * 从 CREATED 与 DEAD 都可达：DEAD 行被人工重置或客户端重试补齐后同样收敛。
      * 返回 false = 已是 DONE（幂等跳过）。
      */
     boolean finishPurchaseOrder(String purchaseOrderId);
 
-    /** 重试耗尽置 {@code DEAD}（条件更新 {@code state = DEDUCTED}）；返回 false = 状态已变，跳过 */
-    boolean markPurchaseOrderDead(Long id);
+    /** 置 {@code DEAD}（条件更新 {@code state = CREATED}）：重试耗尽或积分不足等业务永久失败；返回 false = 状态已变，跳过 */
+    boolean markPurchaseOrderDead(String purchaseOrderId);
 
     // ---- 孤儿预扣对账单（spec User Stories 14–16：扫描种单 + 重试状态机 + 死信） ----
 

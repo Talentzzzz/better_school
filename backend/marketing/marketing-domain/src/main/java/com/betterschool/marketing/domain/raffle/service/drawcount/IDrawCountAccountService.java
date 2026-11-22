@@ -4,8 +4,8 @@ package com.betterschool.marketing.domain.raffle.service.drawcount;
  * 抽奖次数账户服务（桶模型，sql.md 积分段，与积分桶同构）。
  * <p>
  * **与抽奖同域**：抽奖次数是抽奖域内的资产（{@code draw_count_bucket}），不再是独立领域；
- * 抽奖主链路直接注入本服务扣次（不经 port），购买次数由同包的
- * {@link IRaffleDrawCountPurchaseService} 编排（只碰积分域的扣分边）。
+ * 抽奖主链路直接注入本服务扣次（不经 port），购买次数的三段编排（落单 → 扣积分 → 入账）
+ * 在 case 层 {@code DrawCountPurchaseCase}，入账是其中的第三段。
  * <p>
  * 余额读口径：剩余次数 = 未过期且未扣完的桶 remain 之和（SUM 读，没有余额列）。
  */
@@ -13,7 +13,7 @@ public interface IDrawCountAccountService {
 
     /**
      * 积分购买次数入账：幂等键 = {@code (userId, REDEEM, purchaseOrderId)}，重试不重复加次数。
-     * 「扣积分 → 入账次数」的顺序编排归 {@link IRaffleDrawCountPurchaseService}（各自域内原子，无跨域事务）。
+     * 「扣积分 → 入账次数」的顺序编排归 case 层 {@code DrawCountPurchaseCase}（各自域内原子，无跨域事务）。
      */
     boolean creditForPurchase(String userId, String purchaseOrderId, int amount);
 

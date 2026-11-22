@@ -3,9 +3,9 @@ package com.betterschool.infrastructure.adapter.repository.credit;
 import com.betterschool.domain.credit.adapter.repository.ICreditRepository;
 import com.betterschool.domain.credit.model.entity.CreditDetailEntity;
 import com.betterschool.domain.credit.model.valobj.CreditChangeResult;
+import com.betterschool.infrastructure.dao.credit.IUserCreditAccountDao;
 import com.betterschool.infrastructure.dao.credit.IUserCreditDao;
 import com.betterschool.infrastructure.dao.credit.po.CreditDetail;
-import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -16,9 +16,10 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * 信用分仓储：直操 bs_user（credit_score/state 列）与 user_credit_detail 流水，
+ * 信用分仓储：直操 user_credit（信用账户：分数/封禁状态）与 user_credit_detail 流水，
+ * 两表均 credit 域独占写（表所有权原则：一张表只归一个领域写）。
  * 每次变更由方法自身用事务（REQUIRED）收成一个原子用例——流水先行（INSERT IGNORE，撞 uk = 已处理过）
- * 保证重试幂等，分数/封禁与流水同事务
+ * 保证重试幂等，账户行懒播种（seedIfAbsent，无行 = 默认 100/NORMAL）与分数/封禁同事务
  */
 @Repository
 @RequiredArgsConstructor
@@ -26,27 +27,29 @@ public class CreditRepository implements ICreditRepository {
 
     private static final String STATE_NORMAL = "NORMAL";
     private static final String STATE_BANNED = "BANNED";
+    private static final int DEFAULT_CREDIT_SCORE = 100;
 
-    /** bs_user（credit_score/state 列）读写，按主表归属 user 域 DAO */
-    private final IUserDao userDao;
+    /** 信用账户（user_credit 单表，credit 域独占写） */
+    private final IUserCreditAccountDao userCreditAccountDao;
     /** 信用分流水（user_credit_detail）按表拆分的 DAO */
     private final IUserCreditDao userCreditDao;
     private final TransactionTemplate transactionTemplate;
 
     @Override
     public String getStatus(String userId) {
-        return userDao.selectStatus(userId);
+        String state = userCreditAccountDao.selectState(userId);
+        return state == null ? STATE_NORMAL : state;
     }
 
     @Override
     public int getCreditScore(String userId) {
-        Integer creditScore = userDao.selectCreditScore(userId);
-        return creditScore == null ? 0 : creditScore;
+        Integer creditScore = userCreditAccountDao.selectCreditScore(userId);
+        return creditScore == null ? DEFAULT_CREDIT_SCORE : creditScore;
     }
 
     @Override
     public void updateCreditScore(String userId, int delta) {
-        userDao.updateCreditScore(userId, delta);
+        userCreditAccountDao.updateCreditScore(userId, delta);
     }
 
     @Override
@@ -62,7 +65,7 @@ public class CreditRepository implements ICreditRepository {
 
     @Override
     public boolean banIfLowScore(String userId) {
-        return userDao.banIfLowScore(userId) == 1;
+        return userCreditAccountDao.banIfLowScore(userId) == 1;
     }
 
     @Override
@@ -77,7 +80,7 @@ public class CreditRepository implements ICreditRepository {
 
     @Override
     public boolean updateStatus(String userId, String status) {
-        return userDao.updateStatus(userId, status) == 1;
+        return userCreditAccountDao.updateStatus(userId, status) == 1;
     }
 
     // ---------- 原子用例：仓储方法即一次事务（REQUIRED，与既有事务合流） ----------
@@ -89,6 +92,8 @@ public class CreditRepository implements ICreditRepository {
             if (!insertCreditDetail(creditDetailEntity)) {
                 return null;
             }
+            // 账户行懒播种：无行 = 默认 100/NORMAL，播种后再做分数/封禁变更
+            userCreditAccountDao.seedIfAbsent(creditDetailEntity.getUserId());
             updateCreditScore(creditDetailEntity.getUserId(), creditDetailEntity.getChange());
             boolean justBanned = banIfLowScore(creditDetailEntity.getUserId());
             return new CreditChangeResult(getCreditScore(creditDetailEntity.getUserId()), justBanned);
@@ -101,6 +106,7 @@ public class CreditRepository implements ICreditRepository {
             // ADMIN_ADJUST 的 ref_id 为空，不受 uk 约束（人工操作不要求幂等，前端防重）
             int delta = creditDetailEntity.getChange();
             insertCreditDetail(creditDetailEntity);
+            userCreditAccountDao.seedIfAbsent(creditDetailEntity.getUserId());
             updateCreditScore(creditDetailEntity.getUserId(), delta);
             boolean justBanned = delta < 0 && banIfLowScore(creditDetailEntity.getUserId());
             return new CreditChangeResult(getCreditScore(creditDetailEntity.getUserId()), justBanned);
@@ -110,6 +116,7 @@ public class CreditRepository implements ICreditRepository {
     @Override
     public void banByAdminWithDetail(CreditDetailEntity creditDetailEntity) {
         transactionTemplate.execute(status -> {
+            userCreditAccountDao.seedIfAbsent(creditDetailEntity.getUserId());
             if (!updateStatus(creditDetailEntity.getUserId(), STATE_BANNED)) {
                 // 条件 UPDATE 未生效：已处于目标状态 = 幂等成功；否则状态冲突报错
                 if (STATE_BANNED.equals(getStatus(creditDetailEntity.getUserId()))) {
@@ -125,6 +132,7 @@ public class CreditRepository implements ICreditRepository {
     @Override
     public void unbanByAdminWithDetail(CreditDetailEntity creditDetailEntity) {
         transactionTemplate.execute(status -> {
+            userCreditAccountDao.seedIfAbsent(creditDetailEntity.getUserId());
             if (!updateStatus(creditDetailEntity.getUserId(), STATE_NORMAL)) {
                 if (STATE_NORMAL.equals(getStatus(creditDetailEntity.getUserId()))) {
                     return null;

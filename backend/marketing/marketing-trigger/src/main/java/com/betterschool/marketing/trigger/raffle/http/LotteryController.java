@@ -24,7 +24,7 @@ import com.betterschool.marketing.domain.raffle.model.valobj.UserPrizeVO;
 import com.betterschool.marketing.domain.raffle.service.IRaffleDrawService;
 import com.betterschool.marketing.domain.raffle.service.IRaffleQueryService;
 import com.betterschool.marketing.domain.raffle.service.IRaffleShippingService;
-import com.betterschool.marketing.domain.raffle.service.drawcount.IRaffleDrawCountPurchaseService;
+import com.betterschool.marketing.usecase.raffle.DrawCountPurchaseCase;
 import com.betterschool.marketing.trigger.common.http.security.SecurityUtils;
 import com.betterschool.marketing.types.common.AppException;
 import com.betterschool.marketing.types.common.ResponseCode;
@@ -65,7 +65,7 @@ public class LotteryController implements ILotteryService {
 
     private final IRaffleQueryService raffleQueryService;
     private final IRaffleDrawService raffleDrawService;
-    private final IRaffleDrawCountPurchaseService raffleDrawCountPurchaseService;
+    private final DrawCountPurchaseCase drawCountPurchaseCase;
     private final IRaffleShippingService raffleShippingService;
 
     @Override
@@ -143,9 +143,11 @@ public class LotteryController implements ILotteryService {
     }
 
     /**
-     * 用积分购买抽奖次数（抽奖域内的次数资产，与抽奖同域）：购买单与扣积分同事务落库
-     * （ADR-0014，单在即分已扣），入账幂等，宕机残留由 drawCountPurchaseScan 定时补偿收敛；
-     * 同 token 重放按 Stripe 语义返回原结果、不重复扣不重复加。
+     * 用积分购买抽奖次数（抽奖域内的次数资产，与抽奖同域）：三段式顺序编排
+     * （ADR-0016 票 C——落单 CREATED → 扣积分 → 入账置 DONE，每段各自仓储本地事务，
+     * 「单在 ⇒ 分已扣」降级为「扣分结果未知、扫描收敛」），宕机残留由
+     * drawCountPurchaseScan 定时补偿收敛；同 token 重放按 Stripe 语义返回原结果、
+     * 不重复扣不重复加。编排细节见 case 层 {@code DrawCountPurchaseCase}。
      * <p>
      * 路径保留历史的 {@code /exchange/draw-count}（前端在调），并给出语义化的
      * {@code /purchase/draw-count}——两条指向同一实现。
@@ -154,7 +156,7 @@ public class LotteryController implements ILotteryService {
     @PostMapping({"/purchase/draw-count", "/exchange/draw-count"})
     public Response<RedeemDrawCountResponseDTO> exchangeDrawCount(
             @Valid @RequestBody RedeemDrawCountRequestDTO request) {
-        var result = raffleDrawCountPurchaseService.purchaseDrawCount(
+        var result = drawCountPurchaseCase.purchaseDrawCount(
                 SecurityUtils.currentUserId(), request.getToken(), request.quantityOrDefault());
         return Response.ok(new RedeemDrawCountResponseDTO(
                 result.getPurchaseOrderId(), result.getPointsCost(), result.getDrawCount()));

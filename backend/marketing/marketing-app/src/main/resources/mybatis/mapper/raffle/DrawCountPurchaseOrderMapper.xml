@@ -18,7 +18,7 @@
         WHERE purchase_order_id = #{purchaseOrderId}
     </select>
 
-    <!-- 到期待补偿单：DEDUCTED 且未到退避时点，FIFO -->
+    <!-- 到期待收敛单：CREATED 且未到退避时点，FIFO -->
     <select id="listDue" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawCountPurchaseOrderPO">
         SELECT id, purchase_order_id, user_id, quantity, points_cost, state,
                retry_count, next_retry_at, finish_time, create_time, update_time
@@ -35,18 +35,18 @@
         WHERE id = #{id} AND state = 0 AND (next_retry_at IS NULL OR next_retry_at &lt;= NOW())
     </update>
 
-    <!-- 置 DONE：state &lt;&gt; 1 才生效（DEDUCTED 与 DEAD 都可达） -->
+    <!-- 置 DONE：state &lt;&gt; 1 才生效（CREATED 与 DEAD 都可达） -->
     <update id="finish">
         UPDATE draw_count_purchase_order
         SET state = 1, finish_time = NOW(), update_time = NOW()
         WHERE purchase_order_id = #{purchaseOrderId} AND state &lt;&gt; 1
     </update>
 
-    <!-- 置 DEAD：state=0 才生效 -->
+    <!-- 置 DEAD：state=0 才生效（按购买单号条件更新，同步路径无物理 id 也可调） -->
     <update id="markDead">
         UPDATE draw_count_purchase_order
         SET state = 2, update_time = NOW()
-        WHERE id = #{id} AND state = 0
+        WHERE purchase_order_id = #{purchaseOrderId} AND state = 0
     </update>
 
 </mapper>

@@ -56,6 +56,7 @@ public class ErrandFundOrphanScanCase {
 
     public ErrandFundOrphanScanSummaryVO scan() {
         List<WalletDetailEntity> frozenOrphans = walletRepository.listOrphanFrozen(
+                WalletDetailTypeVO.FROZEN, WalletDetailTypeVO.UNFROZEN,
                 FROZEN_ORPHAN_THRESHOLD_MINUTES, SCAN_LIMIT);
         List<ErrandOrderEntity> settledOrders = errandRepository.listRecentSettled(SETTLED_WINDOW_MINUTES, SCAN_LIMIT);
         int unfrozenDone = unfreezeTerminalOrphans(frozenOrphans);

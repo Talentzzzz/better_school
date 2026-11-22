@@ -178,10 +178,11 @@ public class WalletRepository implements IWalletRepository {
         return detailEntity;
     }
 
-    /** 孤儿扫描输入（ADR-0016 两段式）：只读，无事务 */
+    /** 孤儿扫描输入（ADR-0016 两段式）：流水类型成对传入（跑腿/商品各一条扫描线），只读，无事务 */
     @Override
-    public List<WalletDetailEntity> listOrphanFrozen(int thresholdMinutes, int limit) {
-        return walletDetailDao.selectOrphanFrozen(thresholdMinutes, limit)
+    public List<WalletDetailEntity> listOrphanFrozen(WalletDetailTypeVO frozenType, WalletDetailTypeVO unfrozenType,
+                                                     int thresholdMinutes, int limit) {
+        return walletDetailDao.selectOrphanFrozen(frozenType.name(), unfrozenType.name(), thresholdMinutes, limit)
                 .stream().map(this::toDetailEntity).toList();
     }
 }

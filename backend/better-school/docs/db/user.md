@@ -1,12 +1,13 @@
 # 用户表（账号 / 钱包 / 信用分）
 
-> 业务：账号登录 + 公开资料 + 隐私开关，以及以用户为主体的虚拟钱包与信用分流水；归属模块：user（`virtual_wallet` / `wallet_detail` 归 wallet 域、`user_credit_detail` 归 credit 域，三表均只以用户为键，随本文档记）
+> 业务：账号登录 + 公开资料 + 隐私开关，以及以用户为主体的虚拟钱包与信用账户；归属模块：user（`virtual_wallet` / `wallet_detail` 归 wallet 域、`user_credit` / `user_credit_detail` 归 credit 域，各表均只以用户为键，随本文档记）
 
 |表名|说明|
 |----|----|
 |bs_user|用户主表（`user` 是 MySQL 保留字，故加 `bs_` 前缀）|
 |virtual_wallet|虚拟钱包（一人一行：余额 + 托管冻结）|
 |wallet_detail|钱包流水（资金事实源，uk_order_type 幂等）|
+|user_credit|信用账户（分数 + 封禁状态，credit 域独占写；行懒播种，无行 = 默认 100/NORMAL）|
 |user_credit_detail|信用分流水（信用分事实源，uk_user_reason_ref 幂等）|
 
 **主键口径（全库统一，uuid-biz-id 起）**：`id` 是纯内部物理自增，**对外与跨表引用一律用业务 ID 列**（本组表为 `user_id` / `wallet_id`）；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`UUID.randomUUID()` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
@@ -27,23 +28,23 @@
 |show_liked|tinyint(1)|NOT NULL, DEFAULT 1|隐私开关：公开我的「赞过」——1 公开 / 0 仅自己；**仅他视生效**|
 |show_comments|tinyint(1)|NOT NULL, DEFAULT 1|隐私开关：公开我的「评论」——1 公开 / 0 仅自己；**仅他视生效**|
 |role|varchar(20)|NOT NULL, DEFAULT 'USER'|角色 USER/ADMIN|
-|state|varchar(20)|NOT NULL, DEFAULT 'NORMAL'|状态 NORMAL/BANNED（原 `status` 列改名；信用分跌破 30 由 credit 域条件 UPDATE 置 BANNED）|
-|credit_score|int|NOT NULL, DEFAULT 100|信用分，区间 0–100（credit 域写：`GREATEST(0, LEAST(100, credit_score + delta))`），勿在 user 域写|
 |last_login_at|datetime|NULL|最近登录时间|
 |create_time|datetime|NOT NULL|注册时间（SQL `NOW()` 写入，**无 DB 默认值**）|
 |update_time|datetime|NOT NULL|更新时间（SQL `NOW()` 写入，无 `ON UPDATE`）|
+
+> 原 `state` / `credit_score` 列已迁出至 `user_credit` 表（credit 域独占写，表所有权原则：一张表只归一个领域写）。user 域实体拼装 `status`/`creditScore` 时只读 `user_credit`（读跨域，拆库后走 credit 域 API）。
 
 ## 索引
 - `uk_user_id (user_id)`：业务键查用户
 - `uk_phone (phone)`：登录查用户
 
 ## 关联
-- 1:1 → virtual_wallet（user_id）
+- 1:1 → virtual_wallet / user_credit（user_id）
 - 1:N → wallet_detail / user_credit_detail（user_id）
 - 被 post.user_id / post_comment.user_id / product.user_id / errand_order.publisher_id|taker_id / product_order.buyer_id|seller_id / notification|timeline.user_id 引用（一律存 `user_id`）
 
 ## 谁在写 / 注意
-- 资料编辑只写 `signature`/`gender`（`UserMapper.updateProfile`），隐私设置只写 `show_liked`/`show_comments`（`updatePrivacy`），登录只写 `nickname`/`avatar`/`last_login_at`（`updateById`）——**三条语句各管一摊，不要合并成通用 updateById**：`role`/`state`/`credit_score` 归其他域写，防止登录写覆盖并发封禁/调分
+- 资料编辑只写 `signature`/`gender`（`UserMapper.updateProfile`），隐私设置只写 `show_liked`/`show_comments`（`updatePrivacy`），登录只写 `nickname`/`avatar`/`last_login_at`（`updateById`）——**三条语句各管一摊，不要合并成通用 updateById**，防止登录写覆盖其他域数据
 - **获赞无独立计数列**：公开资料接口的 `receivedLikeCount` 读时两段查聚合——post 单表取该用户 NORMAL 帖 id 集，再按 id 集批量读 `post_like_count` 后 Java 求和（窄表计数由 MQ 窗口聚合异步刷盘，属近似值；不含评论获赞；SQL 层零 JOIN）
 - 查用户请走 `phone` / `user_id`（都有 uk），不要扫全表
 
@@ -87,6 +88,23 @@
 - 幂等语义：同一 (订单, type, 轮次, 人) 只允许一条流水；并发/重试撞键 → 影响 0 行 → 该次资金动作整体跳过
 - 只插不改（无 UPDATE / DELETE 语句）；分页读按 `user_id` + `id DESC`
 
+# user_credit
+
+> 业务：信用账户（分数 + 封禁状态）；归属模块：credit（**credit 域独占写**，user/search 域只读）
+
+|字段|类型|约束|说明|
+|----|----|----|----|
+|id|bigint|PK, AUTO_INCREMENT|内部物理主键|
+|user_id|varchar(36)|UNIQUE(uk_user_id), NOT NULL|用户 ID，一人一行|
+|credit_score|int|NOT NULL, DEFAULT 100|信用分，区间 0–100（`GREATEST(0, LEAST(100, credit_score + delta))`）|
+|state|varchar(20)|NOT NULL, DEFAULT 'NORMAL'|状态 NORMAL/BANNED（信用分跌破 30 由条件 UPDATE 置 BANNED）|
+|update_time|datetime|NOT NULL|更新时间|
+
+## 注意
+- **行懒播种**：注册不插行；首次信用变动前 `INSERT IGNORE` 播种默认行（撞 uk_user_id 忽略）。**无行 = 默认分 100 / 状态 NORMAL**（与原 bs_user 列 DEFAULT 语义一致）
+- `banIfLowScore` 的幂等语义（影响行数 = 1 表示「本次刚封禁」）依赖 `credit_score` 与 `state` 同行原子条件 UPDATE，**两列必须同表**，勿再拆分
+- 原寄生在 `bs_user.credit_score`/`bs_user.state` 列上，2026-11-23 迁出为独立表（存量库不迁移，删库重建）
+
 # user_credit_detail
 
 > 业务：信用分流水（信用分事实源，一变动一行）；归属模块：credit
@@ -104,4 +122,4 @@
 ## 索引 / 注意
 - `uk_user_reason_ref (user_id, reason_type, ref_id)`：幂等键，`INSERT IGNORE` 撞键即「已处理过」跳过。**ADMIN 类 `ref_id` 为 NULL，唯一键不约束，故可重复调分**（业务上允许）
 - 加分上限按 `reason_type` 的 dailyCap 判定（`sumTodayChange` 取当日 `create_time` 窗口内的 `SUM(change)`），当前枚举均未设 dailyCap
-- 分数写入 `bs_user.credit_score` 与本表在同一事务：**先插流水，再条件 UPDATE 分数**
+- 分数写入 `user_credit.credit_score` 与本表在同一事务：**先插流水（幂等），再播种账户行，最后条件 UPDATE 分数/封禁**

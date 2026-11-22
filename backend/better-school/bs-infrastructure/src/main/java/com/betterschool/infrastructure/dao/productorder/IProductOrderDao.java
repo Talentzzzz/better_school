@@ -36,4 +36,7 @@ public interface IProductOrderDao {
                                             @Param("limit") int limit);
 
     long countMineBySeller(@Param("userId") String userId);
+
+    /** 孤儿扫描输入（ADR-0016 两段式）：近窗口进入终态的订单，按 update_time 升序 */
+    List<ProductOrder> selectRecentSettled(@Param("windowMinutes") int windowMinutes, @Param("limit") int limit);
 }

@@ -185,17 +185,19 @@
 - 定价：`Constants.DRAW_COUNT_PURCHASE_PRICE = 100`（随 `GET /activity` 的 `drawCountPrice` 返回）；
   单次份数上限 `DRAW_COUNT_PURCHASE_MAX_QUANTITY = 10`
 - **领域归属**：抽奖次数是**抽奖域内的资产**（`domain.raffle.service.drawcount`），不再是独立领域；
-  购买是抽奖域内的一个用例（`IRaffleDrawCountPurchaseService`），与抽奖主链路并列、入口与幂等键各自独立
+  购买是抽奖域内的一个用例（编排落 case 层 `DrawCountPurchaseCase`），与抽奖主链路并列、入口与幂等键各自独立
 - **幂等**：`redeemOrderId = SHA-256(userId + ":" + token)` 取 16 字节组 UUID 的 36 位规范形字符串
-  （确定性映射，不落重放表）——同一 token 重放恒映射同一单号，积分流水唯一键
-  `(userId, REDEEM_DRAW_COUNT, refId)` 与次数桶唯一键 `(userId, REDEEM, refId)` 各自吸收重复，
-  所以**只成功入账一次**：积分只扣一次、次数只加一次。换 token 才是新的一笔
-- **事务边界**：**不跨域开事务**。购买用例顺序做两次、各自域内原子：
-  ① 积分域扣分（`IPointsDeductPort` → `IPointsAccountService.deduct`，流水唯一键 = 购买单号）
-  ② 抽奖域次数入账（域内仓储 `creditDrawCountBucket`，桶唯一键 = 同一购买单号）。
-  两步共用同一个确定性单号做幂等互斥，因此「扣分成功、入账未成功」（进程崩溃 / 抽奖域短暂故障）时
-  客户端带同一 token 重试即收敛：第一步幂等跳过、第二步补上；反向不会发生（入账前必先扣分）。
-  **积分不足**在第一步就抛 `4306`，一分不扣、一桶不加
+  （确定性映射，不落重放表）——同一 token 重放恒映射同一单号，购买单唯一键、积分流水唯一键
+  `(userId, REDEEM_DRAW_COUNT, refId)` 与次数桶唯一键 `(userId, PURCHASE, refId)` 各自吸收重复，
+  所以**只成功一次**：积分只扣一次、次数只加一次。换 token 才是新的一笔
+- **事务边界（ADR-0016 票 C 三段式）**：**不跨域开事务**，三段各自仓储本地事务、case 层顺序编排：
+  ① 落单段——购买单 `CREATED`（raffle 仓储，订单兼幂等键与对账源，`uk_purchase_order_id` 是并发同 token 的唯一互斥点）
+  ② 扣分段——积分域扣分（points 仓储，流水先行幂等，唯一键 = 购买单号），**资金段先行**（不先入账，杜绝短款）
+  ③ 推进段——次数入账（桶唯一键幂等）+ 条件更新置 `DONE`（守卫 `state <> 1`）。
+  「单在 ⇒ 分已扣」降级为「单在 ⇒ 扣分结果未知、扫描收敛」：宕机残留（CREATED 无扣分流水 /
+  有流水未 DONE）由 xxl `drawCountPurchaseScan` 补偿收敛（收敛动作 = 三段全量重放，分叉被幂等吸收），
+  客户端带同一 token 重试同样顺势补齐。**积分不足**在扣分段判出：一分未扣、单即置死信
+  （不占补偿重试轮次），充值后带原 token 重放自愈
 - 旧模型「兑换单 + PENDING 残留 + `resume`」整套机制**已废除**；「一个 MySQL 事务罩两域」也已废除，
   改为上面的顺序调用 + 幂等重试（全仓统一的跨域口径）
 

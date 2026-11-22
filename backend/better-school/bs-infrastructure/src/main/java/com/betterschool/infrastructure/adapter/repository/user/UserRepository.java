@@ -8,6 +8,8 @@ import com.betterschool.domain.user.model.valobj.GenderVO;
 import com.betterschool.domain.user.model.valobj.UserBriefVO;
 import com.betterschool.domain.user.model.valobj.UserRoleVO;
 import com.betterschool.domain.user.model.valobj.UserStatusVO;
+import com.betterschool.infrastructure.dao.credit.IUserCreditAccountDao;
+import com.betterschool.infrastructure.dao.credit.po.UserCredit;
 import com.betterschool.infrastructure.dao.post.IPostDao;
 import com.betterschool.infrastructure.dao.post.IPostLikeCountDao;
 import com.betterschool.infrastructure.dao.post.po.Post;
@@ -24,19 +26,26 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Repository
 @RequiredArgsConstructor
 public class UserRepository implements IUserRepository {
+
+    private static final String DEFAULT_STATE = "NORMAL";
+    private static final int DEFAULT_CREDIT_SCORE = 100;
 
     private final IUserDao userDao;
     /** 获赞统计回查帖 id 集（post 单表） */
     private final IPostDao postDao;
     /** 获赞统计回查 like_count 窄表（post_like_count 单表，SQL 层零 JOIN） */
     private final IPostLikeCountDao postLikeCountDao;
+    /** 信用账户只读（user_credit 表，credit 域独占写）：拼装 UserEntity.status/creditScore，读跨域（拆库后走 credit 域 API） */
+    private final IUserCreditAccountDao userCreditAccountDao;
 
     private final RedissonClient redissonClient;
 
@@ -49,13 +58,13 @@ public class UserRepository implements IUserRepository {
     @Override
     public UserEntity findByPhone(String phone) {
         User user = userDao.selectByPhone(phone);
-        return user == null ? null : toEntity(user);
+        return user == null ? null : toEntity(user, loadCredit(user.getUserId()));
     }
 
     @Override
     public UserEntity findById(String userId) {
         User user = userDao.selectById(userId);
-        return user == null ? null : toEntity(user);
+        return user == null ? null : toEntity(user, loadCredit(userId));
     }
 
     /** 落库 + 注册消息 + 搜索同步消息一个原子用例（同事务写 outbox） */
@@ -159,7 +168,10 @@ public class UserRepository implements IUserRepository {
 
     @Override
     public List<UserEntity> listByIds(List<String> userIdList) {
-        return userDao.selectByIds(userIdList).stream().map(this::toEntity).toList();
+        Map<String, UserCredit> creditMap = loadCredits(userIdList);
+        return userDao.selectByIds(userIdList).stream()
+                .map(user -> toEntity(user, creditMap.get(user.getUserId())))
+                .toList();
     }
 
     @Override
@@ -175,7 +187,21 @@ public class UserRepository implements IUserRepository {
         return userBriefVO;
     }
 
-    private UserEntity toEntity(User user) {
+    /** 单个用户信用账户只读（user_credit 无行 = 默认 NORMAL/100，懒播种语义） */
+    private UserCredit loadCredit(String userId) {
+        return userCreditAccountDao.selectByUserId(userId);
+    }
+
+    /** 批量信用账户只读（列表场景一次取回，避免逐行查询） */
+    private Map<String, UserCredit> loadCredits(List<String> userIdList) {
+        if (userIdList.isEmpty()) {
+            return Map.of();
+        }
+        return userCreditAccountDao.selectByUserIds(userIdList).stream()
+                .collect(Collectors.toMap(UserCredit::getUserId, Function.identity()));
+    }
+
+    private UserEntity toEntity(User user, UserCredit credit) {
         UserEntity userEntity = new UserEntity();
         userEntity.setUserId(user.getUserId());
         userEntity.setPhone(user.getPhone());
@@ -186,8 +212,10 @@ public class UserRepository implements IUserRepository {
         userEntity.setShowLiked(user.getShowLiked());
         userEntity.setShowComments(user.getShowComments());
         userEntity.setRole(UserRoleVO.valueOf(user.getRole()));
-        userEntity.setStatus(UserStatusVO.valueOf(user.getState()));
-        userEntity.setCreditScore(user.getCreditScore());
+        userEntity.setStatus(UserStatusVO.valueOf(credit == null || credit.getState() == null
+                ? DEFAULT_STATE : credit.getState()));
+        userEntity.setCreditScore(credit == null || credit.getCreditScore() == null
+                ? DEFAULT_CREDIT_SCORE : credit.getCreditScore());
         userEntity.setLastLoginAt(user.getLastLoginAt());
         userEntity.setCreatedAt(user.getCreateTime());
         return userEntity;
@@ -204,8 +232,6 @@ public class UserRepository implements IUserRepository {
         user.setShowLiked(userEntity.getShowLiked());
         user.setShowComments(userEntity.getShowComments());
         user.setRole(userEntity.getRole().name());
-        user.setState(userEntity.getStatus().name());
-        user.setCreditScore(userEntity.getCreditScore());
         return user;
     }
 }

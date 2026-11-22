@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.credit.IUserCreditAccountDao">
+
+    <sql id="baseColumns">
+        id, user_id, credit_score, state, update_time
+    </sql>
+
+    <!-- 播种默认行：INSERT IGNORE 撞 uk_user_id 忽略（幂等），保证后续条件 UPDATE 有行可命中 -->
+    <insert id="seedIfAbsent">
+        INSERT IGNORE INTO user_credit (user_id, update_time)
+        VALUES (#{userId}, NOW())
+    </insert>
+
+    <select id="selectByUserId" resultType="com.betterschool.infrastructure.dao.credit.po.UserCredit">
+        SELECT <include refid="baseColumns"/>
+        FROM user_credit
+        WHERE user_id = #{userId}
+    </select>
+
+    <select id="selectByUserIds" resultType="com.betterschool.infrastructure.dao.credit.po.UserCredit">
+        SELECT <include refid="baseColumns"/>
+        FROM user_credit
+        WHERE user_id IN
+        <foreach collection="ids" item="userId" open="(" separator="," close=")">#{userId}</foreach>
+    </select>
+
+    <select id="selectCreditScore" resultType="int">
+        SELECT credit_score
+        FROM user_credit
+        WHERE user_id = #{userId}
+    </select>
+
+    <select id="selectState" resultType="string">
+        SELECT state
+        FROM user_credit
+        WHERE user_id = #{userId}
+    </select>
+
+    <update id="updateCreditScore">
+        UPDATE user_credit
+        SET credit_score = GREATEST(0, LEAST(100, credit_score + #{delta})),
+            update_time  = NOW()
+        WHERE user_id = #{userId}
+    </update>
+
+    <!-- 条件 UPDATE：仅 NORMAL 且分数 <30 时置 BANNED，影响行数 = 本次刚封禁（幂等） -->
+    <update id="banIfLowScore">
+        UPDATE user_credit
+        SET state = 'BANNED',
+            update_time = NOW()
+        WHERE user_id = #{userId}
+          AND state = 'NORMAL'
+          AND credit_score &lt; 30
+    </update>
+
+    <!-- 封禁/解封通用：state 已是目标值则不生效 -->
+    <update id="updateStatus">
+        UPDATE user_credit
+        SET state = #{state},
+            update_time = NOW()
+        WHERE user_id = #{userId}
+          AND state &lt;&gt; #{state}
+    </update>
+</mapper>

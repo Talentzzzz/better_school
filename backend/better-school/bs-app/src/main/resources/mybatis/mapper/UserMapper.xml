@@ -4,7 +4,7 @@
 
     <sql id="baseColumns">
         id, user_id, phone, nickname, avatar, signature, gender, show_liked, show_comments,
-        role, state, credit_score, last_login_at, create_time
+        role, last_login_at, create_time
     </sql>
 
     <!-- 展示用窄投影列口径：会话列表/消息发送者只要这三列，phone 等敏感列不出库 -->
@@ -62,13 +62,14 @@
 
     <insert id="insert" parameterType="com.betterschool.infrastructure.dao.user.po.User"
             useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO bs_user (user_id, phone, nickname, avatar, role, state, credit_score, last_login_at, create_time, update_time)
-        VALUES (#{userId}, #{phone}, #{nickname}, #{avatar}, #{role}, #{state}, #{creditScore}, NOW(), NOW(), NOW())
+        INSERT INTO bs_user (user_id, phone, nickname, avatar, role, last_login_at, create_time, update_time)
+        VALUES (#{userId}, #{phone}, #{nickname}, #{avatar}, #{role}, NOW(), NOW(), NOW())
     </insert>
 
     <!-- 业务 ID 应用层发号、insert 前一次写入（user_id 列 UUID 字符串） -->
-    <!-- 只更新资料与登录时间：role/state/credit_score 列归 credit 域写，防止登录写覆盖并发封禁/调分；
-         last_login_at 取数据库时钟（登录时刻），updateById 只被登录链路调用，资料编辑走 updateProfile/updatePrivacy -->
+    <!-- 只更新资料与登录时间：信用分/封禁状态已迁 user_credit 表（credit 域独占写），
+         登录写不会覆盖并发封禁/调分；last_login_at 取数据库时钟（登录时刻），
+         updateById 只被登录链路调用，资料编辑走 updateProfile/updatePrivacy -->
     <update id="updateById" parameterType="com.betterschool.infrastructure.dao.user.po.User">
         UPDATE bs_user
         SET nickname      = #{nickname},
@@ -78,7 +79,7 @@
         WHERE user_id = #{id}
     </update>
 
-    <!-- 编辑资料：只写资料两列（nickname/avatar 本次不改、role/state/credit_score 归其他域写） -->
+    <!-- 编辑资料：只写资料两列（nickname/avatar 本次不改，其余列各归各域） -->
     <update id="updateProfile">
         UPDATE bs_user
         SET signature = #{signature},
@@ -102,43 +103,7 @@
         WHERE user_id = #{userId}
     </select>
 
-    <select id="selectStatus" resultType="string">
-        SELECT state
-        FROM bs_user
-        WHERE user_id = #{userId}
-    </select>
-
-    <select id="selectCreditScore" resultType="int">
-        SELECT credit_score
-        FROM bs_user
-        WHERE user_id = #{userId}
-    </select>
-
-    <update id="updateCreditScore">
-        UPDATE bs_user
-        SET credit_score = GREATEST(0, LEAST(100, credit_score + #{delta})),
-            update_time  = NOW()
-        WHERE user_id = #{userId}
-    </update>
-
-    <!-- 条件 UPDATE：仅 NORMAL 且分数 <30 时置 BANNED，影响行数 = 本次刚封禁（幂等） -->
-    <update id="banIfLowScore">
-        UPDATE bs_user
-        SET state = 'BANNED',
-            update_time = NOW()
-        WHERE user_id = #{userId}
-          AND state = 'NORMAL'
-          AND credit_score &lt; 30
-    </update>
-
-    <!-- 封禁/解封通用：state 已是目标值则不生效 -->
-    <update id="updateStatus">
-        UPDATE bs_user
-        SET state = #{state},
-            update_time = NOW()
-        WHERE user_id = #{userId}
-          AND state &lt;&gt; #{state}
-    </update>
+    <!-- 信用分/封禁状态的 SQL 已整体迁出至 UserCreditMapper.xml（user_credit 表，credit 域独占写） -->
 
     <!-- 获赞统计改仓储多查拼装：post 单表取该用户 NORMAL 帖 id 集（PostMapper.selectNormalIdsByUser）
          + post_like_count 窄表批量读（PostMapper.selectLikeCountsByPostIds），Java 求和（SQL 层零 JOIN） -->

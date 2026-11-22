@@ -9,5 +9,14 @@
         VALUES (#{orderId}, #{eventType}, #{fromState}, #{toState}, #{actorId}, #{actorRole},
                 #{reasonType}, #{reason}, #{images}, NOW(), NOW())
     </insert>
+    <!-- 订单最新一条事件（id 递增即状态变更顺序）：孤儿扫描的已支付取消判据事实源 -->
+    <select id="selectLatestEvent" resultType="com.betterschool.infrastructure.dao.productorder.po.ProductOrderEvent">
+        SELECT id, order_id, event_type, from_state, to_state, actor_id, actor_role,
+               reason_type, reason, images, create_time, update_time
+        FROM product_order_event
+        WHERE order_id = #{orderId}
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
 
 </mapper>

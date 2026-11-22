@@ -45,8 +45,19 @@
    （支付 prepare→freeze→confirm；取消/超时/自动完成翻转先行、case 层补资金段）+
    `ErrandFundOrphanScanCase` / `ErrandFundOrphanScanJob`（xxl `errandFundOrphanScan`，钱包侧
    `listOrphanFrozen` + 订单侧 `listRecentSettled` 两个扫描查询）+ `errand.md` 宣称改写。
-2. 票 B：`ProductPayCompositeTxPort` 两方法两段化 + 商品孤儿扫描（可与票 A 共用扫描 job 按 `biz_type` 分派）。
-3. 票 C：marketing `PointsDeductPort` 三段化 + `drawCountPurchaseScan` 口径扩展。
+2. **票 B（已完成，2026-11-22）**：`IProductPayCompositeTxPort` / `ProductPayCompositeTxPort` 与
+   `CompositeTxExecutor` 组件删除，商品支付/取消两段化（支付 prepare→case 层 PRODUCT_FROZEN 冻结→confirm
+   翻转；取消翻转段先行、case 层补 PRODUCT_UNFROZEN 解冻）+ `ProductFundOrphanScanCase` /
+   `ProductFundOrphanScanJob`（xxl `productFundOrphanScan`，钱包侧 `listOrphanFrozen` 参数化——
+   跑腿 FROZEN/UNFROZEN 与商品 PRODUCT_FROZEN/PRODUCT_UNFROZEN 同表不同 type 两条扫描线，
+   订单侧 `listRecentSettled` + `latestEventOf` 已支付取消判据补解冻）+ `trade.md` 宣称改写。
+   确认收货路径不改（幂等回放口径保留）。
+3. **票 C（已完成，2026-11-23）**：`IPointsDeductPort` / `PointsDeductPort` 删除，购买链路改三段
+   （case 层 `DrawCountPurchaseCase` 编排：落单 CREATED → 积分域扣分 → 入账置 DONE；状态机
+   `DEDUCTED(0)` 改名 `CREATED(0)`，code 不变存量行零迁移——老行重放扣分被积分流水唯一键幂等吸收）；
+   `drawCountPurchaseScan` 口径扩展（收敛动作 = 三段全量重放，认领/退避/死信基建保留，
+   购买单本身就是状态表、零新表）；积分不足单即置 DEAD（充值后原 token 重放自愈）；
+   `marketing-services.md` §4 / `lottery.md` 宣称改写。
 4. 文档随票：`backend/better-school/docs/api/trade.md`、`backend/docs/architecture/marketing-services.md` 中
    「经组合事务端口并入一个物理事务」的宣称改写为两段式口径（票 A 的 `errand.md` 已随票完成）。
 

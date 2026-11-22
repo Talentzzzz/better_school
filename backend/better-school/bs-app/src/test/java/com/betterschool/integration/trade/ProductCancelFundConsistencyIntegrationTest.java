@@ -12,15 +12,16 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 商品取消资金收口集成测试（资金一致性票 07）：在主缝（商品订单用例层公开取消方法
- * {@link ProductOrderCase#cancelOrder}）上断言「订单取消翻转」与「买家解冻退款
- * PRODUCT_UNFROZEN」经组合事务端口并入同一物理事务的外显行为——只断言外部可观察状态
- * （订单状态 / 钱包流水 / 冻结额 / 可用余额），不断言事务内部编排。
+ * 商品取消资金链路集成测试（资金一致性票 07，ADR-0016 两段化后口径同步）：在主缝（商品订单用例层
+ * 公开取消方法 {@link ProductOrderCase#cancelOrder}）上断言两段式资金链路的外显行为——取消翻转段
+ * （含台账回补 + 搜索同步，单仓储事务）先行，买家解冻退款 PRODUCT_UNFROZEN（uk_order_type 幂等）
+ * 由 case 层随后执行；只断言外部可观察状态（订单状态 / 钱包流水 / 冻结额 / 可用余额），
+ * 不断言段落编排。
  * <p>
  * 失败注入点说明（照票 03 维护者备注同缝不同向模式）：解冻动作（updateUnfreeze）无
  * 「0 行失败」的天然条件守卫可注入，故钱包侧原子性由「取消成功 ⇒ 钱必到位」与
- * 「幂等重放 ⇒ 不重复退款」两个方向外显覆盖；翻转未命中（状态已变化）整事务回滚、
- * 解冻随之回滚由条件 UPDATE 守卫保证，与票 06 支付的余额不足注入同缝不同向。
+ * 「幂等重放 ⇒ 不重复退款」两个方向外显覆盖；翻转未命中（状态已变化）抛业务异常、
+ * 资金段尚未执行零残留，由条件 UPDATE 守卫保证，与票 06 支付的余额不足注入同缝不同向。
  */
 class ProductCancelFundConsistencyIntegrationTest extends CommunityApiTestBase {
 
@@ -30,7 +31,7 @@ class ProductCancelFundConsistencyIntegrationTest extends CommunityApiTestBase {
     /** 注册赠送初始余额（WalletRepository.INITIAL_BALANCE）——资金注入基线 */
     private static final String INITIAL_BALANCE = "1000";
 
-    // ---------- 取消成功：订单已取消 + 货款解冻回可用余额（同一物理事务的外显三态） ----------
+    // ---------- 取消成功：订单已取消 + 货款解冻回可用余额（两段式成功路径的外显三态） ----------
 
     @Test
     void 已支付订单取消成功_订单取消且解冻退款回可用余额无悬置冻结() {
