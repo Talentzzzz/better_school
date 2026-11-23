@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.cache.post;
+package com.betterschool.infrastructure.cache.post;
 
 import com.betterschool.domain.community.model.entity.PostEntity;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;

@@ -1,9 +1,9 @@
 package com.betterschool.integration.community;
 
-import com.betterschool.infrastructure.adapter.merge.CountAction;
-import com.betterschool.infrastructure.adapter.merge.CountEvent;
-import com.betterschool.infrastructure.adapter.merge.ICountFlushHandler;
-import com.betterschool.infrastructure.adapter.merge.LikeState;
+import com.betterschool.infrastructure.merge.count.CountAction;
+import com.betterschool.infrastructure.merge.count.CountEvent;
+import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
+import com.betterschool.infrastructure.merge.count.LikeState;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

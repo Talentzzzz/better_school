@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.merge;
+package com.betterschool.infrastructure.merge.count;
 
 import lombok.extern.slf4j.Slf4j;
 

@@ -1,7 +1,7 @@
 package com.betterschool.unit.config;
 
 import com.betterschool.config.CountMergeConfig;
-import com.betterschool.infrastructure.adapter.merge.MergeConfig;
+import com.betterschool.infrastructure.merge.count.MergeConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.env.MockEnvironment;

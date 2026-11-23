@@ -1,9 +1,9 @@
 package com.betterschool.integration.errand;
 
 import com.betterschool.domain.errand.adapter.repository.IErrandRepository;
-import com.betterschool.infrastructure.adapter.merge.CountAction;
-import com.betterschool.infrastructure.adapter.merge.CountEvent;
-import com.betterschool.infrastructure.adapter.merge.ICountFlushHandler;
+import com.betterschool.infrastructure.merge.count.CountAction;
+import com.betterschool.infrastructure.merge.count.CountEvent;
+import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.betterschool.trigger.job.MarketFeedIndexRebuildJob;
 import org.junit.jupiter.api.DisplayName;

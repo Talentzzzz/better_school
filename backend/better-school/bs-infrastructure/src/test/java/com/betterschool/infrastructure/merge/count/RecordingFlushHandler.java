@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.merge;
+package com.betterschool.infrastructure.merge.count;
 
 import java.util.ArrayList;
 import java.util.Collections;

@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.merge;
+package com.betterschool.infrastructure.merge.count;
 
 /**
  * 不等结果的那条入口（{@code submitAsync}，浏览类）的返回：只有三句，没有 {@code TIMEOUT}

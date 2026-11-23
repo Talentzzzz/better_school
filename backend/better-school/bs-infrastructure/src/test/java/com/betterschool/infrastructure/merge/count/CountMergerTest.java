@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.merge;
+package com.betterschool.infrastructure.merge.count;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -12,8 +12,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntConsumer;
 
-import static com.betterschool.infrastructure.adapter.merge.CountAction.POST_LIKE;
-import static com.betterschool.infrastructure.adapter.merge.CountAction.POST_VIEW;
+import static com.betterschool.infrastructure.merge.count.CountAction.POST_LIKE;
+import static com.betterschool.infrastructure.merge.count.CountAction.POST_VIEW;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;

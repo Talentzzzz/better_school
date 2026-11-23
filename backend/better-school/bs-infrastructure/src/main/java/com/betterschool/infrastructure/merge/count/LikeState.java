@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.merge;
+package com.betterschool.infrastructure.merge.count;
 
 /**
  * 点赞类动作的逐件业务结果——落库方法回填给等待者的东西。

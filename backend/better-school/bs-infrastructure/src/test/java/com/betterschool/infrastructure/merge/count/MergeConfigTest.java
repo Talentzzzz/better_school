@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.merge;
+package com.betterschool.infrastructure.merge.count;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

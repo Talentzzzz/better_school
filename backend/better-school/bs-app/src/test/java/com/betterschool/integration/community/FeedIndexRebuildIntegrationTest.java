@@ -1,6 +1,6 @@
 package com.betterschool.integration.community;
 
-import com.betterschool.infrastructure.adapter.merge.CountMerger;
+import com.betterschool.infrastructure.merge.count.CountMerger;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.betterschool.trigger.job.FeedIndexRebuildJob;
 import com.fasterxml.jackson.databind.JsonNode;

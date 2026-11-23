@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.merge;
+package com.betterschool.infrastructure.merge.count;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;

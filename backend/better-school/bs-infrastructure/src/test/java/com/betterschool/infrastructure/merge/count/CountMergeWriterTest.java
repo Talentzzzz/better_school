@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.merge;
+package com.betterschool.infrastructure.merge.count;
 
 import com.betterschool.domain.community.model.valobj.LikeStateVO;
 import com.betterschool.types.enums.ResponseCode;
@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static com.betterschool.infrastructure.adapter.merge.CountAction.POST_LIKE;
+import static com.betterschool.infrastructure.merge.count.CountAction.POST_LIKE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;

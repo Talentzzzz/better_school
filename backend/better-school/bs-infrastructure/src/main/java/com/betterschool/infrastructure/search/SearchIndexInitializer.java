@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.search;
+package com.betterschool.infrastructure.search;
 
 import com.betterschool.domain.search.adapter.repository.ISearchRepository;
 import lombok.RequiredArgsConstructor;

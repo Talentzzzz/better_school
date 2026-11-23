@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.merge;
+package com.betterschool.infrastructure.merge.count;
 
 /**
  * 合并器终态：等结果的那条入口（{@code commit}）<b>只会说出三句</b>——{@code COMPLETED} /

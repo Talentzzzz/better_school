@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.merge;
+package com.betterschool.infrastructure.merge.count;
 
 import com.betterschool.domain.community.model.valobj.LikeStateVO;
 import com.betterschool.types.enums.ResponseCode;

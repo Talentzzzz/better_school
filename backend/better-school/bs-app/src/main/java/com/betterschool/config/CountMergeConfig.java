@@ -1,6 +1,6 @@
 package com.betterschool.config;
 
-import com.betterschool.infrastructure.adapter.merge.MergeConfig;
+import com.betterschool.infrastructure.merge.count.MergeConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

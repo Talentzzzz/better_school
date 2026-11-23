@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.merge;
+package com.betterschool.infrastructure.merge.count;
 
 /**
  * 计数侧的写动作：合并器只按它做<b>二次分组</b>（动作 × 行主键），不解析它的语义。
