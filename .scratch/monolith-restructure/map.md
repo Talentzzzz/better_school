@@ -27,8 +27,8 @@ backend 回归单体：单一 Maven reactor（分层 7 模块 types/api/domain/c
 
 ## Not yet specified
 
-- xxl-job 2 处 seed↔代码不一致（`postReviewTimeoutScan` seed 有代码无、`pointsBucketCompaction` 代码有 seed 无）——07 票执行时核对处置，是否单独票化待 04 拍板。
-- `outbox_message` 双表归并方案（marketing 侧超集两列）——04 票拍板。
+- RocketMQ 链路进程内化（bs-lottery-drawn / bs-points-changed 两个撞名 topic 的退役，连同 marketing 生产点与 3 个消费者）：07 票按「代码不改语义」边界保留现状，归后续 effort（与 04 票 trigger 归并去留联动）。
+- 票 08 遗留清单新增：docs 双库双 seed 口径（backend/docs/db/README.md、marketing-services.md、testing.md、sql.md、backend/docs/marketing/db/*）；dev-stack.ps1 两服务起停段（$Services 仍指向已删的 backend/marketing 工程）；测试基类注释（bs_marketing_test）。
 
 ## Out of scope
 
