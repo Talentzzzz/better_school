@@ -20,11 +20,10 @@
                 → rocketmq-namesrv(healthy) → es(healthy)
                 broker / xxl-job-admin 无 healthcheck，只报状态不阻塞
       ③ 建库（docker exec 直连，不用 test-env.sh）：
-           better_school  = better-school/sql/init-dev.sql   + schema.sql（超时 16 分表就在这份 schema 里）
-           bs_marketing   = marketing/sql/init-dev.sql       + schema.sql（init 已含 USE）
+           better_school  = better-school/sql/init-dev.sql   + schema.sql（超时 16 分表与营销域 22 张表都在这份 schema 里，票 07 合库）
            xxl_job        = backend/sql/xxl-job.sql（只在 xxl_job_info 表缺失时灌；官方脚本非幂等）
-      ④ xxl 注册（xxl-seed）：两个工程的 sql/xxl-job-tasks.sql（幂等，按 executor_handler 判重）
-                              + 清掉已无 handler 对应的历史行与两个废弃执行器组
+      ④ xxl 注册（xxl-seed）：单体的 sql/xxl-job-tasks.sql（幂等，按 executor_handler 判重；
+                              营销任务已随票 07 并入，marketing-executor 组退役）
       ⑤ 注册面清理：Nacos（nacos-prune，删掉已删工程留下的 dataId）+ RocketMQ（mq-prune，
                     删掉已无生产/消费方的 topic 与消费组，清单见 $StaleMqNames）
       ⑥ 构建（除非 -SkipBuild）：mvn -o clean package -DskipTests（两个工程各一次）
@@ -249,20 +248,14 @@ function Invoke-DbInit([switch]$Drop) {
     $mode = if ($Drop) { '先 DROP 再建' } else { '幂等，已存在则不动' }
     Write-Step "3/7 建库（$mode）"
     $bsSql = Join-Path $BackendDir 'better-school\sql'
-    $mktSql = Join-Path $BackendDir 'marketing\sql'
 
     if ($Drop) {
-        foreach ($db in @('better_school', 'bs_marketing')) {
-            Invoke-SqlStatement "DROP DATABASE IF EXISTS ``$db``;" | Out-Null
-            Write-Ok "dropped $db"
-        }
+        Invoke-SqlStatement "DROP DATABASE IF EXISTS ``better_school``;" | Out-Null
+        Write-Ok 'dropped better_school'
     }
 
     Invoke-SqlFiles -Paths @((Join-Path $bsSql 'init-dev.sql'), (Join-Path $bsSql 'schema.sql'))
-    Write-Ok 'better_school = init-dev.sql + schema.sql'
-
-    Invoke-SqlFiles -Paths @((Join-Path $mktSql 'init-dev.sql'), (Join-Path $mktSql 'schema.sql'))
-    Write-Ok 'bs_marketing = init-dev.sql + schema.sql（init 自带 USE）'
+    Write-Ok 'better_school = init-dev.sql + schema.sql（营销域表已并入，票 07）'
 
     # xxl_job.sql 非幂等（CREATE TABLE 无 IF NOT EXISTS），只在表缺失时灌一次
     $xxlTables = Invoke-SqlStatement "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='xxl_job' AND table_name='xxl_job_info';"
@@ -274,7 +267,7 @@ function Invoke-DbInit([switch]$Drop) {
         Write-Ok 'xxl_job 已在（xxl_job_info 存在），跳过官方建库脚本'
     }
 
-    foreach ($row in (Invoke-SqlStatement "SELECT table_schema, COUNT(*) FROM information_schema.tables WHERE table_schema IN ('better_school','bs_marketing') GROUP BY table_schema ORDER BY table_schema;")) {
+    foreach ($row in (Invoke-SqlStatement "SELECT table_schema, COUNT(*) FROM information_schema.tables WHERE table_schema = 'better_school' GROUP BY table_schema;")) {
         Write-Ok "表数 $row"
     }
 }
@@ -293,9 +286,8 @@ function Invoke-XxlSeed {
     Write-Ok "清掉废弃执行器组：$($StaleXxlGroups -join ', ')"
 
     Invoke-SqlFiles -Paths @(
-        (Join-Path $BackendDir 'better-school\sql\xxl-job-tasks.sql'),
-        (Join-Path $BackendDir 'marketing\sql\xxl-job-tasks.sql'))
-    Write-Ok '灌入两份 sql/xxl-job-tasks.sql'
+        (Join-Path $BackendDir 'better-school\sql\xxl-job-tasks.sql'))
+    Write-Ok '灌入 sql/xxl-job-tasks.sql（单体唯一 seed，营销任务已并入）'
 
     Write-Host '  当前注册表（组 → handler，trigger_status）：'
     # 箭头用 ASCII：→ 会在 mysql 客户端回显时被转码成乱码

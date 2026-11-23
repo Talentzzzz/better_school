@@ -11,25 +11,22 @@
 #      推荐：scripts/dev-stack.ps1 up —— 起容器 + 等就绪 + 建好两个开发库 + xxl 注册 + 两服务健康检查
 #      （PowerShell 入口；本机 bash/WSL 是坏的，scripts/test-env.sh / run-app.sh 跑不了）。
 #      test-env.sh 是等价的手工步骤参考：起容器 + 等就绪 + 建好 better_school / better_school_test 两个库（幂等，可重复跑）。
-#      等效手工命令：init-dev.sql / init-test.sql 只建库并 USE，schema.sql 是唯一 DDL 主体；
+#      等效手工命令：init-dev.sql / init-test.sql 只建库并 USE，schema.sql 是唯一 DDL 主体
+#      （营销域表已随 monolith-restructure 票 07 并入同一份 schema.sql，无独立营销库）；
 #      USE 是连接级的，所以两段必须按序拼给同一个 mysql 连接（单喂 schema.sql 会报 No database selected）：
 #      cat better-school/sql/init-dev.sql  better-school/sql/schema.sql | docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4
 #      cat better-school/sql/init-test.sql better-school/sql/schema.sql | docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4
-#      营销一个库（points / raffle / inventory / drawcount 同库 bs_marketing，票 13 起 schema.sql 是唯一 DDL，
-#      schema-legacy.sql 已随旧 lottery 十张表一起删除）：
-#      { cat marketing/sql/init-dev.sql; cat marketing/sql/schema.sql; } | docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4
-#      （init-dev.sql 自带 USE bs_marketing；测试侧换 init-test.sql。DDL 全 IF NOT EXISTS，重复拼接幂等）
 #      xxl-job 库非幂等，只需建一次（应用启动前）：
 #      docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4 < sql/xxl-job.sql
 #      docker exec -i bs-mysql mysql -uroot -pbs123456 --default-character-set=utf8mb4 < better-school/sql/xxl-job-tasks.sql
-#      （两份 sql/xxl-job-tasks.sql 各自幂等；better-school / marketing 同法）
+#      （xxl-job-tasks.sql 幂等；营销任务已随票 07 并入这一份 seed）
 #   2. 若本地 3306/6379/9876 已有服务在跑，改下面 ports 映射并同步改应用配置
 #   3. 密码统一 bs123456（MySQL root / Redis requirepass / 数据源）
 #   4. Nacos 起来后须建共享配置 dataId=better-school-shared.yml / group=DEFAULT_GROUP，
 #      内容为 jwt.secret + jwt.expire-days。两个 app（单体 + 营销）都严格导入这一份，
 #      没建则两个 app 全部起不来。控制台 http://localhost:8848/nacos（2.5.4 未开鉴权，直接进）
 #   5. 测试栈与开发栈同一份 compose：MySQL / Redis / MinIO 由两边共用（隔离靠各自的多租户机制——
-#      库名 better_school 与 better_school_test、营销域 bs_marketing 及 bs_marketing_test、
+#      库名 better_school 与 better_school_test（营销域表已并入同一库，monolith-restructure 票 07）、
 #      Redis 逻辑库 0 与 1、桶 bs-files 与 bs-files-it），
 #      Nacos 与 RocketMQ namesrv 各多一个测试专用容器（bs-nacos-test / bs-rocketmq-namesrv-test）；
 #      测试栈只有 namesrv、没有配套 broker（测试不投递消息，发送失败由 OutboxMessageSender 兜住），
