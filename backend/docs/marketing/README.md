@@ -1,11 +1,13 @@
-# 营销服务文档总览
+# 营销域文档总览
 
-一个 app 两业务域（points / raffle）+ 两支撑域（rebate / inventory）
-（票 06 并入积分、票 07 并入抽奖、票 12 两段式库存、票 13 抽奖域整体落 `draw_*` 新模型；
+营销四域（points / raffle / rebate / inventory）已随 monolith-restructure 票 05/06/07 **并入单体**
+`backend/better-school/`（`com.betterschool` 平级领域包，marketing 命名空间退役）：
+HTTP **8080**（单体唯一 app），Dubbo 50051，xxl 执行器 `better-school-executor`（9999），
+库 **`better_school`**（测试 `better_school_test`；票 07 合库，`bs_marketing` 库名退役）。
+（沿革：票 06 并入积分、票 07 并入抽奖、票 12 两段式库存、票 13 抽奖域整体落 `draw_*` 新模型；
 **抽奖次数与抽奖同域**——`draw_count_*` 三张表与次数账务并入 raffle，不再有独立的 drawcount 域
 （`draw_count_config` 因此归 raffle）。原 `config` 域只留行为返利并改名 `rebate`。
-域下没有 `common` 段：跨服务/跨域只读端口声明在消费方域）：
-HTTP **8081**，Dubbo 50052，xxl 执行器 `marketing-executor`（9998），库 **`bs_marketing`**（测试 `bs_marketing_test`）。
+域下没有 `common` 段：跨域只读端口声明在消费方域。）
 
 ## 接口
 
@@ -32,8 +34,8 @@ HTTP **8081**，Dubbo 50052，xxl 执行器 `marketing-executor`（9998），库
 | 库存（inventory） | award-inventory 两层模型：配额池 `virtual_inventory_quota_*` / `physical_marketing_quota_*` 各 2 张 + 分配流水 `inventory_allocation_flow` + 奖品库存统一台账 `draw_strategy_award_inventory`(+detail) 2 张（抽奖只扣奖品库存账户，池只被分配转移） | [inventory.md](db/inventory.md) |
 | 跨域公共（MQ） | outbox_message（本地消息表，票 08 定型、票 14 起抽奖域写入） | 本文件下「事件」段 |
 
-- DDL 来源：本工程 `sql/init-{dev,test}.sql`（只建库）+ `sql/schema.sql`（唯一 DDL 主体，21 张表；
-  票 13 起 `schema-legacy.sql` 已删除，旧域九张表退出；hot-row-merge-l2w256 起为最终形态，
+- DDL 来源：单体 `better-school/sql/schema.sql` **尾段**（全库唯一 DDL 事实源，79 张表；
+  营销独立 `marketing/sql/` 四件已随票 07 合库删除；hot-row-merge-l2w256 起为最终形态，
   uuid-biz-id 票 08 起存量库退役（删库重建），历史切换包 `sql/cutover/` 已删除）。
 - 子域名与跨库纪律见根 `backend/docs/db/README.md`。
 
@@ -41,12 +43,13 @@ HTTP **8081**，Dubbo 50052，xxl 执行器 `marketing-executor`（9998），库
 
 - [进程内合并（攒批）通用组件](architecture/merge.md)：`infrastructure/merge` 只做分片路由 / 攒批窗口 /
   单飞落库 + 五态回填，**落库函数由调用方传入**；接新用途三步、不改 `merge` 包。
-- [超时中心接入规格](architecture/timeout.md)：营销侧超时的**将来落法**（当前零接入方，本期不落表、不落代码）
+- [超时中心接入规格](../architecture/timeout.md)：营销侧超时的**将来落法**（当前零接入方，本期不落表、不落代码）
   —— 库表 / 域段落位 / 路由 / 调度并行 / 与既有扫描 job（及已删除的每秒合并 job）的边界。
 
 ## 事件
 
-**`outbox_message` 是营销服务自己的本地消息表**（一服务一份，与单体各写各的；`uk_msg_id` 幂等）。
+**`outbox_message` 是全库唯一的本地消息表**（单体与营销域共写一份；形状取 marketing 超集，含
+`delay_level` / `delay_ms`；`uk_msg_id` 幂等）。
 口径（票 14 定型）：
 
 - **写**：业务事务内 `INSERT`（`OutboxMessageStore.save`），提交后 `afterCommit` 异步发送一次；

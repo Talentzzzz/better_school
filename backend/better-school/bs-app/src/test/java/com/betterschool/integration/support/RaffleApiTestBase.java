@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 抽奖域集成测试基类（票 13 重写）：完整 Spring 上下文，连 scripts/test-env.sh up 备好的常驻栈
- * （bs_marketing_test 库 + redis 逻辑库 1）。
+ * （better_school_test 库 + redis 逻辑库 1；monolith-restructure 票 07 合库后与单体同库）。
  *
  * <p>约定（照 {@code PointsApiTestBase}）：单一 seam = HTTP 走 trigger 入口、预热/合并走域服务；
  * 断言只看外部可观察状态（HTTP 响应 + MySQL 落库 + redis 桶值）；隔离靠每用例清业务表与

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 #
-# 两工程共享启动入口（virtual-thread effort 票 16，spec §5.1「JFR 常态化」）。
-# 在 backend/ 下执行：
+# 单体启动入口（virtual-thread effort 票 16，spec §5.1「JFR 常态化」；monolith-restructure
+# 票 05/07 起唯一工程唯一服务，原 marketing svc 键已删）。在 backend/ 下执行：
 #
 #   scripts/run-app.sh <svc> [--no-jfr] [传给应用的参数...]
 #
-# svc ∈ bs | marketing —— 端口分别 8080 / 8081
-# （票 07 起营销只有一个工程 marketing-app，域为 points + raffle + inventory + drawcount；原 activity 的 8082 已释放）
+# svc ∈ bs —— 端口 8080
 #
 # 例：起单体并打开 Hikari JMX（spec §5.1「替代信号」手册要读池的 active / awaiting）
 #   scripts/run-app.sh bs --spring.datasource.hikari.register-mbeans=true
@@ -30,11 +29,11 @@ RECORDING_NAME="bs-vt"
 
 usage() {
     cat <<'EOF'
-两工程共享启动入口（JFR 常态化）。在 backend/ 下执行：
+单体启动入口（JFR 常态化）。在 backend/ 下执行：
 
   scripts/run-app.sh <svc> [--no-jfr] [传给应用的参数...]
 
-  svc ∈ bs | marketing —— 端口分别 8080 / 8081
+  svc ∈ bs —— 端口 8080
 
 例：起单体并打开 Hikari JMX（spec §5.1「替代信号」手册要读池的 active / awaiting）
   scripts/run-app.sh bs --spring.datasource.hikari.register-mbeans=true
@@ -57,9 +56,9 @@ shift
 
 case "$SVC" in
     bs)        PROJ="better-school";  APP_DIR="bs-app";                PORT=8080 ;;
-    marketing) PROJ="marketing";      APP_DIR="marketing-app";         PORT=8081 ;;
+    marketing) echo "marketing svc 已随单体收口退役（票 08）：营销四域并入 bs-app，单后端 8080" >&2; exit 2 ;;
     -h|--help) usage; exit 0 ;;
-    *) echo "未知工程：$SVC（可选 bs / marketing）" >&2; exit 2 ;;
+    *) echo "未知工程：$SVC（可选 bs）" >&2; exit 2 ;;
 esac
 
 USE_JFR=true

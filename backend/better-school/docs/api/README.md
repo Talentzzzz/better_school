@@ -19,4 +19,4 @@
 | 信用分 | [credit.md](credit.md) | `/api/credit` |
 | 内嵌超时中心管理面（死信，运维面） | [timeout.md](timeout.md) | `/api/admin/timeout-tasks` |
 
-营销服务接口文档在 `backend/marketing/docs/api/`。超时任务没有业务 HTTP/Dubbo 接口——注册与回调都在进程内。
+营销域接口文档在 `backend/docs/marketing/api/`（票 05/07 起营销四域并入单体，HTTP 8080；路径前缀 `/api/points`、`/api/lottery`、`/api/marketing/*` 不变）。超时任务没有业务 HTTP/Dubbo 接口——注册与回调都在进程内。

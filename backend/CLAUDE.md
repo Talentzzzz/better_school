@@ -2,6 +2,15 @@
 
 # 项目编码规范（DDD 分包分模块约定）
 
+## 0. 当前工程形态（单体收口，monolith-restructure 票 05/06/07）
+
+唯一 Maven reactor = `backend/better-school/`：bs-* 七模块 + 单应用 `bs-app`（`com.betterschool.BetterSchoolApplication`）。
+营销四域以**平级领域包**并入 `com.betterschool`（`domain/{points,raffle,rebate,inventory}` 等），
+`com.betterschool.marketing` 命名空间退役；数据库收敛为**单库 `better_school`**（营销 22 表并入
+`better-school/sql/schema.sql` 尾段，`bs_marketing` / `bs_marketing_test` 库名退役）。
+同名类的 bean 名冲突由全局 `FqcnAnnotationBeanNameGenerator`（组件扫描与 `@MapperScan` 都挂）兜底，
+`@MapperScan` 单基包 `com.betterschool.infrastructure.dao`。下文 §1 起的分层约定不变，仍按「域」叙述。
+
 ## 1. Maven 模块划分与依赖方向（严格单向）
 
 ```
@@ -27,7 +36,7 @@ types →（无内部依赖）
 - domain 的 `adapter` 层只定义接口，由 infrastructure 实现。
 - 各模块间只允许上层依赖下层，禁止反向依赖或平级相互依赖。
 - **domain 服务禁止互相注入（领域嵌套）**：跨域写组合的编排一律放 case 层（顺序调用，无跨域事务）；域方法返回"外部动作需求"结果对象（如 ErrandXxxResult）。**跨域只读一律经消费方域定义的 port**：需要读他域数据时，在**消费方域**的 `domain/<X>/adapter/port/…` 定义 port（判据留在消费方域，port 里不放判据逻辑），实现落 `infrastructure/adapter/port/<域>/`（实现内可只读他域仓储）；域层从此**只注入本域仓储 + 本域 port**，不再注入他域仓储接口、不再注入 `TransactionTemplate`。
-- **跨服务同一条规矩**：Dubbo 读外部服务（单体的用户中心等）也在**消费方域**声明 `I<域>XxxPort`，各域各持一份域内读视图（单体 chat / community 的 `IUserQueryPort` 是现成先例）。**`domain` 下只有业务域，没有 `common` 段**——「很多域都要」不是建一个共享域的理由；`marketing.{layer}.common.*` 只放非域公共件（框架装配 / 统一响应 / JWT / outbox / wire 契约）。同理，**配置项跟表走**：某张配置表配的是谁，就归谁的域（有效期归各自的桶域、返利规则归返利域），不设「配置域」。
+- **跨服务同一条规矩**：Dubbo 读外部服务（单体的用户中心等）也在**消费方域**声明 `I<域>XxxPort`，各域各持一份域内读视图（单体 chat / community 的 `IUserQueryPort` 是现成先例）。**`domain` 下只有业务域，没有 `common` 段**——「很多域都要」不是建一个共享域的理由；`marketing.{layer}.common.*` 只放非域公共件（框架装配 / 统一响应 / JWT / outbox / wire 契约）——单体收口后该口径由「各层 `common` 段只放非域公共件、不放域模型与端口」继续沿用。同理，**配置项跟表走**：某张配置表配的是谁，就归谁的域（有效期归各自的桶域、返利规则归返利域），不设「配置域」。
 - **port 只留跨域调用（含 dubbo——本质也是调他域）；技术能力一律走本域仓储**：业务用 WS 推送/Redis/MQ(outbox) 等技术设施，都做成自己域仓储上的方法（如 chat 域 `IChatRepository.pushMessage/pushRead/pushRecall`、notification 域 `pushNotif`、errand 域 `pushOrderStatus`），仓储实现在 infrastructure 里委托技术组件——不得为技术能力开 port。
 - **WS 是独立技术组件，整体落 `infrastructure/ws/`（同 MQ 待遇）**：连接机器（注册表/心跳/互踢/多实例路由/实例订阅）与组件 API（`IWsConnectionHub` 连接登记+投递、`IWsTicketStore` 票据）与协议信封（`WsFrame/WsFrameType`，组装收口在 `WsFrameFactory`）同住 infrastructure/ws——不进 domain（非业务域）、不进 types（types 只放常量/枚举/异常）、不散在 adapter/port 下。业务侧推送：各域仓储声明 `pushXxx(userId, 本域推送事件)`（只传事件对象，不碰帧信封），仓储实现经 `WsFrameFactory` 组帧后委托 `IWsConnectionHub`；chat/notification/errand 的推送用例均经本域仓储投递，不得各自再声明第二套推送出口；一个用户一条全局连接，多业务按帧类型（MSG/READ/RECALL/NOTIF/ORDER…）复用。trigger 连接端（ws/）注入组件 API（bs-trigger → bs-infrastructure 依赖边；bs-case 不依赖 infra）。domain 只放业务域——技术能力不占 domain 段（既有 `domain.timeout` 历史遗留除外）。
 - **一域一仓储**：每个业务域**恰有一个** `I<域>Repository` 接口与一个实现（读写同一接口）。实现内可注入多个 DAO（`I<域>Dao` 等）；PO、mapper XML、DAO 不因合并而变。
@@ -57,27 +66,40 @@ cn.xxx.domain.<业务域>/
 
 **一域一仓储 / 事务落位**：`adapter/repository/` 下每个业务域**恰有一个** `I<域>Repository`（读写同接口，不再按聚合拆多个仓储）；需要事务的操作由仓储方法自身用编程式事务（`TransactionTemplate`，传播恒 `REQUIRED`）收成一个原子用例，域服务只调一次、**不注入 `TransactionTemplate`**（完整约束见 §1）。
 
-## 3. infrastructure 层包结构
+## 3. infrastructure 层包结构（单体收口终态，票 06）
 
 ```
 cn.xxx.infrastructure/
-├── adapter/
-│   ├── repository/  
-		|_ 领域包
-			|_ 实现 domain 仓储接口：XxxRepository implements IxxxRepository
-		|_ 领域包
-			|_ 实现 domain 仓储接口：XxxRepository implements IxxxRepository
-│   └── port/        实现 domain 端口：   XxxPort implements IxxxPort,分包同上
-├── dao/             MyBatis Mapper 接口：IxxxDao（@Mapper）
-│   └── po/          持久化对象 PO（与表对应），base/Page 分页对象
-├── gateway/         定义 http/rpc 调用外部接口；gateway/dto 放外部 DTO
+├── adapter/                     实现层（只有 {port, repository} 两棵树）
+│   ├── repository/
+│   │   └── <域>/                实现 domain 仓储接口：XxxRepository implements IxxxRepository
+│   │       （repository 根包可放横跨多域、无归属域的组件，先例 CountFlushDispatcher——
+│   │         放这里消解「技术包→adapter」反向依赖）
+│   └── port/
+│       └── <域>/                实现 domain 端口：   XxxPort implements IxxxPort
+├── cache/                       缓存（域子包，如 post/）
+├── dao/                         MyBatis Mapper 接口：IxxxDao（@Mapper），按域分包
+│   └── <域>/po/                 持久化对象 PO（与表对应），base/Page 分页对象
+├── merge/                       合并引擎（两套并存，功能不同不归并）：
+│   ├── count/                   计数引擎（键对齐 application.yml merge.count / merge.batch.*）
+│   └── <根>                     库存引擎（键对齐 merge.batch.*）
+├── outbox/                      本地消息表发送器与扫描
+├── search/  security/  sharding/ ws/   其余技术包（ws = WS 连接机器 + IWsConnectionHub，见 §1）
+└── gateway/                     调用外部 http/rpc 的接口定义（按需建，当前工程没有；gateway/dto 放外部 DTO）
 ```
 
 规则：
-- gateway 只定义调用外部的接口，由 adapter 层调用，通常用不到
-- repository / port 的类名与 domain 接口一一对应（去掉 `I`）。
-- **一域一仓储**：每个业务域恰一个 `XxxRepository implements I<域>Repository`；实现类内可注入**多个 DAO**（以及共享 outbox / Redisson 等），PO、mapper XML、DAO 不因合并仓储而变。
-- **事务在仓储实现内**：多 DAO 的读改写用编程式事务（`TransactionTemplate`，传播恒 `REQUIRED`）收成一个原子用例；域服务不注入 `TransactionTemplate`。事务 Bean 每工程一个（`<工程>-app/.../config/TransactionConfig.java`），仅为仓储提供模板。
+
+- **技术包按需建，不建空包**；`adapter/{port, repository}` 与技术包平级。
+- **依赖方向单向：adapter → 技术包**。repository / port 实现想用什么就从 dao / merge / cache / outbox /
+  ws 等平级技术包取用；**技术包禁止 import `adapter.{port, repository}`**。横跨多域、无归属域的组件
+  不要落在技术包里往上调用 adapter——落 `adapter/repository` 根包（先例 `CountFlushDispatcher`：从
+  merge/count 移入 repository 根包，bean 名随 FQCN 变但注入全按类型不受影响）。
+- gateway 只定义调用外部的接口，由 adapter 层调用，通常用不到。
+- repository / port 的类名与 domain 接口一一对应（去掉 `I`）；实现按域分包。
+- **一域一仓储**：每个业务域恰一个 `XxxRepository implements I<域>Repository`；实现类内可注入**多个 DAO**
+  （以及共享 outbox / Redisson 等），PO、mapper XML、DAO 不因合并仓储而变。
+- **事务在仓储实现内**：多 DAO 的读改写用编程式事务（`TransactionTemplate`，传播恒 `REQUIRED`）收成一个原子用例；域服务不注入 `TransactionTemplate`。事务 Bean 每工程一个（`bs-app/.../config/TransactionConfig.java`），仅为仓储提供模板。
 
 ## 4. trigger 层包结构
 
@@ -168,7 +190,7 @@ public class Constants {
 1. **类名后缀决定分层归属**：Entity / VO / Aggregate / Repository / Port / Dao / PO / Controller / Job / Consumer。
 2. **接口 `I` 前缀、实现去掉 `I`**：domain 定义 `IxxxRepository`，infrastructure 实现 `XxxRepository`。
 3. MyBatis mapper XML 统一放 `app/src/main/resources/mybatis/mapper/`，接口在 infrastructure 的 `dao` 包。
-4. 新加业务域时，在 domain 下建 `model/service/adapter` 三件套，infrastructure 建对应 `adapter/dao` 实现。
+4. 新加业务域时，在 domain 下建 `model/service/adapter` 三件套，infrastructure 建对应 `adapter/repository`、`adapter/port`（若有）与 `dao/<域>` 实现。
 5. 变量命名见名知意，如UserAccount userAccount，不要省略user；各种类的创建要符合DDD规范
 6. **业务 ID 口径（uuid-biz-id 起）**：所有业务对象的对外唯一标识一律是 **UUID 字符串**（36 位连字符规范形，DB 列 `VARCHAR(36)`，Java 实体/PO/DTO/mapper 全链路 `String`）；由统一 `IIdGenerator`（types 模块，默认实现 `UuidIdGenerator` = `UUID.randomUUID()`）在 **insert 前生成、随行一次写入**。物理主键 `id BIGINT AUTO_INCREMENT` 保留为纯内部键：永不对外、永不再与业务键同值、禁止「业务列插 0 同事务回写物理 id」的旧形态（`bindBizId`/`useGeneratedKeys` 回写已全仓退役）。新增表/接口禁止用 `Long`/`bigint` 承载业务 ID；排序同值收敛用「时间 + 业务 ID」复合键，不要拿 UUID 当时间代理；分片/合并路由的哈希输入是业务 ID 字符串本身（`String.hashCode` 折叠），不做数值化假设。
 

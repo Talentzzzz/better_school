@@ -1,6 +1,6 @@
 # 抽奖模块接口（/api/lottery）
 
-抽奖域（`backend/marketing/`，与积分 / 返利 / 库存同属营销服务 marketing-app **8081**；
+抽奖域（与积分 / 返利 / 库存同属单体 better-school **8080**，monolith-restructure 票 05/07 并入；
 **抽奖次数与抽奖同域**，`draw_count_*` 三张表与次数账务都在 `raffle` 域内）。
 **票 13 起整域落在 `draw_*` 新模型**（决策侧票 11、库存票 12），旧域九张表与旧代码已整体删除。
 

@@ -48,30 +48,27 @@ scripts/test-env.sh up
    - `dubbo.protocol.port` 取一个空闲端口——`application.yml` 里的 50051 是给 IDE 里的单体用的，
      本机同时开着它会 `Address already in use`。
 
-## 营销服务的测试设施（营销票 05 建立，票 06 扩到积分外域，票 07 扩到抽奖并域合一，票 13 抽奖换 raffle 域段）
+## 营销域的测试设施（营销票 05 建立，票 06/07 扩域，票 13 抽奖换 raffle 域段；monolith-restructure 票 05/07 起随代码并入 `bs-app`）
 
-营销服务是**独立 project**（与单体无 reactor），测试因此放服务的组装层，不挤进 `bs-app`。
-（票 07 起多个域段同属 `marketing` 工程一个 app：points / raffle（含抽奖次数）/ rebate / inventory；
-票 13 起抽奖由 `raffle` 域承载，旧 `lottery` 域段与它的测试基类已删除。）
+营销四域随单体收口并入 `bs-*` 七模块，测试因此全部落在**唯一组装层 `bs-app`**
+（`com.betterschool.integration.{points,raffle,inventory,marketing}`，基类在 `integration.support`）：
 
 ```bash
-# 在 backend/marketing/ 下跑本服务的测试类（同 project 的兄弟模块由 reactor 带上，不必 -am）
-mvn -o test -Dtest=RaffleDrawPipelineIntegrationTest -Dsurefire.failIfNoSpecifiedTests=false
+# 单个测试类（-am 连带构建依赖模块）
+mvn test -pl bs-app -am -Dtest=RaffleDrawPipelineIntegrationTest
 ```
 
-| 项 | 单体（bs-app） | 营销服务（marketing-app，points + raffle + rebate + inventory） |
+| 项 | 单体既有测试 | 营销域测试（points + raffle + rebate + inventory） |
 | --- | --- | --- |
-| 测试库 | `better_school_test` | `bs_marketing_test`（同一 MySQL 容器，库名隔离）+ **redis 逻辑库 1**（key 前缀 `bs:points:` / `bs:raffle:` / `bs:inventory:`） |
-| 基类 | `integration.support.CommunityApiTestBase` | `marketing.integration.support.{PointsApiTestBase, RaffleApiTestBase}`（两类按域共存；VT 两个 seam 测试跑在 `RaffleApiTestBase` 上） |
-| 登录态 | 真链路 send-code → register 换 JWT | 服务没有登录链路，基类按共享密钥**直接签发** JWT（形状与单体 `JwtService.generateToken` 一致）；`RaffleApiTestBase` 另有 `ADMIN` 角色的签发方法 |
+| 测试库 | `better_school_test` | 同一份（票 07 合库后与单体同库）+ **redis 逻辑库 1**（key 前缀 `bs:points:` / `bs:raffle:` / `bs:inventory:`） |
+| 基类 | `integration.support.CommunityApiTestBase` | `integration.support.{PointsApiTestBase, RaffleApiTestBase}`（两类按域共存；VT 两个 seam 测试跑在 `RaffleApiTestBase` 上） |
+| 登录态 | 真链路 send-code → register 换 JWT | 营销域没有注册链路，基类按共享密钥**直接签发** JWT（形状与单体 `JwtService.generateToken` 一致）；`RaffleApiTestBase` 另有 `ADMIN` 角色的签发方法 |
 | MQ 消费 | 直调消费者 Bean | 同左（测试栈无 broker，构造 payload 直调消费者）；points 域直调 `LotteryDrawnConsumer`，raffle 域没有消费者（只发事件），断言只看 outbox 落行 |
-| Dubbo | 真 Consumer 打单体 Provider | 用户只读边**换桩**：测试源码里 `@Primary StubUserQueryPort` 覆盖真 Dubbo Consumer（抽奖读侧依赖昵称头像，桩可给确定值）。**兑换边票 13 起不再经 Dubbo**（折成进程内 port），原 `@Primary StubPointsExchangePort` 已删；积分域自己的 Provider Bean（`PointsExchangeDubboService`）仍直接调用测 |
+| Dubbo | 真 Consumer 打单体 Provider | 无 Dubbo 边（合并前营销侧的 `StubUserQueryPort` / `StubPointsExchangePort` 已随单体收口删除）；营销域自己的 Provider Bean（`PointsExchangeDubboService`）仍直接调用测 |
 
-- 建库走 `marketing/sql/init-{dev,test}.sql`（只建 `bs_marketing` / `bs_marketing_test`）+
-  `sql/schema.sql`（**唯一 DDL 主体**，20 张；票 13 起 `schema-legacy.sql` 已删除）。
-  `scripts/test-env.sh` 的
-  `apply_service_init <工程sql目录> <建库文件> <库名> <DDL文件>` 把 `USE` 插在中间——
-  各份 schema 都不含库名，开发库与测试库才能共用一份 DDL。改过 schema 后同样用
+- 建库走 `better-school/sql/init-{dev,test}.sql`（只建 `better_school` / `better_school_test`）+
+  `sql/schema.sql`（**唯一 DDL 主体**，79 张表，票 07 合库含营销 22 张）。
+  `scripts/test-env.sh` 把建库文件与 schema 按序拼给同一个连接——改过 schema 后用
   `scripts/test-env.sh reset-test-db` 重建。
 - **抽奖测试要重置活动配置**：`RaffleApiTestBase` 的 `@BeforeEach` 会 `TRUNCATE` 17 张业务表
   （draw_* / draw_count_* / points_* / virtual_* / physical_* / outbox_message）并清
@@ -81,7 +78,7 @@ mvn -o test -Dtest=RaffleDrawPipelineIntegrationTest -Dsurefire.failIfNoSpecifie
 - **outbox 在测试里的可观察形态**：测试栈有 namesrv、没有 broker，发送必然报
   `No route info of this topic` 并被 `OutboxMessageSender` 兜住 → 记录保持 PENDING、`retry_count` 增长。
   所以「事件发出」的断言口径 = **outbox 落行 + 载荷正确**；真投递与单体消费归端到端票（营销票 09）。
-- **mock 单测放 `marketing.unit.*`，不进集成包**：`marketing-app/src/test/java/com/betterschool/marketing/unit/`
+- **mock 单测放 `unit.*`，不进集成包**：`bs-app/src/test/java/com/betterschool/unit/`
   收「不需要 Spring 上下文」的用例（如 `unit.outbox.OutboxMessageSenderTest` 验「选了哪条发送分支」）。
   上面那条「只断言外部行为、不 mock 内部 Bean」管的是集成测试；发送分支这类**没有外部可观察面**的判据
   （测试栈无 broker，定时投递与直发都表现为发送失败）只能靠 mock `RocketMQTemplate` 断言调用形态。

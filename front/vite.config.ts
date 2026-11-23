@@ -24,17 +24,8 @@ export default defineConfig({
     port: 5173,
     host: true,
     proxy: {
-      // 营销前缀必须排在 '/api' 之前：Vite 的 proxy 按 key 插入顺序匹配，'*' 会吃掉一切。
-      // 服务端 controller 映射在 /api/<域>/**，故不 rewrite（前缀即真实路径的一部分）；
-      // points / lottery 两域同属营销服务（marketing-app，8081）。已下线域的代理随票 09/16 一并删除。
-      '/api/points': {
-        target: 'http://localhost:8081',
-        changeOrigin: true
-      },
-      '/api/lottery': {
-        target: 'http://localhost:8081',
-        changeOrigin: true
-      },
+      // 单体收口后只有一个后端：服务端 controller 映射在 /api/<域>/**，
+      // 故不 rewrite（前缀即真实路径的一部分）。营销前缀分流规则已随票 08 删除。
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true

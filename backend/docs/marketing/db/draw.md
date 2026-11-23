@@ -1,9 +1,9 @@
-# 抽奖新模型 schema（bs_marketing 的 draw_* 表集）
+# 抽奖新模型 schema（draw_* 表集，已并入单体库 better_school）
 
-> 业务：抽奖决策侧 + 主链路（营销域 `backend/marketing/`，票 11 落表、票 13 接主链路）；
-> 归属域：`marketing.domain.raffle`
-> 结构与根目录 `sql.md` §2 逐表一致（唯一事实源，比对脚本 `.scratch/project-rework/cmp_schema_marketing.py`）。
-> DDL 在本工程 `sql/schema.sql`（`schema-legacy.sql` 已随旧域表整体删除）。
+> 业务：抽奖决策侧 + 主链路（营销域，票 11 落表、票 13 接主链路；monolith-restructure 票 07 起并入单体）；
+> 归属域：`domain.raffle`（包根 `com.betterschool`，marketing 命名空间已退役）
+> 结构与根 `sql.md` §2 逐表一致（唯一事实源；schema 已并入单体 `better-school/sql/schema.sql` 尾段，比对脚本随之失效退役）。
+> DDL 在单体 `better-school/sql/schema.sql`（`schema-legacy.sql` 已随旧域表整体删除）。
 
 |表名|说明|
 |----|----|

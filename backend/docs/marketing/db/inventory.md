@@ -1,7 +1,7 @@
-# 库存配额 schema（bs_marketing 的 award-inventory 两层模型：配额池 + 奖品库存账户）
+# 库存配额 schema（award-inventory 两层模型：配额池 + 奖品库存账户；已并入单体库 better_school）
 
-> 业务：发放侧库存（营销域 `backend/marketing/`）；归属域：`marketing.domain.inventory`
-> 结构与根目录 `sql.md` §2 逐表一致（唯一事实源）。DDL 在本工程 `sql/schema.sql`。
+> 业务：发放侧库存（营销域；monolith-restructure 票 07 起并入单体）；归属域：`domain.inventory`
+> 结构与根 `sql.md` §2 逐表一致（唯一事实源）。DDL 在单体 `better-school/sql/schema.sql` 尾段。
 > hot-row-merge-l2w256 起（ADR-0013 取代 0011/0012）：**进程内合并，无 Redis 桶、无合并消息、无兜底**。
 > award-inventory 两层模型起（本票）：**抽奖不再直接扣配额池**——配额池（外界投放）只被「分配」转移，
 > 抽奖的预扣/确认全部落在奖品库存统一台账上。

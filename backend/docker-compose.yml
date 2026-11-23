@@ -145,7 +145,7 @@ services:
     image: apacherocketmq/rocketmq-dashboard:latest
     container_name: bs-rocketmq-dashboard
     ports:
-      - "8089:8080"    # 容器内默认端口是 8080；宿主机 8089（票 07 起 8082 已释放，营销只占 8081）
+      - "8089:8080"    # 容器内默认端口是 8080；宿主机 8089（营销独立 app 的 8081 已随单体收口释放）
     environment:
       JAVA_OPTS: "-Drocketmq.namesrv.addr=rocketmq-namesrv:9876"
     depends_on:

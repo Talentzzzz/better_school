@@ -24,11 +24,11 @@ backend 回归单体：单一 Maven reactor（分层 7 模块 types/api/domain/c
 
 - [01 包名/类名冲突扫描](issues/01-name-collision-scan.md)：FQN 冲突 10 处（含 rocketmq 同包补丁类两侧完全同名）、简单名冲突 29 类名、反向依赖 1 处（marketing-infrastructure → bs-api）、adapter 双层包序相反（bs `adapter.X.<域>` vs marketing `<域>.adapter.X`）；完整清单在 research/01-name-collision.md。
 - [02 合库/配置冲突扫描](issues/02-db-config-collision-scan.md)：同名表仅 outbox_message（marketing 侧超集）、marketing 无 sharding（SS 单表规则零改动覆盖）、配置必撞键 8 组（mybatis 需 `**` 递归）、xxl-job 撞名 1（outboxScan）+2 处 seed↔代码不一致、HTTP 前缀交集 0（且暴露 vite proxy 缺 2 个 marketing 前缀的存量缺口）、RocketMQ topic 撞名 2 个为既定事件流非错误；完整清单在 research/02-db-config.md。
+- [08 文档同步与前端收口](issues/08-docs-sync.md)：已完成——CLAUDE.md §0/§3 单体口径（含 adapter/技术包依赖方向与 CountFlushDispatcher 先例）、architecture/marketing-services.md 重写为单体运行手册、db/api/README、sql.md 合库口径与单份 outbox 超集 DDL、testing.md 营销测试段、marketing 子文档头注、better-school/docs/db/{README,outbox}.md、测试基类注释、dev-stack.ps1/run-app.sh 单服务化、docker-compose 8089 注释、front vite proxy 删分流；未展开表（product_inventory / product_stock_event / draw_count_purchase_order / draw_orphan_prereserve_order）以「未展开表」注记票化归后续文档票。
 
 ## Not yet specified
 
-- RocketMQ 链路进程内化（bs-lottery-drawn / bs-points-changed 两个撞名 topic 的退役，连同 marketing 生产点与 3 个消费者）：07 票按「代码不改语义」边界保留现状，归后续 effort（与 04 票 trigger 归并去留联动）。
-- 票 08 遗留清单新增：docs 双库双 seed 口径（backend/docs/db/README.md、marketing-services.md、testing.md、sql.md、backend/docs/marketing/db/*）；dev-stack.ps1 两服务起停段（$Services 仍指向已删的 backend/marketing 工程）；测试基类注释（bs_marketing_test）。
+- RocketMQ 链路进程内化（bs-lottery-drawn / bs-points-changed 两个撞名 topic 的退役，连同营销生产点与 3 个消费者）：07 票按「代码不改语义」边界保留现状，归后续 effort（与 04 票 trigger 归并去留联动）。
 
 ## Out of scope
 

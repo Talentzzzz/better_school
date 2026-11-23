@@ -1,6 +1,7 @@
 ﻿<#
 .SYNOPSIS
-    better-school 全栈一键起（票 17）：中间件容器 + 两库 + xxl 注册 + MQ 清理 + 两服务 + 健康检查。
+    better-school 全栈一键起（票 17）：中间件容器 + 服务库 + xxl 注册 + MQ 清理 + 服务 + 健康检查。
+    （monolith-restructure 票 05/07 起只有这一个工程/服务：原 marketing 起停段已删。）
 
 .DESCRIPTION
     bash / WSL 在这台机器上是坏的（`execvpe(/bin/bash) failed`），所以 test-env.sh / run-app.sh
@@ -13,7 +14,7 @@
 
       ① docker compose up -d        （cwd = backend/）
            mysql ─┬─ xxl-job-admin（要先有 xxl_job 库，见 ③）
-                  └─ 两服务库
+                  └─ 服务库
            redis / minio / nacos / rocketmq-namesrv / es 各自独立
            rocketmq-broker 依赖 rocketmq-namesrv 健康（compose 里已写 depends_on）
       ② 等就绪：mysql(healthy) → redis(healthy) → minio(healthy) → nacos(healthy)
@@ -26,19 +27,19 @@
                               营销任务已随票 07 并入，marketing-executor 组退役）
       ⑤ 注册面清理：Nacos（nacos-prune，删掉已删工程留下的 dataId）+ RocketMQ（mq-prune，
                     删掉已无生产/消费方的 topic 与消费组，清单见 $StaleMqNames）
-      ⑥ 构建（除非 -SkipBuild）：mvn -o clean package -DskipTests（两个工程各一次）
-      ⑦ 起服务并等健康（顺序 = 依赖方向）：
-           better-school（bs-api 的 Dubbo Provider）
-             → marketing（IUserQueryService 的 Consumer）
+      ⑥ 构建（除非 -SkipBuild）：mvn -o clean package -DskipTests（唯一工程，一次）
+      ⑦ 起服务并等健康：
+           better-school（唯一 app；Dubbo Provider）
 
     健康端点（无 actuator 依赖，取各服务匿名可访问的 GET；xxl 执行器端口顺带校验）：
 
-      | 服务           | HTTP | 健康端点                                              | Dubbo tri | xxl 执行器 |
-      | -------------- | ---- | ----------------------------------------------------- | --------- | ---------- |
-      | better-school  | 8080 | GET /api/community/posts?page=1&pageSize=1            | 50051     | 9999       |
-      | marketing      | 8081 | GET /api/lottery/activity                             | 50052     | 9998       |
+      | 服务           | HTTP | 健康端点                                   | Dubbo tri | xxl 执行器 |
+      | -------------- | ---- | ------------------------------------------ | --------- | ---------- |
+      | better-school  | 8080 | GET /api/community/posts?page=1&pageSize=1 | 50051     | 9999       |
 
-      端口清单来源：两个工程的 app 模块 src/main/resources/application.yml。
+      （原 marketing 独立 app 的 8081 / 50052 / 9998 已随单体收口释放。）
+
+      端口清单来源：bs-app 模块 src/main/resources/application.yml。
       9999 / 9998 是 **xxl 执行器端口**（票 17 票面把这两个误称作 actuator——本仓没有引入
       spring-boot-starter-actuator，也没有 management.* 配置）。
 
@@ -83,17 +84,12 @@ $NameSrvInContainer = 'rocketmq-namesrv:9876'
 $MqCluster = 'DefaultCluster'
 $MySqlArgs = @('exec', '-i', $MysqlContainer, 'mysql', '-uroot', '-pbs123456', '--default-character-set=utf8mb4')
 
-# 服务清单：顺序 = 依赖方向（先起的在后面被依赖）。health = 匿名可访问的 GET。
+# 服务清单（monolith-restructure 票 05/07 起唯一服务；原 marketing 段已删）。health = 匿名可访问的 GET。
 $Services = @(
     [pscustomobject]@{
         Key = 'bs'; Project = 'better-school'; Module = 'bs-app'
         HttpPort = 8080; DubboPort = 50051; XxlPort = 9999
         HealthPath = '/api/community/posts?page=1&pageSize=1'
-    }
-    [pscustomobject]@{
-        Key = 'marketing'; Project = 'marketing'; Module = 'marketing-app'
-        HttpPort = 8081; DubboPort = 50052; XxlPort = 9998
-        HealthPath = '/api/lottery/activity'
     }
 )
 
@@ -303,8 +299,8 @@ $NacosInstances = @(
 
 # 已删工程在 Nacos 里留下的配置（Dubbo 元数据 + 接口→应用映射）。
 # 判据：包根属于票 06/07 删掉的两个工程（com.betterschool.asset.* / com.betterschool.points.*）、
-# 或测试探针/桩的临时项（probe-*.yml / stub-bs-*）。在用的
-# com.betterschool.marketing.api.points.* 不匹配这些前缀（com.betterschool.timeout.* 包已随独立超时工程删除）。
+# 或测试探针/桩的临时项（probe-*.yml / stub-bs-*）。在用的 dataId 只有一份共享配置（better-school-shared.yml），
+# 不匹配这些前缀（com.betterschool.timeout.* 包已随独立超时工程删除）。
 $StaleNacosPrefixes = @('com.betterschool.asset.', 'com.betterschool.points.', 'probe-')
 $StaleNacosContains = @('stub-bs-')
 
@@ -347,7 +343,7 @@ function Invoke-MqPrune {
 }
 
 function Invoke-Build {
-    Write-Step '6/7 构建两个工程（mvn -o clean package -DskipTests）'
+    Write-Step '6/7 构建（mvn -o clean package -DskipTests）'
     foreach ($svc in $Services) {
         $projDir = Join-Path $BackendDir $svc.Project
         Write-Host "  → $($svc.Project)"
@@ -362,7 +358,7 @@ function Invoke-Build {
 }
 
 function Start-Services {
-    Write-Step '7/7 起两服务（better-school → marketing）'
+    Write-Step '7/7 起服务'
     foreach ($svc in $Services) {
         $jar = Get-ServiceJar $svc
         $projDir = Join-Path $BackendDir $svc.Project
@@ -410,12 +406,12 @@ function Invoke-Health {
                 $svc.Project, $svc.HttpPort, $svc.HealthPath, $svc.DubboPort, $dubbo, $svc.XxlPort, $xxl)
         if ($http -eq 'FAIL') { $allOk = $false }
     }
-    if ($allOk) { Write-Ok '两服务全部健康' } else { Write-Warn2 '存在不健康项（见上）' }
+    if ($allOk) { Write-Ok '服务健康' } else { Write-Warn2 '存在不健康项（见上）' }
     return $allOk
 }
 
 function Invoke-Down {
-    Write-Step '停两服务（容器保持运行；要停容器用 docker compose down）'
+    Write-Step '停服务（容器保持运行；要停容器用 docker compose down）'
     foreach ($svc in $Services) {
         $pidFile = Join-Path $BackendDir "$($svc.Project)\logs\dev-stack-$($svc.Key).pid"
         if (-not (Test-Path $pidFile)) { Write-Warn2 "$($svc.Project)：无 pid 文件，跳过"; continue }

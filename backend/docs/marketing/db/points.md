@@ -1,12 +1,11 @@
-# 积分 / 抽奖次数 schema（bs_marketing 的桶模型表集）
+# 积分 / 抽奖次数 schema（桶模型表集，已并入单体库 better_school）
 
-> 业务：积分与抽奖次数（桶模型，营销域，服务 `backend/marketing/`）；归属服务：marketing。
+> 业务：积分与抽奖次数（桶模型，营销域；monolith-restructure 票 07 起随单体收口并入 `better_school`）。
 > 域归属：积分桶归 points 域，**抽奖次数桶归 raffle 域**（抽奖次数与抽奖同域，`draw_count_config` 随之归 raffle）。
-> 独立 schema（与单体同 MySQL 实例、不同库）。**跨 schema 硬约定：只存 id、不 join 单体库、不存昵称头像快照。**
-> 票 10 起积分域三张旧表已删除（lot/明细/单行配置），积分域全面切 sql.md §2 的桶模型。
+> 单体收口后与单体业务表**同库**（跨域纪律不因此改变：一个物理事务只写一个域的仓储，见 ADR-0016；用户表归 user 域独占写，读经消费方 port / case 层编排）。**SQL 层零 JOIN**：跨表展示一律多查一次应用层拼装。
+> 票 10 起积分域三张旧表已删除（lot/明细/单行配置），积分域全面切根 `sql.md` §2 的桶模型。
 
-表结构 DDL：`sql/schema.sql`（**唯一 DDL 来源**；单行配置的种子也在该文件尾部）；建库文件
-`sql/init-dev.sql` / `init-test.sql`。票 13 起 `sql/schema-legacy.sql` 已删除（旧域表整体退出）。
+表结构 DDL：单体 `better-school/sql/schema.sql` **尾段**（全库唯一 DDL 来源；单行配置的种子也在其中；营销独立 `marketing/sql/` 四件已随票 07 合库删除）。
 
 积分与抽奖次数是**同构的两套桶**：入账流水即事实源（桶表），消费按 `expire_at` FIFO
 递减各桶 `remain` 并落明细（detail 表），没有余额列——余额 = 未过期桶的 `SUM(remain)`。

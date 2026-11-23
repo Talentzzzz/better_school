@@ -1,6 +1,6 @@
 # 进程内合并（攒批）通用组件
 
-> 归属：`marketing-infrastructure/.../infrastructure/merge`（**6 个文件**），装配在 `marketing-app/config/MergeEngineConfig`。
+> 归属：`bs-infrastructure/.../infrastructure/merge`（monolith-restructure 票 06 起：计数引擎落 `merge/count`、库存引擎留 `merge` 根；两套并存、功能不同不归并），装配在 `bs-app/config`。
 > 本文只写「它为什么长这样、怎么接新用途、哪里不能动」；库存侧口径见 [`../db/inventory.md`](../db/inventory.md)，
 > 引擎参数见 `application.yml` 的 `merge.batch.*`。
 > 历史：hot-row-merge-l2w256（ADR-0013）把合并从 Redis 桶 + 消息搬进进程；通用化那一轮把引擎与库存解绑。

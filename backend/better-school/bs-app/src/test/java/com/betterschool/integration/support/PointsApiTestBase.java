@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 积分域集成测试基类：完整 Spring 上下文，连 scripts/test-env.sh up 备好的常驻栈
- * （bs_marketing_test 库——points / lottery 两域并库后同一份）。
+ * （better_school_test 库——monolith-restructure 票 07 合库后全应用同一份）。
  *
  * <p>约定（照单体的 {@code CommunityApiTestBase}）：
  * <ul>
@@ -30,7 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       Dubbo 走 Provider Bean（积分域没有自己的 consumer，真跨进程调用归联调票）</li>
  *   <li>断言只看外部可观察状态：HTTP 响应 + MySQL 落库（points_bucket / points_detail / outbox_message）</li>
  *   <li>不 mock 任何 Bean；broker 不可达的副作用只有日志与 outbox 保持 PENDING</li>
- *   <li>隔离靠库名（bs_marketing_test）与每用例 TRUNCATE</li>
+ *   <li>隔离靠库名（better_school_test）与每用例 TRUNCATE</li>
  *   <li>登录态：直接按共享密钥签发 JWT（积分域只验签不签发，没有自己的登录链路）</li>
  * </ul>
  *

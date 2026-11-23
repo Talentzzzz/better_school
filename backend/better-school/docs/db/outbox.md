@@ -1,7 +1,7 @@
 # outbox 域表（outbox_message）
 
 > 业务：事务性本地消息表（RocketMQ 最终一致）；归属模块：outbox（infrastructure）
-> DDL 唯一事实源：`sql/schema.sql`（票 05 全库重写）。**`delay_outbox_message` / `DelayOutboxMessageStore` / `DelayOutboxMessageSender` 整条延迟 outbox 链路已删除，无此表、无此代码**
+> DDL 唯一事实源：`sql/schema.sql`（票 05 全库重写；monolith-restructure 票 07 合库后**全库唯一一份**，形状取合并前 marketing 侧超集——单体侧旧形状退役）。**`delay_outbox_message` / `DelayOutboxMessageStore` / `DelayOutboxMessageSender` 整条延迟 outbox 链路已删除，无此表、无此代码**
 > **原来的超时注册意图表 / `TimeoutRegisterOutboxStore` / `TimeoutRegisterOutboxSender` 整条注册 outbox 链路已删除（超时内嵌化票 03）**：注册改为业务事务内直插 `timeout_task` 分表（16 张，见 schema.sql），三分支幂等在 `TimeoutRepository.register`。用法见 [`backend/docs/architecture/timeout.md`](../../../docs/architecture/timeout.md)
 
 # outbox_message（本地消息表 outbox）
@@ -10,8 +10,10 @@
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理自增，标记/扫描按它寻址（分配序 = 提交序）|
 |msg_id|varchar(64)|UNIQUE(`uk_msg_id`), NOT NULL|消息 ID（幂等/去重）：由 `OutboxMessageStore` 生成 UUID，消费端按它幂等。**注意本列是 UUID 字符串，与 chat `message.msg_id`（同为 UUID 字符串的业务 ID）只是同名不同列**|
-|destination|varchar(64)|NOT NULL|消息目的地（**原 `topic` 列**）：`topic` 或 `topic:tag` 语法，由业务端自行解析，取值见 `bs-types` 的 `Constants.*_TOPIC`（如 `bs-search-sync`、`bs-chat-push`、`bs-notify-event`（通知事件：业务事务内写，NotifyEventConsumer 消费统一落 notification + 按通道投递）、`bs-notify-chat`、`bs-notify-push`、`bs-order-push`）|
+|destination|varchar(64)|NOT NULL|消息目的地（**原 `topic` 列**）：`topic` 或 `topic:tag` 语法，由业务端自行解析，取值见 `bs-types` 的 `Constants.*_TOPIC`（如 `bs-search-sync`、`bs-chat-push`、`bs-notify-event`（通知事件：业务事务内写，NotifyEventConsumer 消费统一落 notification + 按通道投递）、`bs-notify-chat`、`bs-notify-push`、`bs-order-push`、`bs-lottery-drawn`、`bs-points-changed`）|
 |payload|text|NOT NULL|消息内容 JSON（落库与发送同一份）|
+|delay_level|tinyint|NOT NULL, DEFAULT 0|RocketMQ 延迟等级；0=不延迟，1=1 秒（约 1.0–1.1s）——marketing 侧超集列，合并前单体侧无此列|
+|delay_ms|int|NULL|毫秒级相对延迟（RocketMQ 定时消息）；NULL=走 `delay_level`——marketing 侧超集列（库存合并定时投递在用）|
 |state|tinyint|NOT NULL, DEFAULT 0|0 待发送 / 1 已发送 / 2 发送失败（重试耗尽）。**本列是 tinyint 数字码（`OutboxStatus`），不是别处的 varchar 状态名**|
 |retry_count|int|NOT NULL, DEFAULT 0|已重试次数；达上限（当前 5 次）后置 state=2，不再重发|
 |create_time|datetime|NOT NULL|创建时间|

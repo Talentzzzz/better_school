@@ -30,7 +30,7 @@
 
 ## IPointsExchangeService.deduct(PointsDeductRequestDTO)
 
-Provider：`marketing-trigger/.../trigger/points/rpc/PointsExchangeDubboService`（`@DubboService`）；Consumer：抽奖服务。
+Provider：`bs-trigger/.../trigger/points/rpc/PointsExchangeDubboService`（`@DubboService`；对外契约保留）；Consumer：无——票 13 起兑换折叠成进程内调用，单体收口后域内亦无 Dubbo consumer。
 请求 `{ userId, amount, reasonType, refId }`，`reasonType` 只接受 `REDEEM_DRAW_COUNT` / `REDEEM_PRIZE`，
 **`refId` = 兑换单 id = 幂等键**。
 
