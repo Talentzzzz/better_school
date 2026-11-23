@@ -1,7 +1,7 @@
 # 05 模块合并与领域包平级化
 
 Type: task
-Status: open
+Status: done
 Blocked by: 03, 04
 
 ## Question

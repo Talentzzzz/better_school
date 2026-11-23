@@ -1,7 +1,7 @@
 # 06 infra 层包结构重组
 
 Type: task
-Status: open
+Status: done
 Blocked by: 05
 
 ## Question
@@ -17,4 +17,10 @@ Blocked by: 05
 
 ## Answer
 
-（待执行后记录 commit hash 与要点）
+（commit `99639b7`，2026-11-23，分支 chat-ws-layering-rollout）
+
+- **搬移清单**（git mv 保历史）：`adapter/cache/post` → `cache/post`（1 类）；`adapter/search` → `search`（1 类）；`adapter/merge`（计数引擎 15 类）→ `merge/count`，库存引擎留 `merge` 根——与 research 口径（counting at `infrastructure.merge.count`）及 application.yml `merge.count.*`/`merge.batch.*` 配置键对齐；主+测 5 个测试文件随迁。
+- **违规消解**：`CountFlushDispatcher`（引擎唯一出口，按动作分发到 community/trade/errand 三域仓储）原在 merge 包反向 import 三个具体 repository，违反「技术包→adapter 不允许」——移入 `adapter/repository` 根包（横跨三域、无单一归属域，不放任何领域子包）。`@Primary`/`@Lazy`/构造注入逐字保留；FqcnAnnotationBeanNameGenerator 下 bean 名随 FQCN 变化但注入一律按类型，装配不受影响。
+- **引用同步 41 文件**：bs-infrastructure 主代码（3 repository import）、测试 5 件；bs-app 的 CountMergeConfig、12 个集成测试、CountMergeConfigTest、启动类 javadoc 包名示例。
+- **终态核验**：adapter 下仅 `port`/`repository` 两棵树；技术包 = `cache/dao/merge/outbox/search/security/sharding/ws`（`mq` 两侧原本都没有，按需不建）；技术包→adapter import 零残留；`git diff -- bs-domain` 零改动（domain 接口未动）；全 reactor `compile + test-compile` 绿（未跑测试，按票面标准）。
+- **遗留归票 08**：backend/CLAUDE.md §3 的 infrastructure 树未覆盖两处新形态——`merge/count` 子包与 `adapter/repository` 根级横域组件（CountFlushDispatcher）；文档同步时补一行说明。
