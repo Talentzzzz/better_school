@@ -32,6 +32,10 @@ public class Constants {
 
     public final static String POINTS_CHANGED_TOPIC = "bs-points-changed";
 
+    /** 营销库存对账告警 topic（生产方 = 营销对账轮 drawReconScan，outbox 独立落库投递）：
+     *  单体消费落 BOTTOM_SYSTEM 维护者告警通知，dedupKey = MARKETING:RECON:<roundNo>:<checkType>:<bizId> */
+    public final static String RECON_ALERT_TOPIC = "bs-marketing-recon-alert";
+
     /**
      * 系统助手账号（系统消息通道发送者）：固定 user_id，schema.sql 种子行（phone 占位不参与登录）。
      * 订单动态/信用分等 CHAT 通道通知由它经 chat 发送管线落入用户的「系统助手」1v1 会话

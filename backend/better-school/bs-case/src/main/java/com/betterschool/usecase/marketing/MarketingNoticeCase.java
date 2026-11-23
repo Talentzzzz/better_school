@@ -6,6 +6,7 @@ import com.betterschool.domain.notification.model.valobj.NotificationEventMessag
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.domain.notification.service.INotificationService;
+import com.betterschool.types.common.Constants;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -89,6 +90,44 @@ public class MarketingNoticeCase {
                 .build());
         log.info("[MarketingNoticeCase] 积分变动通知已落 userId={} delta={} reasonType={} refId={}",
                 message.getUserId(), delta, message.getReasonType(), message.getRefId());
+    }
+
+    /**
+     * 对账告警（营销对账轮 drawReconScan 发现 CONFIRMED 差错 / DEAD 孤儿单时点名）：
+     * 维护者告警不是用户通知——收件人落系统助手账号（通知中心 system tab 可查历史），
+     * 正文优先用生产方渲染好的告警文案。dedupKey 含轮次 + 检查类型 + 单号，
+     * job 重跑 / broker 重投的重复点名只落一条。
+     */
+    public void notifyReconAlert(DrawReconAlertMessage message) {
+        String content = message.getAlertText() != null ? message.getAlertText() : reconAlertContent(message);
+        notificationService.publish(NotificationEventMessage.builder()
+                .notificationId(UUID.randomUUID().toString())
+                .userId(Constants.SYSTEM_USER_ID)
+                .scope(NotificationScopeVO.BOTTOM_SYSTEM.name())
+                .type(NotificationTypeVO.RECON_ALERT.name())
+                .title("库存对账告警")
+                .content(content)
+                .refType(REF_TYPE_MARKETING)
+                .refId(message.getBizId())
+                .dedupKey(marketingDedupKey("RECON", message.getRoundNo(), message.getCheckType(), message.getBizId()))
+                .build());
+        log.info("[MarketingNoticeCase] 对账告警已落 roundNo={} checkType={} scopeKey={} bizId={}",
+                message.getRoundNo(), message.getCheckType(), message.getScopeKey(), message.getBizId());
+    }
+
+    /** 缺省文案：事件体没带告警文案时按其余字段拼（守恒公式形状：期望 X，实际 Y） */
+    private String reconAlertContent(DrawReconAlertMessage message) {
+        StringBuilder content = new StringBuilder("对账轮 ").append(message.getRoundNo())
+                .append("：").append(message.getCheckType()).append(" 差异");
+        if (message.getScopeKey() != null) {
+            content.append("（").append(message.getScopeKey()).append("）");
+        }
+        content.append("，定位 ").append(message.getBizId());
+        if (message.getExpectSummary() != null || message.getActualSummary() != null) {
+            content.append("：期望 ").append(message.getExpectSummary())
+                    .append("，实际 ").append(message.getActualSummary());
+        }
+        return content.toString();
     }
 
     private String marketingDedupKey(Object... parts) {

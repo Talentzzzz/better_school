@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.raffle.IDrawRecordReconQueryDao">
+
+    <!-- ============ 对账轮（drawReconScan）只读聚合：反向配对，纯旁路只读不写 ============ -->
+
+    <!-- 反向配对（数据破坏级缺失候选，返回行即差异）：窗口内 draw_record（inv_id 非空且
+         award_type != 'THANKS'）不存在对应预扣明细（award_id = inv_id 发放来源快照、
+         biz_id = record_id，biz_type 由端口填 LOTTERY_DRAW）——记录在、明细丢，只告警人工不自动修。
+         分批：批内账户 inv_id IN 过滤（inv_id 是发放来源快照，快照口径不变，IN 列表元素量 ≤100）。
+         THANKS 是谢谢参与占位（inv_id='0' 无库存来源），无预扣明细是正常态，已排除 -->
+    <select id="listRecordsMissingDeduct"
+            resultType="com.betterschool.infrastructure.dao.raffle.po.RecordMissingDeductPO">
+        SELECT record_id, inv_id, user_id
+        FROM draw_record
+        WHERE inv_id IS NOT NULL AND award_type != 'THANKS'
+          AND update_time &lt; #{before}
+          AND inv_id IN
+          <foreach collection="awardIds" item="invId" open="(" separator="," close=")">#{invId}</foreach>
+          AND NOT EXISTS (SELECT 1 FROM draw_strategy_award_inventory_detail
+                          WHERE award_id = inv_id AND biz_type = #{bizType} AND biz_id = record_id)
+    </select>
+
+</mapper>

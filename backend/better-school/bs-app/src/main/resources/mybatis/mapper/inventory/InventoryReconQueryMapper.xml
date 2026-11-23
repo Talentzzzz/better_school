@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.inventory.IInventoryReconQueryDao">
+
+    <!-- ============ 对账轮（drawReconScan）只读聚合：纯旁路，只读不写、不进合并器 ============ -->
+
+    <!-- 台账账户 award_id 分页（四条不变量按账户分批跑的分页读入口，批大小 ≤100）：
+         按 award_id 升序、游标 award_id > #{cursor} 取下一批（首批游标传空串） -->
+    <select id="listLedgerAwardIds" resultType="string">
+        SELECT award_id
+        FROM draw_strategy_award_inventory
+        WHERE award_id &gt; #{cursor}
+        ORDER BY award_id ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- B1 台账守恒（按 award_id 一行返回期望/实际两侧读数，差异判断在域侧）：
+         限量户 surplus + waiting + issued == Σ(flow_type=0 分配转入 quantity)；
+         不限量户（surplus_qty = -1）跳过 surplus 项，即 waiting + issued == Σ(flow_type=0)。
+         公式出处：库存 flush 落库已声明的守恒判据与 marketing/docs/db/inventory.md §0
+         （三列守恒；分配行只在 surplus 与池之间搬运）。
+         VIRTUAL 行 waiting_qty 恒 0（deductVirtual 只动 issued），公式自然成立无需特判。
+         窗口：台账与明细两侧均 update_time < before——台账与明细同事务落库、NOW() 同批，
+         取数边界的事务错位由差错 PENDING → 下一轮复查确认消化。
+         分批：批内账户 award_id IN 过滤（账户分页口径，IN 列表元素量 ≤100）。
+         写法：外层表列以全表名限定（零表别名，CLAUDE.md SQL 规范）；标量子查询投影表达式无列名，AS 命名 -->
+    <select id="queryLedgerConservation"
+            resultType="com.betterschool.infrastructure.dao.inventory.po.InventoryLedgerConservationPO">
+        SELECT award_id, surplus_qty, waiting_qty, issued_qty,
+               (SELECT COALESCE(SUM(quantity), 0)
+                FROM draw_strategy_award_inventory_detail
+                WHERE award_id = draw_strategy_award_inventory.award_id
+                  AND flow_type = 0
+                  AND update_time &lt; #{before}) AS allocated_qty
+        FROM draw_strategy_award_inventory
+        WHERE update_time &lt; #{before}
+          AND award_id IN
+          <foreach collection="awardIds" item="awardId" open="(" separator="," close=")">#{awardId}</foreach>
+    </select>
+
+    <!-- B3 预扣守恒（按 award_id 一行返回期望/实际两侧读数，差异判断在域侧）：
+         waiting_qty + issued_qty == Σ(flow_type=1 预扣明细 quantity)。
+         公式出处：AwardInventoryDetailMapper.xml 删预扣明细语句上方注释的守恒判据 B3
+         （「台账转回而不删行即破等式」）与 marketing/docs/db/inventory.md §0；
+         回补是「台账转回 + 删明细」同事务，公式天然平衡。
+         VIRTUAL 行 waiting 恒 0，此时等式即 issued == Σ预扣明细（§0 虚拟行口径）。
+         分批：批内账户 award_id IN 过滤（账户分页口径，IN 列表元素量 ≤100）。 -->
+    <select id="queryPrereserveConservation"
+            resultType="com.betterschool.infrastructure.dao.inventory.po.InventoryPrereserveConservationPO">
+        SELECT award_id, waiting_qty, issued_qty,
+               (SELECT COALESCE(SUM(quantity), 0)
+                FROM draw_strategy_award_inventory_detail
+                WHERE award_id = draw_strategy_award_inventory.award_id
+                  AND flow_type = 1
+                  AND update_time &lt; #{before}) AS deducted_qty
+        FROM draw_strategy_award_inventory
+        WHERE update_time &lt; #{before}
+          AND award_id IN
+          <foreach collection="awardIds" item="awardId" open="(" separator="," close=")">#{awardId}</foreach>
+    </select>
+
+    <!-- 正向配对（漏结候选，返回行即差异）：窗口内预扣明细（flow_type=1，biz_type 由端口填 LOTTERY_DRAW）
+         的 biz_id（= record_id）既不命中 draw_record.record_id 也不命中 draw_orphan_prereserve_order.record_id
+         ——预扣已提交、记录没落库也没种上孤儿对账单，种单环节失效。
+         分批：批内账户 award_id IN 过滤（账户分页口径，IN 列表元素量 ≤100）。
+         NOT EXISTS 跨表反查先例：AwardInventoryDetailMapper.xml 孤儿候选扫描（只读反查不写） -->
+    <select id="listUnmatchedDeductDetails"
+            resultType="com.betterschool.infrastructure.dao.inventory.po.UnmatchedDeductDetailPO">
+        SELECT award_id, biz_id, quantity
+        FROM draw_strategy_award_inventory_detail
+        WHERE flow_type = 1 AND biz_type = #{bizType}
+          AND update_time &lt; #{before}
+          AND award_id IN
+          <foreach collection="awardIds" item="awardId" open="(" separator="," close=")">#{awardId}</foreach>
+          AND NOT EXISTS (SELECT 1 FROM draw_record WHERE record_id = biz_id)
+          AND NOT EXISTS (SELECT 1 FROM draw_orphan_prereserve_order WHERE record_id = biz_id)
+    </select>
+
+</mapper>

@@ -155,6 +155,8 @@ SELECT d.award_id, d.biz_id, d.quantity, d.create_time
  ORDER BY d.create_time;
 ```
 
+逐笔收敛之上另有每日全量对账轮（`drawReconScan`，03:00）做总量兜底：两条台账守恒 + 正反双向配对轧账、差错二次核对、平账分流，见 [recon.md](recon.md)。
+
 ## 与主链路相接
 
 抽奖主链路经 `IInventoryDeductPort` 调本域的预扣（实物 `preDeductWithFallback(primary, fallback)`、

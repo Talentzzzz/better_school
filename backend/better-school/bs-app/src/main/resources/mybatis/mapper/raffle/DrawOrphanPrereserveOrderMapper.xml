@@ -41,4 +41,22 @@
         WHERE id = #{id} AND state = 0
     </update>
 
+    <!-- 按抽奖记录业务 ID 查对账单（uk_record_id 保证至多一行；对账轮正向配对分流判据用，只读） -->
+    <select id="selectByRecordId" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawOrphanPrereserveOrderPO">
+        SELECT id, record_id, award_id, user_id, quantity, state,
+               retry_count, next_retry_at, finish_time, create_time, update_time
+        FROM draw_orphan_prereserve_order
+        WHERE record_id = #{recordId}
+    </select>
+
+    <!-- 死信单点名扫描：DEAD（重试耗尽待人工）按 id 升序，上限 limit（对账轮周期性点名读入口，只读） -->
+    <select id="listDead" resultType="com.betterschool.marketing.infrastructure.raffle.dao.po.DrawOrphanPrereserveOrderPO">
+        SELECT id, record_id, award_id, user_id, quantity, state,
+               retry_count, next_retry_at, finish_time, create_time, update_time
+        FROM draw_orphan_prereserve_order
+        WHERE state = 2
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
 </mapper>

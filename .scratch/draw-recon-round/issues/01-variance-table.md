@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Type: task
 Blocked by:
 
@@ -33,4 +33,38 @@ Blocked by:
 
 ## Answer
 
-（完成后在此追加要点）
+实现者：t01（分支 `draw-recon-round-t01-variance-table`）。全部新增，未动主链路/合并器/孤儿收敛 job。
+
+### 新增/改动文件清单
+
+| 文件 | 内容 |
+| --- | --- |
+| `backend/marketing/sql/schema.sql` | 追加 `draw_recon_variance`、`draw_recon_round` 两表 DDL（`CREATE TABLE IF NOT EXISTS`，表尾 create_time/update_time 无默认值，uk/idx 带语义 COMMENT） |
+| `marketing-types/.../types/raffle/DrawReconVarianceState.java` | 差错状态枚举 PENDING(0)/CONFIRMED(1)/AUTO_FIXED(2)/RESOLVED_MANUAL(3)/FALSE_ALARM(4)，code + desc，javadoc 写明二次核对状态机 |
+| `marketing-types/.../types/raffle/DrawReconCheckType.java` | 检查类型枚举五类：B1_CONSERVATION / B3_CONSERVATION / FORWARD_PAIRING / REVERSE_PAIRING / DEAD_ORPHAN_PATROL，javadoc 注明是二期扩展位 |
+| `marketing-domain/.../raffle/model/entity/DrawReconVarianceEntity.java` | Entity，state/checkType 为枚举（域侧类型） |
+| `marketing-domain/.../raffle/model/entity/DrawReconRoundEntity.java` | Entity，最小列 |
+| `marketing-infrastructure/.../raffle/dao/po/DrawReconVariancePO.java` | PO，state Integer / checkType String |
+| `marketing-infrastructure/.../raffle/dao/po/DrawReconRoundPO.java` | PO |
+| `marketing-infrastructure/.../raffle/dao/IDrawReconVarianceDao.java` | insertIgnoreVariance / listPendingByRound / confirm / markAutoFixed / markFalseAlarm / markResolvedManual / countByRound / countByRoundAndState |
+| `marketing-infrastructure/.../raffle/dao/IDrawReconRoundDao.java` | insertIgnoreRound / finishRound |
+| `marketing-app/.../mybatis/mapper/raffle/DrawReconVarianceMapper.xml` | INSERT IGNORE + 条件更新（均带起点状态守卫，`update_time = NOW()` 照 RaffleMapper/AwardInventoryMapper 口径）+ 计数；零表别名、无 AS（map-underscore-to-camel-case） |
+| `marketing-app/.../mybatis/mapper/raffle/DrawReconRoundMapper.xml` | 起轮 INSERT IGNORE + 终轮回填 |
+| `marketing-domain/.../raffle/adapter/repository/IRaffleRepository.java` | 追加对账轮写面方法段（10 个方法） |
+| `marketing-infrastructure/.../raffle/adapter/repository/raffle/RaffleRepository.java` | 注入两 DAO + 实现 + Entity↔PO 转换器（INSERT IGNORE 结果 > 0 判布尔） |
+
+### 关键设计决定
+
+- **幂等口径**：差错表 `uk_round_check_biz (round_no, check_type, biz_id)` + 轮次表 `uk_round_no`，均 INSERT IGNORE（扫描种单语义，照孤儿种单/库存明细先例）；所有状态推进是按 id + 起点状态的条件更新（confirm 0→1、markAutoFixed 1→2、markFalseAlarm 0→4、markResolvedManual 1→3），0 行 = 状态漂移，调用方跳过。
+- **列设计**：`scope_key` 与 `biz_id` 分列——scope_key 是定位维度（award_id / record_id），biz_id 进幂等键末位；快照两列 VARCHAR(255) 存读数文本。
+- **状态/类型落库形态**：state TINYINT 存枚举 code、check_type VARCHAR(32) 存枚举 name，映射收口在 RaffleRepository 转换器（未识别 code 抛 IllegalArgumentException，自己写自己读不会触发）。
+- **终轮计数**：finishRound 按 round_no 直接回填三项计数（一轮一行无状态机，重跑幂等无害）；计数来源 countByRound / countByRoundAndState。
+- **依赖先例**：本 worktree 的集成分支不含 `draw_orphan_prereserve_order`（该代码在 `chat-ws-layering-rollout`，与集成分支从 2d5a290 分叉，未合入），故形态镜像自集成分支现有先例：DrawRecordPO/IDrawRecordDetailDao/DrawRecordDetailMapper.xml（INSERT IGNORE、一表一 DAO）、RaffleMapper/AwardInventoryMapper 的条件更新（`update_time = NOW()`）、PointsReasonType 的枚举 javadoc 形态。实现要点（insertIgnore 撞 uk 静默跳过、条件更新状态守卫）与探索报告 §1.3/§6 描述的孤儿对账单形态一致。
+
+### 编译外的额外修复（既有阻断）
+
+`InventoryQuotaServiceImpl.degradeConfirm` L165 异常消息引用了作用域外的 `awardId`/`item`（集成分支既有笔误，marketing-domain 整体无法编译）。最小修复为 `request.awardId()`/`request.bizId()`（与 L159 日志同口径），单独 commit `23df5f9`。
+
+### 编译结果
+
+`mvn -q compile -pl marketing-types,marketing-domain,marketing-infrastructure,marketing-app -am`（`backend/marketing/` 下，JDK 21）**通过**（EXIT=0）。未写未跑任何测试（spec Testing Decisions）。

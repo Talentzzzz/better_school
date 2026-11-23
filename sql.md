@@ -2,6 +2,7 @@
 
 > 收录 1 个工程的建表语句：better-school 单体（库 `better_school`，超时中心已内嵌在此；monolith-restructure 票 07 合库——原 bs_marketing 营销库的 22 张表并入同一份 `backend/better-school/sql/schema.sql` 尾段，营销域独立 init/schema 文件退役）。XXL-Job 调度库（原 backend/sql/xxl-job.sql 的 8 张表）不在本文档范围内。
 > **单体收口（2026-11-23 起，[`.scratch/monolith-restructure/`](.scratch/monolith-restructure/map.md)）已完成**：营销 22 张表并入 `better_school` / `better_school_test`，全库物理表数 = **79（41 单体业务 + 16 单体超时分表 + 22 营销并入）**；`outbox_message` 全库**唯一一份**，形状取合并前 marketing 侧超集（+`delay_level` / `delay_ms`，见 §1）。
+> **对账轮并入（2026-11-23，draw-recon-round 并入 master）**：营销侧新增对账差错表 `draw_recon_variance` 与轮次观测表 `draw_recon_round` 两张旁路表，全库物理表数 = **81（41 单体业务 + 16 单体超时分表 + 24 营销并入）**，见 §2 尾。
 > **超时中心内嵌化（2026-10-16 起，[`.scratch/timeout-inline/`](.scratch/timeout-inline/map.md)）已完成**：原独立超时工程与独立库已下线，16 张 `timeout_task_00..15` 分表在 `better_school` / `better_school_test` 里（见 §1 末），与业务表同库、同事务。
 > **业务 ID 全面 UUID 化（2026-11-02 起，[`.scratch/uuid-biz-id/`](.scratch/uuid-biz-id/spec.md)）已完成**：全部业务对象的对外唯一标识统一为 **UUID 字符串**（DB 列 `VARCHAR(36)`，由应用层统一 `IIdGenerator` 在 insert 前发号、随行一次写入），Java 实体/PO/DTO 全链路 String；marketing 的雪花发号器退役。**存量数据不迁移——开发/测试库删库重建**，历史上按 BIGINT 体系书写的割接/回填脚本（`sql/backfill/`、`sql/cutover/` 全目录）已随收口整体退役删除。
 > 不含种子数据 `INSERT`（schema 内置的敏感词/单行配置种子除外）；开发库与测试库共用同一份 DDL，建库语句在各自的 `init-dev.sql` / `init-test.sql`。
@@ -782,7 +783,7 @@ CREATE TABLE IF NOT EXISTS user_credit_detail (
 
 ## 2. 营销领域段（库 better_school 尾段，monolith-restructure 票 07 合库）
 
-来源：`backend/better-school/sql/schema.sql` **尾段**（该文件是全库唯一 DDL 事实源；营销域独立 `marketing/sql/` 四件已删除，比对脚本 `.scratch/project-rework/cmp_schema_marketing.py` 随之失效退役）· 营销并入 **22 张表**（本节展开 **17 张**；未展开 5 张——库存票的 `draw_strategy_award_inventory` / `draw_strategy_award_inventory_detail` / `inventory_allocation_flow` 三张历史表 + 下注两张对账单表，形状以 schema.sql 为准）。积分（桶模型）、抽奖次数（与积分同构的桶模型）、配置（积分/次数有效期 + 行为返利）、抽奖（活动/策略/奖品/记录）、库存（虚拟权益池与实物营销配额的两段式库存：进程内合并 + DB 台账）。**outbox_message 不在本节**：全库唯一一份已按 marketing 超集形状归并在 §1。原积分与抽奖两个服务合并为一个营销服务、共库，积分流水与抽奖记录可同库同事务；单体收口后与单体业务表同库（跨域纪律不因此改变，见 §1 头注）。**uuid-biz-id 票 07**：营销自有业务键（bucket_id / activity_id / strategy_id / award_id / record_id / inv_id / 兑换 ref_id / 台账 biz_id）全 `VARCHAR(36)`，由工程内 `IIdGenerator`（`IdGeneratorConfig` @Bean）insert 前发号一次写入；抽奖记录/兑换单两个幂等键由 `IdempotencyKeys.of()` 确定性映射（SHA-256(userId, token) 16 字节组 UUID，36 位规范形）——同一 token 恒同一 id，重放语义不变。`draw_strategy_award.inv_id` 的「不限量」哨兵由数值 0 改字符串 `'0'`（`RaffleDrawServiceImpl` 按字符串等值判断；落库快照无库存来源仍置 NULL）；`draw_strategy_weight.weights` 随 award_id 变长放宽到 VARCHAR(512)。存量数据不迁移，删库重建。
+来源：`backend/better-school/sql/schema.sql` **尾段**（该文件是全库唯一 DDL 事实源；营销域独立 `marketing/sql/` 四件已删除，比对脚本 `.scratch/project-rework/cmp_schema_marketing.py` 随之失效退役）· 营销并入 **24 张表**（本节展开 **19 张**；未展开 5 张——库存票的 `draw_strategy_award_inventory` / `draw_strategy_award_inventory_detail` / `inventory_allocation_flow` 三张历史表 + 下注两张对账单表，形状以 schema.sql 为准）。积分（桶模型）、抽奖次数（与积分同构的桶模型）、配置（积分/次数有效期 + 行为返利）、抽奖（活动/策略/奖品/记录）、库存（虚拟权益池与实物营销配额的两段式库存：进程内合并 + DB 台账）、对账轮（draw-recon-round 并入的差错登记 + 轮次观测两张旁路表）。**outbox_message 不在本节**：全库唯一一份已按 marketing 超集形状归并在 §1。原积分与抽奖两个服务合并为一个营销服务、共库，积分流水与抽奖记录可同库同事务；单体收口后与单体业务表同库（跨域纪律不因此改变，见 §1 头注）。**uuid-biz-id 票 07**：营销自有业务键（bucket_id / activity_id / strategy_id / award_id / record_id / inv_id / 兑换 ref_id / 台账 biz_id）全 `VARCHAR(36)`，由工程内 `IIdGenerator`（`IdGeneratorConfig` @Bean）insert 前发号一次写入；抽奖记录/兑换单两个幂等键由 `IdempotencyKeys.of()` 确定性映射（SHA-256(userId, token) 16 字节组 UUID，36 位规范形）——同一 token 恒同一 id，重放语义不变。`draw_strategy_award.inv_id` 的「不限量」哨兵由数值 0 改字符串 `'0'`（`RaffleDrawServiceImpl` 按字符串等值判断；落库快照无库存来源仍置 NULL）；`draw_strategy_weight.weights` 随 award_id 变长放宽到 VARCHAR(512)。存量数据不迁移，删库重建。
 
 > **未展开表**（在 schema.sql 尾段、本文档尚未收录 DDL，形状以 schema.sql 为准）：
 > `draw_count_purchase_order`（抽奖次数购买单——订单兼 outbox，三段式「落单→扣分→推进」的状态机载体与对账源，票 C / ADR-0016）与
@@ -1105,3 +1106,45 @@ CREATE TABLE IF NOT EXISTS physical_marketing_quota_detail (
 ```
 
 说明（合并落库，与虚拟段同一套）：type=1（预扣结转）合进 waiting_qty、同时减 surplus_qty；type=2（兑换确认）在返回时就把 waiting_qty 转成 issued_qty（与预扣同分片、同形状的另一组，一个事务），**不碰任何 Redis 结构**。撞 `uk_biz_type` = 已落过，按成功回放。hot-row-merge-l2w256 切换期的存量过渡形状处置（bucket_id / state 列与两条索引的 window-ddl / d9-finalize 两脚本）已随 uuid-biz-id 票 08 退役：存量数据不迁移，删库重建。
+对账部分：每日全量对账轮（xxl `drawReconScan`，03:00）的差错登记与轮次观测两张旁路表——业务表只读，写面仅此两表；公式口径与分流规则见 `backend/docs/marketing/db/recon.md`。
+
+### draw_recon_variance
+
+```sql
+CREATE TABLE IF NOT EXISTS draw_recon_variance (
+    id              BIGINT       NOT NULL AUTO_INCREMENT,
+    round_no        VARCHAR(32)  NOT NULL COMMENT '对账轮次号（= draw_recon_round.round_no，本轮扫描开始时刻文本）',
+    check_type      VARCHAR(32)  NOT NULL COMMENT '检查类型 B1_CONSERVATION(B1 台账守恒) / B3_CONSERVATION(B3 预扣守恒) / FORWARD_PAIRING(正向配对) / REVERSE_PAIRING(反向配对) / DEAD_ORPHAN_PATROL(DEAD 孤儿单点名)',
+    scope_key       VARCHAR(36)  NOT NULL COMMENT '定位键：award_id（守恒类，按奖品位账户定位）/ record_id（配对类与点名，按抽奖记录/对账单定位）',
+    biz_id          VARCHAR(36)  NOT NULL COMMENT '业务单号（守恒类 = award_id；配对/点名类 = record_id）',
+    expect_snapshot VARCHAR(255) NOT NULL COMMENT '期望值快照（不变量期望侧读数文本）',
+    actual_snapshot VARCHAR(255) NOT NULL COMMENT '实际值快照（不变量实际侧读数文本）',
+    state           TINYINT      NOT NULL DEFAULT 0 COMMENT '0 待复查(PENDING) / 1 已确认(CONFIRMED) / 2 已自动修复(AUTO_FIXED) / 3 已人工处理(RESOLVED_MANUAL) / 4 假差错(FALSE_ALARM)',
+    fixed_time      DATETIME     NULL COMMENT '自动修复时间（置 AUTO_FIXED 时写）',
+    finish_time     DATETIME     NULL COMMENT '人工处理/复查完成时间（置 RESOLVED_MANUAL / FALSE_ALARM 时写）',
+    create_time     DATETIME     NOT NULL COMMENT '创建时间',
+    update_time     DATETIME     NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_round_check_biz (round_no, check_type, biz_id) COMMENT '对账幂等键：同一轮次同一检查类型同一业务单号一条差错，登记 INSERT IGNORE（调度重复触发/重跑零副作用）',
+    KEY idx_state_round (state, round_no) COMMENT '下一轮复查扫描：取前轮 PENDING 差错做二次核对（仍在 → CONFIRMED，消失 → FALSE_ALARM）'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '对账差错表（每日全量对账轮发现的不一致登记，纯旁路只写此表；PENDING → CONFIRMED → AUTO_FIXED / RESOLVED_MANUAL / FALSE_ALARM）';
+```
+
+### draw_recon_round
+
+```sql
+CREATE TABLE IF NOT EXISTS draw_recon_round (
+    id               BIGINT      NOT NULL AUTO_INCREMENT,
+    round_no         VARCHAR(32) NOT NULL COMMENT '轮次号（本轮扫描开始时刻文本）',
+    scan_start_time  DATETIME    NOT NULL COMMENT '本轮扫描开始时间',
+    scan_end_time    DATETIME    NULL COMMENT '本轮扫描结束时间（终轮回填）',
+    variance_total   INT         NULL COMMENT '本轮登记差错数（终轮回填）',
+    confirmed_total  INT         NULL COMMENT '本轮确认差异数（终轮回填）',
+    auto_fixed_total INT         NULL COMMENT '本轮自动修复数（终轮回填）',
+    create_time      DATETIME    NOT NULL COMMENT '创建时间',
+    update_time      DATETIME    NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_round_no (round_no) COMMENT '一轮一行：起轮 INSERT IGNORE，调度重复触发按幂等跳过'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '对账轮次观测表（每轮起止与计数，纯观测用，最小列）';
+```
+

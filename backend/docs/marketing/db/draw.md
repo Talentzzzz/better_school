@@ -82,6 +82,8 @@
    库存被白扣一份。对账读数瘦成台账三列直读后（hot-row-merge-l2w256），这条**没有自动暴露口**——
    能自愈的靠同 token 重试撞明细唯一键回放；用户放弃的部分永久挂账，只能跑 inventory.md 里那条
    「两张明细表 LEFT JOIN `draw_record` 找 `record_id IS NULL` 的 `type = 1` 行」人工 SQL（不建 job、不建巡检）。
+   **draw-recon-round 起该口径被取代**：孤儿预扣收敛 job（fund-consistency 票）已承接逐笔收敛，其上的
+   每日全量对账轮（`drawReconScan`）做总量兜底复查与平账分流（自动补种 / 告警人工），见 [recon.md](recon.md)。
 2. **确认不分活动**（库存域的有意口径）：合并器只认分片键（奖品库存账户 awardId），确认与预扣都按
    `awardId` 路由落库，
    不查活动是否还在运行——好处是停用库存的遗留确认也能收敛；
