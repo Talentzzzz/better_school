@@ -16,7 +16,7 @@ Status: done
 
 ## Answer
 
-已完成，commit `3ba09c7`（24 files，+278/−319）。要点：
+已完成，commit `3ba09c7`（24 files，+278/−319）+ 评审订正 `2fe964d`（sql.md §2 展开表数 19→17/未展开 5、GLOSSARY.md 头部单体口径、CLAUDE.md merge 树措辞）。要点：
 
 1. **CLAUDE.md**：新增 §0「当前工程形态」（唯一 reactor `backend/better-school`、bs-* 七模块、单应用 bs-app、单库 better_school、marketing 命名空间退役、FqcnAnnotationBeanNameGenerator + @MapperScan 单基包）；§3 infra 树重写为票 06 终态（adapter/{port, repository} 两棵树 + 平级技术包 cache/dao/merge(count)/outbox/search/security/sharding/ws，**技术包→adapter 禁止反向依赖**，横域组件落 adapter/repository 根包——先例 CountFlushDispatcher；两套合并引擎并存不归并）。
 2. **架构/schema 文档**：`architecture/marketing-services.md` 整篇重写为单体运行手册（端口表只剩 8080/50051/9999，旧 8081/50052/9998 已释放；Dubbo 双 Provider 保留现状、无 consumer；MQ 两撞名 topic 保留现状归后续 effort；购买次数三段式链路、契约变更纪律改单工程口径；`/api/points/ping` 改进程内直调 IUserRepository）。合库口径同步：backend/docs/{README,db/README,api/README,testing}.md（营销测试段改 bs-app 单层）、marketing/README 与 db/api/architecture 子文档头注、better-school/docs/db/{README,outbox}.md（outbox 表补 delay_level/delay_ms 两列）；根 `sql.md` 改单工程口径：全库 79 表（41 单体业务 + 16 超时分表 + 22 营销并入）、§1 outbox_message 换 marketing 超集形状（全库唯一一份）、§2 改「营销领域段（better_school 尾段）」并删重复 outbox DDL。
