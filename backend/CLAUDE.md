@@ -80,9 +80,8 @@ cn.xxx.infrastructure/
 ├── cache/                       缓存（域子包，如 post/）
 ├── dao/                         MyBatis Mapper 接口：IxxxDao（@Mapper），按域分包
 │   └── <域>/po/                 持久化对象 PO（与表对应），base/Page 分页对象
-├── merge/                       合并引擎（两套并存，功能不同不归并）：
-│   ├── count/                   计数引擎（键对齐 application.yml merge.count / merge.batch.*）
-│   └── <根>                     库存引擎（键对齐 merge.batch.*）
+├── merge/                       合并引擎根 = 库存引擎（键对齐 application.yml merge.batch.*）；
+│   └── count/                   计数引擎子包（键对齐 merge.count.*）。两套并存、功能不同不归并
 ├── outbox/                      本地消息表发送器与扫描
 ├── search/  security/  sharding/ ws/   其余技术包（ws = WS 连接机器 + IWsConnectionHub，见 §1）
 └── gateway/                     调用外部 http/rpc 的接口定义（按需建，当前工程没有；gateway/dto 放外部 DTO）

@@ -1,6 +1,6 @@
 # 营销域 Glossary
 
-better-school 营销服务（points / rebate / raffle / inventory 四域）的统一领域语言。本表只收领域词，不收实现细节。
+better-school 单体中营销四域（points / rebate / raffle / inventory；monolith-restructure 票 05/07 起并入 `com.betterschool` 平级领域包、单库 `better_school`）的统一领域语言。本表只收领域词，不收实现细节。
 
 ## Language
 
