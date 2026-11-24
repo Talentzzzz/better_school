@@ -1,7 +1,12 @@
 # Spec：合并引擎 per-invId leader 模型改造（对齐数据库内核热点组提交）
 
-> 状态：ready-for-agent（待确认测试 seam 后开工）
+> 状态：**已落地**，其中「收集窗口」条款**已作废**
 > 决策来源：2026-11-23 引擎评审对话——与 PolarDB-X《如何支持淘宝库存热点更新》、淘宝数据库内核月报《RDS 三节点企业版热点组提交》逐层对齐后的拍板。
+>
+> ⚠️ **修订（2026-11-24）**：本 spec 中所有「收集窗口」条款（「窗口攒批 / 到点发车 / 窗口参数保留」等）
+> **已作废**，由 `merge-window-removal-spec.md` 取代——发车条件改为「**队列非空即发**」，收集窗就是
+> 落库耗时本身；`maxFlushDelayMillis` 降为退役兼容键，「攒满提前发车」也一并删除（{@code maxBatch}
+> 只剩单批上界一个职责）。per-invId leader 模型、乐观删除闭环、接班协议、背压口径其余全部沿用。
 
 ## Problem Statement
 
@@ -16,12 +21,13 @@
 
 **per-invId leader 模型引擎**：以 `invId`（业务行主键）为键的动态 Group 表替代固定分片数组——
 
-- 第一条到达的请求**惰性创建**该 invId 的 Group 并成为 leader，在收集窗口内吸收 follower（窗口参数保留，即内核 `hotspot_update_max_wait_time` 的对应物）；
-- 到点/攒满后 leader 带全队**一次落库**（一组一个事务不变），提交即清空、锁内提前释放领导权——下一批的 leader 由下一个到达者担任，收集与落库流水线重叠（内核的双执行单元乒乓）；
+- 第一条到达的请求**惰性创建**该 invId 的 Group 并成为 leader，<s>在收集窗口内吸收 follower（窗口参数保留，即内核 `hotspot_update_max_wait_time` 的对应物）</s>（**已作废**：改为队列非空即发车，无收集窗口）；
+- <s>到点/攒满后</s>队列非空时 leader 带全队**一次落库**（一组一个事务不变，单批上界 `maxBatch`），提交即清空、锁内提前释放领导权——下一批的 leader 由下一个到达者担任，收集与落库流水线重叠（内核的双执行单元乒乓）；
 - Group 空闲即从表中乐观删除；删除竞态由 DB 行锁 + 唯一键自愈兜底；
 - **浏览类从 fire-and-forget 翻转为 commit 语义**：等待落库终态，超时 = 结果未知（TIMEOUT → RETRY_LATER → 重放），不再有「允许丢」与 `droppedViews` 指标。
 
-已知代价（用户知情拍板，非缺陷）：中低流量下事务数相比窗口模型上升（窗口是「用延迟换更少事务」的杠杆，leader 模型的事务频率恒为 1/单次写时长）；浏览请求 RT 增加窗口 + 落库时长；浏览类每请求分配 future 的成本回归（旧设计为省 future 专门做过优化，本次有意放弃）。
+已知代价（用户知情拍板，非缺陷）：中低流量下事务数相比窗口模型上升（窗口是「用延迟换更少事务」的杠杆，leader 模型的事务频率恒为 1/单次写时长）；浏览请求 RT 增加落库时长；浏览类每请求等待结果的开销回归。
+（窗口删除后这条代价被追认为**设计意图**：事务速率 = 1/flush 天然 ≤ DB 天花板，低速率下每批 1 件 = 延迟最低，见 `merge-window-removal-spec.md`。）
 
 ## User Stories
 
@@ -57,7 +63,7 @@
 - **领导权协议**（内核同构）：到达 → 锁内入队 → 领导权空缺则自任 leader 并在收集窗口内吸收 follower（攒满 maxBatch 或停机提前唤醒）→ 锁内摘批（≤maxBatch）→ **锁内先释放领导权再出锁** → 锁外调落库函数（一组一个事务）→ 逐件回填 → 队列空则条件 remove 出 map（乐观删除，竞态自愈由 DB 行锁 + 唯一键兜）；队列非空则 signalAll，等待者按协议接班。
 - **等待者协议**：follower 在 Group 条件变量上带截止时间 await，循环检查三件事——我的件已终态（返回）/ 领导权空缺（接班成为新 leader）/ 超时（走 TIMEOUT）。
 - **超时收尾**：follower 等超时、准备返回 TIMEOUT 之前，若领导权空缺则自任 leader 清一次队——把自己的 TIMEOUT 收敛为 COMPLETED，杜绝孤儿批。
-- **MergeConfig 语义调整**：`maxFlushDelayMillis` 语义变为「leader 收集窗口」（内核 `hotspot_update_max_wait_time` 对应物，默认沿用现值）；`shardCount` / `shardOf` 退役（保留 yml 键一个版本兼容，不再参与路由）；`maxBatch` / `waitTimeoutMs` / 容量 / 排空超时语义不变。
+- **MergeConfig 语义调整**：`maxFlushDelayMillis` <s>语义变为「leader 收集窗口」</s>**已退役**（读入不参与发车判定，yml 键保留一个版本；见 `merge-window-removal-spec.md`）；`shardCount` / `shardOf` 退役（保留 yml 键一个版本兼容，不再参与路由）；`maxBatch` / `waitTimeoutMs` / 容量 / 排空超时语义不变。
 - **装配层校验调整**：删除「shardCount ≤ 连接池 − 2」校验（后台线程模型消失，flush 并发 = 并发热点 leader 数，天然受连接池约束）；校验收敛为窗口/等待预算等自身约束。
 - **浏览语义翻转**：浏览写入组件的异步入口退役，改为 commit 等结果；`droppedViews` 指标退役；浏览幂等沿用明细唯一键 + INSERT IGNORE 影响行数口径（不新增去重机制）；「允许丢」分支与不回补注释一并清除。
 - **计数合并器**：8 分片常驻线程删除，点赞/取消赞/评论赞/浏览统一走新引擎；按动作分发落库的出口组件不变；「按影响行数计数」的守恒口径不变。

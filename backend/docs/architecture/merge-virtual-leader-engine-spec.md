@@ -1,7 +1,12 @@
 # Spec：合并引擎专属虚拟线程 leader 改造（infrastructure.mergevirtual）
 
-> 状态：ready-for-agent
+> 状态：**已落地**，其中「收集窗口」条款**已作废**
 > 决策来源：2026-11-24 引擎讨论——在 per-invId leader 模型（`merge-per-invid-leader-engine-spec.md`）基础上，讨论「每个 group 创建时顺手 spawn 一根专属虚拟线程当 leader」，经三轮修正后拍板的结论。
+>
+> ⚠️ **修订（2026-11-24）**：本 spec 中「收集窗口同口径平移」条款**已作废**，由
+> `merge-window-removal-spec.md` 取代——三处收集段（本包 + `merge` 根包 + `merge/count`）统一改为
+> 「**队列非空即发**」，`maxFlushDelayMillis` 退役、「攒满提前发车」删除。spawn claim-CAS、supervisor、
+> 退出谓词、停机三步全部沿用。
 
 ## Problem Statement
 
@@ -54,7 +59,7 @@
 - **退出谓词**：循环只在「组已置死并从 map 摘除」后退出；组内不存在提前 return 的合法路径——这是新模型唯一需要单测钉死的不变量。
 - **领导权协议删除**：无 hasLeader / tryPromote / yieldLeadership / 卸任点名 / WAKEUP_PROBE 交接探测；`leaderClaimed` 是组内唯一新增标志。leader 不退位，接班链路不存在。
 - **commit 收敛**：入队（或建组）→ park 在自己的件上等终态（`MergeItem` 的终态 CAS + 精确 unpark 机制原样复用），无任何接班分支。
-- **收集窗口 / maxBatch / 组容量 / 排空超时**：与旧引擎同口径——窗口攒批、攒满或停机提前发车、满即拒不扩容不挤掉已入队件。
+- **<s>收集窗口</s> / maxBatch / 组容量 / 排空超时**：与旧引擎同口径——<s>窗口攒批、攒满或停机提前发车</s>**队列非空即发车（无收集窗口，`maxBatch` 只是单批上界）**、满即拒不扩容不挤掉已入队件。
 - **乐观删除闭环保留**：队列空 → 置死 → 引擎从 map 摘除（两步必须成对）；迟到入队得 GROUP_REMOVED → 换组重建 → 新组 spawn 新 leader。
 - **背压决策（讨论第二轮修正后拍板）**：不加任何新闸门。两种模型下 commit 都阻塞到终态，在途请求数、tomcat 耗尽点、门前快速失败、flush 并发度（= 活跃热点数）完全相同；「线程耗尽 → 延迟上升」的形状变化属于 commit 异步化场景，不在本 spec 范围。
 - **pinning 已知风险**：JDK 21 下 JDBC 驱动 synchronized 可能钉住载体线程（JEP 491 于 JDK 24 解决）——记录为性能风险而非正确性缺陷；初始接受，基准对比后再决定是否升 JDK / 审驱动版本。
