@@ -3,7 +3,7 @@ package com.betterschool.usecase.idle;
 import com.betterschool.domain.credit.service.ICreditAccountService;
 import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
 import com.betterschool.domain.idle.model.valobj.ProductConfirmResult;
-import com.betterschool.domain.idle.service.productorder.IProductOrderService;
+import com.betterschool.domain.idle.service.IIdleService;
 import com.betterschool.domain.wallet.model.valobj.WalletDetailTypeVO;
 import com.betterschool.domain.wallet.service.IWalletAccountService;
 import lombok.RequiredArgsConstructor;
@@ -21,13 +21,13 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ProductOrderCase {
 
-    private final IProductOrderService productOrderService;
+    private final IIdleService idleService;
     private final ICreditAccountService creditAccountService;
     private final IWalletAccountService walletAccountService;
 
     public String createOrder(String buyerId, String productId, int quantity) {
         creditAccountService.ensureOperable(buyerId);
-        return productOrderService.createOrder(buyerId, productId, quantity);
+        return idleService.createOrder(buyerId, productId, quantity);
     }
 
     /**
@@ -39,20 +39,20 @@ public class ProductOrderCase {
      * 冻结流水 uk 吸收重复冻结
      */
     public void payOrder(String orderId, String buyerId) {
-        var payResult = productOrderService.preparePayOrder(orderId, buyerId);
+        var payResult = idleService.preparePayOrder(orderId, buyerId);
         if (payResult.isAlreadyPaid()) {
             return; // 幂等：上次支付已提交成功（重试场景），零副作用
         }
         walletAccountService.freeze(buyerId, payResult.getAmount(), orderId, WalletDetailTypeVO.PRODUCT_FROZEN);
-        productOrderService.confirmPayOrder(orderId, buyerId);
+        idleService.confirmPayOrder(orderId, buyerId);
     }
 
     public void markDelivered(String orderId, String sellerId) {
-        productOrderService.markDelivered(orderId, sellerId);
+        idleService.markDelivered(orderId, sellerId);
     }
 
     public void confirmReceived(String orderId, String buyerId) {
-        ProductConfirmResult confirmResult = productOrderService.confirmReceived(orderId, buyerId);
+        ProductConfirmResult confirmResult = idleService.confirmReceived(orderId, buyerId);
         walletAccountService.unfreeze(confirmResult.getBuyerId(), confirmResult.getAmount(), orderId,
                 WalletDetailTypeVO.PRODUCT_UNFROZEN);
         walletAccountService.income(confirmResult.getSellerId(), confirmResult.getAmount(), orderId,
@@ -67,7 +67,7 @@ public class ProductOrderCase {
      * 扫描收敛；待支付取消（未冻结）needRefund=false 无资金动作，重放终态短路不重复退款
      */
     public void cancelOrder(String orderId, String buyerId) {
-        var cancelResult = productOrderService.cancelOrder(orderId, buyerId);
+        var cancelResult = idleService.cancelOrder(orderId, buyerId);
         if (cancelResult.isNeedRefund()) {
             walletAccountService.unfreeze(cancelResult.getBuyerId(), cancelResult.getAmount(), orderId,
                     WalletDetailTypeVO.PRODUCT_UNFROZEN);
@@ -75,19 +75,19 @@ public class ProductOrderCase {
     }
 
     public ProductOrderEntity orderDetail(String orderId, String currentUserId) {
-        return productOrderService.orderDetail(orderId, currentUserId);
+        return idleService.orderDetail(orderId, currentUserId);
     }
 
     public List<ProductOrderEntity> listMineOrders(String role, String userId, int page, int pageSize) {
-        return productOrderService.listMineOrders(role, userId, page, pageSize);
+        return idleService.listMineOrders(role, userId, page, pageSize);
     }
 
     public long countMineOrders(String role, String userId) {
-        return productOrderService.countMineOrders(role, userId);
+        return idleService.countMineOrders(role, userId);
     }
 
     public void handlePayTimeout(String orderId) {
-        productOrderService.handlePayTimeout(orderId);
+        idleService.handlePayTimeout(orderId);
     }
 
 }

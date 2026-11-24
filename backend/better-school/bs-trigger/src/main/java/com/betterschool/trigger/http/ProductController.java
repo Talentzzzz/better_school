@@ -9,11 +9,11 @@ import com.betterschool.api.dto.ProductResponseDTO;
 import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
 import com.betterschool.usecase.idle.IdlePublishCase;
+import com.betterschool.usecase.idle.ProductOrderCase;
 import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
 import com.betterschool.domain.idle.model.valobj.ProductFeedPageVO;
 import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
-import com.betterschool.domain.idle.service.product.IProductService;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -42,9 +42,10 @@ public class ProductController implements IIdleService {
 
     private static final int MAX_PAGE_SIZE = 50;
 
-    private final IProductService productService;
+    /** 域名服务与 api 契约同名，字段用全限定名区分（照 SearchController 先例） */
+    private final com.betterschool.domain.idle.service.IIdleService idleService;
     private final IdlePublishCase idlePublishCase;
-    private final com.betterschool.usecase.idle.ProductOrderCase productOrderCase;
+    private final ProductOrderCase productOrderCase;
 
     @Override
     @GetMapping("/products")
@@ -60,9 +61,9 @@ public class ProductController implements IIdleService {
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         // 索引 + 游标分页（票 04）：无筛选走索引序扫描，total 降口径 -1 不再精确 COUNT、续页靠 cursor；
         // 带筛选或索引查询降级时 indexPath=false，total 仍精确、按 page 续页
-        ProductFeedPageVO feedPage = productService.listProducts(category, minPrice, maxPrice, sort, cursor,
+        ProductFeedPageVO feedPage = idleService.listProducts(category, minPrice, maxPrice, sort, cursor,
                 page, pageSize);
-        long total = feedPage.isIndexPath() ? -1 : productService.countProducts(category, minPrice, maxPrice);
+        long total = feedPage.isIndexPath() ? -1 : idleService.countProducts(category, minPrice, maxPrice);
         List<ProductResponseDTO> dtoList = feedPage.getProducts().stream()
                 .map(product -> toProductResponseDTO(product, false)).toList();
         // 已读灰显（market-feed-uv 票 05，照帖子 listPosts）：页内 product_id 批量回查浏览明细，
@@ -127,28 +128,28 @@ public class ProductController implements IIdleService {
     @GetMapping("/products/{productId}")
     public Response<ProductResponseDTO> productDetail(@PathVariable String productId) {
         String currentUserId = SecurityUtils.currentUserId();
-        ProductEntity productEntity = productService.productDetail(productId, currentUserId);
+        ProductEntity productEntity = idleService.productDetail(productId, currentUserId);
         return Response.ok(toProductResponseDTO(productEntity, productEntity.isFavorited()));
     }
 
     @Override
     @DeleteMapping("/products/{productId}")
     public Response<Void> deleteProduct(@PathVariable String productId) {
-        productService.deleteProduct(productId, SecurityUtils.currentUserId());
+        idleService.deleteProduct(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/sold")
     public Response<Void> markSold(@PathVariable String productId) {
-        productService.markSold(productId, SecurityUtils.currentUserId());
+        idleService.markSold(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/relist")
     public Response<Void> relistProduct(@PathVariable String productId) {
-        productService.relistProduct(productId, SecurityUtils.currentUserId());
+        idleService.relistProduct(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
@@ -162,14 +163,14 @@ public class ProductController implements IIdleService {
     @Override
     @PostMapping("/products/{productId}/favorite")
     public Response<Void> favoriteProduct(@PathVariable String productId) {
-        productService.favoriteProduct(productId, SecurityUtils.currentUserId());
+        idleService.favoriteProduct(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @DeleteMapping("/products/{productId}/favorite")
     public Response<Void> unfavoriteProduct(@PathVariable String productId) {
-        productService.unfavoriteProduct(productId, SecurityUtils.currentUserId());
+        idleService.unfavoriteProduct(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
@@ -181,8 +182,8 @@ public class ProductController implements IIdleService {
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         String userId = SecurityUtils.currentUserId();
-        long total = productService.countMyProducts(userId);
-        List<ProductEntity> productList = productService.listMyProducts(userId, page, pageSize);
+        long total = idleService.countMyProducts(userId);
+        List<ProductEntity> productList = idleService.listMyProducts(userId, page, pageSize);
         List<ProductResponseDTO> dtoList = productList.stream()
                 .map(product -> toProductResponseDTO(product, false))
                 .toList();
@@ -197,8 +198,8 @@ public class ProductController implements IIdleService {
             @RequestParam(defaultValue = "10") int pageSize) {
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
-        long total = productService.countUserOnSaleProducts(userId);
-        List<ProductEntity> productList = productService.listUserOnSaleProducts(userId, page, pageSize);
+        long total = idleService.countUserOnSaleProducts(userId);
+        List<ProductEntity> productList = idleService.listUserOnSaleProducts(userId, page, pageSize);
         List<ProductResponseDTO> dtoList = productList.stream()
                 .map(product -> toProductResponseDTO(product, false)).toList();
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
@@ -211,7 +212,7 @@ public class ProductController implements IIdleService {
             @RequestParam(defaultValue = "10") int pageSize) {
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
-        List<ProductEntity> productList = productService.listFavorites(SecurityUtils.currentUserId(), page, pageSize);
+        List<ProductEntity> productList = idleService.listFavorites(SecurityUtils.currentUserId(), page, pageSize);
         List<ProductResponseDTO> dtoList = productList.stream().map(product -> toProductResponseDTO(product, true)).toList();
         return Response.ok(new PageResult<>(page, pageSize, 0, dtoList));
     }
@@ -276,7 +277,7 @@ public class ProductController implements IIdleService {
     /** 当前用户浏览过的商品 id 集合（未登录为空集；一页一次批量查询，不做 N+1） */
     private Set<String> viewedProductIdsOf(List<ProductEntity> productList, String currentUserId) {
         List<String> productIds = productList.stream().map(ProductEntity::getProductId).toList();
-        return new HashSet<>(productService.listViewedProductIds(currentUserId, productIds));
+        return new HashSet<>(idleService.listViewedProductIds(currentUserId, productIds));
     }
 
     private ProductResponseDTO toProductResponseDTO(ProductEntity productEntity, boolean favorited) {

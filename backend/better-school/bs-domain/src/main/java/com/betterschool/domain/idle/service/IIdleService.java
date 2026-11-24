@@ -1,23 +1,37 @@
-package com.betterschool.domain.idle.service.product;
+package com.betterschool.domain.idle.service;
 
 import com.betterschool.domain.idle.model.entity.ProductEntity;
+import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
+import com.betterschool.domain.idle.model.valobj.ProductCancelResult;
+import com.betterschool.domain.idle.model.valobj.ProductConfirmResult;
 import com.betterschool.domain.idle.model.valobj.ProductFeedPageVO;
+import com.betterschool.domain.idle.model.valobj.ProductPayResult;
 
 import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * 二手商品领域服务：发布/列表/详情/删除/成交/收藏
+ * 闲置域服务：闲置商品生命周期 + 商品托管订单状态机，一个域一个服务。
+ *
+ * <p>不再拆商品 / 商品订单两个服务：两者共用唯一仓储 {@code IIdleRepository}，库存台账是同一个
+ * 不变量——下单扣减、取消回补、售罄翻态、加货都落在台账上，"谁能改台账"这条规则只该有一处出口；
+ * 两个聚合的状态机在服务层零相互调用，合并后按方法分节读即可。
+ *
+ * <p>跨域资金动作（钱包冻结/解冻/入账）不在此处：域服务只做判据与状态翻转，需求通过结果对象
+ * 交回 case 层顺序执行（ADR-0016，资金段与翻转段各自仓储本地事务，事务边界 = 仓储）。
+ * 支付为资金段先行、取消为翻转段先行，宕机窗口的长款中间态由 {@code productFundOrphanScan} 收敛。
  */
-public interface IProductService {
+public interface IIdleService {
+
+    // ==================== 商品生命周期：发布 / 草稿 / 上下架 / 编辑 / 浏览 / 收藏 ====================
 
     /** 发布（quantity = 挂单件数，null/<=0 按 1 件）：落库即可见 + 同事务建库存台账 */
     String publishProduct(String userId, String title, String description, List<String> images, BigDecimal price,
-                        String tradeLocation, String category, Integer quantity);
+                          String tradeLocation, String category, Integer quantity);
 
     /** 保存草稿（字段可缺省，不做初筛，仅本人可见；quantity = 挂单件数可缺省），返回草稿 id */
     String saveProductDraft(String userId, String title, String description, List<String> images, BigDecimal price,
-                          String tradeLocation, String category, Integer quantity);
+                            String tradeLocation, String category, Integer quantity);
 
     /** 编辑草稿（仅 DRAFT；quantity 非 null 时同事务覆盖台账件数） */
     void updateProductDraft(String userId, String productId, String title, String description, List<String> images,
@@ -99,4 +113,49 @@ public interface IProductService {
     List<ProductEntity> listUserOnSaleProducts(String userId, int page, int pageSize);
 
     long countUserOnSaleProducts(String userId);
+
+    // ==================== 商品托管订单：下单 / 支付 / 交付 / 确认 / 取消 / 超时 ====================
+
+    /**
+     * 下单：自购校验 → 生成 PENDING_PAYMENT 订单（含件数）+ 库存台账条件 UPDATE 扣减
+     * （remaining >= quantity，0 行即库存不足回滚；扣到 0 售罄随行翻 SOLD）+ 超时注册（域内事务；
+     * 信用分门槛由 case 层前置校验）
+     */
+    String createOrder(String buyerId, String productId, int quantity);
+
+    /**
+     * 支付确认准备（两段式 ADR-0016 第一段，纯校验无副作用）：买家校验 + 幂等判定
+     * （已越过待支付视为上次支付已提交成功，alreadyPaid=true 零副作用），返回需冻结金额（单价 × 件数）；
+     * 资金冻结由 case 层在 prepare 与 confirm 之间顺序执行
+     */
+    ProductPayResult preparePayOrder(String orderId, String buyerId);
+
+    /**
+     * 支付确认翻转（两段式 ADR-0016 第二段）：「待支付 → 已支付」条件翻转（守卫买家 + 前态，
+     * PAID 事件随行落表，单仓储事务）；翻转未命中抛业务异常——此刻货款可能已冻结
+     * （订单留待支付的长款中间态），孤儿由 {@code productFundOrphanScan} 扫描解冻收敛
+     */
+    void confirmPayOrder(String orderId, String buyerId);
+
+    /** 卖家标记交付：PAID → DELIVERED */
+    void markDelivered(String orderId, String sellerId);
+
+    /** 买家确认收货：DELIVERED → COMPLETED（域内事务），返回解冻/入账需求（单价 × 件数） */
+    ProductConfirmResult confirmReceived(String orderId, String buyerId);
+
+    /**
+     * 买家取消（两段式 ADR-0016 翻转段先行）：PENDING_PAYMENT/PAID → CANCELLED + 库存台账回补 +
+     * 搜索同步（单仓储事务，未命中抛异常零残留——资金段尚未执行）；返回退款需求（单价 × 件数），
+     * 解冻退款（needRefund=true 时）由 case 层随后执行
+     */
+    ProductCancelResult cancelOrder(String orderId, String buyerId);
+
+    ProductOrderEntity orderDetail(String orderId, String currentUserId);
+
+    List<ProductOrderEntity> listMineOrders(String role, String userId, int page, int pageSize);
+
+    long countMineOrders(String role, String userId);
+
+    /** 待支付超时（超时中心回调触发）：PENDING_PAYMENT → CANCELLED + 商品回 ON_SALE（幂等忽略） */
+    void handlePayTimeout(String orderId);
 }

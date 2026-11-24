@@ -2,7 +2,7 @@ package com.betterschool.usecase.idle;
 
 import com.betterschool.domain.credit.service.ICreditAccountService;
 import com.betterschool.domain.idle.model.entity.ProductEntity;
-import com.betterschool.domain.idle.service.product.IProductService;
+import com.betterschool.domain.idle.service.IIdleService;
 import com.betterschool.types.concurrent.VirtualThreadFanout;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
@@ -22,35 +22,35 @@ import java.util.List;
 @RequiredArgsConstructor
 public class IdlePublishCase {
 
-    private final IProductService productService;
+    private final IIdleService idleService;
     private final ICreditAccountService creditAccountService;
     private final VirtualThreadFanout fanout;
 
     public String publishProduct(String userId, String title, String description, List<String> images, BigDecimal price,
                                String tradeLocation, String category, Integer quantity) {
         creditAccountService.ensureOperable(userId);
-        return productService.publishProduct(userId, title, description, images, price, tradeLocation, category, quantity);
+        return idleService.publishProduct(userId, title, description, images, price, tradeLocation, category, quantity);
     }
 
     /** 保存商品草稿：不做信用分门槛，字段可缺省 */
     public String saveProductDraft(String userId, String title, String description, List<String> images, BigDecimal price,
                                  String tradeLocation, String category, Integer quantity) {
-        return productService.saveProductDraft(userId, title, description, images, price, tradeLocation, category, quantity);
+        return idleService.saveProductDraft(userId, title, description, images, price, tradeLocation, category, quantity);
     }
 
     /** 编辑商品草稿：仅 DRAFT 可编辑 */
     public void updateProductDraft(String userId, String productId, String title, String description, List<String> images,
                                    BigDecimal price, String tradeLocation, String category, Integer quantity) {
-        productService.updateProductDraft(userId, productId, title, description, images, price,
+        idleService.updateProductDraft(userId, productId, title, description, images, price,
                 tradeLocation, category, quantity);
     }
 
     /** 提交商品草稿：与直接发布同门槛校验，通过即上架可见 */
     public void submitProductDraft(String userId, String productId) {
-        ProductEntity draftEntity = productService.getOwnedProductDraft(userId, productId);
+        ProductEntity draftEntity = idleService.getOwnedProductDraft(userId, productId);
         creditAccountService.ensureOperable(userId);
         validateProductDraftComplete(draftEntity);
-        productService.submitProductDraft(userId, productId);
+        idleService.submitProductDraft(userId, productId);
     }
 
     /**
@@ -58,8 +58,8 @@ public class IdlePublishCase {
      */
     public void editOnSaleProduct(String userId, String productId, String title, String description, List<String> images,
                                   BigDecimal price) {
-        productService.getOwnedOnSaleProduct(userId, productId);
-        productService.editOnSaleProduct(productId, title, description, images, price);
+        idleService.getOwnedOnSaleProduct(userId, productId);
+        idleService.editOnSaleProduct(productId, title, description, images, price);
     }
 
     /**
@@ -67,14 +67,14 @@ public class IdlePublishCase {
      * 归属与在售守卫由域层 getOwnedOnSaleProduct 前置
      */
     public void restockProduct(String userId, String productId, int quantity) {
-        productService.restockProduct(userId, productId, quantity);
+        idleService.restockProduct(userId, productId, quantity);
     }
 
     /**
      * 上架商品主动下架：ON_SALE → DRAFT 汇入草稿箱，可编辑后重新提交上架；同事务退出搜索可见
      */
     public void takeDownProduct(String userId, String productId) {
-        productService.takeDownProduct(userId, productId);
+        idleService.takeDownProduct(userId, productId);
     }
 
     /**
@@ -82,8 +82,8 @@ public class IdlePublishCase {
      * 条件 UPDATE 幂等，与下架并发无害。单发一批、批内扇出（宽度 = SCAN_BATCH_SIZE），项内失败只影响该项（下轮扫描补跑）
      */
     public void scanExpiredListings() {
-        fanout.forEach("idle-expire-product-", productService.listExpiredProductIds(),
-                productService::expireProductToDraft);
+        fanout.forEach("idle-expire-product-", idleService.listExpiredProductIds(),
+                idleService::expireProductToDraft);
     }
 
     private void validateProductDraftComplete(ProductEntity draftEntity) {

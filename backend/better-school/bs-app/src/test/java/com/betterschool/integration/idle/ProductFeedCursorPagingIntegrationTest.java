@@ -3,7 +3,7 @@ package com.betterschool.integration.idle;
 import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
 import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.idle.model.valobj.ProductFeedPageVO;
-import com.betterschool.domain.idle.service.product.ProductServiceImpl;
+import com.betterschool.domain.idle.service.IdleServiceImpl;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
@@ -159,7 +159,7 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
                         org.mockito.ArgumentMatchers.any(),
                         org.mockito.ArgumentMatchers.anyInt());
 
-        ProductFeedPageVO page = new ProductServiceImpl(failingIndexRepo)
+        ProductFeedPageVO page = new IdleServiceImpl(failingIndexRepo)
                 .listProducts(null, null, null, "time", null, 1, PAGE_SIZE);
         assertThat(page.isIndexPath()).as("降级后 indexPath=false（total 由调用方精确 COUNT）").isFalse();
         assertThat(page.getNextCursor()).as("降级路径不发游标").isNull();

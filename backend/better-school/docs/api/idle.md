@@ -7,7 +7,7 @@
 - Auth: 需要登录；信用分 <60 被 case 层拒
 - Body: title(≤30)/description(≤500)/images/price(≥0.01)/tradeLocation/category
 - 成功: `{ productId }`，状态 ON_SALE（发布即对外可见并同步搜索）
-- 流程: ProductController → IdlePublishCase（信用分门槛）→ ProductServiceImpl → product 入库
+- 流程: ProductController → IdlePublishCase（信用分门槛）→ IdleServiceImpl → product 入库
 
 ## POST /api/idle/products/draft · PUT /api/idle/products/{productId}/draft
 
@@ -17,7 +17,7 @@
 - Body: 同发布但**全部字段可缺省**（未填完就存），仍校验长度/下限（title≤30、images≤9、price≥0.01 等）
 - 编辑仅 DRAFT 可用；他人草稿 → 403
 - 成功: 保存返回 `{ productId }`（status=DRAFT），编辑返回空 data
-- 流程: ProductController → IdlePublishCase（直通）→ ProductServiceImpl → product 入库/条件 UPDATE（WHERE status='DRAFT'）
+- 流程: ProductController → IdlePublishCase（直通）→ IdleServiceImpl → product 入库/条件 UPDATE（WHERE status='DRAFT'）
 
 ## POST /api/idle/products/{productId}/submit
 
@@ -89,7 +89,7 @@
 
 ## DELETE /api/idle/products/{productId} · POST .../sold · POST .../relist · POST .../favorite · DELETE .../favorite
 
-删除（软删，放行 ON_SALE 与 DRAFT；在售删除同步搜索文档、草稿删除不同步）/ 标记已出 / 重新上架（仅 SOLD，转回 ON_SALE）/ 收藏 / 取消收藏；后四者要求商品处于 ON_SALE（具体状态机见 `ProductServiceImpl`）
+删除（软删，放行 ON_SALE 与 DRAFT；在售删除同步搜索文档、草稿删除不同步）/ 标记已出 / 重新上架（仅 SOLD，转回 ON_SALE）/ 收藏 / 取消收藏；后四者要求商品处于 ON_SALE（具体状态机见 `IdleServiceImpl`）
 
 ## GET /api/idle/favorites
 

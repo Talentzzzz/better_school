@@ -1,6 +1,6 @@
 package com.betterschool.trigger.job;
 
-import com.betterschool.domain.idle.service.product.IProductService;
+import com.betterschool.domain.idle.service.IIdleService;
 import com.xxl.job.core.handler.annotation.XxlJob;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,11 +16,11 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class MarketFeedIndexRebuildJob {
 
-    private final IProductService productService;
+    private final IIdleService idleService;
 
     @XxlJob("productFeedIndexRebuildJob")
     public String rebuildProduct(String param) {
-        productService.rebuildFeedIndex();
+        idleService.rebuildFeedIndex();
         return "success";
     }
 }
