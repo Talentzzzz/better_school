@@ -1,6 +1,6 @@
 package com.betterschool.trigger.job;
 
-import com.betterschool.usecase.idle.IdlePublishCase;
+import com.betterschool.usecase.idle.IdleCase;
 import com.xxl.job.core.handler.annotation.XxlJob;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,11 +15,11 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class IdleExpireScanJob {
 
-    private final IdlePublishCase idlePublishCase;
+    private final IdleCase idleCase;
 
     @XxlJob("idleExpireScan")
     public String scan(String param) {
-        idlePublishCase.scanExpiredListings();
+        idleCase.scanExpiredListings();
         return "success";
     }
 }

@@ -165,7 +165,7 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 
 | taskType | 动作 | 说明 |
 | --- | --- | --- |
-| `PRODUCT_ORDER_PAY_TIMEOUT` | `ProductOrderCase.handlePayTimeout` | 条件 UPDATE 取消 + 商品回在售 + 搜索同步消息 |
+| `PRODUCT_ORDER_PAY_TIMEOUT` | `IdleCase.handlePayTimeout` | 条件 UPDATE 取消 + 商品回在售 + 搜索同步消息 |
 
 - **幂等责任仍在业务状态机**：未命中（已支付 / 已取消 / 不存在）= 幂等成功、零副作用。
   **不要**在回调层加去重表或「已处理 key」。

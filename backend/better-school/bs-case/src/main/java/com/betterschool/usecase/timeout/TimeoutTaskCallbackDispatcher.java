@@ -3,7 +3,7 @@ package com.betterschool.usecase.timeout;
 import com.betterschool.domain.timeout.adapter.port.callback.ITimeoutTaskCallbackPort;
 import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
 import com.betterschool.types.common.Constants;
-import com.betterschool.usecase.idle.ProductOrderCase;
+import com.betterschool.usecase.idle.IdleCase;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -30,7 +30,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
 
-    private final ProductOrderCase productOrderCase;
+    private final IdleCase idleCase;
 
     /**
      * {@code taskType → 到期动作}。{@code bizId} 是 UUID 字符串订单业务 id（直传，uuid-biz-id 票 05）。
@@ -38,7 +38,7 @@ public class TimeoutTaskCallbackDispatcher implements ITimeoutTaskCallbackPort {
     @Override
     public void callback(TimeoutTaskEntity taskEntity) {
         switch (taskEntity.getTaskType()) {
-            case Constants.PRODUCT_ORDER_PAY_TIMEOUT -> productOrderCase.handlePayTimeout(taskEntity.getBizId());
+            case Constants.PRODUCT_ORDER_PAY_TIMEOUT -> idleCase.handlePayTimeout(taskEntity.getBizId());
             // 业务侧不认识这个 taskType = 注册与消费的代码不一致（如改了 Constants 取值），
             // 按失败重投直到进死信，在管理面显式暴露，不静默吞掉
             default -> throw new IllegalStateException("未接入的 taskType：" + taskEntity.getTaskType());

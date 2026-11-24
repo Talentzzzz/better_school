@@ -7,7 +7,7 @@
 - Auth: 需要登录；信用分 <60 被 case 层拒
 - Body: title(≤30)/description(≤500)/images/price(≥0.01)/tradeLocation/category
 - 成功: `{ productId }`，状态 ON_SALE（发布即对外可见并同步搜索）
-- 流程: ProductController → IdlePublishCase（信用分门槛）→ IdleServiceImpl → product 入库
+- 流程: ProductController → IdleCase（信用分门槛）→ IdleServiceImpl → product 入库
 
 ## POST /api/idle/products/draft · PUT /api/idle/products/{productId}/draft
 
@@ -17,7 +17,7 @@
 - Body: 同发布但**全部字段可缺省**（未填完就存），仍校验长度/下限（title≤30、images≤9、price≥0.01 等）
 - 编辑仅 DRAFT 可用；他人草稿 → 403
 - 成功: 保存返回 `{ productId }`（status=DRAFT），编辑返回空 data
-- 流程: ProductController → IdlePublishCase（直通）→ IdleServiceImpl → product 入库/条件 UPDATE（WHERE status='DRAFT'）
+- 流程: ProductController → IdleCase（直通）→ IdleServiceImpl → product 入库/条件 UPDATE（WHERE status='DRAFT'）
 
 ## POST /api/idle/products/{productId}/submit
 
@@ -95,7 +95,7 @@
 
 我的收藏分页（排除软删商品）
 
-## 商品订单系列（`ProductOrderCase`，商品下单要求 ON_SALE；LOCKED 托管状态机见代码）
+## 商品订单系列（`IdleCase`，商品下单要求 ON_SALE；LOCKED 托管状态机见代码）
 
 ### POST /api/idle/orders?productId
 下单（需登录，信用可操作账号）：商品锁定进订单，返回 `data = orderId`。

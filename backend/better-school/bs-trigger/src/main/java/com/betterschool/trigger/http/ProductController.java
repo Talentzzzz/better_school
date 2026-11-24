@@ -8,8 +8,7 @@ import com.betterschool.api.dto.ProductPublishRequestDTO;
 import com.betterschool.api.dto.ProductResponseDTO;
 import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
-import com.betterschool.usecase.idle.IdlePublishCase;
-import com.betterschool.usecase.idle.ProductOrderCase;
+import com.betterschool.usecase.idle.IdleCase;
 import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
 import com.betterschool.domain.idle.model.valobj.ProductFeedPageVO;
@@ -44,8 +43,7 @@ public class ProductController implements IIdleService {
 
     /** 域名服务与 api 契约同名，字段用全限定名区分（照 SearchController 先例） */
     private final com.betterschool.domain.idle.service.IIdleService idleService;
-    private final IdlePublishCase idlePublishCase;
-    private final ProductOrderCase productOrderCase;
+    private final IdleCase idleCase;
 
     @Override
     @GetMapping("/products")
@@ -76,7 +74,7 @@ public class ProductController implements IIdleService {
     @Override
     @PostMapping("/products")
     public Response<String> publishProduct(@Valid @RequestBody ProductPublishRequestDTO request) {
-        String productId = idlePublishCase.publishProduct(SecurityUtils.currentUserId(), request.getTitle(),
+        String productId = idleCase.publishProduct(SecurityUtils.currentUserId(), request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
                 request.getTradeLocation(), request.getCategory(), request.getQuantity());
         return Response.ok(productId);
@@ -85,7 +83,7 @@ public class ProductController implements IIdleService {
     @Override
     @PostMapping("/products/draft")
     public Response<String> saveProductDraft(@Valid @RequestBody ProductDraftSaveRequestDTO request) {
-        String productId = idlePublishCase.saveProductDraft(SecurityUtils.currentUserId(), request.getTitle(),
+        String productId = idleCase.saveProductDraft(SecurityUtils.currentUserId(), request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
                 request.getTradeLocation(), request.getCategory(), request.getQuantity());
         return Response.ok(productId);
@@ -95,7 +93,7 @@ public class ProductController implements IIdleService {
     @PutMapping("/products/{productId}/draft")
     public Response<Void> updateProductDraft(@PathVariable String productId,
                                              @Valid @RequestBody ProductDraftSaveRequestDTO request) {
-        idlePublishCase.updateProductDraft(SecurityUtils.currentUserId(), productId, request.getTitle(),
+        idleCase.updateProductDraft(SecurityUtils.currentUserId(), productId, request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
                 request.getTradeLocation(), request.getCategory(), request.getQuantity());
         return Response.ok(null);
@@ -104,14 +102,14 @@ public class ProductController implements IIdleService {
     @Override
     @PostMapping("/products/{productId}/submit")
     public Response<Void> submitProductDraft(@PathVariable String productId) {
-        idlePublishCase.submitProductDraft(SecurityUtils.currentUserId(), productId);
+        idleCase.submitProductDraft(SecurityUtils.currentUserId(), productId);
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/takedown")
     public Response<Void> takeDownProduct(@PathVariable String productId) {
-        idlePublishCase.takeDownProduct(SecurityUtils.currentUserId(), productId);
+        idleCase.takeDownProduct(SecurityUtils.currentUserId(), productId);
         return Response.ok(null);
     }
 
@@ -119,7 +117,7 @@ public class ProductController implements IIdleService {
     @PutMapping("/products/{productId}")
     public Response<Void> editProduct(@PathVariable String productId,
                                       @Valid @RequestBody ProductEditRequestDTO request) {
-        idlePublishCase.editOnSaleProduct(SecurityUtils.currentUserId(), productId, request.getTitle(),
+        idleCase.editOnSaleProduct(SecurityUtils.currentUserId(), productId, request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice());
         return Response.ok(null);
     }
@@ -156,7 +154,7 @@ public class ProductController implements IIdleService {
     @Override
     @PostMapping("/products/{productId}/stock")
     public Response<Void> restockProduct(@PathVariable String productId, @RequestParam Integer quantity) {
-        idlePublishCase.restockProduct(SecurityUtils.currentUserId(), productId, quantity);
+        idleCase.restockProduct(SecurityUtils.currentUserId(), productId, quantity);
         return Response.ok(null);
     }
 
@@ -221,41 +219,41 @@ public class ProductController implements IIdleService {
     @PostMapping("/orders")
     public Response<String> createProductOrder(@RequestParam String productId,
                                                @RequestParam(defaultValue = "1") Integer quantity) {
-        return Response.ok(productOrderCase.createOrder(SecurityUtils.currentUserId(), productId, quantity));
+        return Response.ok(idleCase.createOrder(SecurityUtils.currentUserId(), productId, quantity));
     }
 
     @Override
     @PostMapping("/orders/{orderId}/pay")
     public Response<Void> payProductOrder(@PathVariable String orderId) {
-        productOrderCase.payOrder(orderId, SecurityUtils.currentUserId());
+        idleCase.payOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/mark-delivered")
     public Response<Void> markDeliveredProduct(@PathVariable String orderId) {
-        productOrderCase.markDelivered(orderId, SecurityUtils.currentUserId());
+        idleCase.markDelivered(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/confirm")
     public Response<Void> confirmProductOrder(@PathVariable String orderId) {
-        productOrderCase.confirmReceived(orderId, SecurityUtils.currentUserId());
+        idleCase.confirmReceived(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/cancel")
     public Response<Void> cancelProductOrder(@PathVariable String orderId) {
-        productOrderCase.cancelOrder(orderId, SecurityUtils.currentUserId());
+        idleCase.cancelOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @GetMapping("/orders/{orderId}")
     public Response<ProductOrderResponseDTO> productOrderDetail(@PathVariable String orderId) {
-        ProductOrderEntity orderEntity = productOrderCase.orderDetail(orderId, SecurityUtils.currentUserId());
+        ProductOrderEntity orderEntity = idleCase.orderDetail(orderId, SecurityUtils.currentUserId());
         return Response.ok(toProductOrderResponseDTO(orderEntity));
     }
 
@@ -268,8 +266,8 @@ public class ProductController implements IIdleService {
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         String userId = SecurityUtils.currentUserId();
-        long total = productOrderCase.countMineOrders(role, userId);
-        List<ProductOrderEntity> orderList = productOrderCase.listMineOrders(role, userId, page, pageSize);
+        long total = idleCase.countMineOrders(role, userId);
+        List<ProductOrderEntity> orderList = idleCase.listMineOrders(role, userId, page, pageSize);
         List<ProductOrderResponseDTO> dtoList = orderList.stream().map(this::toProductOrderResponseDTO).toList();
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }

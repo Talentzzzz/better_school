@@ -1,7 +1,7 @@
 package com.betterschool.integration.idle;
 
 import com.betterschool.integration.support.CommunityApiTestBase;
-import com.betterschool.usecase.idle.ProductOrderCase;
+import com.betterschool.usecase.idle.IdleCase;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 商品取消资金链路集成测试（资金一致性票 07，ADR-0016 两段化后口径同步）：在主缝（商品订单用例层
- * 公开取消方法 {@link ProductOrderCase#cancelOrder}）上断言两段式资金链路的外显行为——取消翻转段
+ * 公开取消方法 {@link IdleCase#cancelOrder}）上断言两段式资金链路的外显行为——取消翻转段
  * （含台账回补 + 搜索同步，单仓储事务）先行，买家解冻退款 PRODUCT_UNFROZEN（uk_order_type 幂等）
  * 由 case 层随后执行；只断言外部可观察状态（订单状态 / 钱包流水 / 冻结额 / 可用余额），
  * 不断言段落编排。
@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ProductCancelFundConsistencyIntegrationTest extends CommunityApiTestBase {
 
     @Autowired
-    private ProductOrderCase productOrderCase;
+    private IdleCase idleCase;
 
     /** 注册赠送初始余额（WalletRepository.INITIAL_BALANCE）——资金注入基线 */
     private static final String INITIAL_BALANCE = "1000";
@@ -39,10 +39,10 @@ class ProductCancelFundConsistencyIntegrationTest extends CommunityApiTestBase {
         Session buyer = registerAndLogin("13800011002", "取消买家A");
         String productId = createProduct(seller, "九成新台灯", "19.90");
         String orderId = createProductOrder(buyer, productId, 2);
-        productOrderCase.payOrder(orderId, buyer.userId());
+        idleCase.payOrder(orderId, buyer.userId());
         assertThat(frozenAmountOf(buyer.userId())).as("前置：支付后货款已冻结").isEqualByComparingTo("39.80");
 
-        productOrderCase.cancelOrder(orderId, buyer.userId());
+        idleCase.cancelOrder(orderId, buyer.userId());
 
         // 外显一：订单取消（终态）
         assertThat(orderState(orderId)).as("取消成功应转已取消").isEqualTo("CANCELLED");
@@ -66,11 +66,11 @@ class ProductCancelFundConsistencyIntegrationTest extends CommunityApiTestBase {
         Session buyer = registerAndLogin("13800011004", "重放买家B");
         String productId = createProduct(seller, "九成新吉他", "19.90");
         String orderId = createProductOrder(buyer, productId, 2);
-        productOrderCase.payOrder(orderId, buyer.userId());
-        productOrderCase.cancelOrder(orderId, buyer.userId());
+        idleCase.payOrder(orderId, buyer.userId());
+        idleCase.cancelOrder(orderId, buyer.userId());
 
         // 重放：终态短路返回原结果（不抛异常、订单保持已取消），uk_order_type 幂等吸收重复
-        productOrderCase.cancelOrder(orderId, buyer.userId());
+        idleCase.cancelOrder(orderId, buyer.userId());
 
         assertThat(orderState(orderId)).as("重放后订单保持已取消").isEqualTo("CANCELLED");
         assertThat(unfreezeFlowCount(orderId)).as("重放不得重复退款（uk_order_type 幂等）").isEqualTo(1);
@@ -87,7 +87,7 @@ class ProductCancelFundConsistencyIntegrationTest extends CommunityApiTestBase {
         String productId = createProduct(seller, "九成新水杯", "19.90");
         String orderId = createProductOrder(buyer, productId, 1);
 
-        productOrderCase.cancelOrder(orderId, buyer.userId());
+        idleCase.cancelOrder(orderId, buyer.userId());
 
         assertThat(orderState(orderId)).as("待支付取消应转已取消").isEqualTo("CANCELLED");
         assertThat(unfreezeFlowCount(orderId)).as("从未冻结不应产生解冻流水").isEqualTo(0);
