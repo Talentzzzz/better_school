@@ -1,6 +1,5 @@
 package com.betterschool.trigger.http;
 
-import com.betterschool.api.IPostService;
 import com.betterschool.api.dto.CommentReplyResponseDTO;
 import com.betterschool.api.dto.PostCommentRequestDTO;
 import com.betterschool.api.dto.PostCommentResponseDTO;
@@ -16,6 +15,7 @@ import com.betterschool.usecase.post.CommentPublishCase;
 import com.betterschool.usecase.post.PostLikeCase;
 import com.betterschool.usecase.post.PostPublishCase;
 import com.betterschool.domain.post.model.entity.PostCommentEntity;
+import com.betterschool.domain.post.service.post.IPostService;
 import com.betterschool.domain.post.model.entity.PostEntity;
 import com.betterschool.domain.post.model.valobj.FeedPageVO;
 import com.betterschool.domain.post.model.valobj.PostStatusVO;
@@ -44,20 +44,19 @@ import java.util.Set;
 @RestController
 @RequestMapping("/api/community")
 @RequiredArgsConstructor
-public class PostController implements IPostService {
+public class PostController {
 
     private static final int MAX_PAGE_SIZE = 50;
     /** feed 摘要截断长度（约前 50 字，文字小卡渲染用） */
     private static final int FEED_SUMMARY_MAX_LENGTH = 50;
 
-    private final com.betterschool.domain.post.service.post.IPostService postService;
+    private final IPostService postService;
     private final ICommentService commentService;
     private final PostPublishCase postPublishCase;
     private final CommentPublishCase commentPublishCase;
     private final PostLikeCase postLikeCase;
     private final CommentLikeCase commentLikeCase;
 
-    @Override
     @GetMapping("/posts")
     public Response<PageResult<PostSummaryResponseDTO>> listPosts(
             @RequestParam(defaultValue = "time") String sort,
@@ -81,7 +80,6 @@ public class PostController implements IPostService {
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList, feedPage.getNextCursor()));
     }
 
-    @Override
     @GetMapping("/posts/mine")
     public Response<PageResult<PostSummaryResponseDTO>> listMyPosts(
             @RequestParam(defaultValue = "1") int page,
@@ -97,7 +95,6 @@ public class PostController implements IPostService {
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
 
-    @Override
     @GetMapping("/posts/liked")
     public Response<PageResult<PostSummaryResponseDTO>> listLikedPosts(
             @RequestParam(defaultValue = "1") int page,
@@ -112,7 +109,6 @@ public class PostController implements IPostService {
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
 
-    @Override
     @GetMapping("/posts/commented")
     public Response<PageResult<PostSummaryResponseDTO>> listCommentedPosts(
             @RequestParam(defaultValue = "1") int page,
@@ -128,7 +124,6 @@ public class PostController implements IPostService {
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
 
-    @Override
     @GetMapping("/posts/history")
     public Response<PageResult<PostSummaryResponseDTO>> listViewHistory(
             @RequestParam(defaultValue = "1") int page,
@@ -148,7 +143,6 @@ public class PostController implements IPostService {
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
 
-    @Override
     @GetMapping("/users/{userId}/posts")
     public Response<PageResult<PostSummaryResponseDTO>> listUserPosts(
             @PathVariable String userId,
@@ -164,7 +158,6 @@ public class PostController implements IPostService {
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
 
-    @Override
     @GetMapping("/users/{userId}/liked")
     public Response<PageResult<PostSummaryResponseDTO>> listUserLikedPosts(
             @PathVariable String userId,
@@ -180,7 +173,6 @@ public class PostController implements IPostService {
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
 
-    @Override
     @GetMapping("/users/{userId}/comments")
     public Response<PageResult<UserCommentResponseDTO>> listUserComments(
             @PathVariable String userId,
@@ -195,7 +187,6 @@ public class PostController implements IPostService {
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
 
-    @Override
     @PostMapping("/posts")
     public Response<String> publishPost(@Valid @RequestBody PostPublishRequestDTO request) {
         String postId = postPublishCase.publishPost(SecurityUtils.currentUserId(),
@@ -203,7 +194,6 @@ public class PostController implements IPostService {
         return Response.ok(postId);
     }
 
-    @Override
     @PostMapping("/posts/draft")
     public Response<String> savePostDraft(@Valid @RequestBody PostDraftSaveRequestDTO request) {
         String postId = postPublishCase.savePostDraft(SecurityUtils.currentUserId(),
@@ -211,7 +201,6 @@ public class PostController implements IPostService {
         return Response.ok(postId);
     }
 
-    @Override
     @PutMapping("/posts/{postId}/draft")
     public Response<Void> updatePostDraft(@PathVariable String postId,
                                           @Valid @RequestBody PostDraftSaveRequestDTO request) {
@@ -220,14 +209,12 @@ public class PostController implements IPostService {
         return Response.ok(null);
     }
 
-    @Override
     @PostMapping("/posts/{postId}/submit")
     public Response<Void> submitPostDraft(@PathVariable String postId) {
         postPublishCase.submitPostDraft(SecurityUtils.currentUserId(), postId);
         return Response.ok(null);
     }
 
-    @Override
     @GetMapping("/posts/{postId}")
     public Response<PostResponseDTO> postDetail(@PathVariable String postId) {
         String currentUserId = SecurityUtils.currentUserId();
@@ -235,42 +222,36 @@ public class PostController implements IPostService {
         return Response.ok(toPostResponseDTO(postEntity, currentUserId));
     }
 
-    @Override
     @DeleteMapping("/posts/{postId}")
     public Response<Void> deletePost(@PathVariable String postId) {
         postService.deletePost(postId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
-    @Override
     @PostMapping("/posts/{postId}/like")
     public Response<Void> likePost(@PathVariable String postId) {
         postLikeCase.like(postId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
-    @Override
     @DeleteMapping("/posts/{postId}/like")
     public Response<Void> unlikePost(@PathVariable String postId) {
         postService.unlikePost(postId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
-    @Override
     @PostMapping("/comments/{commentId}/like")
     public Response<Void> likeComment(@PathVariable String commentId) {
         commentLikeCase.like(commentId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
-    @Override
     @DeleteMapping("/comments/{commentId}/like")
     public Response<Void> unlikeComment(@PathVariable String commentId) {
         commentLikeCase.unlike(commentId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
-    @Override
     @GetMapping("/posts/{postId}/comments")
     public Response<PageResult<PostCommentResponseDTO>> listComments(
             @PathVariable String postId,
@@ -290,14 +271,12 @@ public class PostController implements IPostService {
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
 
-    @Override
     @PostMapping("/posts/{postId}/comments")
     public Response<PostCommentResponseDTO> addComment(@PathVariable String postId, @Valid @RequestBody PostCommentRequestDTO request) {
         PostCommentEntity commentEntity = commentPublishCase.addComment(postId, SecurityUtils.currentUserId(), request.getContent());
         return Response.ok(toCommentResponseDTO(commentEntity));
     }
 
-    @Override
     @GetMapping("/comments/{commentId}/replies")
     public Response<PageResult<CommentReplyResponseDTO>> listReplies(
             @PathVariable String commentId,
@@ -316,14 +295,12 @@ public class PostController implements IPostService {
         return Response.ok(new PageResult<>(page, size, total, dtoList));
     }
 
-    @Override
     @PostMapping("/comments/{commentId}/replies")
     public Response<CommentReplyResponseDTO> addReply(@PathVariable String commentId, @Valid @RequestBody PostCommentRequestDTO request) {
         PostCommentEntity replyEntity = commentPublishCase.addReply(commentId, SecurityUtils.currentUserId(), request.getContent());
         return Response.ok(toReplyResponseDTO(replyEntity));
     }
 
-    @Override
     @DeleteMapping("/comments/{commentId}")
     public Response<Void> deleteComment(@PathVariable String commentId) {
         commentService.deleteComment(commentId, SecurityUtils.currentUserId());
