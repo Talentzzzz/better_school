@@ -82,6 +82,9 @@ cn.xxx.infrastructure/
 │   └── <域>/po/                 持久化对象 PO（与表对应），base/Page 分页对象
 ├── merge/                       合并引擎根 = 库存引擎（键对齐 application.yml merge.batch.*）；
 │   └── count/                   计数引擎子包（键对齐 merge.count.*）。两套并存、功能不同不归并
+├── mergevirtual/                专属虚拟线程 leader 模型引擎（同语义并存候选，调用方暂不切换；
+│                                复用 merge 包公开类型 MergeConfig/MergeStrategy/MergeResult，
+│                                见 backend/docs/architecture/merge-virtual-leader-engine-spec.md）
 ├── outbox/                      本地消息表发送器与扫描
 ├── search/  security/  sharding/ ws/   其余技术包（ws = WS 连接机器 + IWsConnectionHub，见 §1）
 └── gateway/                     调用外部 http/rpc 的接口定义（按需建，当前工程没有；gateway/dto 放外部 DTO）

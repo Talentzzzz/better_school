@@ -1,0 +1,815 @@
+package com.betterschool.infrastructure.mergevirtual;
+
+import com.betterschool.infrastructure.merge.MergeConfig;
+import com.betterschool.infrastructure.merge.MergeResult;
+import com.betterschool.infrastructure.merge.MergeStrategy;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntConsumer;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+
+/**
+ * 专属虚拟线程 leader 引擎的五条不变量 + 本模型专属断言（spec Testing Decisions）。
+ *
+ * <p>全部是纯内存测试（Seam 1 复用）：件是 {@link Job}，落库是 {@link RecordingFlush}，
+ * 不起 Spring、不连库。只测外部行为——提交 → 终态、批上限、同 key 单飞与保序、停机排空、
+ * 背压有界——不测内部结构；唯一例外是 spec 点名的四条「新模型专属断言」，其中 claim 死亡窗口
+ * 需要 spawn 失败这个外部不可触发的状态，经由包内可见的 {@link VirtualMergeEngine.LeaderThreadFactory}
+ * 注入（全实现零新增生产 seam）。
+ */
+class VirtualMergeEngineTest {
+
+    private static final String KEY = "9_001";
+
+    /** 测试件：业务键（= invId）+ 业务号（业务号只用于保序断言） */
+    record Job(String shardKey, int seq) {
+    }
+
+    private VirtualMergeEngine<Job, Boolean> engine;
+
+    @AfterEach
+    void tearDown() {
+        if (engine != null) {
+            engine.close();
+            engine = null;
+        }
+    }
+
+    /** 起引擎必须连策略一起给：件里不带策略，一个引擎只服务一个用途 */
+    private VirtualMergeEngine<Job, Boolean> start(MergeConfig config, MergeStrategy<Job, Boolean> strategy) {
+        engine = new VirtualMergeEngine<>(config, strategy);
+        return engine;
+    }
+
+    /** 测试专用构造：注入 leader 线程工厂（claim 死亡窗口用例） */
+    private VirtualMergeEngine<Job, Boolean> start(MergeConfig config, MergeStrategy<Job, Boolean> strategy,
+                                                   VirtualMergeEngine.LeaderThreadFactory factory) {
+        engine = new VirtualMergeEngine<>(config, strategy, factory);
+        return engine;
+    }
+
+    private static MergeStrategy<Job, Boolean> strategyOf(RecordingFlush flush) {
+        return new MergeStrategy<>("test", Job::shardKey, flush);
+    }
+
+    private static Job job(int seq) {
+        return new Job(KEY, seq);
+    }
+
+    /** 单热点、窄窗口、够大的缓冲 */
+    private static MergeConfig hotConfig(int maxBatch) {
+        return new MergeConfig(8, 1, maxBatch, 5_000, 2_000);
+    }
+
+    /** 拿到业务结果且为 true 的件数 */
+    private static long countTrue(List<MergeResult<Boolean>> outcomes) {
+        return outcomes.stream().filter(o -> o.isCompleted() && Boolean.TRUE.equals(o.result())).count();
+    }
+
+    /** 落在某个终态的件数（{@code COMPLETED} / {@code FAILED}） */
+    private static long countState(List<MergeResult<Boolean>> outcomes, MergeResult.State state) {
+        return outcomes.stream().filter(o -> o.state() == state).count();
+    }
+
+    /**
+     * 起 N 条线程，在同一道闸门后同时执行 body（收到线程号）——并发用例的公共骨架。
+     */
+    private static void runConcurrently(int threads, IntConsumer body) throws InterruptedException {
+        CountDownLatch startGate = new CountDownLatch(1);
+        List<Thread> workers = new ArrayList<>(threads);
+        for (int t = 0; t < threads; t++) {
+            int threadNo = t;
+            Thread worker = Thread.ofVirtual().start(() -> {
+                try {
+                    startGate.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                body.accept(threadNo);
+            });
+            workers.add(worker);
+        }
+        startGate.countDown();
+        for (Thread worker : workers) {
+            worker.join(30_000);
+        }
+    }
+
+    /**
+     * 「只入队、不等结果」：本组件唯一的入口会等结果，只能在别的线程上等（虚拟线程足够便宜）。
+     *
+     * @return 那条线程；结果会进 {@code sink}
+     */
+    private Thread submitInBackground(Job item, List<MergeResult<Boolean>> sink) {
+        return Thread.ofVirtual().start(() -> sink.add(engine.commit(item)));
+    }
+
+    /** 等到队列里至少攒到 {@code expected} 件：这就是「入队成功」的判据（提交线程会等终态） */
+    private boolean awaitBuffered(int expected, long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (engine.pending() < expected) {
+            if (System.currentTimeMillis() > deadline) {
+                return false;
+            }
+            Thread.sleep(1);
+        }
+        return true;
+    }
+
+    private boolean awaitBuffered(int expected) throws InterruptedException {
+        return awaitBuffered(expected, 5_000);
+    }
+
+    /** 等到落库函数被调用过 {@code expected} 次 */
+    private static boolean awaitFlushCalls(RecordingFlush flush, int expected, long timeoutMs)
+            throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (flush.callCount() < expected) {
+            if (System.currentTimeMillis() > deadline) {
+                return false;
+            }
+            Thread.sleep(1);
+        }
+        return true;
+    }
+
+    /**
+     * 让 {@code count} 个等待者挤进同一个窗口（同一 key）：窗口给到 200ms，
+     * 线程在同一道闸门后起跑，落库前一定都已在队列里——这样「一组 N 件」是确定性的。
+     */
+    private List<MergeResult<Boolean>> submitBurst(VirtualMergeEngine<Job, Boolean> buffer, int count)
+            throws Exception {
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>(count));
+        runConcurrently(count, threadNo -> results.add(buffer.commit(job(threadNo))));
+        assertEquals(count, results.size(), "每个等待者都必须拿到终态");
+        return results;
+    }
+
+    /** 轮询等待线程退出（外部只看 {@code isAlive()}，不碰引擎内部） */
+    private static void awaitThreadDead(Thread thread, long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (thread.isAlive() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(5);
+        }
+    }
+
+    // ── I1：不丢件、恰一个终态 ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("8 线程并发提交：每件全部拿到终态，且每件只被落库一次")
+    void everyAcceptedItemGetsExactlyOneTerminalState() throws Exception {
+        int threads = 8;
+        int perThread = 50;
+        RecordingFlush flush = new RecordingFlush();
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(hotConfig(20), strategy);
+
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        runConcurrently(threads, threadNo -> {
+            int base = threadNo * 1_000;
+            for (int i = 0; i < perThread; i++) {
+                results.add(buffer.commit(job(base + i)));
+            }
+        });
+
+        assertEquals(threads * perThread, results.size(), "每个提交都必须有一个返回值，不能悬空");
+        assertEquals(threads * perThread, countTrue(results), "不该出现超时/失败");
+        assertTrue(buffer.awaitIdle(5_000), "缓冲必须排空");
+        assertEquals(0, buffer.pending());
+
+        assertEquals(threads * perThread, flush.seenCount(), "入队的件数 == 落库函数看到的件数");
+        assertEquals(0, flush.duplicateCount(), "每件至多回填一次（VirtualMergeItem 幂等）");
+    }
+
+    @Test
+    @DisplayName("I1 补齐：落库函数漏回填时引擎补 FAILED，等待者不会悬着")
+    void missingBackfillIsCompletedAsFailed() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        flush.fillOnlyTotal = 1;
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 200, 10, 5_000, 2_000), strategy);
+
+        List<MergeResult<Boolean>> results = submitBurst(buffer, 5);
+
+        assertEquals(1, countTrue(results));
+        assertEquals(4, countState(results, MergeResult.State.FAILED), "漏回填的件必须补 FAILED");
+    }
+
+    @Test
+    @DisplayName("I1 兜底：落库整组抛 RuntimeException → 该组全部 FAILED")
+    void flushFailureMarksWholeGroupFailed() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        flush.throwOnFlush = true;
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 200, 10, 5_000, 2_000), strategy);
+
+        List<MergeResult<Boolean>> results = submitBurst(buffer, 3);
+
+        assertEquals(3, countState(results, MergeResult.State.FAILED),
+                "事务回滚 ⇒ 组内每件都是 FAILED（没有「结果未知」这一态）");
+    }
+
+    // ── 新模型专属断言之一：supervisor 吞 Throwable（含 Error） ────────────────
+
+    @Test
+    @DisplayName("supervisor 吞 Error：落库桩抛 Error，整组仍得 FAILED 且引擎继续服务后续提交")
+    void supervisorSwallowsErrorAndKeepsServing() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        flush.throwErrorOnFlush = true;
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(hotConfig(10), strategy);
+
+        List<MergeResult<Boolean>> first = submitBurst(buffer, 3);
+        assertEquals(3, countState(first, MergeResult.State.FAILED),
+                "Error 被就地消化：整组回填 FAILED，线程不死");
+
+        // 引擎还活着：同一 key 继续提交照常成功
+        flush.throwErrorOnFlush = false;
+        List<MergeResult<Boolean>> second = submitBurst(buffer, 2);
+        assertEquals(2, countTrue(second), "supervisor 线程不死，引擎继续服务后续提交");
+        assertTrue(buffer.awaitIdle(5_000));
+        assertEquals(5, flush.seenCount());
+    }
+
+    // ── 新模型专属断言之二：退出谓词 ──────────────────────────────────────────
+
+    @Test
+    @DisplayName("退出谓词：组被摘除后专属 leader 线程退出，无残留")
+    void leaderThreadExitsAfterGroupRemoved() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(hotConfig(10), strategy);
+
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        Thread submitter = submitInBackground(job(1), results);
+        submitter.join(5_000);
+        assertTrue(buffer.awaitIdle(5_000), "组应已排空并摘除");
+        assertEquals(1, flush.distinctLeaderCount(KEY));
+
+        Thread leaderThread = flush.leaderThreadsOf(KEY).iterator().next();
+        awaitThreadDead(leaderThread, 5_000);
+        assertFalse(leaderThread.isAlive(),
+                "组摘除后 leader 必须退出（退出谓词）：不存在「组活着但没人管」或「组死了线程还挂着」");
+
+        // 线程退出后引擎照常可用：新提交换组重建、新 leader
+        List<MergeResult<Boolean>> again = Collections.synchronizedList(new ArrayList<>());
+        Thread second = submitInBackground(job(2), again);
+        second.join(5_000);
+        assertEquals(List.of(MergeResult.State.COMPLETED),
+                again.stream().map(MergeResult::state).toList());
+        assertEquals(2, flush.seenCount());
+    }
+
+    // ── 新模型专属断言之三：双 spawn 不可能 ───────────────────────────────────
+
+    @Test
+    @DisplayName("双 spawn 不可能：并发提交同 key，全程只有一根专属 leader（同一线程串行落库）")
+    void doubleSpawnImpossibleConcurrentSameKey() throws Exception {
+        int threads = 16;
+        RecordingFlush flush = new RecordingFlush();
+        flush.delayMs = 5;
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(hotConfig(10), strategy);
+
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        runConcurrently(threads, threadNo -> results.add(buffer.commit(job(threadNo))));
+
+        assertTrue(buffer.awaitIdle(5_000));
+        assertEquals(threads, flush.seenCount(), "单飞不等于丢件");
+        assertEquals(1, flush.maxInFlightOf(KEY),
+                "同 key 两条 flush 同时跑 = 双 spawn 的直接后果，台账行锁会重新排队");
+        assertEquals(1, flush.distinctLeaderCount(KEY),
+                "同一组全程恰好一根专属 leader：claim-CAS 恰好一次，双 spawn 不可能");
+    }
+
+    // ── 新模型专属断言之四：claim 死亡窗口自愈 ────────────────────────────────
+
+    @Test
+    @DisplayName("claim 死亡窗口：spawn 失败放行 claim，下一个提交者兜底 spawn 并落库")
+    void claimDeathWindowSelfHeals() throws Exception {
+        AtomicInteger spawnAttempts = new AtomicInteger();
+        VirtualMergeEngine.LeaderThreadFactory firstSpawnFails = (leaderLoop, key) -> {
+            if (spawnAttempts.incrementAndGet() == 1) {
+                throw new IllegalStateException("模拟 spawn 失败（claim 与 start 之间创建者死亡）");
+            }
+            return Thread.ofVirtual().name("merge-virtual-leader-" + key).start(leaderLoop);
+        };
+        RecordingFlush flush = new RecordingFlush();
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        // 窗口给足：让「放行 claim → 下一个提交者接棒」完全落在窗口内
+        VirtualMergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1_000, 200, 5_000, 2_000),
+                strategy, firstSpawnFails);
+
+        // 创建者：建组入队成功、赢得 claim、spawn 失败 → 放行 claim → 就地失败
+        List<Object> firstOutcome = Collections.synchronizedList(new ArrayList<>());
+        Thread creator = Thread.ofVirtual().start(() -> {
+            try {
+                firstOutcome.add(buffer.commit(job(1)));
+            } catch (Throwable t) {
+                firstOutcome.add(t);
+            }
+        });
+        creator.join(5_000);
+        assertEquals(1, firstOutcome.size());
+        assertInstanceOf(Throwable.class, firstOutcome.get(0),
+                "spawn 失败的创建者就地失败（不吞进程级异常），但 claim 已放行");
+
+        // 下一个提交者：兜底 claim 赢得 spawn，创建者遗留的件与自己的件一起落库
+        List<MergeResult<Boolean>> secondOutcome = Collections.synchronizedList(new ArrayList<>());
+        Thread next = submitInBackground(job(2), secondOutcome);
+        next.join(10_000);
+        assertEquals(2, spawnAttempts.get(), "第二次 spawn 必须成功（第一次失败 + 兜底成功，恰好两次）");
+        assertEquals(List.of(MergeResult.State.COMPLETED),
+                secondOutcome.stream().map(MergeResult::state).toList(),
+                "窗口自愈：下一个提交者兜底 spawn 成功");
+        assertEquals(2, flush.seenCount(), "创建者遗留的件没有被丢（换 leader 落库）");
+        assertEquals(1, flush.distinctLeaderCount(KEY), "仍然只有一根 leader（放行不产生双 spawn）");
+        assertTrue(buffer.awaitIdle(5_000));
+    }
+
+    // ── I2：单飞（结构保证的复核）─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("落库变慢时，同 key 任一时刻至多一条 flush 在执行，且件数一件不少")
+    void singleFlightNeverTwoConcurrentFlushes() throws Exception {
+        // 线程数必须明显大于 maxBatch：只有并发调用方够多，落库期间队列才攒得满——
+        // 那是「攒满提前触发」撞上「正在落库」的窗口，也是唯一能把单飞写坏的机会
+        int threads = 16;
+        int perThread = 20;
+        int maxBatch = 10;
+        RecordingFlush flush = new RecordingFlush();
+        flush.delayMs = 5;
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(hotConfig(maxBatch), strategy);
+
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        runConcurrently(threads, threadNo -> {
+            int base = threadNo * 1_000;
+            for (int i = 0; i < perThread; i++) {
+                results.add(buffer.commit(job(base + i)));
+            }
+        });
+
+        assertEquals(1, flush.maxInFlightOf(KEY),
+                "同 key 两条 flush 同时跑 = 台账行锁重新排队，后一批看到的也不一定是已提交的状态");
+        assertEquals(threads * perThread, countTrue(results));
+        assertEquals(threads * perThread, flush.seenCount(), "单飞不等于丢件");
+        assertTrue(buffer.awaitIdle(5_000));
+    }
+
+    // ── 跨 key 并发（per-invId 模型的钉子：撞片串行消除）────────────────────────
+
+    @Test
+    @DisplayName("不同 key 可并发 flush：一个 key 的落库卡住，另一个 key 照常发车（各组各 leader）")
+    void differentKeysFlushConcurrently() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        flush.entered = new CountDownLatch(1);
+        flush.hold = new CountDownLatch(1);
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(hotConfig(10), strategy);
+
+        List<MergeResult<Boolean>> blockedKey = Collections.synchronizedList(new ArrayList<>());
+        Thread blockedThread = submitInBackground(new Job("key-A", 1), blockedKey);
+        assertTrue(flush.entered.await(5, TimeUnit.SECONDS), "key-A 的第一次 flush 应该已经进入落库");
+
+        // key-B 与 key-A 不共享任何组：不等 key-A 的落库，独立 spawn、独立发车
+        long startNanos = System.nanoTime();
+        List<MergeResult<Boolean>> otherKey = Collections.synchronizedList(new ArrayList<>());
+        Thread otherThread = submitInBackground(new Job("key-B", 1), otherKey);
+        otherThread.join(5_000);
+        long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+
+        assertEquals(1, otherKey.size());
+        assertEquals(MergeResult.State.COMPLETED, otherKey.get(0).state(),
+                "key-A 卡死期间 key-B 必须独立完成，不能被别的热点拖住");
+        assertTrue(costMs < 1_000, "key-B 独立发车（窗口 1ms），实测 " + costMs + "ms");
+        assertTrue(flush.maxInFlightOf("key-A") >= 1);
+        assertTrue(flush.maxInFlightOf("key-B") >= 1);
+
+        flush.hold.countDown();
+        blockedThread.join(5_000);
+        assertTrue(buffer.awaitIdle(5_000));
+        assertEquals(1, flush.maxInFlightOf("key-A"), "同 key 单飞不受跨 key 并发影响");
+        assertEquals(1, flush.maxInFlightOf("key-B"), "同 key 单飞不受跨 key 并发影响");
+    }
+
+    // ── I3：锁不跨 DB ─────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("落库阻塞期间提交仍毫秒级入队：组锁只保护内存，不跨 DB 调用")
+    void flushBlockingDoesNotBlockSubmit() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        flush.entered = new CountDownLatch(1);
+        flush.hold = new CountDownLatch(1);
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(hotConfig(10), strategy);
+
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        submitInBackground(job(1), results);
+        assertTrue(flush.entered.await(5, TimeUnit.SECONDS), "第一次 flush 应该已经进入落库");
+
+        // leader 线程此刻被闸门挡住，同一组的锁必须已经放开：第二件要能立刻进队列
+        long startNanos = System.nanoTime();
+        submitInBackground(job(2), results);
+        boolean buffered = awaitBuffered(1, 2_000);
+        long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+
+        assertTrue(buffered, "落库阻塞期间提交必须仍能入队（锁跨 DB 就会卡在入队上）");
+        assertTrue(costMs < 100, "入队必须毫秒级，实测 " + costMs + "ms");
+
+        flush.hold.countDown();
+        assertTrue(buffer.awaitIdle(5_000));
+        assertEquals(2, flush.seenCount());
+        assertEquals(1, flush.maxInFlightOf(KEY), "期间只有那一条 flush 在跑");
+    }
+
+    // ── 发车时机：窗口到点发车 / 攒满提前发车 ──────────────────────────────────
+
+    @Test
+    @DisplayName("窗口到点发车：单件提交的返回时间 ≈ 收集窗口")
+    void firstItemDepartsAtWindowDeadline() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        long windowMs = 300;
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, (int) windowMs, 200, 2_000, 2_000),
+                strategy);
+
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        long startNanos = System.nanoTime();
+        Thread submitter = submitInBackground(job(1), results);
+        submitter.join(5_000);
+        long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+
+        assertEquals(1, results.size());
+        assertEquals(MergeResult.State.COMPLETED, results.get(0).state());
+        assertTrue(costMs >= windowMs - 50, "窗口到点才发车：单件必须等满收集窗口，实测 " + costMs + "ms");
+        assertTrue(costMs < windowMs + 2_000, "也不能晚得离谱，实测 " + costMs + "ms");
+        assertTrue(flush.callCount() >= 1);
+        assertTrue(buffer.awaitIdle(5_000));
+        assertEquals(0, buffer.pending());
+    }
+
+    @Test
+    @DisplayName("攒满提前发车：maxBatch 件凑齐立即发车，不等收集窗口走完")
+    void fullBatchDepartsBeforeWindowExpires() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        int maxBatch = 5;
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        // 窗口 1000ms ≫ 测试时长：发车只能靠「攒满提前唤醒」触发
+        VirtualMergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1_000, maxBatch, 2_000, 2_000),
+                strategy);
+
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        long startNanos = System.nanoTime();
+        runConcurrently(maxBatch, threadNo -> results.add(buffer.commit(job(threadNo))));
+        long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+
+        assertTrue(buffer.awaitIdle(5_000));
+        assertEquals(maxBatch, countTrue(results));
+        assertEquals(1, flush.callCount(), "5 件凑齐一批，一次落库");
+        assertEquals(maxBatch, flush.maxGroupSize());
+        assertTrue(costMs < 1_000, "攒满必须提前发车（窗口 1000ms 未走完），实测 " + costMs + "ms");
+    }
+
+    // ── I4：停机三步（停收 → 排空 → 残余回填 FAILED）──────────────────────────
+
+    @Test
+    @DisplayName("停机先排空：close() 时队列里的件照样落库，一件不丢")
+    void closeStillDrainsBufferedItems() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        // 窗口 1000ms 远超「攒件」所需：close() 之前不会有任何 flush 发生
+        VirtualMergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1_000, 200, 2_000, 3_000), strategy);
+
+        int total = 20;
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        List<Thread> submitters = new ArrayList<>(total);
+        for (int i = 0; i < total; i++) {
+            submitters.add(submitInBackground(job(i), results));
+        }
+        assertTrue(awaitBuffered(total), "20 件都该在队列里等窗口");
+
+        buffer.close();
+        for (Thread submitter : submitters) {
+            submitter.join(5_000);
+        }
+
+        assertEquals(total, flush.seenCount(), "排空阶段必须把队列里的件全部落库");
+        assertEquals(0, buffer.pending());
+        assertEquals(total, countTrue(results), "等结果的调用方必须在停机前拿到确定的结果");
+    }
+
+    @Test
+    @DisplayName("停收：close() 之后提交不进队列，直接返回 FAILED（件从未入队，重试安全）")
+    void closeRejectsNewSubmissions() {
+        RecordingFlush flush = new RecordingFlush();
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(hotConfig(200), strategy);
+        buffer.close();
+
+        MergeResult<Boolean> outcome = buffer.commit(job(1));
+
+        assertEquals(MergeResult.State.FAILED, outcome.state(), "停机后提交直接失败：件从未入队、必未落库");
+        assertEquals(0, flush.callCount(), "既不进队列，也不就地落库");
+        assertEquals(0, buffer.pending(), "件从未进过队列");
+    }
+
+    @Test
+    @DisplayName("排空超时：没人认领的残余件显式回填 FAILED（= 确定没落，可安全重试）")
+    void drainFailureBackfillsFailed() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        flush.entered = new CountDownLatch(1);
+        flush.hold = new CountDownLatch(1);
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        // 窗口 1ms：第一件立刻发车并卡在落库；排空预算 20ms 远小于闸门被按住的时间
+        VirtualMergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1, 200, 2_000, 20), strategy);
+
+        List<MergeResult<Boolean>> leaderOutcome = Collections.synchronizedList(new ArrayList<>());
+        List<MergeResult<Boolean>> followerOutcome = Collections.synchronizedList(new ArrayList<>());
+        Thread leader = submitInBackground(job(0), leaderOutcome);
+        assertTrue(flush.entered.await(5, TimeUnit.SECONDS), "第一件应该已经进入落库");
+        Thread follower = submitInBackground(job(1), followerOutcome);
+        assertTrue(awaitBuffered(1), "第二件该在队列里等下一批");
+
+        buffer.close();
+        follower.join(5_000);
+
+        assertEquals(1, followerOutcome.size());
+        assertEquals(MergeResult.State.FAILED, followerOutcome.get(0).state(),
+                "排空超时的残余件 = 确定没落（从未进入事务），可安全重试");
+        assertEquals(1, flush.seenCount(), "只有第一件进过落库函数");
+
+        flush.hold.countDown();
+        leader.join(5_000);
+        assertEquals(MergeResult.State.COMPLETED, leaderOutcome.get(0).state(),
+                "在途 flush 由 leader 自己收尾，不受停机回填影响");
+        assertEquals(0, buffer.pending());
+        // 停机之后不该再有 flush 跑出来
+        Thread.sleep(150);
+        assertEquals(1, flush.seenCount());
+    }
+
+    // ── I5：背压有界 ──────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("满即拒：不入队、不扩容、不动已入队件，被拒的件直接失败")
+    void rejectsWhenFullWithoutTouchingQueue() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        flush.entered = new CountDownLatch(1);
+        flush.hold = new CountDownLatch(1);
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 5, 8, 8, 2_000), strategy);
+
+        // 先让一条 flush 卡在落库上，后面的件就都只能待在队列里
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        submitInBackground(job(0), results);
+        assertTrue(flush.entered.await(5, TimeUnit.SECONDS));
+
+        for (int i = 1; i <= 8; i++) {
+            submitInBackground(job(i), results);
+        }
+        assertTrue(awaitBuffered(8), "容量 8 之内必须收下");
+
+        // 第 9 件：队列已满 ⇒ 不进队列，也不就地落库，立刻失败（调用方稍后重试）
+        MergeResult<Boolean> rejected = buffer.commit(job(99));
+
+        assertEquals(MergeResult.State.FAILED, rejected.state(), "满即拒：直接失败，不抢连接落库");
+        assertEquals(8, buffer.pending(), "拒收不许挤掉已入队的件，也不许扩容");
+        assertEquals(1, flush.callCount(), "只有卡住的那条 flush，被拒的件没有触发落库");
+
+        flush.hold.countDown();
+        assertTrue(buffer.awaitIdle(5_000));
+
+        assertEquals(9, flush.seenCount(), "1 件先落库 + 8 件补落库；被拒的那件不在其中");
+        assertEquals(0, buffer.pending());
+    }
+
+    @Test
+    @DisplayName("背压不伤件：收下的 8 件照常落库，被拒件直接失败且不挤队列")
+    void acceptedItemsSurviveRejection() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        flush.entered = new CountDownLatch(1);
+        flush.hold = new CountDownLatch(1);
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 5, 8, 8, 2_000), strategy);
+
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        submitInBackground(job(0), results);
+        assertTrue(flush.entered.await(5, TimeUnit.SECONDS));
+
+        List<Job> accepted = new ArrayList<>();
+        for (int i = 1; i <= 8; i++) {
+            Job item = job(i);
+            submitInBackground(item, results);
+            accepted.add(item);
+        }
+        assertTrue(awaitBuffered(8));
+
+        // 队列满了之后的 20 件：一件都进不了队列，各自立刻失败（不抢连接、不挤队列）
+        List<Job> rejected = new ArrayList<>();
+        List<MergeResult<Boolean>> rejectedOutcomes = new ArrayList<>();
+        for (int i = 100; i < 120; i++) {
+            Job item = job(i);
+            rejected.add(item);
+            rejectedOutcomes.add(buffer.commit(item));
+        }
+        assertEquals(20, countState(rejectedOutcomes, MergeResult.State.FAILED), "满即拒：20 件全部直接失败");
+        assertEquals(8, buffer.pending(), "拒收不许扩容，也不许挤掉已入队的件");
+        assertEquals(1, flush.callCount(), "只有卡住的那条 flush");
+
+        flush.hold.countDown();
+        assertTrue(buffer.awaitIdle(5_000));
+
+        for (Job item : accepted) {
+            assertTrue(flush.hasSeen(item), "已入队的件必须落库");
+        }
+        for (Job item : rejected) {
+            assertFalse(flush.hasSeen(item), "被拒的件从未入队，不许落库");
+        }
+        assertEquals(1 + 8, flush.seenCount(), "先落库 1 件 + 收下 8 件；被拒的 20 件不在其中");
+        assertEquals(0, flush.duplicateCount(), "一件只能落一次");
+        assertEquals(0, buffer.pending(), "排空后无积压");
+    }
+
+    // ── 附加断言：单批上限 + 同 key 保序 ────────────────────────────────────────
+
+    @Test
+    @DisplayName("单批不超过 maxBatch")
+    void batchNeverExceedsMaxBatch() throws Exception {
+        int maxBatch = 15;
+        int threads = 40;
+        RecordingFlush flush = new RecordingFlush();
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1, maxBatch, 2_000, 2_000), strategy);
+
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        runConcurrently(threads, threadNo -> results.add(buffer.commit(job(threadNo))));
+
+        assertTrue(buffer.awaitIdle(5_000));
+        assertEquals(threads, flush.seenCount());
+        assertTrue(flush.maxGroupSize() <= maxBatch, "单组上限 = maxBatch，实测 " + flush.maxGroupSize());
+    }
+
+    @Test
+    @DisplayName("同 key 内保持入队顺序（台账守卫式 UPDATE 的语义可推理）")
+    void sameKeyKeepsSubmissionOrder() throws Exception {
+        int total = 20;
+        RecordingFlush flush = new RecordingFlush();
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        // 窗口给足，让 20 件在同一个窗口里排队
+        VirtualMergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1_000, 200, 2_000, 6_000), strategy);
+
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        for (int i = 1; i <= total; i++) {
+            // 一个线程只能挂一件（都在等结果），所以用「上一件确认已入队」把顺序钉死
+            submitInBackground(job(i), results);
+            if (!awaitBuffered(i)) {
+                fail("第 " + i + " 件没能入队");
+            }
+        }
+        assertTrue(buffer.awaitIdle(5_000));
+
+        List<Object> landed = flush.payloadsOf(KEY);
+        assertEquals(total, landed.size(), "件数不能少");
+        for (int i = 0; i < total; i++) {
+            assertEquals(i + 1, ((Job) landed.get(i)).seq(), "同 key 必须按入队序落库，第 " + i + " 件错位");
+        }
+    }
+
+    // ── 乐观删除闭环：组摘除 → 迟到入队换组重建 → 新组 spawn 新 leader ──────────
+
+    @Test
+    @DisplayName("组摘除后迟到提交换组重建，新组 spawn 新 leader（与旧 leader 不是同一根线程）")
+    void lateEnqueueRebuildsGroupWithNewLeader() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(hotConfig(10), strategy);
+
+        List<MergeResult<Boolean>> first = Collections.synchronizedList(new ArrayList<>());
+        Thread firstSubmitter = submitInBackground(job(1), first);
+        firstSubmitter.join(5_000);
+        assertTrue(buffer.awaitIdle(5_000), "第一组应已排空并摘除");
+        assertEquals(1, flush.distinctLeaderCount(KEY));
+        Thread firstLeader = flush.leaderThreadsOf(KEY).iterator().next();
+
+        List<MergeResult<Boolean>> second = Collections.synchronizedList(new ArrayList<>());
+        Thread secondSubmitter = submitInBackground(job(2), second);
+        secondSubmitter.join(5_000);
+        assertEquals(List.of(MergeResult.State.COMPLETED),
+                second.stream().map(MergeResult::state).toList(),
+                "组摘除后的迟到提交换组重建并正常落库");
+        assertEquals(2, flush.seenCount());
+        assertEquals(2, flush.distinctLeaderCount(KEY), "新组 spawn 了新 leader");
+        Thread secondLeader = flush.leaderThreadsOf(KEY).stream()
+                .filter(t -> t != firstLeader)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("第二根 leader 线程未被捕获"));
+        assertNotSame(firstLeader, secondLeader);
+
+        // 两根 leader 都已随各自的组退出（退出谓词的全量复核）
+        awaitThreadDead(firstLeader, 5_000);
+        awaitThreadDead(secondLeader, 5_000);
+        assertFalse(firstLeader.isAlive());
+        assertFalse(secondLeader.isAlive());
+    }
+
+    // ── 隔离：不同用途 ⇒ 不同引擎 ───────────────────────────────────────────────
+
+    @Test
+    @DisplayName("两个用途各起一个引擎：同键、同窗口也各落各的组（不共享缓冲，也不共享事务）")
+    void differentPurposesNeverShareAGroup() throws Exception {
+        RecordingFlush deductFlush = new RecordingFlush();
+        RecordingFlush claimFlush = new RecordingFlush();
+        MergeConfig config = new MergeConfig(8, 200, 200, 2_000, 2_000);
+        VirtualMergeEngine<Job, Boolean> deductEngine = new VirtualMergeEngine<>(config,
+                new MergeStrategy<>("deduct", Job::shardKey, deductFlush));
+        VirtualMergeEngine<Job, Boolean> claimEngine = new VirtualMergeEngine<>(config,
+                new MergeStrategy<>("claim", Job::shardKey, claimFlush));
+        try {
+            List<MergeResult<Boolean>> deductResults = Collections.synchronizedList(new ArrayList<>());
+            List<MergeResult<Boolean>> claimResults = Collections.synchronizedList(new ArrayList<>());
+            Thread deductThread = Thread.ofVirtual()
+                    .start(() -> deductResults.add(deductEngine.commit(job(1))));
+            Thread claimThread = Thread.ofVirtual()
+                    .start(() -> claimResults.add(claimEngine.commit(job(2))));
+
+            deductThread.join(10_000);
+            claimThread.join(10_000);
+            assertTrue(deductEngine.awaitIdle(5_000));
+            assertTrue(claimEngine.awaitIdle(5_000));
+
+            assertEquals(1, deductFlush.callCount(), "预扣一组");
+            assertEquals(1, claimFlush.callCount(), "确认一组：两条不同表的 SQL 各有自己的事务，不是一条");
+            assertEquals(1, deductFlush.seenCount());
+            assertEquals(1, claimFlush.seenCount());
+            assertEquals(1, countTrue(deductResults), "各拿各的结果，不串");
+            assertEquals(1, countTrue(claimResults));
+        } finally {
+            deductEngine.close();
+            claimEngine.close();
+        }
+    }
+
+    @Test
+    @DisplayName("业务上的「没成功」是结果不是丢失：原样回给调用方（它据此走业务分支）")
+    void negativeBusinessResultIsNotALoss() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        flush.negativeOnFlush = true;
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        VirtualMergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 200, 10, 5_000, 2_000), strategy);
+
+        List<MergeResult<Boolean>> results = submitBurst(buffer, 3);
+
+        assertEquals(3, results.stream().filter(o -> o.isCompleted() && Boolean.FALSE.equals(o.result())).count(),
+                "业务失败必须原样回给调用方，不能变成 FAILED");
+    }
+
+    @Test
+    @DisplayName("没有等待上限：follower 一直 park 到自己的件落库，拿 COMPLETED，无「结果未知」中间态")
+    void followerWaitsWithoutPrematureReturn() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        flush.entered = new CountDownLatch(1);
+        flush.hold = new CountDownLatch(1);
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        // 窗口 1ms：第一件立刻发车，然后被闸门按在落库上——此时第二件只能进队列等
+        VirtualMergeEngine<Job, Boolean> buffer = start(hotConfig(10), strategy);
+
+        List<MergeResult<Boolean>> leaderOutcome = Collections.synchronizedList(new ArrayList<>());
+        List<MergeResult<Boolean>> followerOutcome = Collections.synchronizedList(new ArrayList<>());
+        Thread leader = submitInBackground(job(0), leaderOutcome);
+        assertTrue(flush.entered.await(5, TimeUnit.SECONDS), "第一次 flush 应该已经进入落库");
+        Thread follower = submitInBackground(job(1), followerOutcome);
+        follower.join(200);
+
+        // leader 卡在落库上：follower 不许带任何终态返回——没有等待上限就没有「结果未知」这一态
+        assertTrue(followerOutcome.isEmpty(), "落库被按住期间 follower 必须一直等，不能提前回一个『未知』");
+        assertEquals(1, buffer.pending(), "follower 的件在队列里等下一批");
+        assertTrue(leaderOutcome.isEmpty(), "第一件还卡在落库上，没有终态");
+
+        flush.hold.countDown();
+        leader.join(5_000);
+        follower.join(5_000);
+
+        assertEquals(List.of(MergeResult.State.COMPLETED),
+                leaderOutcome.stream().map(MergeResult::state).toList(), "第一件照常落库");
+        assertEquals(List.of(MergeResult.State.COMPLETED),
+                followerOutcome.stream().map(MergeResult::state).toList(), "第二件由同一根 leader 落库，拿 COMPLETED");
+        assertEquals(2, flush.seenCount(), "两件都落过库");
+        assertEquals(0, buffer.pending());
+    }
+}
