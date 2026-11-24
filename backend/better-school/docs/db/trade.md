@@ -13,7 +13,7 @@
 
 **主键口径（uuid-biz-id 起）**：`id` 是纯内部物理自增，业务 ID 为 `product_id` / `product_order_id`；业务 ID 是应用层发号的 UUID 字符串（`VARCHAR(36)`，`UUID.randomUUID()` 在 insert 前生成、随行一次写入），与物理 `id` 永不同值、物理 id 永不对外。存量数据不迁移（删库重建），历史「插 0 回写」割接脚本已退役。
 
-资金表（`virtual_wallet` / `wallet_detail`）见 [user](user.md)，商品与跑腿共用同一套钱包与流水。
+资金表（`virtual_wallet` / `wallet_detail`）见 [user](user.md)，商品交易走同一套钱包与流水。
 
 # product
 

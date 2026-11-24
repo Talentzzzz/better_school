@@ -10,7 +10,7 @@ package com.betterschool.infrastructure.adapter.repository;
  * <p>技术性失败（事务回滚、连接断、入队被拒）不走这里——引擎只回 {@code COMPLETED} / {@code FAILED}，
  * 后者由调用方翻成可重试异常。
  *
- * <p><b>浏览类动作（{@code POST_VIEW} / {@code PRODUCT_VIEW} / {@code ERRAND_VIEW}）没有逐件业务结果</b>：
+ * <p><b>浏览类动作（{@code POST_VIEW} / {@code PRODUCT_VIEW}）没有逐件业务结果</b>：
  * 落库方法统一回 {@link #APPLIED} 当占位值，含义是「计数已推进」。引擎只用它判断「这一件被回填了」，
  * 不会把它翻成对外的业务结果（浏览路径只看终态、不看占位值）；点赞路径若拿到它，说明落库方法用错了
  * 动作分支——该抛。

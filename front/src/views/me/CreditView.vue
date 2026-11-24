@@ -42,7 +42,7 @@ onMounted(load)
         <div class="score-unit">分</div>
       </div>
       <div class="score-level">{{ score !== null ? level(score).text : '加载中…' }}</div>
-      <div class="score-tip">信用分低于 60 不能发布帖子、发跑腿或接单，低于 30 账号将被封禁</div>
+      <div class="score-tip">信用分低于 60 不能发布帖子或商品，低于 30 账号将被封禁</div>
     </div>
 
     <div class="log-section">

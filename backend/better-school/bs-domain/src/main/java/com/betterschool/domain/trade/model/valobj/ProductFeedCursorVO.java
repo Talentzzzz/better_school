@@ -24,7 +24,7 @@ import java.util.Objects;
  *
  * <p>对外是不透明串（Base64url），内部 {@code product|sort|排序键|create_time|product_id}（5 段，
  * 该档用不到的 create_time 格留空串；照帖子 {@code FeedCursorVO} 先例，各域各写一份）。换 tab 复用旧
- * 游标 / 跨域复用（跑腿游标） / 篡改内容都会在解码时报 PARAM_ERROR，而不是静默错位。游标失效
+ * 游标 / 跨域复用（帖子域游标） / 篡改内容都会在解码时报 PARAM_ERROR，而不是静默错位。游标失效
  * （排序键值已漂移）不报错——keyset 语义下最多边界附近的行有出入，不重不漏由尾段唯一锚点保证。
  */
 public final class ProductFeedCursorVO {
@@ -106,7 +106,7 @@ public final class ProductFeedCursorVO {
     private static final String SEPARATOR = "|";
     /** 编码字段数：domain | sort | 排序键 | create_time（仅热度档携带） | product_id */
     private static final int PARTS = 5;
-    /** 域标签：游标串里钉住来源域，跨域复用（闲置游标喂给跑腿大厅）在解码时即被拒 */
+    /** 域标签：游标串里钉住来源域，跨域复用（闲置游标喂给帖子列表）在解码时即被拒 */
     private static final String DOMAIN = "product";
 
     /**

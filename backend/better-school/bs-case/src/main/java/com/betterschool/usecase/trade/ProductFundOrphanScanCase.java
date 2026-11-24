@@ -16,14 +16,14 @@ import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * 商品资金孤儿扫描（ADR-0016 两段式的收敛 job 用例，照 {@code ErrandFundOrphanScanCase} /
- * {@code drawCountPurchaseScan} 口径：cron 0/30、无状态窗口重扫、动作全部流水唯一键幂等——
+ * 商品资金孤儿扫描（ADR-0016 两段式的收敛 job 用例，照 {@code drawCountPurchaseScan} 口径：
+ * cron 0/30、无状态窗口重扫、动作全部流水唯一键幂等——
  * 失败行留在窗口内下轮重扫，无 per-row 状态与死信）。
  *
  * <p>两段式资金链路的宕机/失败窗口留下的长款中间态在此收敛，判据全部是「流水行与业务行状态比对」，零新增状态表：
  * <ul>
- *   <li>钱包侧自查（PRODUCT_FROZEN 与 PRODUCT_UNFROZEN 同表比对，与跑腿 FROZEN/UNFROZEN
- *       同表不同 type 的两条扫描线）：有 PRODUCT_FROZEN、同订单同轮次同人无 PRODUCT_UNFROZEN、
+ *   <li>钱包侧自查（PRODUCT_FROZEN 与 PRODUCT_UNFROZEN 同表比对，同表不同 type 的扫描线）：
+ *       有 PRODUCT_FROZEN、同订单同轮次同人无 PRODUCT_UNFROZEN、
  *       冻结已超阈值 → 查订单裁决：终态（CANCELLED/COMPLETED）即补解冻退买家；未终态
  *       （支付翻转在途 / 交付流转中）不动钱——此刻解冻会让后续翻转成功后出现「已支付但没冻结」的短款，
  *       宁可长款等到终态再退；</li>
@@ -44,7 +44,7 @@ public class ProductFundOrphanScanCase {
     /** 冻结孤儿判定阈值（分钟）：翻转段正常在秒级完成，超阈值仍「PRODUCT_FROZEN 无 PRODUCT_UNFROZEN」才视为孤儿 */
     private static final int FROZEN_ORPHAN_THRESHOLD_MINUTES = 10;
 
-    /** 终态订单重放窗口（分钟）：覆盖「翻转已提交、资金段未执行」的窗口，与跑腿孤儿扫描 10 分钟窗口口径一致 */
+    /** 终态订单重放窗口（分钟）：覆盖「翻转已提交、资金段未执行」的窗口，与冻结孤儿阈值同口径 */
     private static final int SETTLED_WINDOW_MINUTES = 10;
 
     /** 单轮每段最多处理的行数：孤儿是异常路径，正常流量下恒 0 行 */

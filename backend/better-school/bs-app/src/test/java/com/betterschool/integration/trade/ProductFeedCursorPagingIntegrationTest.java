@@ -91,8 +91,8 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
                 .as("价格排序复用最新游标 → PARAM_ERROR").isEqualTo("400");
         assertThat(getJson("/api/trade/products?sort=time&cursor=garbage!!", null).path("code").asText())
                 .as("Base64 解不开 → PARAM_ERROR").isEqualTo("400");
-        // 跨域复用：跑腿大厅游标喂给闲置推荐页，域标签不符
-        assertThat(getJson("/api/trade/products?sort=time&cursor=" + errandCursorSeed(), null).path("code").asText())
+        // 跨域复用：帖子域游标喂给闲置推荐页，域标签不符
+        assertThat(getJson("/api/trade/products?sort=time&cursor=" + foreignDomainCursorSeed(), null).path("code").asText())
                 .as("跨域游标 → PARAM_ERROR（不静默错位）").isEqualTo("400");
     }
 
@@ -215,9 +215,9 @@ class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
                 "SELECT product_id FROM product_feed_index WHERE state = 'ON_SALE' ORDER BY " + orderBy, String.class);
     }
 
-    /** 手工造一条跑腿域游标：只用于跨域复用校验（域标签不符即拒，不依赖真实订单行） */
-    private String errandCursorSeed() {
-        String raw = "errand|time|" + LocalDateTime.now() + "|1";
+    /** 手工造一条帖子域游标：只用于跨域复用校验（域标签不符即拒，不依赖真实帖子行） */
+    private String foreignDomainCursorSeed() {
+        String raw = "post|time|" + LocalDateTime.now() + "|1";
         return Base64.getUrlEncoder().withoutPadding().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
     }
 

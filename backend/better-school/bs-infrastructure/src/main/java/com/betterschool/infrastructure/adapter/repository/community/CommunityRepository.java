@@ -526,9 +526,9 @@ public class CommunityRepository implements ICommunityRepository {
             case POST_UNLIKE -> transactionTemplate.execute(status -> unlikePosts(shardKey, countEventList));
             case COMMENT_LIKE -> transactionTemplate.execute(status -> likeComments(shardKey, countEventList));
             case POST_VIEW -> transactionTemplate.execute(status -> viewPosts(shardKey, countEventList));
-            // 商品/跑腿浏览打的是各自的 UV 表，落在各自仓储持有的合并器实例里，不该由社区仓储处理
-            case PRODUCT_VIEW, ERRAND_VIEW -> throw new IllegalArgumentException(
-                    "商品/跑腿浏览的落库方法在 TradeRepository / ErrandRepository，不该由社区仓储处理：" + action);
+            // 商品浏览打的是自己的 UV 表，落在 TradeRepository 持有的合并器实例里，不该由社区仓储处理
+            case PRODUCT_VIEW -> throw new IllegalArgumentException(
+                    "商品浏览的落库方法在 TradeRepository，不该由社区仓储处理：" + action);
         };
     }
 

@@ -1,8 +1,8 @@
 import type { TradeCategory } from '@/types/api'
 
 /**
- * 市集列表排序（闲置 + 跑腿同五档，market-feed-uv 票 04）：热度按浏览 UV 数降序、最新 / 最早按进入
- * 可见轮的时刻、价格升降按售价 / 悬赏。后端五档全走索引序扫描。chips 文案与图标是市集页自己的事，
+ * 市集列表排序（闲置五档，market-feed-uv 票 04）：热度按浏览 UV 数降序、最新 / 最早按进入
+ * 可见轮的时刻、价格升降按售价。后端五档全走索引序扫描。chips 文案与图标是市集页自己的事，
  * 见 `views/MarketView.vue` 的 MARKET_SORTS
  */
 export type SortOrder = 'time' | 'time_asc' | 'hot' | 'price_asc' | 'price_desc'

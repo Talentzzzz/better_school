@@ -1,7 +1,6 @@
 package com.betterschool.domain.chat.adapter.port;
 
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
-import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
 import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
 
 /**
@@ -16,7 +15,4 @@ public interface ICardRefQueryPort {
 
     /** 商品状态；不存在返回 null（业务 id 是 UUID 字符串） */
     ProductStatusVO findProductStatus(String productId);
-
-    /** 跑腿订单状态；不存在返回 null（业务 id 是 UUID 字符串） */
-    ErrandStatusVO findErrandStatus(String errandId);
 }

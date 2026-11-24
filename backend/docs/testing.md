@@ -142,5 +142,4 @@ mvn -o test -Dtest=InventoryMergeDeliveryLatencyTest -Dsurefire.failIfNoSpecifie
 | `bs-app/src/test/java/com/betterschool/integration/community/PostCommentBaselineIntegrationTest.java` | 评论区现状基线（发布/列表/删除） |
 | `bs-app/src/test/java/com/betterschool/integration/community/AnonymousRemovalIntegrationTest.java` | 匿名移除固化（v2 票 02）：旧客户端字段忽略、全实名 |
 | `bs-app/src/test/java/com/betterschool/integration/ws/WsIntegrationTest.java` | WS 全链路行为测试先例（chat 票 07）：真客户端 + 直调消费者 + 注入时钟 |
-| `bs-app/src/test/java/com/betterschool/integration/errand/ErrandFullChainIntegrationTest.java` | 跑腿全链路先例：支付 → 消费者通知 → 裁决 → 解冻退款 + 订单事件流水断言 |
 | `bs-app/src/test/resources/application-test.yml` | 测试 profile：只写覆盖项与日志降噪 |

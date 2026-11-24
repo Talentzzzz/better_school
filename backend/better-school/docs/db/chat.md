@@ -10,7 +10,7 @@
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|物理主键：纯内部键，永不对外、永不再与业务键同值|
 |room_id|varchar(36)|UNIQUE(`uk_room_id`), NOT NULL|会话业务 ID（对外唯一标识，UUID 字符串）：应用层 insert 前生成（`UUID.randomUUID()`）、随行一次写入；user_room/room_member/message/timeline 引用的都是它|
-|source|varchar(20)|NULL|会话来源（首次由市集「私信联系」入口建会话时写入、**首来源钉死不覆盖**；首页/主页入口建的为 NULL）：ERRAND/PRODUCT|
+|source|varchar(20)|NULL|会话来源（首次由市集「私信联系」入口建会话时写入、**首来源钉死不覆盖**；首页/主页入口建的为 NULL）：PRODUCT|
 |creator_id|varchar(36)|NULL|会话创建人 user_id，首建落定不覆盖（对家角色标签的相对视角锚点；`source` 为 NULL 时也为 NULL）|
 |last_seq|bigint|NOT NULL, DEFAULT 0|消息序号水位（取号器）：发消息事务内 `UPDATE last_seq=last_seq+1` 原子取号，回滚无空洞|
 |state|varchar(20)|NOT NULL, DEFAULT 'ACTIVE'|与取号器同行：一把行锁完成取号+终态判定；当前恒 ACTIVE（SEALED 已随票 04 下线不再产生，列随口径保留）|
@@ -28,7 +28,7 @@
 - `id` 与 `room_id` 不是同一口径：所有读/改按 `room_id`，`id` 是纯内部键（uuid-biz-id 起两者永不同值）
 - `last_seq` 是取号器，禁用自增 `id` 充当消息序号；取号必须与消息/时间线写入同事务
 - 未读数不落库 = `room.last_seq − user_room.read_seq`（真源与会话真相同行，服务端多一次查询现算）
-- `source` 只写一次（`user_pair_room.uk_pair` 命中即原样返回既有 room）：同一对人先聊闲置又聊跑腿仍是同一条会话、同一个标签
+- `source` 只写一次（`user_pair_room.uk_pair` 命中即原样返回既有 room）：同一对人仍是同一条会话、同一个标签
 - `source` + `creator_id` 是市集消息页的筛子与角色标签来源；对家角色（跑手/卖家/买家）**按请求者现算不落库**——同一会话两侧各自看到自己的对家
 
 # user_pair_room（用户对 → 1v1 会话映射，查重与反查专用）
@@ -106,8 +106,8 @@
 |msg_type|varchar(20)|NOT NULL, DEFAULT 'TEXT'|TEXT/IMAGE/CARD/SYSTEM 四类定死（SYSTEM=系统通知卡片，仅系统助手账号可发，用户不可回复）|
 |content|varchar(1024)|NULL|载荷按类型分：TEXT=裸文本（上限 500 由代码常量收敛，列宽留余量）；IMAGE=JSON{url,width,height}；CARD=恒空；SYSTEM=JSON{notificationId,title,content,refType?,refId?}（通知 CHAT 通道投递载荷）|
 |client_msg_id|varchar(36)|NULL|客户端幂等键（UUID，重发复用同键），`uk_room_client` 第二列|
-|ref_type|varchar(20)|NULL|CARD 引用类型 PRODUCT/POST/ERRAND（仅 CARD 非空）|
-|ref_id|varchar(36)|NULL|CARD 引用对象业务 ID（POST/PRODUCT/ERRAND 均为 UUID 字符串；渲染实时查，失效显示「内容已失效」）|
+|ref_type|varchar(20)|NULL|CARD 引用类型 PRODUCT/POST（仅 CARD 非空）|
+|ref_id|varchar(36)|NULL|CARD 引用对象业务 ID（POST/PRODUCT 均为 UUID 字符串；渲染实时查，失效显示「内容已失效」）|
 |state|varchar(20)|NOT NULL, DEFAULT 'NORMAL'|NORMAL/RECALLED：撤回占 seq 不回退、计入未读，`content` 库内保留取证、读路径脱敏为「已撤回」空壳|
 |recalled_at|datetime|NULL|撤回时间|
 |recalled_by|varchar(20)|NULL|USER=发送者限时窗口内自撤|
@@ -123,7 +123,7 @@
 ## 注意
 - 撤回条件 UPDATE 带 `state='NORMAL'` 守卫：用户自撤与强制撤回并发先到先得，已撤回行不被覆盖
 - 发消息事务顺序：insert 前生成 `msg_id`（`UUID.randomUUID()`）→ 插 message（业务键随行一次写入）→ timeline 扇出引用该 `msg_id`
-- **预览渲染规则归属本表**：会话列表预览不落任何副本（user_room 只有排序键 `last_msg_time`），读时按 `(room_id, room.last_seq)` 点查本表最新一条、由 `RoomPreviewRenderer` 单点渲染——message 是预览唯一真相，撤回即时反映、永不漂移。渲染规则：`RECALLED`→[已撤回]、`IMAGE`→[图片]、`CARD`→按 `ref_type` 出 [商品]/[帖子]/[跑腿卡片]（不查标题）、`TEXT`→原文截 200
+- **预览渲染规则归属本表**：会话列表预览不落任何副本（user_room 只有排序键 `last_msg_time`），读时按 `(room_id, room.last_seq)` 点查本表最新一条、由 `RoomPreviewRenderer` 单点渲染——message 是预览唯一真相，撤回即时反映、永不漂移。渲染规则：`RECALLED`→[已撤回]、`IMAGE`→[图片]、`CARD`→按 `ref_type` 出 [商品]/[帖子]（不查标题）、`TEXT`→原文截 200
 
 # timeline（时间线，不可变瘦收件箱）
 
@@ -181,14 +181,14 @@
 |id|bigint|PK, AUTO_INCREMENT|物理自增，**禁止当已读水位**（分配序 ≠ 提交序，并发跳读）|
 |notification_id|varchar(36)|NOT NULL, UNIQUE `uk_notification_id`|业务 ID（对外唯一标识，UUID 字符串）：应用层 insert 前生成（`UUID.randomUUID()`）、随行一次写入（uuid-biz-id 票 06 起，不再有 bindBizId 回写）|
 |user_id|varchar(36)|NOT NULL|接收用户|
-|scope|varchar(20)|NOT NULL|收件范围：MARKET_ERRAND/MARKET_PRODUCT(预留)/BOTTOM_SYSTEM/INTERACTION_LIKE/INTERACTION_COMMENT；**生产点写入时显式标注，禁止从 (type,refType) 推导**（如 ORDER_EVENT×ERRAND 发用户=MARKET_ERRAND、公告发 BOTTOM_SYSTEM）|
+|scope|varchar(20)|NOT NULL|收件范围：MARKET_PRODUCT(预留)/BOTTOM_SYSTEM/INTERACTION_LIKE/INTERACTION_COMMENT；**生产点写入时显式标注，禁止从 (type,refType) 推导**（如发用户与公告发 BOTTOM_SYSTEM）|
 |seq|bigint|NOT NULL|per-(user,scope) 收件序号（notification_seq 写入事务内取号）|
 |sender_id|varchar(36)|NULL|触发者（互动通知：谁赞/评了你；广播类为空）|
 |type|varchar(20)|NOT NULL|ANNOUNCEMENT/ORDER_EVENT/CREDIT_CHANGE/POST_COMMENTED/COMMENT_REPLIED/POST_LIKED/COMMENT_LIKED/LOTTERY_WON/POINTS_CHANGED|
 |title|varchar(100)|NOT NULL|标题|
 |content|varchar(500)|NOT NULL|内容|
 |ref_type|varchar(20)|NULL|关联类型；营销三类固定 MARKETING（营销票 09）|
-|ref_id|varchar(36)|NULL|关联业务 ID（POST/COMMENT/PRODUCT/ERRAND 均为 UUID 字符串，票 03/05）|
+|ref_id|varchar(36)|NULL|关联业务 ID（POST/COMMENT/PRODUCT 均为 UUID 字符串，票 03/05）|
 |broadcast_msg_id|varchar(64)|NULL|公告广播幂等键|
 |dedup_key|varchar(100)|NULL, UNIQUE `uk_dedup`|互动/系统通知幂等键（同一触发者对同一目标只发一条，取消不撤回）|
 |create_time|datetime|NOT NULL|创建时间|
@@ -199,7 +199,7 @@
 - `uk_dedup (dedup_key)`、`idx_broadcast (broadcast_msg_id)`：两类幂等锚点
 
 ## 注意
-- 归属映射：跑腿订单动态→MARKET_ERRAND；公告/信用分变动→BOTTOM_SYSTEM；赞→INTERACTION_LIKE；评论/回复→INTERACTION_COMMENT
+- 归属映射：公告/信用分变动→BOTTOM_SYSTEM；赞→INTERACTION_LIKE；评论/回复→INTERACTION_COMMENT
 - 营销两类（票 09 后存量，生产方=抽奖/积分服务，事件订阅投递，消费组 bs-monolith-<topic>-group）：LOTTERY_WON（bs-lottery-drawn，ref_id=抽奖记录 id，谢谢参与不发事件）/ POINTS_CHANGED（bs-points-changed，ref_id=事件 refId）→ 全部 BOTTOM_SYSTEM、ref_type=MARKETING
 - 营销 dedup_key 形状：`MARKETING:DRAWN:<recordId>` / `MARKETING:POINTS:<reasonType>:<refId>`（事件体无 txId，reasonType+refId 唯一标识一笔变动，同 points_bucket uk 口径）
 - dedup 幂等先查后插（不白耗 seq 号段），并发窗口由 uk_dedup + INSERT IGNORE 兜底——极端并发重复会留 seq 空号，推水位取计数器值一并越过

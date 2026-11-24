@@ -11,7 +11,7 @@ import org.apache.rocketmq.spring.core.RocketMQListener;
 import org.springframework.stereotype.Component;
 
 /**
- * 通知 CHAT 通道消费方（outbox → MQ → chat 发送管线，spec §2）：把 ORDER_EVENT/CREDIT_CHANGE
+ * 通知 CHAT 通道消费方（outbox → MQ → chat 发送管线，spec §2）：把 CREDIT_CHANGE
  * 等留档类通知落进用户与系统助手的 1v1 会话。投递失败向上抛由 broker 重试——
  * 幂等由 chat uk_room_client（client_msg_id = NOTIFY:<notificationId>）收敛，重试不重复落
  */

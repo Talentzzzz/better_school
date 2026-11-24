@@ -12,7 +12,6 @@ import com.betterschool.domain.chat.model.valobj.DirectRoomPairVO;
 import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
 import com.betterschool.domain.chat.model.valobj.RoomSourceEnum;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
-import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
 import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
 import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCode;
@@ -215,15 +214,6 @@ public class ChatSendServiceImpl implements IChatSendService {
                     throw new BusinessException(ResponseCode.NOT_FOUND, "卡片对象不存在");
                 }
                 if (status == ProductStatusVO.DELETED) {
-                    throw new BusinessException(ResponseCode.BUSINESS_ERROR, "内容已失效");
-                }
-            }
-            case ERRAND -> {
-                ErrandStatusVO status = cardRefQueryPort.findErrandStatus(refId);
-                if (status == null) {
-                    throw new BusinessException(ResponseCode.NOT_FOUND, "卡片对象不存在");
-                }
-                if (status == ErrandStatusVO.CANCELLED) {
                     throw new BusinessException(ResponseCode.BUSINESS_ERROR, "内容已失效");
                 }
             }

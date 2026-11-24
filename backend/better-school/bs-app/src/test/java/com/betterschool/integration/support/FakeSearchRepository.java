@@ -1,7 +1,6 @@
 package com.betterschool.integration.support;
 
 import com.betterschool.domain.search.adapter.repository.ISearchRepository;
-import com.betterschool.domain.search.model.valobj.ErrandSearchDocVO;
 import com.betterschool.domain.search.model.valobj.PostSearchDocVO;
 import com.betterschool.domain.search.model.valobj.ProductSearchDocVO;
 import com.betterschool.domain.search.model.valobj.SearchPageVO;
@@ -30,7 +29,6 @@ public class FakeSearchRepository implements ISearchRepository {
     private static final List<String> CLEARED_INDEXES = Collections.synchronizedList(new ArrayList<>());
     private static final Set<String> POST_IDS = Collections.synchronizedSet(new LinkedHashSet<>());
     private static final Set<String> PRODUCT_IDS = Collections.synchronizedSet(new LinkedHashSet<>());
-    private static final Set<String> ERRAND_IDS = Collections.synchronizedSet(new LinkedHashSet<>());
     private static final Set<String> USER_IDS = Collections.synchronizedSet(new LinkedHashSet<>());
 
     @Override
@@ -54,11 +52,6 @@ public class FakeSearchRepository implements ISearchRepository {
     }
 
     @Override
-    public SearchPageVO<String> searchErrands(String keyword, int page, int pageSize) {
-        return emptyPage();
-    }
-
-    @Override
     public SearchPageVO<String> searchUsers(String keyword, int page, int pageSize) {
         return emptyPage();
     }
@@ -71,11 +64,6 @@ public class FakeSearchRepository implements ISearchRepository {
     @Override
     public void bulkUpsertProductDocs(List<ProductSearchDocVO> docs) {
         docs.forEach(doc -> PRODUCT_IDS.add(doc.getProductId()));
-    }
-
-    @Override
-    public void bulkUpsertErrandDocs(List<ErrandSearchDocVO> docs) {
-        docs.forEach(doc -> ERRAND_IDS.add(doc.getOrderId()));
     }
 
     @Override
@@ -94,11 +82,6 @@ public class FakeSearchRepository implements ISearchRepository {
     }
 
     @Override
-    public void deleteErrandDoc(String orderId) {
-        ERRAND_IDS.remove(orderId);
-    }
-
-    @Override
     public void deleteUserDoc(String userId) {
         USER_IDS.remove(userId);
     }
@@ -107,11 +90,10 @@ public class FakeSearchRepository implements ISearchRepository {
         CLEARED_INDEXES.clear();
         POST_IDS.clear();
         PRODUCT_IDS.clear();
-        ERRAND_IDS.clear();
         USER_IDS.clear();
     }
 
-    /** 重建清索引的顺序：post → product → errand → user */
+    /** 重建清索引的顺序：post → product → user */
     public static List<String> clearedIndexes() {
         return List.copyOf(CLEARED_INDEXES);
     }
@@ -122,10 +104,6 @@ public class FakeSearchRepository implements ISearchRepository {
 
     public static Set<String> productIds() {
         return Set.copyOf(PRODUCT_IDS);
-    }
-
-    public static Set<String> errandIds() {
-        return Set.copyOf(ERRAND_IDS);
     }
 
     public static Set<String> userIds() {

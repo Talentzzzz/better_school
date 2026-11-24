@@ -3,12 +3,10 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listLikedPosts, listMyPosts, listCommentedPosts } from '@/api/community'
 import { listMyProducts } from '@/api/trade'
-import { listMyErrandOrders } from '@/api/errand'
-import { searchPosts, searchProducts, searchErrands, searchUsers } from '@/api/search'
-import type { ErrandOrder, PostSummary, Product, UserSummary } from '@/types/api'
+import { searchPosts, searchProducts, searchUsers } from '@/api/search'
+import type { PostSummary, Product, UserSummary } from '@/types/api'
 import PostCard from '@/components/PostCard.vue'
 import ProductCard from '@/components/ProductCard.vue'
-import ErrandCard from '@/components/ErrandCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import AppAvatar from '@/components/AppAvatar.vue'
 import { toast } from '@/components/Toast'
@@ -16,9 +14,9 @@ import { toast } from '@/components/Toast'
 const route = useRoute()
 const router = useRouter()
 
-type Scope = 'post' | 'market' | 'posts' | 'liked' | 'comments' | 'errands' | 'products' | 'users'
+type Scope = 'post' | 'market' | 'posts' | 'liked' | 'comments' | 'products' | 'users'
 
-const SCOPES: Scope[] = ['post', 'market', 'posts', 'liked', 'comments', 'errands', 'products', 'users']
+const SCOPES: Scope[] = ['post', 'market', 'posts', 'liked', 'comments', 'products', 'users']
 
 const scope = computed<Scope>(() => {
   const s = String(route.query.scope || '')
@@ -27,11 +25,10 @@ const scope = computed<Scope>(() => {
 
 const PLACEHOLDER: Record<Scope, string> = {
   post: '搜索帖子',
-  market: '搜索跑腿 / 闲置',
+  market: '搜索闲置',
   posts: '搜索我发布的笔记',
   liked: '搜索我赞过的笔记',
   comments: '搜索我评论的笔记',
-  errands: '搜索我的跑腿',
   products: '搜索我发布的闲置',
   users: '搜索用户'
 }
@@ -42,15 +39,12 @@ const searched = ref(false)
 
 const posts = ref<PostSummary[]>([])
 const products = ref<Product[]>([])
-const errands = ref<ErrandOrder[]>([])
 const users = ref<UserSummary[]>([])
-const resultTab = ref<'post' | 'product' | 'errand'>('post')
 
 const emptyText = computed(() => {
   const s = scope.value
   if (s === 'post') return '没有匹配的帖子'
   if (s === 'posts') return '没有找到相关的笔记'
-  if (s === 'errands') return '没有找到相关的跑腿单'
   if (s === 'liked') return '暂无赞过的笔记'
   if (s === 'comments') return '暂无评论过的笔记'
   if (s === 'products') return '暂无我发布的闲置'
@@ -61,7 +55,6 @@ const emptyText = computed(() => {
 const hotWords = [
   '失物招领',
   '考研资料',
-  '代取快递',
   '校园卡',
   '二手教材',
   '自行车',
@@ -90,43 +83,24 @@ async function doSearch(word?: string) {
     if (s === 'post') {
       const res = await searchPosts(k, 1, 20)
       posts.value = res.list
-      resultTab.value = 'post'
     } else if (s === 'market') {
-      const [pd, er] = await Promise.all([
-        searchProducts(k, 1, 20),
-        searchErrands(k, 1, 20)
-      ])
-      products.value = pd.list
-      errands.value = er.list
-      resultTab.value = errands.value.length ? 'errand' : products.value.length ? 'product' : 'errand'
+      const res = await searchProducts(k, 1, 20)
+      products.value = res.list
     } else if (s === 'users') {
       const res = await searchUsers(k, 1, 20)
       users.value = res.list
     } else if (s === 'posts') {
       const res = await listMyPosts(1, 50)
       posts.value = res.list.filter((x) => match(x.title, x.content || ''))
-      resultTab.value = 'post'
     } else if (s === 'liked') {
       const res = await listLikedPosts(1, 50)
       posts.value = res.list.filter((x) => match(x.title, x.content || ''))
-      resultTab.value = 'post'
     } else if (s === 'comments') {
       const res = await listCommentedPosts(1, 50)
       posts.value = res.list.filter((x) => match(x.title, x.content || ''))
-      resultTab.value = 'post'
     } else if (s === 'products') {
       const res = await listMyProducts(1, 50)
       products.value = res.list.filter((x) => match(x.title, x.description))
-      resultTab.value = 'product'
-    } else if (s === 'errands') {
-      const [pub, take] = await Promise.all([
-        listMyErrandOrders('publish', { pageSize: 50 }),
-        listMyErrandOrders('take', { pageSize: 50 })
-      ])
-      const seen = new Map<number, ErrandOrder>()
-      for (const o of [...pub.list, ...take.list]) seen.set(o.orderId, o)
-      errands.value = [...seen.values()].filter((x) => match(x.title ?? x.description, x.description + x.pickupLocation + x.deliveryLocation))
-      resultTab.value = 'errand'
     }
   } finally {
     searching.value = false
@@ -177,31 +151,15 @@ async function doSearch(word?: string) {
     <template v-else>
       <div v-if="searching" class="searching">搜索中…</div>
 
-      <!-- 市集入口：跑腿 / 闲置 两类服务端结果 -->
+      <!-- 市集入口：闲置服务端结果 -->
       <template v-else-if="scope === 'market'">
-        <div class="result-tabs">
-          <button class="result-tab" :class="{ active: resultTab === 'errand' }" @click="resultTab = 'errand'">
-            跑腿 {{ errands.length }}
-          </button>
-          <button class="result-tab" :class="{ active: resultTab === 'product' }" @click="resultTab = 'product'">
-            闲置 {{ products.length }}
-          </button>
-        </div>
-
-        <div v-if="resultTab === 'errand'" class="worm">
-          <div v-if="errands.length" class="waterfall">
-            <ErrandCard v-for="o in errands" :key="o.orderId" :order="o" />
-          </div>
-          <EmptyState v-else text="没有匹配的跑腿单" />
-          <button v-if="errands.length" class="btn-text more" @click="router.push('/market')">查看更多跑腿 ›</button>
-        </div>
-        <div v-else class="worm">
-          <div v-if="products.length" class="waterfall">
+        <div v-if="products.length" class="worm">
+          <div class="waterfall">
             <ProductCard v-for="p in products" :key="p.productId" :product="p" />
           </div>
-          <EmptyState v-else text="没有匹配的闲置" />
-          <button v-if="products.length" class="btn-text more" @click="router.push('/market')">查看更多闲置 ›</button>
+          <button class="btn-text more" @click="router.push('/market')">查看更多闲置 ›</button>
         </div>
+        <EmptyState v-else text="没有匹配的闲置" />
       </template>
 
       <!-- 首页-帖子：服务端搜索结果 -->
@@ -237,20 +195,6 @@ async function doSearch(word?: string) {
               <ProductCard v-for="p in products" :key="p.productId" :product="p" />
             </div>
             <button class="btn-text more" @click="router.push('/profile')">查看更多闲置 ›</button>
-          </div>
-        </div>
-        <EmptyState v-else :text="emptyText" />
-      </template>
-
-      <!-- 我的-跑腿：客户端在"我的跑腿单"前 50 条中筛选 -->
-      <template v-else-if="scope === 'errands'">
-        <div v-if="errands.length">
-          <div class="search-hint">已在前 50 条中匹配到结果，更多内容请点击「查看更多」</div>
-          <div class="worm">
-            <div class="waterfall">
-              <ErrandCard v-for="o in errands" :key="o.orderId" :order="o" />
-            </div>
-            <button class="btn-text more" @click="router.push('/me/orders?tab=errand')">查看更多我的跑腿 ›</button>
           </div>
         </div>
         <EmptyState v-else :text="emptyText" />

@@ -6,8 +6,8 @@ package com.betterschool.infrastructure.adapter.repository;
  * <p>它是仓储适配层的公共契约（三个仓储的计数写入共用），不属于合并引擎包——引擎在
  * {@code infrastructure.merge}，只认识泛型件与 {@code MergeStrategy}，不认识这里。
  *
- * <p>六个动作打的行不一样（{@code spec §1.1}）：前三个与关系行同事务、必须精确；
- * 后三个是 UV 口径（明细行 + 加速列）。
+ * <p>五个动作打的行不一样（{@code spec §1.1}）：前三个与关系行同事务、必须精确；
+ * 后两个是 UV 口径（明细行 + 加速列）。
  */
 public enum CountAction {
 
@@ -24,8 +24,5 @@ public enum CountAction {
     POST_VIEW,
 
     /** 商品浏览：UV 明细 {@code product_view_history} + 加速列 {@code product_view_count}（一组一个事务三步，与帖子同构；market-feed-uv 票 02），允许丢 */
-    PRODUCT_VIEW,
-
-    /** 跑腿浏览：UV 明细 {@code errand_view_history} + 加速列 {@code errand_view_count}（与商品浏览同构），允许丢 */
-    ERRAND_VIEW
+    PRODUCT_VIEW
 }

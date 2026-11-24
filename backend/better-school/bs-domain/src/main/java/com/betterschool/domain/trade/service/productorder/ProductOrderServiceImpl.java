@@ -130,7 +130,7 @@ public class ProductOrderServiceImpl implements IProductOrderService {
         }
         // 待支付未冻结无需退款；已支付需解冻退回
         boolean needRefund = orderEntity.getStatus() == ProductOrderStatusVO.PAID;
-        // 翻转段先行（两段式 ADR-0016，与跑腿取消同型）：取消翻转（含台账回补 + 搜索同步）
+        // 翻转段先行（两段式 ADR-0016）：取消翻转（含台账回补 + 搜索同步）
         // 单仓储事务，未命中抛异常——资金段尚未执行，零残留；翻转与 case 层解冻之间的宕机孤儿
         // （订单已取消但货款悬置冻结，长款中间态）由 productFundOrphanScan 扫描收敛
         if (!tradeRepository.cancelOrderWithSearchSync(orderId, buyerId)) {

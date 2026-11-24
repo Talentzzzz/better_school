@@ -23,7 +23,7 @@ public class ChatRoomListItemResponseDTO {
     /** 对家角色 TAKER/SELLER/BUYER（仅 DIRECT 且会话来源非空时非空）：会话行角色小标签 */
     private String peerRole;
 
-    /** 会话来源 ERRAND/PRODUCT（由市集「私信联系」入口首建时非空） */
+    /** 会话来源 PRODUCT（由市集「联系卖家」入口首建时非空） */
     private String source;
 
     private long unread;

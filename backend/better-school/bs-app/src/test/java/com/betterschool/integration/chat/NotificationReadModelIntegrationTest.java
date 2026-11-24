@@ -32,10 +32,10 @@ class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
     void 写入取号按scope独立递增未读数为计数器减水位() {
         var user = registerAndLogin("13900001001", "收件人");
 
-        deliver(event(user.userId(), NotificationScopeVO.MARKET_ERRAND,
-                NotificationTypeVO.ORDER_EVENT, "订单动态", "您的跑腿订单已支付成功", "ERRAND", "1", "D1"));
-        deliver(event(user.userId(), NotificationScopeVO.MARKET_ERRAND,
-                NotificationTypeVO.ORDER_EVENT, "订单已取消", "超时未接单已取消", "ERRAND", "1", "D2"));
+        deliver(event(user.userId(), NotificationScopeVO.MARKET_PRODUCT,
+                NotificationTypeVO.CREDIT_CHANGE, "订单动态", "您的商品订单已支付成功", "PRODUCT", "1", "D1"));
+        deliver(event(user.userId(), NotificationScopeVO.MARKET_PRODUCT,
+                NotificationTypeVO.CREDIT_CHANGE, "订单已取消", "超时未接单已取消", "PRODUCT", "1", "D2"));
         deliver(event(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
                 NotificationTypeVO.ANNOUNCEMENT, "平台公告", "系统维护通知", "BROADCAST", null, null));
 
@@ -45,18 +45,18 @@ class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT seq FROM notification WHERE dedup_key = 'D2'", Long.class)).isEqualTo(2L);
 
-        assertThat(notificationService.unreadCount(user.userId(), NotificationScopeVO.MARKET_ERRAND))
+        assertThat(notificationService.unreadCount(user.userId(), NotificationScopeVO.MARKET_PRODUCT))
                 .as("未读数 = 计数器(2) − 水位(0)").isEqualTo(2L);
         assertThat(notificationService.unreadCount(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM)).isEqualTo(1L);
         assertThat(notificationService.unreadCount(user.userId(), NotificationScopeVO.INTERACTION_LIKE))
                 .as("从无通知的范围未读为 0").isZero();
 
         List<NotificationEntity> marketList = notificationService.listNotifications(
-                user.userId(), NotificationScopeVO.MARKET_ERRAND, 1, 10);
+                user.userId(), NotificationScopeVO.MARKET_PRODUCT, 1, 10);
         assertThat(marketList).hasSize(2)
                 .as("scope 过滤：系统范围通知不串进市集列表")
                 .allSatisfy(n -> {
-                    assertThat(n.getScope()).isEqualTo(NotificationScopeVO.MARKET_ERRAND);
+                    assertThat(n.getScope()).isEqualTo(NotificationScopeVO.MARKET_PRODUCT);
                     assertThat(n.isRead()).as("水位 0 ⇒ 全部未读").isFalse();
                 });
         assertThat(marketList).as("seq 降序：最新在前")
@@ -66,12 +66,12 @@ class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
     @Test
     void dedup幂等命中不耗号未读数不虚增() {
         var user = registerAndLogin("13900001002", "收件人");
-        String dedupKey = "ORDER_EVENT:ERRAND_PAY:1:" + user.userId();
+        String dedupKey = "CREDIT_CHANGE:ADMIN:1:" + user.userId();
 
         deliver(event(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
-                NotificationTypeVO.ORDER_EVENT, "订单动态", "订单支付成功", "ERRAND", "1", dedupKey));
+                NotificationTypeVO.CREDIT_CHANGE, "订单动态", "订单支付成功", "PRODUCT", "1", dedupKey));
         deliver(event(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
-                NotificationTypeVO.ORDER_EVENT, "订单动态", "订单支付成功", "ERRAND", "1", dedupKey));
+                NotificationTypeVO.CREDIT_CHANGE, "订单动态", "订单支付成功", "PRODUCT", "1", dedupKey));
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM notification WHERE user_id = ?", Long.class, user.userId()))
@@ -87,33 +87,33 @@ class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
     void 推水位按scope独立新通知仍算未读() {
         var user = registerAndLogin("13900001003", "收件人");
 
-        deliver(event(user.userId(), NotificationScopeVO.MARKET_ERRAND,
-                NotificationTypeVO.ORDER_EVENT, "订单动态", "第一批", "ERRAND", "1", "E1"));
+        deliver(event(user.userId(), NotificationScopeVO.MARKET_PRODUCT,
+                NotificationTypeVO.CREDIT_CHANGE, "订单动态", "第一批", "PRODUCT", "1", "E1"));
         deliver(event(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM,
                 NotificationTypeVO.CREDIT_CHANGE, "信用分变动", "+2", null, null, "E2"));
 
-        notificationService.markRead(user.userId(), NotificationScopeVO.MARKET_ERRAND);
+        notificationService.markRead(user.userId(), NotificationScopeVO.MARKET_PRODUCT);
 
-        assertThat(notificationService.unreadCount(user.userId(), NotificationScopeVO.MARKET_ERRAND))
+        assertThat(notificationService.unreadCount(user.userId(), NotificationScopeVO.MARKET_PRODUCT))
                 .as("市集范围已清").isZero();
         assertThat(notificationService.unreadCount(user.userId(), NotificationScopeVO.BOTTOM_SYSTEM))
                 .as("系统范围不受误清").isEqualTo(1L);
 
         // 已读后再来新通知：旧行 read=true、新行 read=false，未读数回到 1
-        deliver(event(user.userId(), NotificationScopeVO.MARKET_ERRAND,
-                NotificationTypeVO.ORDER_EVENT, "订单已取消", "第二批", "ERRAND", "1", "E3"));
+        deliver(event(user.userId(), NotificationScopeVO.MARKET_PRODUCT,
+                NotificationTypeVO.CREDIT_CHANGE, "订单已取消", "第二批", "PRODUCT", "1", "E3"));
         List<NotificationEntity> marketList = notificationService.listNotifications(
-                user.userId(), NotificationScopeVO.MARKET_ERRAND, 1, 10);
+                user.userId(), NotificationScopeVO.MARKET_PRODUCT, 1, 10);
         assertThat(marketList).hasSize(2);
         assertThat(marketList.get(0)).as("新通知（seq 2）仍未读")
                 .matches(n -> n.getContent().equals("第二批") && !n.isRead());
         assertThat(marketList.get(1)).as("旧通知（seq 1）在水位下已读")
                 .matches(n -> n.getContent().equals("第一批") && n.isRead());
-        assertThat(notificationService.unreadCount(user.userId(), NotificationScopeVO.MARKET_ERRAND)).isEqualTo(1L);
+        assertThat(notificationService.unreadCount(user.userId(), NotificationScopeVO.MARKET_PRODUCT)).isEqualTo(1L);
 
         // 水位只前进：重复 markRead 不回退，再次已读清零
-        notificationService.markRead(user.userId(), NotificationScopeVO.MARKET_ERRAND);
-        assertThat(notificationService.unreadCount(user.userId(), NotificationScopeVO.MARKET_ERRAND)).isZero();
+        notificationService.markRead(user.userId(), NotificationScopeVO.MARKET_PRODUCT);
+        assertThat(notificationService.unreadCount(user.userId(), NotificationScopeVO.MARKET_PRODUCT)).isZero();
     }
 
     @Test

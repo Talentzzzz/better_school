@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>票 05 起每日信用任务（{@code DailyCreditJob} 及其 {@code user_daily_active} 事实源）随 sql.md 下线，
  * 变体 B 的「游标拉批到空」改由搜索索引全量重建承担——它同样是「游标推进到空批才是终止条件」的形状。
- * 跑腿超时兜底扫描已随「超时场景统一由超时中心回调收口」下线，变体 A 改由商品到期下架扫描承担。
+ * 变体 A 由商品到期下架扫描承担。
  */
 @DisplayName("调度扇出 seam：扇出项跑在虚拟线程上")
 class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
@@ -58,10 +58,9 @@ class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
     @DisplayName("变体 B 游标拉批到空：搜索索引全量重建的扇出项为虚拟线程")
     void variantBFanoutItemsRunOnVirtualThreads() {
         Session author = registerAndLogin("13900001102", "重建作者");
-        // 四类索引各摆一行可进索引的数据：重建的每一类都要有扇出项，断言才盯得住线程模型
+        // 三类索引各摆一行可进索引的数据：重建的每一类都要有扇出项，断言才盯得住线程模型
         publishPost(author, "扇出重建帖");
         insertOnSaleProduct(author.userId());
-        insertPublishedErrand(author.userId());
 
         VtJobFanoutProbe.reset();
         searchIndexRebuildJob.rebuild(null);
@@ -89,14 +88,6 @@ class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
     private void insertOnSaleProduct(String userId) {
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, category, state, "
                 + "create_time, update_time) VALUES (?, ?, '扇出商品', 'BOOKS', 'ON_SALE', NOW(), NOW())",
-                UUID.randomUUID().toString(), userId);
-    }
-
-    /** 直插一行已发布跑腿单（口径同上） */
-    private void insertPublishedErrand(String userId) {
-        jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
-                + "pickup_location, delivery_location, reward, state, create_time, update_time) "
-                + "VALUES (?, ?, 'BUY', '扇出单', '宿舍楼', '食堂', 5.00, 'PUBLISHED', NOW(), NOW())",
                 UUID.randomUUID().toString(), userId);
     }
 }

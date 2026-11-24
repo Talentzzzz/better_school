@@ -18,7 +18,6 @@ public final class RoomPreviewRenderer {
     public static final String PREVIEW_IMAGE = "[图片]";
     public static final String PREVIEW_PRODUCT = "[商品]";
     public static final String PREVIEW_POST = "[帖子]";
-    public static final String PREVIEW_ERRAND = "[跑腿卡片]";
     public static final String PREVIEW_SYSTEM = "[系统通知]";
 
     private RoomPreviewRenderer() {
@@ -55,7 +54,6 @@ public final class RoomPreviewRenderer {
         return switch (refType) {
             case PRODUCT -> PREVIEW_PRODUCT;
             case POST -> PREVIEW_POST;
-            case ERRAND -> PREVIEW_ERRAND;
         };
     }
 

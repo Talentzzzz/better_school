@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getErrandOrder } from '@/api/errand'
 import { listMembers, listMessages, recallMessage, sendMessage } from '@/api/chat'
 import { getProduct } from '@/api/trade'
 import { getPost } from '@/api/community'
@@ -287,16 +286,14 @@ async function doRecall() {
 
 // ---------- CARD 实时查对象 + 失效态 ----------
 
-const CARD_LABELS: Record<string, string> = { PRODUCT: '商品', POST: '帖子', ERRAND: '跑腿' }
+const CARD_LABELS: Record<string, string> = { PRODUCT: '商品', POST: '帖子' }
 const CARD_FETCHERS: Record<string, (id: number) => Promise<string>> = {
   PRODUCT: (id) => getProduct(id).then((p) => p.title),
-  POST: (id) => getPost(id).then((p) => p.title),
-  ERRAND: (id) => getErrandOrder(id).then((o) => o.title ?? o.description)
+  POST: (id) => getPost(id).then((p) => p.title)
 }
 const CARD_ROUTES: Record<string, (id: number) => string> = {
   PRODUCT: (id) => `/product/${id}`,
-  POST: (id) => `/post/${id}`,
-  ERRAND: (id) => `/errand/${id}`
+  POST: (id) => `/post/${id}`
 }
 
 async function ensureCard(msg: ChatMessage) {
@@ -422,15 +419,6 @@ function systemInfoOf(msg: ChatMessage): SystemPayload | null {
   }
 }
 
-function onSystemClick(msg: ChatMessage) {
-  const info = systemInfoOf(msg)
-  if (!info?.refId) return
-  // refType 与详情路由对齐：ERRAND→跑腿详情（其余类型暂只展示不跳转）
-  if (info.refType === 'ERRAND' && Number.isInteger(Number(info.refId))) {
-    void router.push(`/errand/${info.refId}`)
-  }
-}
-
 /** 系统助手会话判定：会话内出现过 SYSTEM 消息即隐藏输入区（用户不可回复，后端同口径拒绝） */
 const isSystemRoom = computed(() => rows.value.some((row) => row.msg.msgType === 'SYSTEM'))
 
@@ -520,8 +508,6 @@ onUnmounted(() => {
           <div
             v-else-if="row.msg.msgType === 'SYSTEM'"
             class="system-bubble"
-            :class="{ 'system-bubble--link': systemInfoOf(row.msg)?.refId }"
-            @click="onSystemClick(row.msg)"
           >
             <span class="system-tag">系统</span>
             <span class="system-body">

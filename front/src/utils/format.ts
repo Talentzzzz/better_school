@@ -40,15 +40,3 @@ export function formatDateTime(iso: string | null | undefined): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-/** 距截止时刻的剩余时间（跑腿单 deadline 倒计时）：过期返回「已截止」，无值返回空串 */
-export function formatRemaining(iso: string | null | undefined): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  const minutes = Math.floor((d.getTime() - Date.now()) / 60000)
-  if (minutes <= 0) return '已截止'
-  if (minutes < 60) return `剩 ${minutes} 分钟`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `剩 ${hours} 小时`
-  return `剩 ${Math.floor(hours / 24)} 天`
-}

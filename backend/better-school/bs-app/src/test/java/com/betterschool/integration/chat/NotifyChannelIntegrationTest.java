@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <ul>
  *   <li>事件驱动：业务侧 {@code publish} 只写 bs-notify-event outbox（业务事务内一行），
  *       NotifyEventConsumer 消费时统一落 notification 表并按通道写投递 outbox</li>
- *   <li>CHAT 通道（ORDER_EVENT/CREDIT_CHANGE）：消费落库写 bs-notify-chat outbox；再经
+ *   <li>CHAT 通道（CREDIT_CHANGE）：消费落库写 bs-notify-chat outbox；再经
  *       chat 发送管线落系统消息（SYSTEM 类型，client_msg_id = NOTIFY:&lt;notificationId&gt;）；
  *       重复消费按 uk_room_client 收敛同一条</li>
  *   <li>BANNER 通道（互动四类）：消费落库写 bs-notify-push outbox（横幅加速路径）</li>
@@ -47,13 +47,13 @@ class NotifyChannelIntegrationTest extends CommunityApiTestBase {
         notificationService.publish(NotificationEventMessage.builder()
                 .notificationId(UUID.randomUUID().toString())
                 .userId(user.userId())
-                .scope(NotificationScopeVO.MARKET_ERRAND.name())
-                .type(NotificationTypeVO.ORDER_EVENT.name())
-                .title("订单动态")
-                .content("您的跑腿订单已支付成功")
-                .refType("ERRAND")
+                .scope(NotificationScopeVO.MARKET_PRODUCT.name())
+                .type(NotificationTypeVO.CREDIT_CHANGE.name())
+                .title("信用分变动")
+                .content("您的信用分发生变动")
+                .refType("CREDIT")
                 .refId("42")
-                .dedupKey("ORDER_EVENT:ERRAND_PAID:42")
+                .dedupKey("CREDIT_CHANGE:ADMIN:42")
                 .build());
 
         // 业务事务内只写通知事件 outbox，不直落 notification、不直写通道 outbox
@@ -66,7 +66,7 @@ class NotifyChannelIntegrationTest extends CommunityApiTestBase {
         notifyEventConsumer.onMessage(eventPayloads.get(0));
 
         Integer notificationCount = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM notification WHERE user_id = ? AND type = 'ORDER_EVENT'",
+                "SELECT COUNT(*) FROM notification WHERE user_id = ? AND type = 'CREDIT_CHANGE'",
                 Integer.class, user.userId());
         assertThat(notificationCount).as("通知应落库一条").isEqualTo(1);
 
@@ -74,7 +74,7 @@ class NotifyChannelIntegrationTest extends CommunityApiTestBase {
         assertThat(chatPayloads).as("落库成功后应写一条 CHAT 通道投递事件").hasSize(1);
         JsonNode payload = readTree(chatPayloads.get(0));
         assertThat(payload.path("userId").asText()).isEqualTo(user.userId());
-        assertThat(payload.path("type").asText()).isEqualTo("ORDER_EVENT");
+        assertThat(payload.path("type").asText()).isEqualTo("CREDIT_CHANGE");
 
         notifyChatConsumer.onMessage(chatPayloads.get(0));
 
@@ -97,7 +97,7 @@ class NotifyChannelIntegrationTest extends CommunityApiTestBase {
         // 不重复落库、不重复写投递 outbox；chat 侧 uk_room_client 收敛同一条
         notifyEventConsumer.onMessage(eventPayloads.get(0));
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM notification WHERE user_id = ? AND type = 'ORDER_EVENT'",
+                "SELECT COUNT(*) FROM notification WHERE user_id = ? AND type = 'CREDIT_CHANGE'",
                 Integer.class, user.userId())).as("重复消费不重复落库").isEqualTo(1);
         assertThat(outboxPayloads(Constants.NOTIFY_CHAT_TOPIC)).as("重复消费不重复投递").hasSize(1);
         notifyChatConsumer.onMessage(outboxPayloads(Constants.NOTIFY_CHAT_TOPIC).get(0));

@@ -11,7 +11,7 @@ function previewOf(msg: ChatMessage): string {
     case 'IMAGE':
       return '[图片]'
     case 'CARD':
-      return msg.refType === 'PRODUCT' ? '[商品]' : msg.refType === 'POST' ? '[帖子]' : '[跑腿卡片]'
+      return msg.refType === 'PRODUCT' ? '[商品]' : '[帖子]'
     case 'SYSTEM':
       return '[系统通知]'
     default:

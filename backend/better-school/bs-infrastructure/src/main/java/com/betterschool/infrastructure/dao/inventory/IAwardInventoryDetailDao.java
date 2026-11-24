@@ -58,7 +58,7 @@ public interface IAwardInventoryDetailDao {
      * 孤儿预扣候选扫描：预扣行（{@code flow_type = 1} + {@code LOTTERY_DRAW}）且
      * {@code create_time} 早于补偿阈值，其 {@code biz_id}（= 抽奖记录 id）在 {@code draw_record}
      * 无对应行 = 主链路落库从未执行。NOT EXISTS 反查对账判据的另一张域表（只读，先例：
-     * {@code ErrandViewCountMapper} 的 NOT EXISTS 守卫）——已落库的行在 SQL 里排除，
+     * {@code ProductViewCountMapper} 的 NOT EXISTS 守卫）——已落库的行在 SQL 里排除，
      * 扫描窗口不被正常流水淹没。按 id 升序 FIFO。
      */
     List<AwardInventoryDetailPO> listOrphanDrawPrereserveDetails(@Param("before") LocalDateTime before,

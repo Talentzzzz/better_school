@@ -11,8 +11,6 @@ public enum NotificationTypeVO {
 
     /** 平台公告（广播落库，无实时投递通道） */
     ANNOUNCEMENT("平台公告", Channel.NONE),
-    /** 订单动态（跑腿支付/锁单超时等）——走系统消息（聊天）通道 */
-    ORDER_EVENT("订单动态", Channel.CHAT),
     /** 信用分变动/封禁/解封——走系统消息（聊天）通道 */
     CREDIT_CHANGE("信用分变动", Channel.CHAT),
     POST_COMMENTED("帖子被评论", Channel.BANNER),

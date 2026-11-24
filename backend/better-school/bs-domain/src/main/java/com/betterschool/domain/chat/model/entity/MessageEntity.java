@@ -33,7 +33,7 @@ public class MessageEntity {
 
     /** CARD 引用（仅 CARD 非空） */
     private CardRefTypeVO refType;
-    /** 卡片引用对象业务 ID（POST=UUID 字符串；PRODUCT/ERRAND 过渡期仍是数值 id 的字符串形） */
+    /** 卡片引用对象业务 ID（POST/PRODUCT 均为 UUID 字符串） */
     private String refId;
 
     private MsgStatusVO status;

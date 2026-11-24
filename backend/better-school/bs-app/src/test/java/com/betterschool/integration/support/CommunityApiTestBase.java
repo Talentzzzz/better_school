@@ -198,11 +198,10 @@ public abstract class CommunityApiTestBase {
         List.of("bs_user", "post", "post_comment", "post_like", "post_like_count", "post_comment_count",
                         "post_comment_like", "post_comment_like_count", "post_comment_feed_index", "outbox_message",
                         "post_feed_index", "user_view_history", "post_view_count",
-                        "product_feed_index", "errand_feed_index",
-                        "product_view_history", "errand_view_history",
-                        "product_view_count", "errand_view_count",
+                        "product_feed_index",
+                        "product_view_history",
+                        "product_view_count",
                         "notification", "virtual_wallet", "wallet_detail", "user_credit_detail",
-                        "errand_order", "errand_order_event",
                         "product", "product_favorite", "product_order", "product_order_event",
                         "room", "user_pair_room", "user_room", "room_member", "message", "timeline", "user_seq",
                         "notification_seq", "notification_read")
@@ -213,9 +212,6 @@ public abstract class CommunityApiTestBase {
         truncateTimeoutTaskTables();
         // 帖子 id 每用例重排但 Redis 不随 TRUNCATE 清空：清详情缓存防跨用例脏读
         redissonClient.getKeys().deleteByPattern(DETAIL_CACHE_KEY_PREFIX + "*");
-        // 跑腿防占单的计数 ZSET 与冷却标记同理（票 05）：逐用例清，防跨用例脏读
-        redissonClient.getKeys().deleteByPattern(Constants.ERRAND_GRAB_ABANDON_KEY + "*");
-        redissonClient.getKeys().deleteByPattern(Constants.ERRAND_GRAB_COOLDOWN_KEY + "*");
     }
 
     /** 裸 MySQL 连接清空 16 张超时分表（测试库专用表，全清无副作用；物理名经 SS 连接查不到） */

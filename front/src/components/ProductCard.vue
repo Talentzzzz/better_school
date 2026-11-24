@@ -25,7 +25,7 @@ const props = defineProps<{ product: Product }>()
     <div class="product-meta">
       <AppAvatar :src="props.product.sellerAvatar" :name="props.product.sellerNickname" :size="16" />
       <span class="product-name ellipsis">{{ props.product.sellerNickname }}</span>
-      <!-- 浏览量 = 热度排序键（market-feed-uv 票 05）；与跑腿卡片同一文案，两域口径对齐。
+      <!-- 浏览量 = 热度排序键（market-feed-uv 票 05）。
            0 不展示：ES 搜索结果不投影 UV（0 是占位不是真值），宁可不显示也不给错数 -->
       <span class="product-stats">
         <span v-if="props.product.viewCount > 0">浏览 {{ formatCount(props.product.viewCount) }}</span>

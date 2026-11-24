@@ -1,7 +1,6 @@
 package com.betterschool.integration.job;
 
 import com.betterschool.domain.community.adapter.repository.ICommunityRepository;
-import com.betterschool.domain.errand.adapter.repository.IErrandRepository;
 import com.betterschool.domain.trade.adapter.repository.ITradeRepository;
 import com.betterschool.domain.user.adapter.repository.IUserRepository;
 import com.betterschool.integration.support.CommunityApiTestBase;
@@ -38,9 +37,6 @@ class UnboundedQueryCursorIntegrationTest extends CommunityApiTestBase {
     private ITradeRepository tradeRepository;
 
     @Autowired
-    private IErrandRepository errandRepository;
-
-    @Autowired
     private IUserRepository userRepository;
 
     @Test
@@ -66,16 +62,14 @@ class UnboundedQueryCursorIntegrationTest extends CommunityApiTestBase {
     }
 
     @Test
-    @DisplayName("商品与跑腿：搜索索引全量重建的游标页")
-    void productAndErrandIdsPageByCursor() {
+    @DisplayName("商品：搜索索引全量重建的游标页")
+    void productIdsPageByCursor() {
         String userId = registerAndLogin("13900001205", "游标卖家").userId();
         for (int i = 0; i < 3; i++) {
             insertProductFixture(userId);
-            insertErrandFixture(userId);
         }
 
         assertPagedToEmpty(cursor -> tradeRepository.listIdsAfter(cursor, PAGE), 3, "");
-        assertPagedToEmpty(cursor -> errandRepository.listIdsAfter(cursor, PAGE), 3, "");
     }
 
     /**
@@ -111,14 +105,5 @@ class UnboundedQueryCursorIntegrationTest extends CommunityApiTestBase {
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, category, state, "
                 + "create_time, update_time) VALUES (?, ?, 'BOOKS', 'ON_SALE', NOW(), NOW())", productId, userId);
         return productId;
-    }
-
-    /** 直插一行已发布跑腿单，返回业务 id（口径同上） */
-    private String insertErrandFixture(String userId) {
-        String errandId = UUID.randomUUID().toString();
-        jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
-                        + "pickup_location, delivery_location, reward, state, create_time, update_time) "
-                        + "VALUES (?, ?, 'BUY', '游标单', '宿舍楼', '食堂', 5.00, 'PUBLISHED', NOW(), NOW())", errandId, userId);
-        return errandId;
     }
 }

@@ -161,7 +161,7 @@ schema / xxl-job-tasks）已删除；xxl 注册收敛为单体唯一 seed `bette
 
 跨域纪律**不因合库改变**（ADR-0016）：一个物理事务只写一个仓储（一个域）的表，跨域一致性 =
 两段各自本地事务 + 资金先行 + 流水唯一键幂等 + 孤儿扫描补偿（`drawCountPurchaseScan` /
-`errandFundOrphanScan` / `productFundOrphanScan` 口径）。表所有权原则也照旧：用户表归 user 域
+`productFundOrphanScan` 口径）。表所有权原则也照旧：用户表归 user 域
 独占写，营销域只存 `user_id`、读经消费方域的 port（进程内实现）或 case 层编排直调用户域。
 
 同库内跨表展示的数据（如抽奖的中奖记录关联 `virtual_inventory_quota` 带出面额与库存）

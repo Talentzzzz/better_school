@@ -1,14 +1,12 @@
 package com.betterschool.trigger.http;
 
 import com.betterschool.api.ISearchService;
-import com.betterschool.api.dto.ErrandOrderResponseDTO;
 import com.betterschool.api.dto.PostSummaryResponseDTO;
 import com.betterschool.api.dto.ProductResponseDTO;
 import com.betterschool.api.dto.UserSearchResponseDTO;
 import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
 import com.betterschool.domain.community.model.entity.PostEntity;
-import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
 import com.betterschool.domain.search.model.valobj.SearchPageVO;
 import com.betterschool.domain.trade.model.entity.ProductEntity;
 import com.betterschool.domain.user.model.entity.UserEntity;
@@ -74,21 +72,6 @@ public class SearchController implements ISearchService {
     }
 
     @Override
-    @GetMapping("/errands")
-    public Response<PageResult<ErrandOrderResponseDTO>> searchErrands(
-            @RequestParam String keyword,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "10") int pageSize) {
-        requireKeyword(keyword);
-        page = Math.max(page, 1);
-        pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
-        SearchPageVO<ErrandOrderEntity> result = searchService.searchErrands(keyword.trim(), page, pageSize);
-        List<ErrandOrderResponseDTO> dtoList = result.getItems().stream()
-                .map(this::toErrandDTO).toList();
-        return Response.ok(new PageResult<>(page, pageSize, result.getTotal(), dtoList));
-    }
-
-    @Override
     @GetMapping("/users")
     public Response<PageResult<UserSearchResponseDTO>> searchUsers(
             @RequestParam String keyword,
@@ -143,25 +126,4 @@ public class SearchController implements ISearchService {
         return dto;
     }
 
-    private ErrandOrderResponseDTO toErrandDTO(ErrandOrderEntity orderEntity) {
-        ErrandOrderResponseDTO dto = new ErrandOrderResponseDTO();
-        dto.setOrderId(orderEntity.getOrderId());
-        dto.setPublisherId(orderEntity.getPublisherId());
-        dto.setPublisherNickname(orderEntity.getPublisherNickname());
-        dto.setPublisherAvatar(orderEntity.getPublisherAvatar());
-        dto.setTakerId(orderEntity.getTakerId());
-        dto.setTakerNickname(orderEntity.getTakerNickname());
-        dto.setTakerAvatar(orderEntity.getTakerAvatar());
-        dto.setType(orderEntity.getType().name());
-        dto.setTitle(orderEntity.getTitle());
-        dto.setDescription(orderEntity.getDescription());
-        dto.setPickupLocation(orderEntity.getPickupLocation());
-        dto.setDeliveryLocation(orderEntity.getDeliveryLocation());
-        dto.setReward(orderEntity.getReward());
-        dto.setCurrentTakers(orderEntity.getCurrentTakers());
-        dto.setDeadline(orderEntity.getDeadline());
-        dto.setStatus(orderEntity.getStatus().name());
-        dto.setCreatedAt(orderEntity.getCreatedAt());
-        return dto;
-    }
 }

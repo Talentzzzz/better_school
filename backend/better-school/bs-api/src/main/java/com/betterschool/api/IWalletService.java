@@ -7,7 +7,7 @@ import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
 
 /**
- * 虚拟钱包服务契约：HTTP 层由 Controller 实现（跑腿资金托管底座，v1 虚拟币 mock 充值）
+ * 虚拟钱包服务契约：HTTP 层由 Controller 实现（资金托管底座，v1 虚拟币 mock 充值）
  */
 public interface IWalletService {
 

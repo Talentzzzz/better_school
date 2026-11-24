@@ -1,23 +1,18 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useRouter } from 'vue-router'
-import { useUiStateStore, type MarketTab } from '@/stores/uiState'
 import { useAuthStore } from '@/stores/auth'
 import { useChatRoomsStore } from '@/stores/chatRooms'
 import { useNoticesStore } from '@/stores/notices'
 import { useWaterfall } from '@/composables/useWaterfall'
-import { listErrandOrders } from '@/api/errand'
 import { listProducts } from '@/api/trade'
-import { getNotificationsUnreadCount } from '@/api/chat'
-import type { ErrandType, TradeCategory } from '@/types/api'
+import type { TradeCategory } from '@/types/api'
 import { TRADE_CATEGORIES, type SortOrder } from '@/utils/trade'
-import ErrandCard from '@/components/ErrandCard.vue'
 import ProductCard from '@/components/ProductCard.vue'
 import MarketEntryRow, { type EntryKey } from '@/components/MarketEntryRow.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
 const router = useRouter()
-const ui = useUiStateStore()
 const auth = useAuthStore()
 const chatRooms = useChatRoomsStore()
 
@@ -34,37 +29,6 @@ const MARKET_SORTS: { value: SortOrder; label: string }[] = [
   { value: 'price_desc', label: '价格↓' }
 ]
 
-// 跑腿
-const errandType = ref<'' | ErrandType>('')
-const errandSort = ref<SortOrder>('time')
-
-const errandChips: { value: '' | ErrandType; label: string }[] = [
-  { value: '', label: '全部' },
-  { value: 'EXPRESS_PICKUP', label: '代取快递' },
-  { value: 'BUY', label: '代买' },
-  { value: 'DELIVER', label: '代送' },
-  { value: 'OTHER', label: '其他' }
-]
-
-const {
-  list: errandList,
-  loading: errandLoading,
-  finished: errandFinished,
-  loaded: errandLoaded,
-  sentinel: errandSentinel,
-  load: loadErrand,
-  reset: resetErrand
-} = useWaterfall((page, cursor) =>
-  listErrandOrders({
-    status: 'PUBLISHED',
-    type: errandType.value || undefined,
-    sort: errandSort.value,
-    page,
-    cursor,
-    pageSize: 10
-  })
-)
-
 // 二手
 const productCategory = ref<'' | TradeCategory>('')
 const productSort = ref<SortOrder>('time')
@@ -79,7 +43,6 @@ const {
   list: productList,
   loading: productLoading,
   finished: productFinished,
-  loaded: productLoaded,
   sentinel: productSentinel,
   load: loadProduct,
   reset: resetProduct
@@ -93,33 +56,10 @@ const {
   })
 )
 
-watch([errandType, errandSort], () => {
-  resetErrand()
-  loadErrand()
-})
-
 watch([productCategory, productSort], () => {
   resetProduct()
   loadProduct()
 })
-
-/** 首次进入某 tab 才加载；之后靠各自哨兵续页 */
-function loadTabIfNeeded(tab: MarketTab) {
-  if (tab === 'errand' && !errandLoaded.value) loadErrand()
-  else if (tab === 'idle' && !productLoaded.value) loadProduct()
-}
-
-// 同页内切 tab：离开存本 tab 的 scrollY，切入恢复（数据在组件内，位置才自洽）
-const scrollPos = {} as Record<MarketTab, number>
-
-watch(
-  () => ui.marketTab,
-  (next, prev) => {
-    scrollPos[prev] = window.scrollY
-    loadTabIfNeeded(next)
-    nextTick(() => window.scrollTo(0, scrollPos[next] ?? 0))
-  }
-)
 
 // 入口行第二层吸顶：filter-bar 的 top 由入口行**实测高度**导出，两处不各写魔数
 // （入口行整行受全局 body line-height 影响，12px 标签实测行盒 20.4px）
@@ -133,21 +73,17 @@ function syncFilterTop() {
 }
 
 /**
- * 消息格角标＝跑腿订单通知未读（MARKET_ERRAND，进页拉取）+ 赞/评横幅通知未读（notices store，
- * NOTIF 帧实时 +1）+ 市集对家会话未读（会话来源列非空者）。
+ * 消息格角标＝赞/评横幅通知未读（notices store，NOTIF 帧实时 +1）+ 市集对家会话未读（会话来源列非空者）。
  */
-const noticeUnread = ref(0)
 const notices = useNoticesStore()
 const roomUnread = computed(() =>
   chatRooms.rooms.reduce((sum, r) => sum + (r.source ? r.unread : 0), 0)
 )
-const entryUnread = computed(() => noticeUnread.value + notices.unread.INTERACTION_LIKE + notices.unread.INTERACTION_COMMENT + roomUnread.value)
+const entryUnread = computed(() => notices.unread.INTERACTION_LIKE + notices.unread.INTERACTION_COMMENT + roomUnread.value)
 
-async function loadEntryUnread() {
+function loadEntryUnread() {
   if (!auth.isLoggedIn) return
   chatRooms.loadRooms()
-  const errand = await getNotificationsUnreadCount('MARKET_ERRAND').catch(() => null)
-  noticeUnread.value = errand?.count ?? 0
 }
 
 function onEntryGo(key: EntryKey) {
@@ -163,7 +99,7 @@ function onEntryGo(key: EntryKey) {
 }
 
 onMounted(() => {
-  loadTabIfNeeded(ui.marketTab)
+  loadProduct()
   syncFilterTop()
   entryResizeObserver = new ResizeObserver(syncFilterTop)
   const el = entryRef.value?.$el as HTMLElement | undefined
@@ -179,12 +115,7 @@ onBeforeUnmount(() => entryResizeObserver?.disconnect())
     <header class="market-nav">
       <div class="nav-left" />
       <div class="nav-tabs">
-        <button class="nav-tab" :class="{ active: ui.marketTab === 'errand' }" @click="ui.marketTab = 'errand'">
-          跑腿
-        </button>
-        <button class="nav-tab" :class="{ active: ui.marketTab === 'idle' }" @click="ui.marketTab = 'idle'">
-          闲置
-        </button>
+        <button class="nav-tab active">闲置</button>
       </div>
       <div class="nav-right">
         <button class="nav-search" aria-label="搜索" @click="router.push('/search?scope=market')">
@@ -198,79 +129,40 @@ onBeforeUnmount(() => entryResizeObserver?.disconnect())
 
     <MarketEntryRow ref="entryRef" :unread="entryUnread" @go="onEntryGo" />
 
-    <template v-if="ui.marketTab === 'errand'">
-      <div class="filter-bar" :style="{ top: filterTop }">
-        <div class="chips">
-          <button
-            v-for="chip in errandChips"
-            :key="chip.value"
-            class="chip"
-            :class="{ active: errandType === chip.value }"
-            @click="errandType = chip.value"
-          >
-            {{ chip.label }}
-          </button>
-        </div>
-        <div class="sorts">
-          <button
-            v-for="item in MARKET_SORTS"
-            :key="item.value"
-            class="sort-chip"
-            :class="{ active: errandSort === item.value }"
-            @click="errandSort = item.value"
-          >
-            {{ item.label }}
-          </button>
-        </div>
+    <div class="filter-bar" :style="{ top: filterTop }">
+      <div class="chips">
+        <button
+          v-for="chip in categoryChips"
+          :key="chip.value"
+          class="chip"
+          :class="{ active: productCategory === chip.value }"
+          @click="productCategory = chip.value"
+        >
+          {{ chip.label }}
+        </button>
       </div>
-      <div v-if="errandList.length" class="waterfall">
-        <ErrandCard v-for="o in errandList" :key="o.orderId" :order="o" />
+      <div class="sorts">
+        <button
+          v-for="item in MARKET_SORTS"
+          :key="item.value"
+          class="sort-chip"
+          :class="{ active: productSort === item.value }"
+          @click="productSort = item.value"
+        >
+          {{ item.label }}
+        </button>
       </div>
-      <EmptyState
-        v-else-if="!errandLoading"
-        text="暂时没有跑腿单，去发一单吧"
-        button-text="去发跑腿"
-        @click="router.push('/publish/errand')"
-      />
-      <div ref="errandSentinel" class="sentinel">{{ errandLoading ? '加载中…' : errandFinished ? '已经到底啦' : '' }}</div>
-    </template>
-
-    <template v-else>
-      <div class="filter-bar" :style="{ top: filterTop }">
-        <div class="chips">
-          <button
-            v-for="chip in categoryChips"
-            :key="chip.value"
-            class="chip"
-            :class="{ active: productCategory === chip.value }"
-            @click="productCategory = chip.value"
-          >
-            {{ chip.label }}
-          </button>
-        </div>
-        <div class="sorts">
-          <button
-            v-for="item in MARKET_SORTS"
-            :key="item.value"
-            class="sort-chip"
-            :class="{ active: productSort === item.value }"
-            @click="productSort = item.value"
-          >
-            {{ item.label }}
-          </button>
-        </div>
-      </div>
-      <div v-if="productList.length" class="waterfall">
-        <ProductCard v-for="p in productList" :key="p.productId" :product="p" />
-      </div>
-      <EmptyState
-        v-else-if="!productLoading"
-        text="还没有闲置出售，发布第一件宝贝吧"
-        button-text="去发布"
-        @click="router.push('/publish/product')"
-      />
-      <div ref="productSentinel" class="sentinel">{{ productLoading ? '加载中…' : productFinished ? '已经到底啦' : '' }}</div>
-    </template>
+    </div>
+    <div v-if="productList.length" class="waterfall">
+      <ProductCard v-for="p in productList" :key="p.productId" :product="p" />
+    </div>
+    <EmptyState
+      v-else-if="!productLoading"
+      text="还没有闲置出售，发布第一件宝贝吧"
+      button-text="去发布"
+      @click="router.push('/publish/product')"
+    />
+    <div ref="productSentinel" class="sentinel">{{ productLoading ? '加载中…' : productFinished ? '已经到底啦' : '' }}</div>
   </div>
 </template>
 

@@ -1,7 +1,6 @@
 package com.betterschool.domain.search.service;
 
 import com.betterschool.domain.community.model.entity.PostEntity;
-import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
 import com.betterschool.domain.search.model.valobj.SearchPageVO;
 import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
 import com.betterschool.domain.trade.model.entity.ProductEntity;
@@ -18,8 +17,6 @@ public interface ISearchService {
     SearchPageVO<PostEntity> searchPosts(String keyword, int page, int pageSize);
 
     SearchPageVO<ProductEntity> searchProducts(String keyword, int page, int pageSize);
-
-    SearchPageVO<ErrandOrderEntity> searchErrands(String keyword, int page, int pageSize);
 
     SearchPageVO<UserEntity> searchUsers(String keyword, int page, int pageSize);
 
