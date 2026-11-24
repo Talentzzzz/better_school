@@ -1,6 +1,6 @@
 package com.betterschool.integration.job;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.integration.support.FakeSearchIndex;
 import com.betterschool.trigger.job.SearchIndexRebuildJob;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>ES 侧用 {@link FakeSearchIndex} 替身（测试栈刻意不连 ES），断言的是重建算法而非 ES 语义。
  */
 @DisplayName("搜索索引全量重建：游标拉批到空批 + 批内扇出 + 状态过滤")
-class SearchIndexRebuildJobIntegrationTest extends CommunityApiTestBase {
+class SearchIndexRebuildJobIntegrationTest extends PostApiTestBase {
 
     @Autowired
     private SearchIndexRebuildJob searchIndexRebuildJob;

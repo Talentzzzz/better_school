@@ -6,7 +6,7 @@
 
 | 库 | 归属 | DDL 来源 | 表文档 |
 | --- | --- | --- | --- |
-| `better_school` | 单体（`backend/better-school/bs-*`） | `sql/init-dev.sql` + `sql/schema.sql` | [user](user.md) · [community](community.md) · [community_comment](community_comment.md) · [idle](idle.md) · [chat](chat.md) · [outbox](outbox.md) · [timeout](timeout.md) |
+| `better_school` | 单体（`backend/better-school/bs-*`） | `sql/init-dev.sql` + `sql/schema.sql` | [user](user.md) · [post](post.md) · [post_comment](post_comment.md) · [idle](idle.md) · [chat](chat.md) · [outbox](outbox.md) · [timeout](timeout.md) |
 
 ## 表清单（业务表，另见 timeout.md 的 16 张分表）
 
@@ -16,17 +16,17 @@
 |virtual_wallet|[user](user.md)|虚拟钱包表（一人一行）|
 |wallet_detail|[user](user.md)|钱包流水表（商品）|
 |user_credit_detail|[user](user.md)|信用分流水表|
-|post|[community](community.md)|帖子表|
-|post_like|[community](community.md)|帖子点赞关系表|
-|post_like_count|[community](community.md)|帖子点赞计数表（专用窄行，异步刷盘）|
-|post_feed_index|[community](community.md)|帖子 feed 排序投影（一帖一行 1:1 索引，hot/time 排序键）|
-|user_view_history|[community](community.md)|帖子浏览明细（UV 事实源，一人一帖一行）|
-|post_view_count|[community](community.md)|帖子浏览 UV 加速列（精确值 = 明细行数）|
-|post_comment|[community_comment](community_comment.md)|帖子评论表|
-|post_comment_count|[community_comment](community_comment.md)|帖子评论计数表（专用窄行，同步维护）|
-|post_comment_like_count|[community_comment](community_comment.md)|评论点赞计数表（专用窄行，计数真源）|
-|post_comment_like|[community_comment](community_comment.md)|评论点赞表|
-|post_comment_feed_index|[community_comment](community_comment.md)|根评论热评排序投影（只服务「最热」序）|
+|post|[post](post.md)|帖子表|
+|post_like|[post](post.md)|帖子点赞关系表|
+|post_like_count|[post](post.md)|帖子点赞计数表（专用窄行，异步刷盘）|
+|post_feed_index|[post](post.md)|帖子 feed 排序投影（一帖一行 1:1 索引，hot/time 排序键）|
+|user_view_history|[post](post.md)|帖子浏览明细（UV 事实源，一人一帖一行）|
+|post_view_count|[post](post.md)|帖子浏览 UV 加速列（精确值 = 明细行数）|
+|post_comment|[post_comment](post_comment.md)|帖子评论表|
+|post_comment_count|[post_comment](post_comment.md)|帖子评论计数表（专用窄行，同步维护）|
+|post_comment_like_count|[post_comment](post_comment.md)|评论点赞计数表（专用窄行，计数真源）|
+|post_comment_like|[post_comment](post_comment.md)|评论点赞表|
+|post_comment_feed_index|[post_comment](post_comment.md)|根评论热评排序投影（只服务「最热」序）|
 |product|[idle](idle.md)|二手商品表|
 |product_favorite|[idle](idle.md)|商品收藏表|
 |product_order|[idle](idle.md)|二手商品托管订单表|

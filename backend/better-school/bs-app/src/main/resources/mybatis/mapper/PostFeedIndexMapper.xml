@@ -9,7 +9,7 @@
          time 排序键 = feed_time、hot = like_count；<b>两档都以 (feed_time DESC, post_id DESC) 收敛并列</b>
          ——业务 ID 是 UUID、无序，不能再拿它当「发布时间先后」的代理（uuid-biz-id 票 03）。
          部分列直映域 VO（排序键随行带出，域服务拿最后一行编下一页游标） -->
-    <select id="selectFeedIndex" resultType="com.betterschool.domain.community.model.valobj.FeedIndexItemVO">
+    <select id="selectFeedIndex" resultType="com.betterschool.domain.post.model.valobj.FeedIndexItemVO">
         SELECT post_id, feed_time, like_count
         FROM post_feed_index
         WHERE state = 'NORMAL'

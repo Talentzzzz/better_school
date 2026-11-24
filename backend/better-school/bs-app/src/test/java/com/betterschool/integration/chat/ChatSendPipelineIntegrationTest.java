@@ -4,7 +4,7 @@ import com.betterschool.domain.chat.adapter.repository.IChatRepository;
 import com.betterschool.domain.chat.model.entity.MessageEntity;
 import com.betterschool.domain.chat.model.entity.TimelineEntity;
 import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.annotation.Resource;
@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 覆盖：建/取 1v1 幂等、发送五表落地、撞 uk 两时序收敛、hidden_at 弹回、列表预览读时现算
  * （票 02 预览去副本：user_room 只落 last_msg_time，预览按 message 真相渲染）、非成员/载荷校验拒绝
  */
-public class ChatSendPipelineIntegrationTest extends CommunityApiTestBase {
+public class ChatSendPipelineIntegrationTest extends PostApiTestBase {
 
     @Resource
     private IChatRepository chatRepository;

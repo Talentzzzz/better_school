@@ -1,6 +1,6 @@
 package com.betterschool.integration.idle;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.usecase.idle.IdleCase;
 import com.betterschool.types.exception.BusinessException;
 import org.junit.jupiter.api.Test;
@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * （余额不足即真实失败注入，翻转段尚未执行）。只断言外显行为：支付成功三态齐备、
  * 余额不足支付失败订单留待支付、幂等重放无害。
  */
-class ProductPayCompositeTxIntegrationTest extends CommunityApiTestBase {
+class ProductPayCompositeTxIntegrationTest extends PostApiTestBase {
 
     @Autowired
     private IdleCase idleCase;

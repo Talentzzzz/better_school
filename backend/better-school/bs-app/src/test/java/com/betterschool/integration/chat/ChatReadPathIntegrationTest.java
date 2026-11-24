@@ -1,6 +1,6 @@
 package com.betterschool.integration.chat;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 覆盖：会话列表拼装与隐藏弹回、历史 beforeSeq 分页边界与撤回脱敏、补拉游标口径、
  * 水位线幂等无噪音 READ、成员含水位线、ws-ticket 原子一次性
  */
-public class ChatReadPathIntegrationTest extends CommunityApiTestBase {
+public class ChatReadPathIntegrationTest extends PostApiTestBase {
 
     private Session userA;
     private Session userB;

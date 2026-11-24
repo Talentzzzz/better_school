@@ -1,6 +1,6 @@
 package com.betterschool.usecase.search;
 
-import com.betterschool.domain.community.service.post.ICommunityPostService;
+import com.betterschool.domain.post.service.post.IPostService;
 import com.betterschool.domain.idle.service.IIdleService;
 import com.betterschool.domain.user.service.profile.IUserProfileService;
 import com.betterschool.types.common.SearchEntityType;
@@ -25,7 +25,7 @@ import java.util.Locale;
 @RequiredArgsConstructor
 public class SearchSyncCase {
 
-    private final ICommunityPostService communityPostService;
+    private final IPostService postService;
     private final IIdleService idleService;
     private final IUserProfileService userProfileService;
 
@@ -36,7 +36,7 @@ public class SearchSyncCase {
             return;
         }
         switch (entityType) {
-            case POST -> communityPostService.syncSearchDoc(message.getId());
+            case POST -> postService.syncSearchDoc(message.getId());
             case PRODUCT -> idleService.syncSearchDoc(message.getId());
             case USER -> userProfileService.syncSearchDoc(message.getId());
         }

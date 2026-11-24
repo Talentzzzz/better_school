@@ -1,6 +1,6 @@
 package com.betterschool.integration.idle;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 断言只看外部可观察状态：product_inventory / product_stock_event / product.state / product_feed_index / product_order。
  */
 @DisplayName("商品库存：建账 / 扣减防超卖 / 售罄翻态 / 回补翻回 / 加货 / relist 闸门")
-class ProductInventoryIntegrationTest extends CommunityApiTestBase {
+class ProductInventoryIntegrationTest extends PostApiTestBase {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;

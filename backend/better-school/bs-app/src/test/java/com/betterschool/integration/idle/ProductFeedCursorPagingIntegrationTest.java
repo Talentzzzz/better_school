@@ -4,7 +4,7 @@ import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
 import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.idle.model.valobj.ProductFeedPageVO;
 import com.betterschool.domain.idle.service.IdleServiceImpl;
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -34,7 +34,7 @@ import static org.mockito.Mockito.withSettings;
  * 降级测试是白盒（黑盒造不出索引表查询故障，照帖子 FeedCursorPagingIntegrationTest 先例）。
  */
 @DisplayName("闲置推荐页读路径：五档排序游标翻页 / 换排序拒游标 / 越尾空页 / 筛选直查 / 降级直查")
-class ProductFeedCursorPagingIntegrationTest extends CommunityApiTestBase {
+class ProductFeedCursorPagingIntegrationTest extends PostApiTestBase {
 
     private static final int PAGE_SIZE = 10;
     private static final int PRODUCT_COUNT = 25;

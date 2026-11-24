@@ -4,7 +4,7 @@ import com.betterschool.domain.notification.model.valobj.NotificationEventMessag
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.domain.notification.service.INotificationService;
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.trigger.listener.NotifyChatConsumer;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li>系统会话守卫：用户向系统助手会话发消息被 403 拒绝</li>
  * </ul>
  */
-class NotifyChannelIntegrationTest extends CommunityApiTestBase {
+class NotifyChannelIntegrationTest extends PostApiTestBase {
 
     @Autowired
     private INotificationService notificationService;

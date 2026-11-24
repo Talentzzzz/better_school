@@ -1,6 +1,6 @@
 package com.betterschool.integration.idle;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.trigger.job.IdleExpireScanJob;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 敏感词初筛已删，编辑在售立即生效）。
  * 只断言外部行为（接口响应、库内状态、feed 索引、事件流水），不断言实现细节。
  */
-class IdleFullChainIntegrationTest extends CommunityApiTestBase {
+class IdleFullChainIntegrationTest extends PostApiTestBase {
 
     @Autowired
     private IdleExpireScanJob idleExpireScanJob;

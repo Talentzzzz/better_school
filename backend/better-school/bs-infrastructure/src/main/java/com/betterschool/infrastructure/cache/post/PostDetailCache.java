@@ -1,7 +1,7 @@
 package com.betterschool.infrastructure.cache.post;
 
-import com.betterschool.domain.community.model.entity.PostEntity;
-import com.betterschool.domain.community.model.valobj.PostStatusVO;
+import com.betterschool.domain.post.model.entity.PostEntity;
+import com.betterschool.domain.post.model.valobj.PostStatusVO;
 import com.betterschool.infrastructure.dao.post.IPostDao;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;

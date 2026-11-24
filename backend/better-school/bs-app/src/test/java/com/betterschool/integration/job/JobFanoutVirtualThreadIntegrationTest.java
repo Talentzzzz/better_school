@@ -1,6 +1,6 @@
 package com.betterschool.integration.job;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.integration.support.VtJobFanoutProbe;
 import com.betterschool.trigger.job.SearchIndexRebuildJob;
 import com.betterschool.trigger.job.IdleExpireScanJob;
@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 变体 A 由商品到期下架扫描承担。
  */
 @DisplayName("调度扇出 seam：扇出项跑在虚拟线程上")
-class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
+class JobFanoutVirtualThreadIntegrationTest extends PostApiTestBase {
 
     private static final String IDLE_EXPIRE_PREFIX_PATTERN = "idle-expire-product-\\d+";
     private static final String REBUILD_PREFIX = "search-rebuild-";

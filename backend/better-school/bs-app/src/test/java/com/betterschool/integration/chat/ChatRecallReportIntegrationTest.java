@@ -1,6 +1,6 @@
 package com.betterschool.integration.chat;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 预览读时现算（票 02 预览去副本：撤回零 user_room 写、列表直接呈现 [已撤回]）、重复撤回幂等。
  * 举报/强制撤回/AUDITOR 语义已整体删除：recalled_by 只会是 'USER'。
  */
-public class ChatRecallReportIntegrationTest extends CommunityApiTestBase {
+public class ChatRecallReportIntegrationTest extends PostApiTestBase {
 
     @Test
     void recallBySenderWithinWindowMarksShellAndPushesRecallEvent() {

@@ -1,7 +1,7 @@
 package com.betterschool.infrastructure.adapter.repository.idle;
 
-import com.betterschool.domain.timeout.adapter.repository.ITimeoutRepository;
-import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
+import com.betterschool.infrastructure.timeout.TimeoutTaskEntity;
+import com.betterschool.infrastructure.timeout.TimeoutTaskStore;
 import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
 import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
@@ -76,7 +76,7 @@ import java.util.stream.Collectors;
  * 交易仓储（闲置商品 + 商品托管订单合一，一域一仓储）：持有 IProductDao / IProductOrderDao
  * 及其拆分出的按表 DAO（IProductFavoriteDao / IProductFeedIndexDao / IProductViewCountDao /
  * IProductViewHistoryDao / IProductOrderEventDao）+ 共享 outbox（OutboxMessageStore）与
- * 超时任务仓储（ITimeoutRepository，注册边直插 timeout_task）。
+ * 超时组件（{@link TimeoutTaskStore}，注册边直插 timeout_task）。
  * 跨两表的多写原子用例收成仓储方法，事务在实现内用编程式事务（默认 REQUIRED，与既有域服务事务同传播语义）。
  * PO / Mapper XML / DAO 位置不变。
  *
@@ -106,7 +106,8 @@ public class IdleRepository implements IIdleRepository {
     private final IProductStockEventDao productStockEventDao;
     private final ObjectMapper objectMapper;
     private final OutboxMessageStore outboxMessageStore;
-    private final ITimeoutRepository timeoutRepository;
+    /** 超时组件（技术能力：同层技术组件直用，不开 domain port） */
+    private final TimeoutTaskStore timeoutTaskStore;
     /** 倒排索引技术组件（技术能力：本域仓储直接用，不为它开 domain port） */
     private final ISearchIndex searchIndex;
     private final TransactionTemplate transactionTemplate;
@@ -357,7 +358,7 @@ public class IdleRepository implements IIdleRepository {
     }
 
     /**
-     * feed 索引全量重建（market-feed-uv 票 06，照 {@code CommunityRepository.rebuildFeedIndex} 先例）：
+     * feed 索引全量重建（market-feed-uv 票 06，照 {@code PostRepository.rebuildFeedIndex} 先例）：
      * 四条语句一个事务——计数窄表校准（ODKU 补缺行 / 刷漂移 + 清孤儿）→ 清空索引 → 重灌投影。
      * 顺序是先校准后清灌：计数窄表是索引热度键的数据源，先算准再抄进重灌语句，一个事务里两次写只对
      * 读者呈现前后两个完整状态（清空用 DELETE 不用 TRUNCATE，后者隐式提交会毁掉原子性）
@@ -580,7 +581,7 @@ public class IdleRepository implements IIdleRepository {
     // ---------- 计数合并器的落库方法：商品浏览（UV 口径，market-feed-uv 票 02） ----------
 
     /**
-     * 一组商品浏览（{@link com.betterschool.infrastructure.adapter.repository.community.CommunityRepository}
+     * 一组商品浏览（{@link com.betterschool.infrastructure.adapter.repository.post.PostRepository}
      * {@code viewPosts} 的镜像）：一组一个事务三步——
      * <ol>
      *   <li>{@code INSERT IGNORE INTO product_view_history}（影响行数 = 本组<b>真正新增</b>的 UV 数，
@@ -738,7 +739,7 @@ public class IdleRepository implements IIdleRepository {
         // 业务事务内直插超时任务行（内嵌超时中心，注册 outbox 已删）：与业务写同一条连接同一事务，
         // 回滚即无行、提交即被扫描可见；同键重入的三分支幂等（新插入/在途不改期/终态复活）在仓储内裁决；
         // 时刻一律数据库时钟，Java 只传时长
-        timeoutRepository.register(TimeoutTaskEntity.newWaiting(
+        timeoutTaskStore.register(TimeoutTaskEntity.newWaiting(
                 Constants.PRODUCT_ORDER_PAY_TIMEOUT, orderId, delaySeconds));
     }
 

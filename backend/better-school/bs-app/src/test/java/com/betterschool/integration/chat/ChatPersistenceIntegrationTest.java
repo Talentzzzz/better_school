@@ -8,7 +8,7 @@ import com.betterschool.domain.chat.model.entity.TimelineEntity;
 import com.betterschool.domain.chat.model.entity.UserRoomEntity;
 import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DuplicateKeyException;
@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 发送链路的域服务归票 02，本测试直接在事务内驱动仓储原语；预览去副本（票 02）：user_room 只落
  * last_msg_time 排序键，预览读时按 message 真相现算
  */
-public class ChatPersistenceIntegrationTest extends CommunityApiTestBase {
+public class ChatPersistenceIntegrationTest extends PostApiTestBase {
 
     private static final String USER_A = "a101a101-a101-a101-a101-a101a101a101";
     private static final String USER_B = "b102b102-b102-b102-b102-b102b102b102";

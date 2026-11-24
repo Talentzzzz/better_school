@@ -1,6 +1,6 @@
 package com.betterschool.integration.marketing;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.trigger.listener.LotteryDrawnConsumer;
 import com.betterschool.trigger.listener.PointsChangedConsumer;
 import org.junit.jupiter.api.Test;
@@ -18,9 +18,9 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  * <p>
  * 事件体照营销服务 outbox 的真实形状构造（LotteryDrawnMessage / PointsChangedMessage），
  * 走消费者真实解析与处理路径。通知落库时机=通知事件消费时：营销消费方现在 publish 通知事件，
- * 断言 notification 前须先 {@link CommunityApiTestBase#consumeNotifyEvents()} 喂 NotifyEventConsumer。
+ * 断言 notification 前须先 {@link PostApiTestBase#consumeNotifyEvents()} 喂 NotifyEventConsumer。
  */
-class MarketingNoticeIntegrationTest extends CommunityApiTestBase {
+class MarketingNoticeIntegrationTest extends PostApiTestBase {
 
     // uuid-biz-id 票 07：营销域业务 ID 已 UUID 字符串化，事件体 recordId/prizeId/refId 均按真实 wire 形状（UUID 串）构造
     private static final String REC_201 = "00000000-0000-4000-8000-000000000201";

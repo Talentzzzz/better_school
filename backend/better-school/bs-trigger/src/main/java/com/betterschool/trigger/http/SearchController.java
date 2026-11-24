@@ -6,8 +6,8 @@ import com.betterschool.api.dto.ProductResponseDTO;
 import com.betterschool.api.dto.UserSearchResponseDTO;
 import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
-import com.betterschool.domain.community.model.entity.PostEntity;
-import com.betterschool.domain.community.service.post.ICommunityPostService;
+import com.betterschool.domain.post.model.entity.PostEntity;
+import com.betterschool.domain.post.service.post.IPostService;
 import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.idle.service.IIdleService;
 import com.betterschool.domain.user.model.entity.UserEntity;
@@ -37,7 +37,7 @@ public class SearchController implements ISearchService {
 
     private static final int MAX_PAGE_SIZE = 50;
 
-    private final ICommunityPostService postService;
+    private final IPostService postService;
     private final IIdleService idleService;
     private final IUserProfileService userProfileService;
 

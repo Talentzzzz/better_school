@@ -1,9 +1,9 @@
 package com.betterschool.integration.job;
 
-import com.betterschool.domain.community.adapter.repository.ICommunityRepository;
+import com.betterschool.domain.post.adapter.repository.IPostRepository;
 import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
 import com.betterschool.domain.user.adapter.repository.IUserRepository;
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -26,12 +26,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code PostDetailCache.initBloom()} 的全量 id 是刻意的例外（一次性预热、不是循环），不在此断言。
  */
 @DisplayName("无界查询游标页：按 id 升序推进、分页不重复、推进到空批终止")
-class UnboundedQueryCursorIntegrationTest extends CommunityApiTestBase {
+class UnboundedQueryCursorIntegrationTest extends PostApiTestBase {
 
     private static final int PAGE = 2;
 
     @Autowired
-    private ICommunityRepository communityRepository;
+    private IPostRepository postRepository;
 
     @Autowired
     private IIdleRepository idleRepository;
@@ -47,7 +47,7 @@ class UnboundedQueryCursorIntegrationTest extends CommunityApiTestBase {
         publishPost(author, "游标帖二");
         publishPost(author, "游标帖三");
 
-        assertPagedToEmpty(cursor -> communityRepository.listIdsAfter(cursor, PAGE), 3, "");
+        assertPagedToEmpty(cursor -> postRepository.listIdsAfter(cursor, PAGE), 3, "");
     }
 
     @Test

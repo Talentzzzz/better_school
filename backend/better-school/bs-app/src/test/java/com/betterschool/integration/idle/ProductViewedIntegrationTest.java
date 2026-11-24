@@ -1,7 +1,7 @@
 package com.betterschool.integration.idle;
 
 import com.betterschool.infrastructure.adapter.repository.idle.IdleRepository;
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 断言只看 HTTP 响应（外部可观察），匿名与游标兼容一并钉死。
  */
 @DisplayName("闲置推荐页已读灰显：登录浏览后 viewed=true / 匿名恒 false / 仅列表填充")
-class ProductViewedIntegrationTest extends CommunityApiTestBase {
+class ProductViewedIntegrationTest extends PostApiTestBase {
 
     /** 浏览是合并写（commit 等终态，无收集窗口），断言列表前先排空合并器只为兜底在途件 */
     private static final long DRAIN_MILLIS = 5_000;

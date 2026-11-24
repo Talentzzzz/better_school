@@ -61,7 +61,7 @@ mvn test -pl bs-app -am -Dtest=RaffleDrawPipelineIntegrationTest
 | 项 | 单体既有测试 | 营销域测试（points + raffle + rebate + inventory） |
 | --- | --- | --- |
 | 测试库 | `better_school_test` | 同一份（票 07 合库后与单体同库）+ **redis 逻辑库 1**（key 前缀 `bs:points:` / `bs:raffle:` / `bs:inventory:`） |
-| 基类 | `integration.support.CommunityApiTestBase` | `integration.support.{PointsApiTestBase, RaffleApiTestBase}`（两类按域共存；VT 两个 seam 测试跑在 `RaffleApiTestBase` 上） |
+| 基类 | `integration.support.PostApiTestBase` | `integration.support.{PointsApiTestBase, RaffleApiTestBase}`（两类按域共存；VT 两个 seam 测试跑在 `RaffleApiTestBase` 上） |
 | 登录态 | 真链路 send-code → register 换 JWT | 营销域没有注册链路，基类按共享密钥**直接签发** JWT（形状与单体 `JwtService.generateToken` 一致）；`RaffleApiTestBase` 另有 `ADMIN` 角色的签发方法 |
 | MQ 消费 | 直调消费者 Bean | 同左（测试栈无 broker，构造 payload 直调消费者）；points 域直调 `LotteryDrawnConsumer`，raffle 域没有消费者（只发事件），断言只看 outbox 落行 |
 | Dubbo | 真 Consumer 打单体 Provider | 无 Dubbo 边（合并前营销侧的 `StubUserQueryPort` / `StubPointsExchangePort` 已随单体收口删除）；营销域自己的 Provider Bean（`PointsExchangeDubboService`）仍直接调用测 |
@@ -137,9 +137,9 @@ mvn -o test -Dtest=InventoryMergeDeliveryLatencyTest -Dsurefire.failIfNoSpecifie
 
 | 文件 | 职责 |
 | --- | --- |
-| `bs-app/src/test/java/com/betterschool/integration/support/CommunityApiTestBase.java` | 基类：Nacos 共享配置 + HTTP/DB/Redis 辅助 + 登录态 |
-| `bs-app/src/test/java/com/betterschool/integration/community/PostCountMergeIntegrationTest.java` | 计数链路先例（hot-row-merge 票 03/04）：点赞返回即窄表精确、浏览 fire-and-forget 只判单调不减 + 丢弃可读 |
-| `bs-app/src/test/java/com/betterschool/integration/community/PostCommentBaselineIntegrationTest.java` | 评论区现状基线（发布/列表/删除） |
-| `bs-app/src/test/java/com/betterschool/integration/community/AnonymousRemovalIntegrationTest.java` | 匿名移除固化（v2 票 02）：旧客户端字段忽略、全实名 |
+| `bs-app/src/test/java/com/betterschool/integration/support/PostApiTestBase.java` | 基类：Nacos 共享配置 + HTTP/DB/Redis 辅助 + 登录态 |
+| `bs-app/src/test/java/com/betterschool/integration/post/PostCountMergeIntegrationTest.java` | 计数链路先例（hot-row-merge 票 03/04）：点赞返回即窄表精确、浏览 fire-and-forget 只判单调不减 + 丢弃可读 |
+| `bs-app/src/test/java/com/betterschool/integration/post/PostCommentBaselineIntegrationTest.java` | 评论区现状基线（发布/列表/删除） |
+| `bs-app/src/test/java/com/betterschool/integration/post/AnonymousRemovalIntegrationTest.java` | 匿名移除固化（v2 票 02）：旧客户端字段忽略、全实名 |
 | `bs-app/src/test/java/com/betterschool/integration/ws/WsIntegrationTest.java` | WS 全链路行为测试先例（chat 票 07）：真客户端 + 直调消费者 + 注入时钟 |
 | `bs-app/src/test/resources/application-test.yml` | 测试 profile：只写覆盖项与日志降噪 |

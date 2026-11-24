@@ -85,7 +85,7 @@ Dubbo 边只剩历史契约的 Provider，**现状保留、不再新增 consumer
 | 积分兑换 | `IPointsExchangeService` | `bs-trigger/points/rpc/PointsExchangeDubboService` | 无（票 13 起已折叠成进程内调用） |
 
 用户读域内口径：合并前营销域经 Dubbo 读单体用户中心；单体回归后该同步边退役——
-探活 `/api/points/ping` 改为进程内直调 `IUserRepository`，chat / community 域各自的
+探活 `/api/points/ping` 改为进程内直调 `IUserRepository`，chat / post 域各自的
 `IUserQueryPort` 也是进程内实现（`infrastructure/adapter/port/<域>/UserQueryPort`）。
 
 购买抽奖次数链路（票 C，ADR-0016）：组合事务端口 `IPointsDeductPort` / `PointsDeductPort` 退役，

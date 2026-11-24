@@ -1,6 +1,6 @@
 package com.betterschool.integration.user;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 
@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>seam = trigger 层 HTTP 入口；前置态尽量用 SQL 直插（过滤口径才是被测行为），
  * 帖子走发布链路以覆盖真实 NORMAL 语义（审核语义移除后：发布即 NORMAL）。
  */
-class AuthorProfileIntegrationTest extends CommunityApiTestBase {
+class AuthorProfileIntegrationTest extends PostApiTestBase {
 
     /** 直插夹具的序号（post/comment 夹具的数字串 id 取号用；product 已改 UUID 直插，uuid-biz-id 票 05） */
     private long fixtureSeq = 0;

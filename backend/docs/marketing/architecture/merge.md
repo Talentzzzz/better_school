@@ -113,13 +113,13 @@ return switch (outcome.state()) {
 ## 7. 接入新用途：三步，不改 `merge` 包任何文件
 
 ```java
-// ① 落库函数已经存在（一组一事务的 SQL，比如 CommunityRepository#flushGroup）
+// ① 落库函数已经存在（一组一事务的 SQL，比如 PostRepository#flushGroup）
 // ② 写一个写入组件：引擎连策略一起 new，收口也归它
 @Component
 public class PostLikeMergeWriter {
     private final MergeEngine<PostLikeEvent, LikeState> engine;
 
-    public PostLikeMergeWriter(MergeConfig mergeConfig, CommunityRepository repository) {
+    public PostLikeMergeWriter(MergeConfig mergeConfig, PostRepository repository) {
         this.engine = new MergeEngine<>(mergeConfig,
                 new MergeStrategy<>("post-like", PostLikeEvent::postId, repository::flushGroup));
     }

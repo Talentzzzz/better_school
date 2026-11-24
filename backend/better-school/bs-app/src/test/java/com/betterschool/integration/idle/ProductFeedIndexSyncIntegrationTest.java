@@ -9,7 +9,7 @@ import com.betterschool.infrastructure.adapter.repository.CountAction;
 import com.betterschool.infrastructure.adapter.repository.CountEvent;
 import com.betterschool.infrastructure.adapter.repository.idle.IdleRepository;
 import com.betterschool.infrastructure.adapter.repository.LikeState;
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 「索引不复活」闸门一并钉死。
  */
 @DisplayName("商品 feed 索引同步：提交诞生/翻回 / 状态快照逐点 / 改价同步 / 浏览旁路 ±N")
-class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
+class ProductFeedIndexSyncIntegrationTest extends PostApiTestBase {
 
     @Autowired
     private IIdleRepository idleRepository;

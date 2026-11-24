@@ -5,7 +5,7 @@ import com.betterschool.domain.notification.model.valobj.NotificationEventMessag
 import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.domain.notification.service.INotificationService;
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 写路径走事件驱动 seam：publish（业务事务内写 outbox）→ 消费方落库（{@link #deliver} helper），
  * HTTP 端点另测 scope 过滤与推水位。
  */
-class NotificationReadModelIntegrationTest extends CommunityApiTestBase {
+class NotificationReadModelIntegrationTest extends PostApiTestBase {
 
     @Autowired
     private INotificationService notificationService;

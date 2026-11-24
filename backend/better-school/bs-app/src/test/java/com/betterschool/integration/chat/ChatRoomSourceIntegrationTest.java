@@ -1,6 +1,6 @@
 package com.betterschool.integration.chat;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>seam = REST 入口 + 外部可观察状态（HTTP 响应 + room 表列）。
  */
-public class ChatRoomSourceIntegrationTest extends CommunityApiTestBase {
+public class ChatRoomSourceIntegrationTest extends PostApiTestBase {
 
     @Test
     @DisplayName("市集入口建会话：来源与创建人落库，列表出对家角色；对方视角角色相反")

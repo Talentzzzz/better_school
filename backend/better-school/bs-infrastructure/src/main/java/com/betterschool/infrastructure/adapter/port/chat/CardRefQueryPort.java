@@ -1,9 +1,9 @@
 package com.betterschool.infrastructure.adapter.port.chat;
 
 import com.betterschool.domain.chat.adapter.port.ICardRefQueryPort;
-import com.betterschool.domain.community.adapter.repository.ICommunityRepository;
-import com.betterschool.domain.community.model.entity.PostEntity;
-import com.betterschool.domain.community.model.valobj.PostStatusVO;
+import com.betterschool.domain.post.adapter.repository.IPostRepository;
+import com.betterschool.domain.post.model.entity.PostEntity;
+import com.betterschool.domain.post.model.valobj.PostStatusVO;
 import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
 import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
@@ -19,12 +19,12 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class CardRefQueryPort implements ICardRefQueryPort {
 
-    private final ICommunityRepository communityRepository;
+    private final IPostRepository postRepository;
     private final IIdleRepository idleRepository;
 
     @Override
     public PostStatusVO findPostStatus(String postId) {
-        PostEntity postEntity = communityRepository.findPostById(postId);
+        PostEntity postEntity = postRepository.findPostById(postId);
         return postEntity == null ? null : postEntity.getStatus();
     }
 

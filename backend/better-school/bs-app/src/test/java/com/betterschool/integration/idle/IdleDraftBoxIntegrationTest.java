@@ -1,6 +1,6 @@
 package com.betterschool.integration.idle;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 
@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 草稿箱（票 02）集成测试：保存（部分字段、仅本人可见）、编辑、删除、
  * 提交即上架（DRAFT→ON_SALE，敏感词初筛已删——含「作弊」等词的内容照常提交成功）。
  */
-class IdleDraftBoxIntegrationTest extends CommunityApiTestBase {
+class IdleDraftBoxIntegrationTest extends PostApiTestBase {
 
     // ---------- 保存草稿：部分字段可存、仅本人可见 ----------
 

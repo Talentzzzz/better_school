@@ -1,6 +1,6 @@
 package com.betterschool.integration.consume;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.integration.support.VtConsumeThreadProbe;
 import org.apache.rocketmq.client.consumer.DefaultMQPushConsumer;
 import org.apache.rocketmq.client.impl.consumer.DefaultMQPushConsumerImpl;
@@ -28,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 断言对象是线程模型，不看业务结果——探针消费者订阅独立 topic，测试直接投递给它的消费服务。
  */
 @DisplayName("消费 seam：12 个消费者的工作线程为虚拟线程 + 流控旋钮已设值")
-class ConsumeHandlerVirtualThreadIntegrationTest extends CommunityApiTestBase {
+class ConsumeHandlerVirtualThreadIntegrationTest extends PostApiTestBase {
 
     @Autowired
     private ApplicationContext applicationContext;

@@ -1,6 +1,6 @@
 package com.betterschool.trigger.job;
 
-import com.betterschool.domain.community.service.comment.ICommunityCommentService;
+import com.betterschool.domain.post.service.comment.ICommentService;
 import com.xxl.job.core.handler.annotation.XxlJob;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,11 +23,11 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class CommentFeedIndexRebuildJob {
 
-    private final ICommunityCommentService communityCommentService;
+    private final ICommentService commentService;
 
     @XxlJob("commentFeedIndexRebuildJob")
     public String rebuild(String param) {
-        communityCommentService.rebuildCommentFeedIndex();
+        commentService.rebuildCommentFeedIndex();
         return "success";
     }
 }

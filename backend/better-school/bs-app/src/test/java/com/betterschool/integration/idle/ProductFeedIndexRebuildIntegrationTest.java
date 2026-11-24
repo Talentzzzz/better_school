@@ -4,7 +4,7 @@ import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
 import com.betterschool.infrastructure.adapter.repository.CountAction;
 import com.betterschool.infrastructure.adapter.repository.CountEvent;
 import com.betterschool.infrastructure.adapter.repository.idle.IdleRepository;
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.trigger.job.MarketFeedIndexRebuildJob;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 跨表被绕过直改的漂移）人工制造后由重建修复；重跑是幂等不动点（照帖子 {@code FeedIndexRebuildIntegrationTest} 先例）。
  */
 @DisplayName("商品 feed 索引全量重建：严格一致 / 缺行与漂移修复 / 计数校准 / 幂等")
-class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
+class ProductFeedIndexRebuildIntegrationTest extends PostApiTestBase {
 
     @Autowired
     private MarketFeedIndexRebuildJob rebuildJob;

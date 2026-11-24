@@ -1,6 +1,6 @@
 package com.betterschool.integration.idle;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.usecase.idle.IdleCase;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 「幂等重放 ⇒ 不重复退款」两个方向外显覆盖；翻转未命中（状态已变化）抛业务异常、
  * 资金段尚未执行零残留，由条件 UPDATE 守卫保证，与票 06 支付的余额不足注入同缝不同向。
  */
-class ProductCancelFundConsistencyIntegrationTest extends CommunityApiTestBase {
+class ProductCancelFundConsistencyIntegrationTest extends PostApiTestBase {
 
     @Autowired
     private IdleCase idleCase;

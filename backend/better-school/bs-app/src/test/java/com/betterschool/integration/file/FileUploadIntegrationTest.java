@@ -1,6 +1,6 @@
 package com.betterschool.integration.file;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ByteArrayResource;
@@ -16,10 +16,10 @@ import java.util.Base64;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 图片上传通道集成测试：MinIO 容器由基类统一拉起（见 CommunityApiTestBase#MINIO），
+ * 图片上传通道集成测试：MinIO 容器由基类统一拉起（见 PostApiTestBase#MINIO），
  * 断言外部可观察状态：HTTP 响应与 MinIO 可直接 GET
  */
-class FileUploadIntegrationTest extends CommunityApiTestBase {
+class FileUploadIntegrationTest extends PostApiTestBase {
 
     /** 1x1 PNG（真实字节，便于下载断言） */
     private static final byte[] PNG_BYTES = Base64.getDecoder().decode(

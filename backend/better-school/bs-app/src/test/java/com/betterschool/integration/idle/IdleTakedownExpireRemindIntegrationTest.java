@@ -1,6 +1,6 @@
 package com.betterschool.integration.idle;
 
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.trigger.job.IdleExpireScanJob;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 商品上架后主动下架进草稿箱（退出搜索可见），可编辑后重新提交上架；
  * 到期下架扫描将上架满 30 天的商品汇入草稿箱，不再进入任何终态。
  */
-class IdleTakedownExpireRemindIntegrationTest extends CommunityApiTestBase {
+class IdleTakedownExpireRemindIntegrationTest extends PostApiTestBase {
 
     @Autowired
     private IdleExpireScanJob idleExpireScanJob;

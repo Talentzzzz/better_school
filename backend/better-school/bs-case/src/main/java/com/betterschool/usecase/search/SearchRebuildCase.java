@@ -1,6 +1,6 @@
 package com.betterschool.usecase.search;
 
-import com.betterschool.domain.community.service.post.ICommunityPostService;
+import com.betterschool.domain.post.service.post.IPostService;
 import com.betterschool.domain.idle.service.IIdleService;
 import com.betterschool.domain.user.service.profile.IUserProfileService;
 import lombok.RequiredArgsConstructor;
@@ -18,13 +18,13 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class SearchRebuildCase {
 
-    private final ICommunityPostService communityPostService;
+    private final IPostService postService;
     private final IIdleService idleService;
     private final IUserProfileService userProfileService;
 
     /** 三类索引依次重建，返回各类回填条数（XXL-Job 调度日志直接可见） */
     public String rebuildAll() {
-        int postCount = communityPostService.rebuildSearchIndex();
+        int postCount = postService.rebuildSearchIndex();
         int productCount = idleService.rebuildSearchIndex();
         int userCount = userProfileService.rebuildSearchIndex();
         log.info("[SearchRebuildCase] 全量重建完成 post={}, product={}, user={}", postCount, productCount, userCount);

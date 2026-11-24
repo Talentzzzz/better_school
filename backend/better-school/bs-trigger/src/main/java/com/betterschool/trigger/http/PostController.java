@@ -1,6 +1,6 @@
 package com.betterschool.trigger.http;
 
-import com.betterschool.api.ICommunityService;
+import com.betterschool.api.IPostService;
 import com.betterschool.api.dto.CommentReplyResponseDTO;
 import com.betterschool.api.dto.PostCommentRequestDTO;
 import com.betterschool.api.dto.PostCommentResponseDTO;
@@ -11,16 +11,15 @@ import com.betterschool.api.dto.PostSummaryResponseDTO;
 import com.betterschool.api.dto.UserCommentResponseDTO;
 import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
-import com.betterschool.usecase.community.CommentLikeCase;
-import com.betterschool.usecase.community.CommentPublishCase;
-import com.betterschool.usecase.community.PostLikeCase;
-import com.betterschool.usecase.community.PostPublishCase;
-import com.betterschool.domain.community.model.entity.PostCommentEntity;
-import com.betterschool.domain.community.model.entity.PostEntity;
-import com.betterschool.domain.community.model.valobj.FeedPageVO;
-import com.betterschool.domain.community.model.valobj.PostStatusVO;
-import com.betterschool.domain.community.service.comment.ICommunityCommentService;
-import com.betterschool.domain.community.service.post.ICommunityPostService;
+import com.betterschool.usecase.post.CommentLikeCase;
+import com.betterschool.usecase.post.CommentPublishCase;
+import com.betterschool.usecase.post.PostLikeCase;
+import com.betterschool.usecase.post.PostPublishCase;
+import com.betterschool.domain.post.model.entity.PostCommentEntity;
+import com.betterschool.domain.post.model.entity.PostEntity;
+import com.betterschool.domain.post.model.valobj.FeedPageVO;
+import com.betterschool.domain.post.model.valobj.PostStatusVO;
+import com.betterschool.domain.post.service.comment.ICommentService;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -40,19 +39,19 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 社区 HTTP 入口：浏览免登录，发布/评论/点赞需登录
+ * 帖子 HTTP 入口：浏览免登录，发布/评论/点赞需登录
  */
 @RestController
 @RequestMapping("/api/community")
 @RequiredArgsConstructor
-public class PostController implements ICommunityService {
+public class PostController implements IPostService {
 
     private static final int MAX_PAGE_SIZE = 50;
     /** feed 摘要截断长度（约前 50 字，文字小卡渲染用） */
     private static final int FEED_SUMMARY_MAX_LENGTH = 50;
 
-    private final ICommunityPostService postService;
-    private final ICommunityCommentService commentService;
+    private final com.betterschool.domain.post.service.post.IPostService postService;
+    private final ICommentService commentService;
     private final PostPublishCase postPublishCase;
     private final CommentPublishCase commentPublishCase;
     private final PostLikeCase postLikeCase;

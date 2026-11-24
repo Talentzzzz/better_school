@@ -4,7 +4,7 @@ import com.betterschool.infrastructure.adapter.repository.CountAction;
 import com.betterschool.infrastructure.adapter.repository.CountEvent;
 import com.betterschool.infrastructure.adapter.repository.idle.IdleRepository;
 import com.betterschool.infrastructure.adapter.repository.LikeState;
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 队列非空即发车，没有收集窗口），断言前排空合并器只为兜底。
  */
 @DisplayName("商品浏览 UV：首次计 1 / 重复只刷 viewed_at / 匿名不计 / 加速列=明细行数")
-class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
+class ProductViewMergeIntegrationTest extends PostApiTestBase {
 
     private static final long DRAIN_MILLIS = 5_000;
 

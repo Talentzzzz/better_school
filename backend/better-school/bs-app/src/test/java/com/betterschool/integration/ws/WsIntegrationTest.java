@@ -3,7 +3,7 @@ package com.betterschool.integration.ws;
 import com.betterschool.infrastructure.ws.WsLocalSessions;
 import com.betterschool.infrastructure.ws.wsframe.WsFrame;
 import com.betterschool.infrastructure.ws.wsframe.WsFrameType;
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.trigger.listener.ChatPushConsumer;
 import com.betterschool.trigger.listener.ChatReadPushConsumer;
 import com.betterschool.trigger.listener.ChatRecallPushConsumer;
@@ -53,7 +53,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 「RECALL 轻推丢失」「断线期间对方已读」为接受退化——语义由用例注释记档。
  * 发送超时重发/重复提交幂等由 {@link ChatSendPipelineIntegrationTest} 背书。
  */
-public class WsIntegrationTest extends CommunityApiTestBase {
+public class WsIntegrationTest extends PostApiTestBase {
 
     @LocalServerPort
     private int port;

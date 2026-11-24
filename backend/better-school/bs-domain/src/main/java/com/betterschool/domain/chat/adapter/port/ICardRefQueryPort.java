@@ -1,6 +1,6 @@
 package com.betterschool.domain.chat.adapter.port;
 
-import com.betterschool.domain.community.model.valobj.PostStatusVO;
+import com.betterschool.domain.post.model.valobj.PostStatusVO;
 import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
 
 /**

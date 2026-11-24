@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 积分域集成测试基类：完整 Spring 上下文，连 scripts/test-env.sh up 备好的常驻栈
  * （better_school_test 库——monolith-restructure 票 07 合库后全应用同一份）。
  *
- * <p>约定（照单体的 {@code CommunityApiTestBase}）：
+ * <p>约定（照单体的 {@code PostApiTestBase}）：
  * <ul>
  *   <li>单一 seam：HTTP 走 trigger 入口、MQ 走消费者 Bean（测试栈无 broker，消费侧当普通 Bean 直接调用）、
  *       Dubbo 走 Provider Bean（积分域没有自己的 consumer，真跨进程调用归联调票）</li>

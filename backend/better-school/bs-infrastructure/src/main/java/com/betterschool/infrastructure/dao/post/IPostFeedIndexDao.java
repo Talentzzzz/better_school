@@ -1,7 +1,7 @@
 package com.betterschool.infrastructure.dao.post;
 
-import com.betterschool.domain.community.model.valobj.FeedCursorVO;
-import com.betterschool.domain.community.model.valobj.FeedIndexItemVO;
+import com.betterschool.domain.post.model.valobj.FeedCursorVO;
+import com.betterschool.domain.post.model.valobj.FeedIndexItemVO;
 import com.betterschool.infrastructure.dao.post.po.PostFeedIndexRow;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
