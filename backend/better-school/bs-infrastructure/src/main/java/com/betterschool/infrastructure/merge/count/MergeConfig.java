@@ -14,7 +14,7 @@ import java.util.Objects;
  * <p>三条硬约束：
  * <ol>
  *   <li><b>{@code waitTimeoutMs > 0}</b>：等终态没有上限等于没有超时出口（DB 慢时调用方会悬挂）；</li>
- *   <li><b>{@code shardCapacity >= maxBatch}</b>：否则永远攒不满一批就被背压拒绝；</li>
+ *   <li><b>{@code shardCapacity >= maxBatch}</b>：容量小于单批上界时，队列会先撞满即拒、一批永远取不到 {@code maxBatch} 件；</li>
  *   <li><b>{@code drainTimeoutMs > 0}</b>：停机排空没有上限等于没有停机。</li>
  * </ol>
  *
@@ -68,7 +68,8 @@ public final class MergeConfig {
         require(waitTimeoutMs > 0,
                 "merge.count.wait-timeout-ms 必须 > 0（当前 %s），否则等终态没有上限", waitTimeoutMs);
         require(shardCapacity >= maxBatch,
-                "merge.count.shard-capacity(%s) 必须 >= merge.count.max-batch(%s)，否则永远攒不满一批就被拒绝",
+                "merge.count.shard-capacity(%s) 必须 >= merge.count.max-batch(%s)，否则单批上界永远取不到、"
+                        + "队列先满即拒",
                 shardCapacity, maxBatch);
         require(drainTimeoutMs > 0, "merge.count.drain-timeout-ms 必须 > 0（当前 %s）", drainTimeoutMs);
         this.shardCount = shardCount;

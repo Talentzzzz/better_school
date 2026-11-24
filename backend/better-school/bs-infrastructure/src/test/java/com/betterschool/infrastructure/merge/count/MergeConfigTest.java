@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * 参数构造即校验（与通用引擎那份逐条对齐）。
  *
  * <p>硬约束都必须<b>在构造时</b>炸：配错了不是「慢」，而是「每个请求都会撞超时」或
- * 「永远攒不满一批」——那种错误在压测里表现为数字难看，在代码里找不到对应关系。
+ * 「队列先满即拒」——那种错误在压测里表现为数字难看，在代码里找不到对应关系。
  *
  * <p>per-invId leader 模型下没有分片路由：{@code shardCount} 是退役兼容参数（保留 yml 键一个
  * 版本），只校验 {@code > 0}，不再要求 2 的幂。
@@ -58,7 +58,7 @@ class MergeConfigTest {
     }
 
     @Test
-    @DisplayName("shardCapacity < maxBatch：构造即失败（永远攒不满一批就被拒）")
+    @DisplayName("shardCapacity < maxBatch：构造即失败（队列先满即拒，单批上界永远取不到）")
     void rejectsShardCapacityBelowMaxBatch() {
         assertThrows(IllegalArgumentException.class,
                 () -> new MergeConfig(8, 5, 200, 100, 199, 5000));

@@ -324,8 +324,8 @@ public class CountMerger {
         while (!mine.isSettled()) {
             List<Pending> batch = group.takeForFlush(mine, deadlineNanos);
             if (batch == null) {
-                // 收集段内部已交还领导权；这里补空组清理——队列空且无在途 flush 时没人再动它
-                group.releaseLeadership();
+                // 收集段三个出口（件已终态 / 预算耗尽 / 被中断）内部都已交还领导权，这里不再重复放权；
+                // 只补空组清理——队列空且无在途 flush 时没人再动它，留着就是 map 里的常驻空壳
                 if (group.tryRemoveIfIdle()) {
                     groups.remove(group.key(), group);
                 }
@@ -341,8 +341,9 @@ public class CountMerger {
                 return true;
             }
         }
-        // 自己的件已终态而退出：此刻手里可能还握着收集领导权（上一轮 tryPromote 成功），
-        // 必须交还并叫醒等待者——带走这张票的话，队列里的件没人能接手，同组全部等到超时
+        // 自己的件已终态而退出：此刻必定握着收集领导权（上一轮 tryPromote 成功才会走到循环顶部），
+        // 不交还的话队列里的件没人能接手，同组全部等到超时。因为票在本线程手里，这次放权不可能
+        // 误撤别人的领导权——放完再叫醒等待者，谁抢到谁接着发
         group.releaseLeadership();
         // 顺手摘掉空组：队列空且无在途 flush 时没人再动它，留着就是 map 里的常驻空壳
         if (group.tryRemoveIfIdle()) {
@@ -444,10 +445,10 @@ public class CountMerger {
 
         private final ReentrantLock lock = new ReentrantLock();
         /**
-         * <b>follower 专用</b>条件：等「自己的件有终态」与「接班」。落库收尾 / 停机会 signalAll；
+         * <b>follower 专用</b>条件（等「自己的件有终态」与「接班」）：落库收尾 / 交权 / 停机会 signalAll；
          * 进件<b>不</b>碰它——否则每进一件就惊醒同组全部等待者（惊群）。
          */
-        private final Condition ready = lock.newCondition();
+        private final Condition followerWakeup = lock.newCondition();
         /**
          * <b>collector 专用</b>条件：等「队列进件」与「落库结束」两种唤醒。只有收集段在它上面等，
          * 同一时刻至多一个（收集领导权互斥），所以 signalAll 最多叫醒一根线程——这就是去掉收集窗口
@@ -542,7 +543,7 @@ public class CountMerger {
                         flushing = true;
                         departedBatches++;
                         // 叫醒跟随者去竞争收集领导权：谁抢到谁在落库结束后接着发下一批
-                        ready.signalAll();
+                        followerWakeup.signalAll();
                         return batch;
                     }
                     long remainNanos = deadlineNanos - now;
@@ -573,7 +574,7 @@ public class CountMerger {
                     removed = true;
                 }
                 // follower 要醒（自己的件有终态了 / 该接班了），collector 也要醒（可以发下一批了）
-                ready.signalAll();
+                followerWakeup.signalAll();
                 arrival.signalAll();
                 return retired;
             } finally {
@@ -585,7 +586,7 @@ public class CountMerger {
             lock.lock();
             try {
                 closed = true;
-                ready.signalAll();
+                followerWakeup.signalAll();
                 arrival.signalAll();
             } finally {
                 lock.unlock();
@@ -598,7 +599,7 @@ public class CountMerger {
                 closed = true;
                 removed = true;
                 if (queue.isEmpty()) {
-                    ready.signalAll();
+                    followerWakeup.signalAll();
                     arrival.signalAll();
                     return 0;
                 }
@@ -612,7 +613,7 @@ public class CountMerger {
                     }
                 }
                 log.warn("组 {} 未落库即回填 {} 件（原因：{}）", key, leftover.size(), reason);
-                ready.signalAll();
+                followerWakeup.signalAll();
                 arrival.signalAll();
                 return filled;
             } finally {
@@ -636,7 +637,7 @@ public class CountMerger {
         void awaitWakeup(long nanos) {
             lock.lock();
             try {
-                ready.awaitNanos(nanos);
+                followerWakeup.awaitNanos(nanos);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } finally {
@@ -665,7 +666,7 @@ public class CountMerger {
         /** 锁内交还收集领导权（调用方必持组锁） */
         private void yieldLeadership() {
             collectorActive = false;
-            ready.signalAll();
+            followerWakeup.signalAll();
         }
 
         /** 无锁交还收集领导权（收集段之外的退出路径用）：放权并叫醒等待者接班 */

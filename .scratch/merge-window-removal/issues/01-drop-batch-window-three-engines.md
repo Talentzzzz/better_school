@@ -18,6 +18,6 @@
 - [x] `application.yml` 两个键的注释改为「退役兼容键，读入不参与发车判定」；`CountMergeConfig` / `MergeEngineConfig` 启动日志与 javadoc 同步（不再宣传「收集窗口」）
 - [x] 断言同步改写（两包对称）：「窗口到点才发车（单件 ≈ 窗口）」→「单件立即落库（返回 ≈ 一次 flush）」；「攒满提前发车」用例删除，换成「队列有货就接着发（在途期间进件，落库结束立即发下一批，单批 ≤maxBatch）」；靠窗口「把件扣在队列里」的既有用例（保序 / 停机排空 / 容量满即拒）改用**闸门后落库**制造确定的在途与排队
 - [x] 既有两份引擎 spec 的「收集窗口同口径平移」条款标注作废并指向本 spec；`backend/CLAUDE.md` 技术包树补发车口径一句
-- [x] 全 reactor `test-compile` 绿；**两包三处引擎单测实跑 80 例全绿**（实测 surefire 可离线跑纯内存用例）
+- [x] 全 reactor `test-compile` 绿；**两包三处引擎单测实跑 82 例全绿**（实测 surefire 可离线跑纯内存用例；计数侧已补齐两条对称用例）
 - [x] 票外发现的三个存量缺陷已修（详见 spec「实现记录」）：计数引擎退出时带走收集领导权、`accepted/rejectedFull/rejectedClosed` 从不累加、`Pending` 终态两步写竞态
 - [ ] 欠账（留给下一个人）：`bs-app` 集成测试（需 MySQL/Redisson）本票未跑；**调用方切换 / 旧包退役 / 任何替换决策之前，必须先补跑 merge + merge/count + mergevirtual 全套单测并全绿**

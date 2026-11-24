@@ -17,7 +17,7 @@
 
 1. **DB 打不穿**：串行形态下事务速率 = 1/flush 耗时，而 flush 耗时（行锁临界区 + 提交）≈ DB 单行事务周期，所以事务速率**天然 ≤ DB 天花板**（loadtesting 实测锚点 ≈4,079 事务/s）——节流阀就是 flush 耗时本身，不需要窗口保护；
 2. **合并比自动伸缩**：合并比 = 到达速率 × flush 耗时。低速率（1k/s × 0.5ms ≈ 0.5~1 件/批）立即发车延迟最低；高速率（10k/s × 0.5ms = 5 件/批）事务速率仍 = 1/flush，稳态自动平衡，不积压、不拒收；
-3. **突发头部已有覆盖**：瞬时大量涌入时队列本来就有货，一次发车取 {@code min(maxBatch, size)}，头部顶多多付一个小事务——不需要「攒满触发」这个旋钮；
+3. **突发头部已有覆盖**：瞬时大量涌入时队列本来就有货，一次发车取 `min(maxBatch, size)`，头部顶多多付一个小事务——不需要「攒满触发」这个旋钮；
 4. **窗口与「攒满触发」的残值趋零**：唯一理论价值（突发头部聚拢）已被上一条覆盖——纯延迟负担，全删。
 
 ## User Stories
@@ -57,8 +57,8 @@
 - **Seam 复用，零新增**：三处引擎各自的纯内存单测骨架（录制型落库桩 + 闸门后并发起跑 + 后台提交）原样沿用；理想 seam 数为零。
 - **断言同步改写**（两包对称）：「窗口到点才发车（单件返回时间 ≈ 收集窗口）」类用例改写为「**单件立即落库**（返回时间 ≈ 一次 flush）」；「攒满提前发车」用例**删除**，原位换成「**队列有货就接着发**（在途一批期间进件的，落库结束立即发下一批，单批 ≤maxBatch）」；同 key 保序、单飞、停机三步、背压、吞 Throwable / 退出谓词 / 双 spawn / claim 死亡窗口等既有断言不受影响——但凡是**靠窗口把件扣在队列里**的用例（保序、停机排空、容量满即拒）必须改用「闸门后落库」制造确定的在途/排队，不许靠调度运气。
 - **实现票的验收标准 = 代码改完 + 全 reactor test-compile 绿**（原为「不执行单测」，用户拍板）。
-  **执行结果（2026-11-24）**：实测 surefire 可离线跑**纯内存**单测，所以两包三处引擎的 80 例全部**实跑并转绿**
-  （`MergeEngineTest` 18 / `VirtualMergeEngineTest` 23 / `CountMergerTest` 15 / `CountMergeWriterTest` 6 /
+  **执行结果（2026-11-24）**：实测 surefire 可离线跑**纯内存**单测，所以两包三处引擎的 82 例全部**实跑并转绿**
+  （`MergeEngineTest` 18 / `VirtualMergeEngineTest` 23 / `CountMergerTest` 17 / `CountMergeWriterTest` 6 /
   `ViewMergeWriterTest` 8 / 两份 `MergeConfigTest` 4+6）——顺带把三处从未跑过的用例暴露的缺陷修掉（见下）。
   **仍然悬着的欠账**：集成测试（`bs-app` 的 `*IntegrationTest`）需要 MySQL/Redisson，本票不跑；
   **调用方切换、旧包退役、任何替换决策之前，必须先补跑 merge + merge/count + mergevirtual 全套单测并全绿**——
@@ -83,7 +83,7 @@
 ## 实现记录（2026-11-24，票：`.scratch/merge-window-removal/issues/01-drop-batch-window-three-engines.md`）
 
 三处收集段已按本 spec 改完（`merge/MergeGroup`、`merge/count/CountMerger$Group`、`mergevirtual/VirtualMergeGroup`），
-两包 80 例单测实跑转绿。实跑过程中暴露并修掉三个**票外缺陷**（都是「单测从未跑过」掩盖的存量问题，
+两包 82 例单测实跑转绿（计数侧补了「单件立即落库」「队列有货就接着发」两条与另两包对称的用例）。实跑过程中暴露并修掉三个**票外缺陷**（都是「单测从未跑过」掩盖的存量问题，
 不修则本 spec 的验收判据（单件延迟、合并比、停机排空）根本立不住）：
 
 1. **计数引擎会带走收集领导权**：`driveFlushCycles` 在自己的件已终态而退出时没有交还 `collectorActive`，

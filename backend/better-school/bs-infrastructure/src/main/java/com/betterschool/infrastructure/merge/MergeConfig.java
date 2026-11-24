@@ -58,8 +58,8 @@ public final class MergeConfig {
                 "merge.batch.max-flush-delay-millis 必须 >= 0（当前 %s）", maxFlushDelayMillis);
         require(maxBatch > 0, "merge.batch.max-batch 必须 > 0（当前 %s）", maxBatch);
         require(shardCapacity >= maxBatch,
-                "merge.batch.shard-capacity(%s) 必须 >= max-batch(%s)，否则永远攒不满一批就被拒",
-                shardCapacity, maxBatch);
+                "merge.batch.shard-capacity(%s) 必须 >= max-batch(%s)，否则单批上界永远取不到、"
+                        + "队列先满即拒", shardCapacity, maxBatch);
         require(drainTimeoutMs > 0, "merge.batch.drain-timeout-ms 必须 > 0（当前 %s）", drainTimeoutMs);
 
         this.shardCount = shardCount;

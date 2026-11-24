@@ -207,6 +207,62 @@ class CountMergerTest {
         return outcomes;
     }
 
+    // ── 发车时机：单件立即落库 / 队列有货就接着发（与 merge、mergevirtual 两包对称）────────
+
+    @Test
+    @DisplayName("单件立即落库：首件即发车，返回时间 ≈ 一次 flush（窗口参数 3s 也一分不等）")
+    void singleItemFlushesImmediatelyWithoutWindow() throws Exception {
+        RecordingFlushHandler handler = new RecordingFlushHandler();
+        // 退役的窗口键给到 3000ms：如果它还参与发车判定，这条断言必红
+        CountMerger engine = start(new MergeConfig(8, 3_000, 200, 5_000, 2_000, 2_000), handler);
+
+        long startNanos = System.nanoTime();
+        MergeResult<LikeState> outcome = engine.commit(POST_ID, like("1"));
+        long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+
+        assertEquals(MergeState.COMPLETED, outcome.state());
+        assertTrue(costMs < 500, "队列非空即发：单件不许等任何窗口，实测 " + costMs + "ms");
+        assertEquals(1, handler.callCount(), "单件自成一批，一次落库");
+        assertEquals(1, engine.metrics().flushed());
+        assertEquals(0, engine.metrics().timedOut(), "延迟预算里不该出现超时");
+        assertTrue(engine.awaitIdle(5_000));
+    }
+
+    @Test
+    @DisplayName("队列有货就接着发：在途一批期间进件的，落库一结束立即发下一批，单批不超过 maxBatch")
+    void queuedItemsDepartRightAfterPreviousFlush() throws Exception {
+        int maxBatch = 5;
+        RecordingFlushHandler handler = new RecordingFlushHandler();
+        handler.entered = new CountDownLatch(1);
+        handler.hold = new CountDownLatch(1);
+        CountMerger engine = start(new MergeConfig(8, 1_000, maxBatch, 10_000, 2_000, 10_000), handler);
+
+        List<MergeResult<LikeState>> outcomes = Collections.synchronizedList(new ArrayList<>());
+        List<Thread> submitters = new ArrayList<>(maxBatch + 4);
+        long startNanos = System.nanoTime();
+        submitters.add(submitInBackground(POST_ID, like("0"), outcomes));
+        assertTrue(handler.entered.await(5, TimeUnit.SECONDS), "首件应已发车并卡在落库上");
+
+        // 落库在途：后面的件只能待在队列里（8 件 = maxBatch + 3）
+        for (int i = 1; i <= maxBatch + 3; i++) {
+            submitters.add(submitInBackground(POST_ID, like(String.valueOf(i)), outcomes));
+        }
+        assertTrue(awaitBuffered(maxBatch + 3), "在途 flush 期间进件必须能入队");
+
+        handler.hold.countDown();
+        assertTrue(engine.awaitIdle(10_000));
+        // 结果由提交线程写进 sink：必须等它们跑完再数，否则数的是「已被唤醒的线程数」而不是终态
+        for (Thread submitter : submitters) {
+            submitter.join(10_000);
+        }
+        long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+
+        assertEquals(maxBatch + 4, outcomes.stream().filter(MergeResult::isCompleted).count());
+        assertEquals(maxBatch, handler.maxGroupSize(), "单批上界 = maxBatch");
+        assertTrue(handler.callCount() >= 2, "队列有货就接着发，不等任何窗口");
+        assertTrue(costMs < 1_000, "发车不依赖窗口（退役键给的 1000ms），实测 " + costMs + "ms");
+    }
+
     // ── I2：单飞 ──────────────────────────────────────────────────────────────
 
     @Test

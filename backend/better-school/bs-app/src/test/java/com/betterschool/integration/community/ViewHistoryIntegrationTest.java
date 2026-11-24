@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("浏览历史倒序分页 / 失效帖过滤 / feed 已读灰显与浏览事件一致")
 class ViewHistoryIntegrationTest extends CommunityApiTestBase {
 
-    /** 窗口之后才会有写：等排空用它，等不到即断言失败 */
+    /** 等合并器排空用它，等不到即断言失败（无收集窗口，正常路径本已落库，这里只兜在途件） */
     private static final long DRAIN_MILLIS = 5_000;
     private static final int PAGE_SIZE = 10;
     private static final int POST_COUNT = 25;

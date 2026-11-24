@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
  * 浏览与点赞共用同一套引擎、同一个 {@code commit} 入口、同一套三态与降级：
  * 等待落库终态，超时 = 结果未知（{@code TIMEOUT} → 上层可重试 → 重放被明细唯一键吸收），
  * 不再有「允许丢」的灰色地带，也不再有 {@code droppedViews} 指标。已知的代价（用户知情拍板，
- * 非缺陷）：浏览请求 RT 增加落库时长；每请求分配 future 的成本回归。
+ * 非缺陷）：浏览请求 RT 增加落库时长；每请求一个终态对象的成本回归。
  *
  * <h2>降级在引擎里，本类只做翻译</h2>
  * {@link CountMerger#commit} 只回三态（{@link MergeState}），本类负责把它们翻成用户能看到的东西
