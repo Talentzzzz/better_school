@@ -7,7 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * 点赞类写入的<b>唯一入口</b>：提交给合并器 → 等窗口 → 一组一事务落库 → 返回。
+ * 点赞类写入的<b>唯一入口</b>：提交给合并器 → 一组一事务落库 → 返回（队列非空即发车，无收集窗口）。
  *
  * <p>接口返回成功时，计数<b>已经精确</b>（与关系行条数相等）：事务在返回前已提交，不需要等待，
  * 也不需要事后重算（验收判据 C1）。
@@ -54,7 +54,7 @@ public class CountMergeWriter {
         MergeResult<LikeState> outcome = countMerger.commit(rowId, event);
         return switch (outcome.state()) {
             case COMPLETED -> toDomain(outcome.result(), action);
-            case TIMEOUT -> throw retryable(action, rowId, "等窗口超时（结果未知，件大概率仍会落库）");
+            case TIMEOUT -> throw retryable(action, rowId, "等落库超时（结果未知，件大概率仍会落库）");
             case FAILED -> throw retryable(action, rowId, "落库失败（整组已回滚，或同步降级也失败）");
             // 这两种引擎内部已就地降级；走到这里说明通用层被改坏了
             case BUFFER_FULL, CLOSED -> throw new IllegalStateException(

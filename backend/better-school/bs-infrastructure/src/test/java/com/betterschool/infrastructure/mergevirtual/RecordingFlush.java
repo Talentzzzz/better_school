@@ -56,6 +56,8 @@ final class RecordingFlush implements MergeStrategy.Flush<VirtualMergeEngineTest
     volatile CountDownLatch entered;
     /** 落库期间要等的闸门：测试用它制造「落库阻塞」 */
     volatile CountDownLatch hold;
+    /** 只拦这个 key 的闸门（{@code null} = 不按 key 区分）：验证「别的 key 不被拖住」时用 */
+    volatile String gatedKey;
     /** 每次落库的人为耗时（毫秒） */
     volatile long delayMs;
     /** true = 整组抛 RuntimeException（模拟事务回滚） */
@@ -123,7 +125,8 @@ final class RecordingFlush implements MergeStrategy.Flush<VirtualMergeEngineTest
                 startSignal.countDown();
             }
             CountDownLatch gate = hold;
-            if (gate != null && !gate.await(BLOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            boolean gated = gatedKey == null || gatedKey.equals(group.shardKey());
+            if (gate != null && gated && !gate.await(BLOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 throw new IllegalStateException("落库替身等闸门超时");
             }
             if (delayMs > 0) {

@@ -22,7 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>语义变更钉死在数据上：首次浏览计 1、重复浏览不计数只刷 viewed_at、<b>匿名不计入</b>
  * （旧口径匿名也累加 PV，随本票作废）、加速列恒等于明细行数；旧 PV 列 {@code product.view_count}
- * 随本票停写、票 06 删列（主表已无该列）。浏览走真实详情链路（commit 合并写、等终态必须全落），断言前排空合并窗口。
+ * 随本票停写、票 06 删列（主表已无该列）。浏览走真实详情链路（commit 合并写、等终态必须全落、
+ * 队列非空即发车，没有收集窗口），断言前排空合并器只为兜底。
  */
 @DisplayName("商品浏览 UV：首次计 1 / 重复只刷 viewed_at / 匿名不计 / 加速列=明细行数")
 class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
@@ -42,7 +43,7 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
         Session viewer = registerAndLogin("13700006001", "商品浏览者");
 
         assertSuccess(getJson("/api/trade/products/" + productId, viewer), "登录浏览商品详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         assertThat(historyCountOf(productId)).as("明细即事实源：一人一商品一行").isEqualTo(1);
         assertThat(acceleratedCountOf(productId)).as("加速列 = 明细行数").isEqualTo(1);
@@ -67,7 +68,7 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
                 LocalDateTime.class, viewer.userId(), productId);
 
         assertSuccess(getJson("/api/trade/products/" + productId, viewer), "重复浏览商品详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         assertThat(historyCountOf(productId)).as("重复浏览不新增明细行").isEqualTo(1);
         assertThat(acceleratedCountOf(productId)).as("重复浏览不计数").isEqualTo(1);
@@ -82,7 +83,7 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
     void 匿名浏览不计入() {
         String productId = insertOnSaleProduct("匿名浏览的手电筒");
         assertSuccess(getJson("/api/trade/products/" + productId, null), "匿名浏览商品详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         assertThat(historyCountOf(productId)).as("匿名落不了明细行（主键一半是 user_id）").isZero();
         assertThat(acceleratedCountOf(productId)).as("无明细则无计数").isZero();

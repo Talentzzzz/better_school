@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * feed-index-uv 票 05：浏览历史接口与 feed 已读灰显——消费 {@code user_view_history} 明细的两个读能力。
  *
  * <p>断言只看外部可观察状态：HTTP 响应 + MySQL 数据。浏览走真实详情链路（fire-and-forget 合并写），
- * 断言前排空合并窗口；历史的期望序取自库内明细序（viewed_at 是秒级 DATETIME，同秒并列由
+ * 断言前排空合并器（无收集窗口，只为兜底在途件）；历史的期望序取自库内明细序（viewed_at 是秒级 DATETIME，同秒并列由
  * post_id tie-break 收敛成确定序），不假设浏览时刻互异。
  */
 @DisplayName("浏览历史倒序分页 / 失效帖过滤 / feed 已读灰显与浏览事件一致")
@@ -40,7 +40,7 @@ class ViewHistoryIntegrationTest extends CommunityApiTestBase {
             String postId = publishPost(author, "历史夹具帖" + i);
             assertSuccess(getJson("/api/community/posts/" + postId, viewer), "浏览详情");
         }
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         List<String> expected = jdbcTemplate.queryForList(
                 "SELECT post_id FROM user_view_history WHERE user_id = ? "
@@ -100,7 +100,7 @@ class ViewHistoryIntegrationTest extends CommunityApiTestBase {
         assertSuccess(getJson("/api/community/posts/" + kept, viewer), "浏览保留帖");
         assertSuccess(getJson("/api/community/posts/" + removed, viewer), "浏览将删帖");
         assertSuccess(getJson("/api/community/posts/" + ownPost, viewer), "浏览本人帖");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         assertSuccess(deleteJson("/api/community/posts/" + removed, author), "作者删帖");
 
@@ -123,7 +123,7 @@ class ViewHistoryIntegrationTest extends CommunityApiTestBase {
         // 只浏览前两帖：后一帖未浏览
         assertSuccess(getJson("/api/community/posts/" + posts.get(0), viewer), "浏览第一帖");
         assertSuccess(getJson("/api/community/posts/" + posts.get(1), viewer), "浏览第二帖");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         JsonNode feed = getJson("/api/community/posts?sort=time&pageSize=10", viewer);
         assertSuccess(feed, "主页 feed");

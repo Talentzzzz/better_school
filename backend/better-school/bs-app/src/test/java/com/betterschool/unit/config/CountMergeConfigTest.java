@@ -23,7 +23,7 @@ class CountMergeConfigTest {
     private final CountMergeConfig config = new CountMergeConfig();
 
     @Test
-    @DisplayName("什么都没配：落计数侧默认值（5ms 窗口 / 200 批 / 100ms 等待 / 2000 容量 / 5s 排空）")
+    @DisplayName("什么都没配：落计数侧默认值（200 批 / 100ms 等待 / 2000 容量 / 5s 排空；窗口键已退役）")
     void fallsBackToEngineDefaults() {
         MergeConfig mergeConfig = config.mergeConfig(new MockEnvironment());
 
@@ -45,7 +45,7 @@ class CountMergeConfigTest {
         MergeConfig mergeConfig = config.mergeConfig(environment);
 
         assertEquals(4, mergeConfig.shardCount());
-        assertEquals(3, mergeConfig.maxFlushDelayMillis());
+        assertEquals(3, mergeConfig.maxFlushDelayMillis(), "退役兼容键照读：只是不再参与发车判定");
         assertEquals(100, mergeConfig.maxBatch());
         assertEquals(80, mergeConfig.waitTimeoutMs());
         assertEquals(2000, mergeConfig.shardCapacity());

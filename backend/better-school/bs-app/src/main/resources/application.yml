@@ -137,28 +137,28 @@ xxl:
       log-retention-days: 30
 
 # 合并器参数（两套引擎并存，各一个子键；YAML 同文档顶层键不允许重复定义）
-# 计数合并器（per-invId leader 模型，对齐数据库内核热点组提交）：窗口 / 批 / 容量是模型推导，
-# 上线后只按 MergeMetrics 的 flushed ÷ batches（合并比）、activeGroups（活跃热点组数）、
-# handovers（接班次数）、timedOut、rejectedFull 调，调参不改代码结构。
+# 计数合并器（per-invId leader 模型，对齐数据库内核热点组提交）：发车条件 = 队列非空即发
+# （收集窗 = 落库耗时本身，无收集窗口）；上线后按 MergeMetrics 的 flushed ÷ batches（合并比，
+# 期望值 = 到达速率 × 落库耗时，变小不是回归）、activeGroups、handovers、timedOut、rejectedFull 调。
 # flush 并发 = 并发热点 leader 数，天然受连接池约束（无常驻 flush 线程，无「池 - 2」校验）。
 merge:
   count:
     shard-count: 8         # 【退役兼容键】保留一个版本，读进来只存不用（不再路由、不绑定线程）
-    max-flush-delay-millis: 5            # leader 收集窗口：首件建组起算 5ms 后发车，攒满可提前触发
-    max-batch: 200          # 200 行 ≈ 8ms 落库；再大 wait-timeout-ms 就吃紧
-    wait-timeout-ms: 100    # 必须 > max-flush-delay-millis：5ms 窗口 + 8ms 落库 + 抖动
+    max-flush-delay-millis: 5   # 【退役兼容键】收集窗口已删除（队列非空即发），读入不参与发车判定
+    max-batch: 200          # 单批上界：200 行 ≈ 8ms 落库；再大 wait-timeout-ms 就吃紧
+    wait-timeout-ms: 100    # 等终态的上限（含排队 + 落库），与发车条件正交；DB 变慢时的确定性出口
     shard-capacity: 2000    # 单个 invId 组的「降级触发点 + 内存上界」，满了就拒，不扩容
     drain-timeout-ms: 5000  # 停机排空（停收 → 排空 → 残余回填 FAILED）的等待上限
 
-# 库存合并器（合并前 marketing 侧 merge.batch.*，与计数侧同一套窗口 / 批 / 容量；全部未经扫参）。
+# 库存合并器（合并前 marketing 侧 merge.batch.*，与计数侧同一套发车口径 / 批 / 容量；全部未经扫参）。
 # 通用攒批引擎（infrastructure/merge，per-invId leader 模型）：任何仓储都能用，
 # 调用方传「业务键 + 落库函数」即可；flush 并发 = 并发热点 leader 数，受连接池自然约束。
 # shardCapacity 取 2000 是刻意的：库存扣减资金敏感 ⇒ 满了立刻拒收（调用方退避重试），队列别长。
 # 刻意没有 wait-timeout-ms：commit 一直等到件有终态；这条成立的前提是 jdbcUrl 上有 socketTimeout。
   batch:
     shard-count: 8          # 【退役兼容键】保留一个版本，读进来只存不用（不再路由、不绑定线程）
-    max-flush-delay-millis: 5            # leader 收集窗口：首件建组起算 5ms 后发车，攒满可提前触发
-    max-batch: 200          # 200 行 ≈ 8ms 落库；再大则单组占住落库线程变久，排队变长
+    max-flush-delay-millis: 5   # 【退役兼容键】收集窗口已删除（队列非空即发），读入不参与发车判定
+    max-batch: 200          # 单批上界：200 行 ≈ 8ms 落库；再大则单组占住落库线程变久，排队变长
     shard-capacity: 2000    # 单个 invId 组的缓冲上界，满了就拒（直接 FAILED，调用方重试），不扩容
     drain-timeout-ms: 5000  # 停机排空（停收 → 排空 → 残余回填 FAILED）的等待上限
 

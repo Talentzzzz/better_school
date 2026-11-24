@@ -48,6 +48,8 @@ final class RecordingFlushHandler implements ICountFlushHandler {
     volatile CountDownLatch entered;
     /** 落库期间要等的闸门：测试用它制造「落库阻塞」 */
     volatile CountDownLatch hold;
+    /** 只拦这个 key 的闸门（{@code null} = 不按 key 区分）：验证「别的 key 不被拖住」时用 */
+    volatile String gatedKey;
     /** 每次落库的人为耗时（毫秒） */
     volatile long delayMs;
     /** true = 整组抛异常（模拟事务回滚） */
@@ -124,7 +126,8 @@ final class RecordingFlushHandler implements ICountFlushHandler {
                 startSignal.countDown();
             }
             CountDownLatch gate = hold;
-            if (gate != null && !gate.await(BLOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            boolean gated = gatedKey == null || gatedKey.equals(keyOf(action, shardKey));
+            if (gate != null && gated && !gate.await(BLOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 throw new IllegalStateException("落库替身等闸门超时");
             }
             if (delayMs > 0) {
@@ -138,7 +141,8 @@ final class RecordingFlushHandler implements ICountFlushHandler {
             if (fill == 0) {
                 return null;
             }
-            return Collections.nCopies(fill, LikeState.LIKED);
+            // 与真实 CountFlushDispatcher 同口径：浏览件回 APPLIED 占位，点赞类回业务态
+            return Collections.nCopies(fill, viewAction(action) ? LikeState.APPLIED : LikeState.LIKED);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("落库替身被中断", e);
@@ -146,6 +150,13 @@ final class RecordingFlushHandler implements ICountFlushHandler {
             inFlight.decrementAndGet();
             untrackKeyInFlight(action, shardKey);
         }
+    }
+
+    private static boolean viewAction(CountAction action) {
+        return switch (action) {
+            case POST_VIEW, PRODUCT_VIEW, ERRAND_VIEW -> true;
+            case POST_LIKE, POST_UNLIKE, COMMENT_LIKE -> false;
+        };
     }
 
     private static String keyOf(CountAction action, String shardKey) {

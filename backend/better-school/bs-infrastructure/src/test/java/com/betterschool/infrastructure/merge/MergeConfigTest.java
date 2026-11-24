@@ -14,7 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * 表现为「抽奖一直处理中」，在代码里找不到对应关系。
  *
  * <p>per-invId leader 模型下没有分片路由：{@code shardCount} 是退役兼容参数（保留 yml 键一个
- * 版本），只校验 {@code > 0}，不再要求 2 的幂。也<b>没有等待超时</b>参数：调用方一直等到件落定，
+ * 版本），只校验 {@code > 0}，不再要求 2 的幂。{@code maxFlushDelayMillis} 同样已退役（收集窗口
+ * 删除，队列非空即发车），只校验 {@code >= 0}。也<b>没有等待超时</b>参数：调用方一直等到件落定，
  * 所以不存在「等待超时 < 收集窗口」这类配错（成立的代价是 jdbcUrl 上必须有 socketTimeout）。
  */
 class MergeConfigTest {
@@ -25,7 +26,7 @@ class MergeConfigTest {
         MergeConfig config = MergeConfig.defaults();
 
         assertEquals(8, config.shardCount());
-        assertEquals(5, config.maxFlushDelayMillis(), "窗口默认沿用现值：leader 收集窗口的起点");
+        assertEquals(5, config.maxFlushDelayMillis(), "退役兼容键的默认值沿用现值：不参与发车判定");
         assertEquals(200, config.maxBatch());
         assertEquals(2000, config.shardCapacity(), "容量默认 2000：满了就拒收，队列别长");
         assertEquals(5000, config.drainTimeoutMs());

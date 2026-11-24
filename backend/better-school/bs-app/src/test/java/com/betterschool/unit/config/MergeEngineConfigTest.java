@@ -23,7 +23,7 @@ class MergeEngineConfigTest {
     private final MergeEngineConfig config = new MergeEngineConfig();
 
     @Test
-    @DisplayName("什么都没配：落默认值（5ms 窗口 / 200 批 / 2000 容量 / 5s 排空）")
+    @DisplayName("什么都没配：落默认值（200 批 / 2000 容量 / 5s 排空；窗口键已退役，默认值仅兼容保留）")
     void fallsBackToSpecDefaults() {
         MergeConfig mergeConfig = config.mergeConfig(new MockEnvironment());
 

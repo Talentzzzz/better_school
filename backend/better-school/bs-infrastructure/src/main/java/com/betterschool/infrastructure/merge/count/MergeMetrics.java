@@ -8,16 +8,17 @@ import java.util.Objects;
  * <p><b>只是值对象，不依赖 micrometer、不开端点</b>：本工程没有 metrics 端点，读数进启动日志与发布
  * 记录。六个用途：
  * <ul>
- *   <li>{@code pending}：背压预警（某组长期高位 ⇒ 该调窗口/容量了）；</li>
+ *   <li>{@code pending}：背压预警（某组长期高位 ⇒ 该调批大小 / 组容量了）；</li>
  *   <li>{@code accepted − flushed}：丢没丢（再减 {@code failed + drainedFailed} 才是「还在途」）；</li>
- *   <li>{@code flushed ÷ batches}：<b>合并比</b>，调参唯一依据（≈1 说明长尾，合并器是净成本；
- *       行业基准参照内核实测平均每组 5.7 follower）；</li>
+ *   <li>{@code flushed ÷ batches}：<b>合并比</b>，调参依据。<b>期望值 = 到达速率 × flush 耗时</b>
+ *       （没有收集窗口之后，收集窗就是落库耗时本身）——所以它<b>变小不是回归</b>：事务速率贴近
+ *       DB 天花板、单件延迟下降才是健康信号；≈1 说明长尾，合并器是净成本；</li>
  *   <li><b>{@code activeGroups}</b>（per-invId leader 模型新增）：当前活跃热点组数——并行度随热点行数
  *       自伸缩的直接读数；</li>
  *   <li><b>{@code handovers}</b>（per-invId leader 模型新增）：接班次数——前任 leader 发车后由等待者
  *       接管收集的次数，接班链活性的直接读数；</li>
  *   <li>{@code rejectedFull / rejectedClosed / timedOut / failed / drainedFailed / maxFlushNanos}：
- *       降级、失败与「落库是不是快到还能给窗口腾地方」。</li>
+ *       降级、失败与「落库耗时是不是已经贴近 DB 单行事务周期（= 天然节流阀）」。</li>
  * </ul>
  *
  * @param pending       当前缓冲件数（各组求和，无锁镜像）

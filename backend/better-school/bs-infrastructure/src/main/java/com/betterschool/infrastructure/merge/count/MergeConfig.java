@@ -13,20 +13,26 @@ import java.util.Objects;
  *
  * <p>三条硬约束：
  * <ol>
- *   <li><b>{@code waitTimeoutMs > maxFlushDelayMillis}</b>：否则请求必然「先超时、后落库」，{@code timedOut}
- *       失去观测意义，调用方还会重试一次；</li>
+ *   <li><b>{@code waitTimeoutMs > 0}</b>：等终态没有上限等于没有超时出口（DB 慢时调用方会悬挂）；</li>
  *   <li><b>{@code shardCapacity >= maxBatch}</b>：否则永远攒不满一批就被背压拒绝；</li>
  *   <li><b>{@code drainTimeoutMs > 0}</b>：停机排空没有上限等于没有停机。</li>
  * </ol>
+ *
+ * <p>收集窗口已整体删除（队列非空即发车，收集窗 = 落库耗时本身），所以这里<b>不再有
+ * 「{@code waitTimeoutMs} 必须大于窗口」这条耦合</b>：等待预算与发车条件正交——它只剩「等终态的上限」
+ * 一个语义，DB 变慢时给调用方一个可重试的确定失败。决策见
+ * {@code backend/docs/architecture/merge-window-removal-spec.md}。
  *
  * <p><b>{@code shardCapacity} 只当「降级触发点 + 内存上界」</b>，不做扩容：满了就让调用方走
  * 同步降级（组大小 1 调同一个落库方法），合并器自己永不扩容、永不丢弃已入队件。
  *
  * @param shardCount    【退役兼容参数】历史分片数的 yml 键（{@code merge.count.shard-count}）
  *                      保留一个版本，读进来只存不用——不再参与路由，也不再绑定任何线程
- * @param maxFlushDelayMillis      leader 收集窗口：首件建组起算这么久后发车，攒满可提前触发
- * @param maxBatch      单次 flush 最多取走的件数
- * @param waitTimeoutMs 等结果的调用方最长等待（含排队 + 收集 + 落库），超时返回 {@code TIMEOUT}
+ * @param maxFlushDelayMillis 【退役兼容参数】历史「leader 收集窗口」的 yml 键
+ *                      （{@code merge.count.max-flush-delay-millis}）：保留一个版本，
+ *                      <b>读入不参与发车判定</b>；下一版本随 yml 键一并删除
+ * @param maxBatch      单次 flush 最多取走的件数（单批上界，<b>不是发车条件</b>）
+ * @param waitTimeoutMs 等结果的调用方最长等待（含排队 + 落库），超时返回 {@code TIMEOUT}
  * @param shardCapacity 单个 invId Group 的缓冲上限，满即 {@code BUFFER_FULL}（入口背压）
  * @param drainTimeoutMs 停机排空（停收 → 排空 → 残余回填）的等待上限
  */
@@ -59,9 +65,8 @@ public final class MergeConfig {
         require(shardCount > 0, "merge.count.shard-count 必须 > 0（当前 %s）", shardCount);
         require(maxFlushDelayMillis >= 0, "merge.count.max-flush-delay-millis 必须 >= 0（当前 %s）", maxFlushDelayMillis);
         require(maxBatch > 0, "merge.count.max-batch 必须 > 0（当前 %s）", maxBatch);
-        require(waitTimeoutMs > maxFlushDelayMillis,
-                "merge.count.wait-timeout-ms(%s) 必须 > merge.count.max-flush-delay-millis(%s)，否则请求必然先超时后落库",
-                waitTimeoutMs, maxFlushDelayMillis);
+        require(waitTimeoutMs > 0,
+                "merge.count.wait-timeout-ms 必须 > 0（当前 %s），否则等终态没有上限", waitTimeoutMs);
         require(shardCapacity >= maxBatch,
                 "merge.count.shard-capacity(%s) 必须 >= merge.count.max-batch(%s)，否则永远攒不满一批就被拒绝",
                 shardCapacity, maxBatch);
@@ -78,6 +83,7 @@ public final class MergeConfig {
         return shardCount;
     }
 
+    /** 【退役兼容】历史收集窗口：不参与发车判定（队列非空即发），仅为 yml 键一个版本兼容而保留 */
     public int maxFlushDelayMillis() {
         return maxFlushDelayMillis;
     }

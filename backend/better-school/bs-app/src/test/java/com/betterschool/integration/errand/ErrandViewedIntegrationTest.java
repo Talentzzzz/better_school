@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("跑腿大厅已读灰显：登录浏览后 viewed=true / 匿名恒 false / 仅列表填充")
 class ErrandViewedIntegrationTest extends CommunityApiTestBase {
 
-    /** 浏览走 fire-and-forget 合并写，断言列表前先排空合并窗口 */
+    /** 浏览是合并写（commit 等终态，无收集窗口），断言列表前先排空合并器只为兜底在途件 */
     private static final long DRAIN_MILLIS = 5_000;
     private static final int PAGE_SIZE = 2;
 
@@ -63,7 +63,7 @@ class ErrandViewedIntegrationTest extends CommunityApiTestBase {
         List<String> seeded = seedPublishedOrders(publisher, 3);
 
         assertSuccess(getJson("/api/errand/orders/" + seeded.get(0), null), "匿名浏览跑腿详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         List<String> walked = new ArrayList<>();
         JsonNode data = fetchPage(null, null);

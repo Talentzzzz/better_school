@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code errand_view_count} 加速列，与帖子 / 商品同构；跑腿此前无浏览量，从切码起按 UV 精确累计）。
  *
  * <p>断言只看外部可观察状态：HTTP 详情响应 + MySQL 数据。浏览走真实详情链路
- * （commit 合并写、等终态必须全落），断言前排空合并窗口。
+ * （commit 合并写、等终态必须全落、队列非空即发车，没有收集窗口），断言前排空合并器只为兜底。
  */
 @DisplayName("跑腿浏览 UV：详情接线 viewCount / 首次计 1 / 重复只刷 viewed_at / 匿名不计")
 class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {
@@ -43,9 +43,9 @@ class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {
 
         JsonNode first = getJson("/api/errand/orders/" + orderId, viewer).path("data");
         assertThat(first.path("viewCount").asLong())
-                .as("详情读的是库里的当前值：合并窗口未过，本次请求读到的还是浏览前的 0")
-                .isZero();
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+                .as("返回即精确：无收集窗口，浏览件在本次请求内已落库，读到的库值含自己这一票")
+                .isEqualTo(1);
+        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         assertThat(historyCountOf(orderId)).as("明细即事实源：一人一单一行").isEqualTo(1);
         assertThat(acceleratedCountOf(orderId)).as("加速列 = 明细行数").isEqualTo(1);
@@ -70,7 +70,7 @@ class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {
 
         assertSuccess(getJson("/api/errand/orders/" + orderId, viewer), "重复浏览跑腿详情");
         assertSuccess(getJson("/api/errand/orders/" + orderId, null), "匿名浏览跑腿详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         assertThat(historyCountOf(orderId)).as("重复浏览不新增明细行、匿名落不了明细行").isEqualTo(1);
         assertThat(acceleratedCountOf(orderId)).as("两者都不计数").isEqualTo(1);

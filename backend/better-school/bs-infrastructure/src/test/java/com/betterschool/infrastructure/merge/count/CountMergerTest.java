@@ -27,6 +27,10 @@ import static org.junit.jupiter.api.Assertions.fail;
  * <p>全部是<b>纯内存</b>测试：落库是 {@link RecordingFlushHandler}，不起 Spring、不连库。
  * per-invId leader 模型下每一条 commit 都等终态（浏览也是），所以「只入队不等结果」的骨架
  * 改用虚拟线程后台提交。
+ *
+ * <p><b>没有收集窗口</b>：发车条件只有「队列非空」一条（单批上界 {@code maxBatch} 不是发车条件）。
+ * 需要「件留在队列里」的用例一律用<b>闸门后落库</b>（{@link RecordingFlushHandler#hold}）制造
+ * 确定的在途/排队——件不会被窗口扣住，只能靠慢落库。
  */
 class CountMergerTest {
 
@@ -47,9 +51,9 @@ class CountMergerTest {
         return merger;
     }
 
-    /** 单热点、窄窗口、够大的等待预算：A1/A2/A6 用 */
+    /** 单热点、够大的等待预算：A1/A2/A6 用（第 2 个参数是退役的窗口键，不参与发车判定） */
     private static MergeConfig hotConfig(int maxBatch) {
-        return new MergeConfig(8, 1, maxBatch, 5_000, 5_000, 2_000);
+        return new MergeConfig(8, 0, maxBatch, 5_000, 5_000, 2_000);
     }
 
     private static CountEvent like(String userId) {
@@ -185,15 +189,16 @@ class CountMergerTest {
 
         assertEquals(3, outcomes.stream().filter(o -> o.state() == MergeState.FAILED).count(),
                 "事务回滚 ⇒ 组内每件都是 FAILED，不是超时");
-        assertEquals(1, engine.metrics().batches(), "一次落库调用 = 一组");
+        assertTrue(engine.metrics().batches() >= 1, "每次落库调用 = 一组（无窗口，批数不止一条）");
         assertEquals(3, engine.metrics().failed());
         assertEquals(0, engine.metrics().flushed());
     }
 
     /**
-     * 让 {@code count} 个等待者挤进同一个窗口（同一 key）：窗口给到 200ms，
-     * 线程在同一道闸门后起跑，落库前一定都已在队列里——这样「一组 N 件」是确定性的，
-     * 不靠「谁先被调度」的运气。
+     * 让 {@code count} 个等待者在同一道闸门后同时提交（同一 key）。
+     *
+     * <p>没有收集窗口之后「一组 N 件」不再是确定性事实（先到的件立刻发车，后到的进下一批），
+     * 调用方只能断言「终态 / 件数」。要断言批次形状的用例自己用闸门造。
      */
     private List<MergeResult<LikeState>> submitBurst(CountMerger engine, int count) throws Exception {
         List<MergeResult<LikeState>> outcomes = Collections.synchronizedList(new ArrayList<>(count));
@@ -236,6 +241,8 @@ class CountMergerTest {
         RecordingFlushHandler handler = new RecordingFlushHandler();
         handler.entered = new CountDownLatch(1);
         handler.hold = new CountDownLatch(1);
+        // 闸门只拦 post-A：post-B 的落库必须能照常走完，这才叫「不被别的热点拖住」
+        handler.gatedKey = POST_LIKE + "|post-A";
         CountMerger engine = start(hotConfig(10), handler);
 
         List<MergeResult<LikeState>> blockedKey = Collections.synchronizedList(new ArrayList<>());
@@ -251,7 +258,7 @@ class CountMergerTest {
         assertEquals(1, otherKey.size());
         assertEquals(MergeState.COMPLETED, otherKey.get(0).state(),
                 "post-A 卡死期间 post-B 必须独立完成：并行度随热点行数自伸缩，不被别的热点拖住");
-        assertTrue(costMs < 1_000, "post-B 独立发车（窗口 1ms），实测 " + costMs + "ms");
+        assertTrue(costMs < 1_000, "post-B 独立发车（队列非空即发），实测 " + costMs + "ms");
         assertEquals(2, handler.maxDistinctKeysInFlight(), "两个不同 key 的 flush 并发在途");
 
         handler.hold.countDown();
@@ -324,19 +331,28 @@ class CountMergerTest {
     @DisplayName("A4 停机先排空：close() 时队列里的件照样落库，一件不丢")
     void closeStillDrainsBufferedItems() throws Exception {
         RecordingFlushHandler handler = new RecordingFlushHandler();
-        CountMerger engine = start(new MergeConfig(8, 20, 200, 500, 2_000, 3_000), handler);
+        // 闸门造出「落库在途 + 队列有货」：没有窗口之后，件不会被窗口扣在队列里，只能靠慢落库制造排队
+        handler.entered = new CountDownLatch(1);
+        handler.hold = new CountDownLatch(1);
+        CountMerger engine = start(new MergeConfig(8, 0, 200, 10_000, 2_000, 10_000), handler);
 
         int total = 50;
         List<MergeResult<LikeState>> outcomes = Collections.synchronizedList(new ArrayList<>());
         List<Thread> submitters = new ArrayList<>(total);
-        for (int i = 0; i < total; i++) {
+        submitters.add(submitInBackground(POST_ID, view(POST_ID, "0"), outcomes));
+        assertTrue(handler.entered.await(5, TimeUnit.SECONDS), "首件应已发车并卡在落库上");
+        for (int i = 1; i < total; i++) {
             submitters.add(submitInBackground(POST_ID, view(POST_ID, String.valueOf(i)), outcomes));
         }
-        assertTrue(awaitBuffered(total), "50 件都该在队列里等窗口");
+        assertTrue(awaitBuffered(total - 1), "在途 flush 期间，其余件都该在队列里");
 
-        engine.close();
+        Thread closer = Thread.ofVirtual().start(engine::close);
+        // close 已进入「停收 + 等排空」：给它一点时间落到 awaitIdle 上，再放开闸门
+        Thread.sleep(100);
+        handler.hold.countDown();
+        closer.join(10_000);
         for (Thread submitter : submitters) {
-            submitter.join(5_000);
+            submitter.join(10_000);
         }
 
         assertEquals(total, handler.seenCount(), "排空阶段必须把队列里的件全部落库");
@@ -372,7 +388,7 @@ class CountMergerTest {
         RecordingFlushHandler handler = new RecordingFlushHandler();
         handler.entered = new CountDownLatch(1);
         handler.hold = new CountDownLatch(1);
-        // 窗口 1ms：第一件立刻发车并卡在落库；排空预算 20ms 远小于闸门被按住的时间
+        // 队列非空即发：第一件立刻发车并卡在落库；排空预算 20ms 远小于闸门被按住的时间
         CountMerger engine = start(new MergeConfig(8, 1, 200, 5_000, 2_000, 20), handler);
 
         List<MergeResult<LikeState>> leaderOutcome = Collections.synchronizedList(new ArrayList<>());
@@ -427,7 +443,7 @@ class CountMergerTest {
                 () -> overflowOutcome.add(engine.commit(POST_ID, view(POST_ID, "99"))));
 
         assertTrue(awaitOverflowDegraded(handler, 2, 5_000),
-                "满了必须立刻就地落库，不是等窗口、也不是等超时");
+                "满了必须立刻就地落库，不是等任何窗口、也不是等超时");
         assertEquals(8, engine.pending(), "拒收不许挤掉已入队的件，也不许扩容");
         assertTrue(overflowOutcome.isEmpty(), "件正卡在落库上，此时不该有终态");
 
@@ -535,22 +551,29 @@ class CountMergerTest {
     void sameKeyKeepsSubmissionOrder() throws Exception {
         int total = 100;
         RecordingFlushHandler handler = new RecordingFlushHandler();
-        CountMerger engine = start(hotConfig(7), handler);
+        // 首件发车并被闸门按在落库上：此后进件只能排队，入队顺序即落库顺序
+        handler.entered = new CountDownLatch(1);
+        handler.hold = new CountDownLatch(1);
+        CountMerger engine = start(new MergeConfig(8, 0, 7, 10_000, 5_000, 10_000), handler);
 
         AtomicLong sequence = new AtomicLong();
         List<MergeResult<LikeState>> outcomes = Collections.synchronizedList(new ArrayList<>());
         List<Thread> submitters = new ArrayList<>(total);
-        for (int i = 0; i < total; i++) {
+        submitters.add(submitInBackground(POST_ID,
+                view(POST_ID, String.valueOf(sequence.incrementAndGet())), outcomes));
+        assertTrue(handler.entered.await(5, TimeUnit.SECONDS), "首件应已发车并卡在落库上");
+        for (int i = 1; i < total; i++) {
             // 一个线程只能挂一件（都在等结果），所以用「上一件确认已入队」把顺序钉死
             submitters.add(submitInBackground(POST_ID,
                     view(POST_ID, String.valueOf(sequence.incrementAndGet())), outcomes));
-            if (!awaitBuffered(i + 1)) {
+            if (!awaitBuffered(i)) {
                 fail("第 " + (i + 1) + " 件没能入队");
             }
         }
+        handler.hold.countDown();
         assertTrue(engine.awaitIdle(5_000));
         for (Thread submitter : submitters) {
-            submitter.join(5_000);
+            submitter.join(10_000);
         }
 
         List<CountEvent> landed = handler.eventsOf(POST_ID);
@@ -566,18 +589,24 @@ class CountMergerTest {
     @DisplayName("读数快照：合并比 flushed ÷ batches 可算，activeGroups / handovers 有值")
     void metricsExposeMergeRatioAndLeaderObservables() throws Exception {
         RecordingFlushHandler handler = new RecordingFlushHandler();
-        CountMerger engine = start(new MergeConfig(8, 1, 50, 5_000, 2_000, 2_000), handler);
+        // 闸门把件扣在队列里，一次放出 120 件：合并比才有可观的批次形状（无窗口，不靠窗口攒件）
+        handler.entered = new CountDownLatch(1);
+        handler.hold = new CountDownLatch(1);
+        CountMerger engine = start(new MergeConfig(8, 0, 50, 10_000, 2_000, 10_000), handler);
 
         int total = 120;
         List<MergeResult<LikeState>> outcomes = Collections.synchronizedList(new ArrayList<>());
         List<Thread> submitters = new ArrayList<>(total);
-        for (int i = 0; i < total; i++) {
+        submitters.add(submitInBackground(POST_ID, view(POST_ID, "0"), outcomes));
+        assertTrue(handler.entered.await(5, TimeUnit.SECONDS), "首件应已发车并卡在落库上");
+        for (int i = 1; i < total; i++) {
             submitters.add(submitInBackground(POST_ID, view(POST_ID, String.valueOf(i)), outcomes));
-            awaitBuffered(i + 1);
         }
+        assertTrue(awaitBuffered(total - 1), "在途 flush 期间，其余件都该在队列里");
+        handler.hold.countDown();
         assertTrue(engine.awaitIdle(5_000));
         for (Thread submitter : submitters) {
-            submitter.join(5_000);
+            submitter.join(10_000);
         }
 
         MergeMetrics metrics = engine.metrics();

@@ -45,9 +45,14 @@ class CountMergeWriterTest {
         }
     }
 
-    /** 单组、单件容量、够长的窗口：容量 1 ⇒ 第二笔必然 BUFFER_FULL */
+    /**
+     * 单组、单件容量（{@code maxBatch = shardCapacity = 1}）。
+     *
+     * <p>没有收集窗口之后，件不会被窗口扣在队列里，所以「队列满」只能这样造：首件发车并卡在
+     * <b>慢落库</b>上（{@code sleepMillis}）→ 第二件占满容量 → 第三件才轮到 {@code BUFFER_FULL}。
+     */
     private CountMergeWriter startFullBufferScenario() {
-        merger = new CountMerger(new MergeConfig(1, 1_000, 1, 2_000, 1, 1_000), handler);
+        merger = new CountMerger(new MergeConfig(1, 0, 1, 2_000, 1, 3_000), handler);
         writer = new CountMergeWriter(merger);
         return writer;
     }
@@ -69,27 +74,40 @@ class CountMergeWriterTest {
     @DisplayName("缓冲满：调用方线程用同一个落库方法落「组大小 1」，不是另一套 SQL")
     void bufferFullDegradesToSameFlushMethodWithSingleItem() throws Exception {
         startFullBufferScenario();
-        // 后台提交把容量 1 的组塞满（leader 在收集窗口里等，件留在队列）；窗口 1s 内不会被 flush 走
-        List<MergeResult<LikeState>> filler = new CopyOnWriteArrayList<>();
-        Thread fillerThread = Thread.ofVirtual()
-                .start(() -> filler.add(merger.commit(POST_ID, new CountEvent(POST_LIKE, POST_ID, "1"))));
+        handler.entered = new CountDownLatch(1);
+        handler.sleepMillis = 1_000;
+
+        // 首笔：发车并卡在慢落库上（在途 flush）
+        List<MergeResult<LikeState>> inFlight = new CopyOnWriteArrayList<>();
+        Thread inFlightThread = Thread.ofVirtual()
+                .start(() -> inFlight.add(merger.commit(POST_ID, new CountEvent(POST_LIKE, POST_ID, "1"))));
+        assertTrue(handler.entered.await(5, TimeUnit.SECONDS), "首笔应已发车并卡在落库上");
+
+        // 第二笔：进队列（容量 1 恰满），等落库结束
+        List<MergeResult<LikeState>> queued = new CopyOnWriteArrayList<>();
+        Thread queuedThread = Thread.ofVirtual()
+                .start(() -> queued.add(merger.commit(POST_ID, new CountEvent(POST_LIKE, POST_ID, "2"))));
         long deadline = System.currentTimeMillis() + 5_000;
         while (merger.pending() < 1) {
-            assertTrue(System.currentTimeMillis() < deadline, "第一笔该在队列里等窗口");
+            assertTrue(System.currentTimeMillis() < deadline, "第二笔该占满容量 1 的队列");
             Thread.sleep(1);
         }
 
-        LikeStateVO state = writer.write(POST_LIKE, POST_ID, "2");
+        // 第三笔：入队必然撞满 ⇒ 降级（在调用方线程上用同一个落库方法落组大小 1）
+        LikeStateVO state = writer.write(POST_LIKE, POST_ID, "3");
 
         assertEquals(LikeStateVO.LIKED, state, "降级成功 = 对用户就是成功");
-        assertEquals(1, handler.callCount.get(), "降级必须真的调落库方法（同一个）");
-        List<CountEvent> degraded = handler.batches.get(0);
-        assertEquals(1, degraded.size(), "降级组大小恒为 1");
-        assertEquals("2", degraded.get(0).userId(), "打的是这一笔请求本人");
         assertEquals(1, merger.metrics().rejectedFull(), "背压由合并器计数，不进用户视野");
+        List<CountEvent> degraded = handler.batches.stream()
+                .filter(batch -> batch.size() == 1 && "3".equals(batch.get(0).userId()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("没有看到降级那次「组大小 1」的落库调用"));
+        assertEquals(1, degraded.size(), "降级组大小恒为 1");
+        assertEquals("3", degraded.get(0).userId(), "打的是这一笔请求本人");
 
-        // 让填充线程收尾（close 由 tearDown 触发排空），不影响上面的断言
-        fillerThread.join(5_000);
+        // 让两条后台提交收尾（close 由 tearDown 触发排空），不影响上面的断言
+        inFlightThread.join(10_000);
+        queuedThread.join(10_000);
     }
 
     @Test
@@ -113,7 +131,7 @@ class CountMergeWriterTest {
         merger = new CountMerger(new MergeConfig(1, 1, 10, 60, 100, 200), handler);
         writer = new CountMergeWriter(merger);
 
-        // leader：后台提交，进收集窗 1ms 后发车，卡在人为慢的落库上（不参与等待预算）
+        // leader：后台提交，队列非空即发车，卡在人为慢的落库上（不参与等待预算）
         List<MergeResult<LikeState>> leaderOutcome = new CopyOnWriteArrayList<>();
         Thread leaderThread = Thread.ofVirtual().start(
                 () -> leaderOutcome.add(merger.commit(POST_ID, new CountEvent(POST_LIKE, POST_ID, "0"))));

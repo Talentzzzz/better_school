@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("闲置推荐页已读灰显：登录浏览后 viewed=true / 匿名恒 false / 仅列表填充")
 class ProductViewedIntegrationTest extends CommunityApiTestBase {
 
-    /** 浏览走 fire-and-forget 合并写，断言列表前先排空合并窗口 */
+    /** 浏览是合并写（commit 等终态，无收集窗口），断言列表前先排空合并器只为兜底在途件 */
     private static final long DRAIN_MILLIS = 5_000;
     private static final int PAGE_SIZE = 2;
 
@@ -64,7 +64,7 @@ class ProductViewedIntegrationTest extends CommunityApiTestBase {
 
         // 匿名也能看详情，但不落浏览明细（匿名不计入），列表照常可浏览
         assertSuccess(getJson("/api/trade/products/" + seeded.get(0), null), "匿名浏览商品详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         List<String> walked = new ArrayList<>();
         JsonNode data = fetchPage(null, null, "");

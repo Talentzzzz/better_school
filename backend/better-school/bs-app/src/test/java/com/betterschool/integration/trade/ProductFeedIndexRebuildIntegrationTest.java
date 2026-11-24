@@ -168,7 +168,7 @@ class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         assertThat(tradeRepository.submitDraft(productId)).as("草稿提交即上架").isTrue();
     }
 
-    /** 一组浏览落库（同步合并，等价于合并窗口过后的三步 + 索引旁路） */
+    /** 一组浏览落库（同步合并，即一组一个事务的三步 + 索引旁路；没有收集窗口要等） */
     private void flushViews(String productId, String... userIds) {
         List<CountEvent> events = java.util.Arrays.stream(userIds)
                 .map(userId -> new CountEvent(CountAction.PRODUCT_VIEW, productId, userId))

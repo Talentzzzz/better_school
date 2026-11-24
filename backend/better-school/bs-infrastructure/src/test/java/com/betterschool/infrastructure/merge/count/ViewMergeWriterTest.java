@@ -60,9 +60,9 @@ class ViewMergeWriterTest {
         return new ViewMergeWriter(merger);
     }
 
-    /** 单热点、窄窗口：正常路径用 */
+    /** 单热点、够大的等待预算：正常路径用（第 2 个参数是退役的窗口键，不参与发车判定） */
     private static MergeConfig hotConfig() {
-        return new MergeConfig(8, 1, 200, 5_000, 5_000, 2_000);
+        return new MergeConfig(8, 0, 200, 5_000, 5_000, 2_000);
     }
 
     @Test
@@ -71,7 +71,7 @@ class ViewMergeWriterTest {
         ProbeHandler handler = new ProbeHandler();
         ViewMergeWriter writer = start(hotConfig(), handler);
 
-        // write 是同步的：返回即已落库（窗口 1ms + 落库都在本次调用内完成）
+        // write 是同步的：队列非空即发车，落库在本次调用内完成（没有收集窗口可等）
         writer.write(POST_VIEW, POST_ID, VIEWER);
 
         assertEquals(1, handler.callCount(), "返回时必须已经落库");
@@ -142,30 +142,43 @@ class ViewMergeWriterTest {
     @DisplayName("缓冲满 → 调用方线程同步一次 +1，不算丢弃、也不报错")
     void bufferFullDegradesToSingleUpdateOnCallerThread() throws Exception {
         ProbeHandler handler = new ProbeHandler();
-        // 窗口 500ms ≫ 两次 write 的间隔、容量 1（= maxBatch 下限）：第二件必然撞满，且第一件还没开始落库
-        ViewMergeWriter writer = start(new MergeConfig(8, 500, 1, 5_000, 1, 2_000), handler);
+        // 容量 1（= maxBatch 下限）：没有窗口扣件，只能靠「首件慢落库」制造在途，让队列被第二件占满
+        handler.slowFlushMillis = 1_000;
+        handler.entered = new CountDownLatch(1);
+        ViewMergeWriter writer = start(new MergeConfig(8, 0, 1, 5_000, 1, 3_000), handler);
 
+        // 第一件：发车并卡在慢落库上（在途 flush）
         List<String> filler = Collections.synchronizedList(new ArrayList<>());
         Thread fillerThread = Thread.ofVirtual().start(() -> {
             writer.write(POST_VIEW, POST_ID, VIEWER);
             filler.add("done");
         });
+        assertTrue(handler.entered.await(5, TimeUnit.SECONDS), "第一件应已发车并卡在落库上");
+
+        // 第二件：进队列（容量 1 恰满），等落库结束
+        List<String> queued = Collections.synchronizedList(new ArrayList<>());
+        Thread queuedThread = Thread.ofVirtual().start(() -> {
+            writer.write(POST_VIEW, POST_ID, VIEWER);
+            queued.add("done");
+        });
         long deadline = System.currentTimeMillis() + 5_000;
         while (merger.pending() < 1) {
-            assertTrue(System.currentTimeMillis() < deadline, "第一件该在队列里等窗口");
+            assertTrue(System.currentTimeMillis() < deadline, "第二件该占满容量 1 的队列");
             Thread.sleep(1);
         }
 
+        // 第三件：撞满 ⇒ 在调用方线程上同步降级（同一段 SQL、组大小 1）
         writer.write(POST_VIEW, POST_ID, VIEWER);
 
-        assertEquals(1, merger.metrics().rejectedFull(), "第二件应被背压拒收（容量 1）");
-        assertEquals(1, handler.callCount(), "唯一一次落库就是降级那次：窗口还没到");
-        ProbeHandler.Call degrade = handler.callsSnapshot().get(0);
-        assertEquals(Thread.currentThread().getName(), degrade.thread(),
-                "降级必须在调用方线程上同步执行");
+        assertEquals(1, merger.metrics().rejectedFull(), "第三件应被背压拒收（容量 1）");
+        ProbeHandler.Call degrade = handler.callsSnapshot().stream()
+                .filter(call -> Thread.currentThread().getName().equals(call.thread()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("没有看到调用方线程上的降级落库"));
         assertEquals(1, degrade.size(), "降级组大小恒为 1：一次独立 UPDATE … + 1");
 
-        fillerThread.join(5_000);
+        fillerThread.join(10_000);
+        queuedThread.join(10_000);
     }
 
     @Test
@@ -238,6 +251,8 @@ class ViewMergeWriterTest {
         volatile CountDownLatch hold;
         /** true = 整组抛异常（模拟 UPDATE 失败） */
         volatile boolean throwOnFlush;
+        /** 每次落库的人为耗时（毫秒）：用来制造「落库在途」而不必阻塞别的调用 */
+        volatile long slowFlushMillis;
 
         static final class Call {
 
@@ -303,6 +318,14 @@ class ViewMergeWriterTest {
                     if (!gate.await(10, TimeUnit.SECONDS)) {
                         throw new IllegalStateException("落库替身等闸门超时");
                     }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("落库替身被中断", e);
+                }
+            }
+            if (slowFlushMillis > 0) {
+                try {
+                    Thread.sleep(slowFlushMillis);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     throw new IllegalStateException("落库替身被中断", e);
