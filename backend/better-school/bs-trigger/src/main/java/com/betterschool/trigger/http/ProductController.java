@@ -35,7 +35,8 @@ import java.util.Set;
  * 二手交易 HTTP 入口：浏览免登录，发布/收藏需登录
  */
 @RestController
-@RequestMapping("/api/idle")
+// /api/trade 是更名前缀，保留为兼容别名（已发出的分享链接 / 客户端缓存不因改名 404）；下个大版本移除
+@RequestMapping({"/api/idle", "/api/trade"})
 @RequiredArgsConstructor
 public class ProductController implements IIdleService {
 

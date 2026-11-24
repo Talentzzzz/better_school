@@ -46,6 +46,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/user/*/profile").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/community/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/idle/**").permitAll()
+                        // 更名前缀的兼容别名（见 ProductController @RequestMapping），同一组只读端点
+                        .requestMatchers(HttpMethod.GET, "/api/trade/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/search/**").permitAll()
                         // 营销域免登录（合并前 marketing SecurityConfig）：抽奖 banner 与奖品目录访客可见
                         .requestMatchers(HttpMethod.GET, "/api/lottery/activity", "/api/lottery/prizes").permitAll()

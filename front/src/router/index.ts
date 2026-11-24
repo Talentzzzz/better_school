@@ -51,6 +51,8 @@ const router = createRouter({
     { path: '/me/post-drafts', component: () => import('@/views/post/PostDraftBoxView.vue'), meta: { requiresAuth: true } },
     { path: '/me/history', component: () => import('@/views/me/ViewHistoryView.vue'), meta: { requiresAuth: true } },
     { path: '/idle/order/:id(\\d+)', component: () => import('@/views/idle/ProductOrderView.vue'), meta: { requiresAuth: true } },
+    // 更名前路由的兼容跳转：老分享链接落到 /trade/order/:id 时转到新路径，下个大版本移除
+    { path: '/trade/order/:id(\\d+)', redirect: to => `/idle/order/${to.params.id}` },
     { path: '/:pathMatch(.*)*', redirect: '/home' }
   ]
 })
