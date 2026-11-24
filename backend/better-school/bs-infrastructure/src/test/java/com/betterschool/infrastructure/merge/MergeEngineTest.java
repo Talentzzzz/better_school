@@ -12,13 +12,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.IntConsumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * 引擎的五条不变量 + 两条附加断言（批上限、同分片保序）。
+ * 引擎的五条不变量 + 附加断言（批上限、同 key 保序、跨 key 并发、窗口发车）。
  *
- * <p>全部是纯内存测试：件是 {@link Job}（分片键 + 业务号），落库是 {@link RecordingFlush}，
+ * <p>全部是纯内存测试：件是 {@link Job}（业务键 + 业务号），落库是 {@link RecordingFlush}，
  * 不起 Spring、不连库。这也说明通用组件的可测性——引擎不知道任何业务类型，
  * 策略在起引擎时绑一次，测它就只需要一个 record 加一个 lambda。
  */
@@ -26,7 +27,7 @@ class MergeEngineTest {
 
     private static final String KEY = "9_001";
 
-    /** 测试件：分片键 + 业务号（业务号只用于保序断言） */
+    /** 测试件：业务键（= invId）+ 业务号（业务号只用于保序断言） */
     record Job(String shardKey, int seq) {
     }
 
@@ -54,9 +55,9 @@ class MergeEngineTest {
         return new Job(KEY, seq);
     }
 
-    /** 单热点、窄窗口、够大的等待预算：A1/A2/A6 用 */
+    /** 单热点、窄窗口、够大的缓冲：A1/A2/A6 用 */
     private static MergeConfig hotConfig(int maxBatch) {
-        return new MergeConfig(8, 1, maxBatch, 5_000, 5_000, 2_000);
+        return new MergeConfig(8, 1, maxBatch, 5_000, 2_000);
     }
 
     /** 拿到业务结果且为 true 的件数 */
@@ -64,7 +65,7 @@ class MergeEngineTest {
         return outcomes.stream().filter(o -> o.isCompleted() && Boolean.TRUE.equals(o.result())).count();
     }
 
-    /** 落在某个终态的件数（{@code TIMEOUT} / {@code FAILED}） */
+    /** 落在某个终态的件数（{@code COMPLETED} / {@code FAILED}） */
     private static long countState(List<MergeResult<Boolean>> outcomes, MergeResult.State state) {
         return outcomes.stream().filter(o -> o.state() == state).count();
     }
@@ -105,7 +106,7 @@ class MergeEngineTest {
         return Thread.ofVirtual().start(() -> sink.add(engine.commit(item)));
     }
 
-    /** 等到缓冲里至少攒到 {@code expected} 件：这就是「入队成功」的判据（提交线程会 park 在 future 上） */
+    /** 等到队列里至少攒到 {@code expected} 件：这就是「入队成功」的判据（提交线程会等终态） */
     private boolean awaitBuffered(int expected, long timeoutMs) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (engine.pending() < expected) {
@@ -157,21 +158,21 @@ class MergeEngineTest {
         assertEquals(threads * perThread, countTrue(results), "等待预算 5s 足够，不该出现超时/失败");
         assertTrue(buffer.awaitIdle(5_000), "缓冲必须排空");
         assertEquals(0, buffer.pending());
-        // I2 的推论（per-shard 线程模型）：提交线程全部返回 ⟹ 每件都已回填 ⟹ 所在批已摘走，
-        // 且不再有新提交 ⟹ size 镜像必为 0，缓冲必空
-        assertTrue(buffer.awaitIdle(0), "排空后必须立刻判定为空闲（没有在途 flush 链）");
+        // I2 的推论（leader 模型）：提交线程全部返回 ⟹ 每件都已回填 ⟹ 所在批已摘走，
+        // 且不再有新提交 ⟹ size 镜像必为 0，队列必空
+        assertTrue(buffer.awaitIdle(0), "排空后必须立刻判定为空闲（没有在途 flush）");
 
         assertEquals(threads * perThread, flush.seenCount(), "入队的件数 == 落库函数看到的件数");
-        assertEquals(0, flush.duplicateCount(), "每件至多回填一次（Pending 幂等）");
+        assertEquals(0, flush.duplicateCount(), "每件至多回填一次（MergeItem 幂等）");
     }
 
     @Test
-    @DisplayName("I1 补齐：落库函数漏回填时引擎补 FAILED，等待者不会悬到超时")
+    @DisplayName("I1 补齐：落库函数漏回填时引擎补 FAILED，等待者不会悬着")
     void missingBackfillIsCompletedAsFailed() throws Exception {
         RecordingFlush flush = new RecordingFlush();
         flush.fillOnlyTotal = 1;
         MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
-        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 2_000), strategy);
+        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 200, 10, 5_000, 2_000), strategy);
 
         List<MergeResult<Boolean>> results = submitBurst(buffer, 5);
 
@@ -185,17 +186,17 @@ class MergeEngineTest {
         RecordingFlush flush = new RecordingFlush();
         flush.throwOnFlush = true;
         MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
-        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 2_000), strategy);
+        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 200, 10, 5_000, 2_000), strategy);
 
         List<MergeResult<Boolean>> results = submitBurst(buffer, 3);
 
         assertEquals(3, countState(results, MergeResult.State.FAILED),
-                "事务回滚 ⇒ 组内每件都是 FAILED，不是 TIMEOUT");
+                "事务回滚 ⇒ 组内每件都是 FAILED（没有「结果未知」这一态）");
     }
 
     /**
-     * 让 {@code count} 个等待者挤进同一个窗口（同一分片、同一行）：窗口给到 200ms，
-     * 线程在同一道闸门后起跑，落库前一定都已在缓冲区里——这样「一组 N 件」是确定性的，
+     * 让 {@code count} 个等待者挤进同一个窗口（同一 key）：窗口给到 200ms，
+     * 线程在同一道闸门后起跑，落库前一定都已在队列里——这样「一组 N 件」是确定性的，
      * 不靠「谁先被调度」的运气。
      */
     private List<MergeResult<Boolean>> submitBurst(MergeEngine<Job, Boolean> buffer, int count) throws Exception {
@@ -208,11 +209,11 @@ class MergeEngineTest {
     // ── I2：单飞 ──────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("A2 落库变慢时，同分片任一时刻至多一条 flush 在执行，且件数一件不少")
+    @DisplayName("A2 落库变慢时，同 key 任一时刻至多一条 flush 在执行，且件数一件不少")
     void singleFlightNeverTwoConcurrentFlushes() throws Exception {
         // 线程数必须明显大于 maxBatch：每个调用方线程同时只挂一件（都在等结果），
-        // 只有并发调用方够多，落库期间 buffer 才攒得满——那正是「攒满提前触发」撞上「正在落库」的窗口，
-        // 也是唯一能把单飞写坏的机会（用 Future.cancel() 判单飞在这里会稳定复现两条并发 flush）
+        // 只有并发调用方够多，落库期间队列才攒得满——那正是「攒满提前触发」撞上「正在落库」的窗口，
+        // 也是唯一能把单飞写坏的机会
         int threads = 16;
         int perThread = 20;
         int maxBatch = 10;
@@ -229,11 +230,46 @@ class MergeEngineTest {
             }
         });
 
-        assertEquals(1, flush.maxInFlight(),
-                "同一分片两条 flush 同时跑 = 台账行锁重新排队，后一批看到的也不一定是已提交的状态");
+        assertEquals(1, flush.maxInFlightOf(KEY),
+                "同 key 两条 flush 同时跑 = 台账行锁重新排队，后一批看到的也不一定是已提交的状态");
         assertEquals(threads * perThread, countTrue(results));
         assertEquals(threads * perThread, flush.seenCount(), "单飞不等于丢件");
         assertTrue(buffer.awaitIdle(5_000));
+    }
+
+    // ── 跨 key 并发（per-invId 模型的钉子：撞片串行消除）────────────────────────
+
+    @Test
+    @DisplayName("不同 key 可并发 flush：一个 key 的落库卡住，另一个 key 照常发车")
+    void differentKeysFlushConcurrently() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        flush.entered = new CountDownLatch(1);
+        flush.hold = new CountDownLatch(1);
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        MergeEngine<Job, Boolean> buffer = start(hotConfig(10), strategy);
+
+        List<MergeResult<Boolean>> blockedKey = Collections.synchronizedList(new ArrayList<>());
+        Thread blockedThread = submitInBackground(new Job("key-A", 1), blockedKey);
+        assertTrue(flush.entered.await(5, TimeUnit.SECONDS), "key-A 的第一次 flush 应该已经进入落库");
+
+        // key-B 与 key-A 不共享任何组：不等 key-A 的落库权，独立发车
+        long startNanos = System.nanoTime();
+        List<MergeResult<Boolean>> otherKey = Collections.synchronizedList(new ArrayList<>());
+        Thread otherThread = submitInBackground(new Job("key-B", 1), otherKey);
+        otherThread.join(5_000);
+        long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+
+        assertEquals(1, otherKey.size());
+        assertEquals(MergeResult.State.COMPLETED, otherKey.get(0).state(),
+                "key-A 卡死期间 key-B 必须独立完成，不能被别的热点拖住");
+        assertTrue(costMs < 1_000, "key-B 独立发车（窗口 1ms），实测 " + costMs + "ms");
+        assertEquals(2, flush.maxDistinctKeysInFlight(), "两个不同 key 的 flush 并发在途");
+
+        flush.hold.countDown();
+        blockedThread.join(5_000);
+        assertTrue(buffer.awaitIdle(5_000));
+        assertEquals(1, flush.maxInFlightOf("key-A"), "同 key 单飞不受跨 key 并发影响");
+        assertEquals(1, flush.maxInFlightOf("key-B"), "同 key 单飞不受跨 key 并发影响");
     }
 
     // ── I3：锁不跨 DB ─────────────────────────────────────────────────────────
@@ -251,30 +287,78 @@ class MergeEngineTest {
         submitInBackground(job(1), results);
         assertTrue(flush.entered.await(5, TimeUnit.SECONDS), "第一次 flush 应该已经进入落库");
 
-        // 落库线程此刻被闸门挡住，同一分片的锁必须已经放开：第二件要能立刻进缓冲区
+        // 落库线程此刻被闸门挡住，同一组的锁必须已经放开：第二件要能立刻进队列
         long startNanos = System.nanoTime();
         submitInBackground(job(2), results);
         boolean buffered = awaitBuffered(1, 2_000);
         long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
 
-        assertTrue(buffered, "落库阻塞期间提交必须仍能入队（锁跨 DB 就会卡在 offer 上）");
+        assertTrue(buffered, "落库阻塞期间提交必须仍能入队（锁跨 DB 就会卡在入队上）");
         assertTrue(costMs < 100, "入队必须毫秒级，实测 " + costMs + "ms");
 
         flush.hold.countDown();
         assertTrue(buffer.awaitIdle(5_000));
         assertEquals(2, flush.seenCount());
-        assertEquals(1, flush.maxInFlight(), "期间只有那一条 flush 在跑");
+        assertEquals(1, flush.maxInFlightOf(KEY), "期间只有那一条 flush 在跑");
     }
 
-    // ── I4：停机三步（停收 → 排空 → 关池）──────────────────────────────────────
+    // ── 发车时机：首件建队 / 窗口到点发车 / 攒满提前发车 ────────────────────────
 
     @Test
-    @DisplayName("A4 停机先排空：close() 时缓冲区里的件照样落库，一件不丢")
+    @DisplayName("首件建队、窗口到点发车：单件提交的返回时间 ≈ 收集窗口")
+    void firstItemCreatesGroupAndDepartsAtWindowDeadline() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        long windowMs = 300;
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, (int) windowMs, 200, 2_000, 2_000),
+                strategy);
+
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        long startNanos = System.nanoTime();
+        Thread submitter = submitInBackground(job(1), results);
+        submitter.join(5_000);
+        long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+
+        assertEquals(1, results.size());
+        assertEquals(MergeResult.State.COMPLETED, results.get(0).state());
+        assertTrue(costMs >= windowMs - 50, "窗口到点才发车：单件必须等满收集窗口，实测 " + costMs + "ms");
+        assertTrue(costMs < windowMs + 2_000, "也不能晚得离谱，实测 " + costMs + "ms");
+        assertTrue(flush.callCount() >= 1);
+        assertTrue(buffer.awaitIdle(5_000));
+        assertEquals(0, buffer.pending());
+    }
+
+    @Test
+    @DisplayName("攒满提前发车：maxBatch 件凑齐立即发车，不等收集窗口走完")
+    void fullBatchDepartsBeforeWindowExpires() throws Exception {
+        RecordingFlush flush = new RecordingFlush();
+        int maxBatch = 5;
+        MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
+        // 窗口 1000ms ≫ 测试时长：发车只能靠「攒满提前唤醒」触发
+        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1_000, maxBatch, 2_000, 2_000),
+                strategy);
+
+        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
+        long startNanos = System.nanoTime();
+        runConcurrently(maxBatch, threadNo -> results.add(buffer.commit(job(threadNo))));
+        long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+
+        assertTrue(buffer.awaitIdle(5_000));
+        assertEquals(maxBatch, countTrue(results));
+        assertEquals(1, flush.callCount(), "5 件凑齐一批，一次落库");
+        assertEquals(maxBatch, flush.maxGroupSize());
+        assertTrue(costMs < 1_000, "攒满必须提前发车（窗口 1000ms 未走完），实测 " + costMs + "ms");
+    }
+
+    // ── I4：停机三步（停收 → 排空 → 残余回填 FAILED）──────────────────────────
+
+    @Test
+    @DisplayName("A4 停机先排空：close() 时队列里的件照样落库，一件不丢")
     void closeStillDrainsBufferedItems() throws Exception {
         RecordingFlush flush = new RecordingFlush();
         MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
         // 窗口 1000ms 远超「攒件」所需：close() 之前不会有任何 flush 发生
-        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1_000, 200, 5_000, 2_000, 3_000), strategy);
+        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1_000, 200, 2_000, 3_000), strategy);
 
         int total = 20;
         List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
@@ -282,7 +366,7 @@ class MergeEngineTest {
         for (int i = 0; i < total; i++) {
             submitters.add(submitInBackground(job(i), results));
         }
-        assertTrue(awaitBuffered(total), "20 件都该在缓冲里等窗口");
+        assertTrue(awaitBuffered(total), "20 件都该在队列里等窗口");
 
         buffer.close();
         // 结果由提交线程写进 sink：必须等它们跑完再数，否则数的是「已被唤醒的线程数」而不是终态
@@ -290,14 +374,14 @@ class MergeEngineTest {
             submitter.join(5_000);
         }
 
-        assertEquals(total, flush.seenCount(), "排空阶段必须把缓冲里的件全部落库");
+        assertEquals(total, flush.seenCount(), "排空阶段必须把队列里的件全部落库");
         assertEquals(0, buffer.pending());
         assertTrue(buffer.awaitIdle(0), "close() 之后必须已排空（没有在途 flush）");
-        assertEquals(total, countTrue(results), "等结果的调用方必须在停机前拿到成功，而不是 TIMEOUT");
+        assertEquals(total, countTrue(results), "等结果的调用方必须在停机前拿到确定的结果");
     }
 
     @Test
-    @DisplayName("A4 停收：close() 之后提交不进缓冲，改由调用线程一组一件就地落库")
+    @DisplayName("A4 停收：close() 之后提交不进队列，直接返回 FAILED（件从未入队，重试安全）")
     void closeRejectsNewSubmissions() {
         RecordingFlush flush = new RecordingFlush();
         MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
@@ -306,50 +390,58 @@ class MergeEngineTest {
 
         MergeResult<Boolean> outcome = buffer.commit(job(1));
 
-        assertEquals(MergeResult.State.COMPLETED, outcome.state(), "停机后提交照样有结果：降级成本线程落库，不是拒收");
-        assertEquals(1, flush.callCount(), "不经缓冲：本线程直接落一组");
-        assertEquals(1, flush.maxGroupSize(), "降级固定组大小 1，不攒批");
-        assertEquals(0, buffer.pending(), "件从未进过缓冲区");
+        assertEquals(MergeResult.State.FAILED, outcome.state(), "停机后提交直接失败：件从未入队、必未落库");
+        assertEquals(0, flush.callCount(), "既不进队列，也不就地落库");
+        assertEquals(0, buffer.pending(), "件从未进过队列");
     }
 
     @Test
-    @DisplayName("A4 排空超时：剩余件显式回填 FAILED（= 确定没落，可安全重试）")
+    @DisplayName("A4 排空超时：没人认领的残余件显式回填 FAILED（= 确定没落，可安全重试）")
     void drainFailureBackfillsFailed() throws Exception {
         RecordingFlush flush = new RecordingFlush();
+        flush.entered = new CountDownLatch(1);
+        flush.hold = new CountDownLatch(1);
         MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
-        // 窗口 1000ms 远超排空预算 20ms：close() 时件一定还在缓冲里
-        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1_000, 200, 5_000, 2_000, 20), strategy);
+        // 窗口 1ms：第一件立刻发车并卡在落库；排空预算 20ms 远小于闸门被按住的时间
+        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1, 200, 2_000, 20), strategy);
 
-        int total = 3;
-        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
-        for (int i = 0; i < total; i++) {
-            submitInBackground(job(i), results);
-        }
-        assertTrue(awaitBuffered(total));
+        List<MergeResult<Boolean>> leaderOutcome = Collections.synchronizedList(new ArrayList<>());
+        List<MergeResult<Boolean>> followerOutcome = Collections.synchronizedList(new ArrayList<>());
+        Thread leader = submitInBackground(job(0), leaderOutcome);
+        assertTrue(flush.entered.await(5, TimeUnit.SECONDS), "第一件应该已经进入落库");
+        Thread follower = submitInBackground(job(1), followerOutcome);
+        assertTrue(awaitBuffered(1), "第二件该在队列里等落库权");
 
         buffer.close();
+        follower.join(5_000);
 
-        assertEquals(0, flush.seenCount(), "回填不等于落库：这些件从未进入事务");
+        assertEquals(1, followerOutcome.size());
+        assertEquals(MergeResult.State.FAILED, followerOutcome.get(0).state(),
+                "排空超时的残余件 = 确定没落（从未进入事务），可安全重试");
+        assertEquals(1, flush.seenCount(), "只有 leader 的那件进过落库函数");
+
+        flush.hold.countDown();
+        leader.join(5_000);
+        assertEquals(MergeResult.State.COMPLETED, leaderOutcome.get(0).state(),
+                "在途 flush 由它自己的线程收尾，不受停机回填影响");
         assertEquals(0, buffer.pending());
-        // 回填的件必须拿到「确定失败」（不是 TIMEOUT），调用方才能直接重试 / 同步降级
-        assertEquals(total, countState(results, MergeResult.State.FAILED));
-        // 停机之后，那条 1000ms 的窗口不该再跑出 flush
+        // 停机之后不该再有 flush 跑出来
         Thread.sleep(150);
-        assertEquals(0, flush.seenCount());
+        assertEquals(1, flush.seenCount());
     }
 
     // ── I5：背压有界 ──────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("A5 满即拒：不入队、不扩容、不动已入队件，被拒的件由调用线程就地落库")
+    @DisplayName("A5 满即拒：不入队、不扩容、不动已入队件，被拒的件直接失败")
     void rejectsWhenFullWithoutTouchingQueue() throws Exception {
         RecordingFlush flush = new RecordingFlush();
         flush.entered = new CountDownLatch(1);
         flush.hold = new CountDownLatch(1);
         MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
-        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 5, 8, 500, 8, 2_000), strategy);
+        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 5, 8, 8, 2_000), strategy);
 
-        // 先让一条 flush 卡在落库上，后面的件就都只能待在缓冲里
+        // 先让一条 flush 卡在落库上，后面的件就都只能待在队列里
         List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
         submitInBackground(job(0), results);
         assertTrue(flush.entered.await(5, TimeUnit.SECONDS));
@@ -359,34 +451,28 @@ class MergeEngineTest {
         }
         assertTrue(awaitBuffered(8), "容量 8 之内必须收下");
 
-        // 第 9 件：缓冲已满 ⇒ 不进缓冲，就地同步落库（组大小 1）。它同样被 hold 闸门挡住，
-        // 所以放到虚拟线程里发起；主线程要断言的是「进没进缓冲」与「有没有立刻就地落库」。
-        Job overflow = job(99);
-        List<MergeResult<Boolean>> overflowOutcome = Collections.synchronizedList(new ArrayList<>());
-        Thread overflowThread = Thread.ofVirtual().start(() -> overflowOutcome.add(buffer.commit(overflow)));
+        // 第 9 件：队列已满 ⇒ 不进队列，也不就地落库，立刻失败（调用方稍后重试）
+        MergeResult<Boolean> rejected = buffer.commit(job(99));
 
-        assertTrue(awaitFlushCalls(flush, 2, 5_000), "满了必须立刻就地落库，不是等窗口、也不是等超时");
+        assertEquals(MergeResult.State.FAILED, rejected.state(), "满即拒：直接失败，不抢连接落库");
         assertEquals(8, buffer.pending(), "拒收不许挤掉已入队的件，也不许扩容");
-        assertTrue(overflowOutcome.isEmpty(), "件正卡在落库上，此时不该有终态");
+        assertEquals(1, flush.callCount(), "只有卡住的那条 flush，被拒的件没有触发落库");
 
         flush.hold.countDown();
-        overflowThread.join(5_000);
         assertTrue(buffer.awaitIdle(5_000));
 
-        assertEquals(MergeResult.State.COMPLETED, overflowOutcome.get(0).state(), "被拒的件最终仍落库——不丢件");
-        assertTrue(flush.hasSeen(overflow), "同一件只经降级落一次");
-        assertEquals(10, flush.seenCount(), "1 件先落库 + 1 件就地落库 + 8 件补落库");
+        assertEquals(9, flush.seenCount(), "1 件先落库 + 8 件补落库；被拒的那件不在其中");
         assertEquals(0, buffer.pending());
     }
 
     @Test
-    @DisplayName("A5 背压不伤件：收下的 8 件与就地落库的 20 件各落一次，谁都不丢")
+    @DisplayName("A5 背压不伤件：收下的 8 件照常落库，被拒件直接失败且不挤队列")
     void acceptedItemsSurviveRejection() throws Exception {
         RecordingFlush flush = new RecordingFlush();
         flush.entered = new CountDownLatch(1);
         flush.hold = new CountDownLatch(1);
         MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
-        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 5, 8, 500, 8, 2_000), strategy);
+        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 5, 8, 8, 2_000), strategy);
 
         List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
         submitInBackground(job(0), results);
@@ -400,37 +486,33 @@ class MergeEngineTest {
         }
         assertTrue(awaitBuffered(8));
 
-        // 缓冲满了之后的 20 件：一件都进不了缓冲，各自在发起线程上就地落库（同样被闸门挡住）
-        List<Job> overflow = new ArrayList<>();
-        List<Thread> overflowThreads = new ArrayList<>();
-        List<MergeResult<Boolean>> overflowOutcomes = Collections.synchronizedList(new ArrayList<>());
+        // 队列满了之后的 20 件：一件都进不了队列，各自立刻失败（不抢连接、不挤队列）
+        List<Job> rejected = new ArrayList<>();
+        List<MergeResult<Boolean>> rejectedOutcomes = new ArrayList<>();
         for (int i = 100; i < 120; i++) {
             Job item = job(i);
-            overflow.add(item);
-            overflowThreads.add(Thread.ofVirtual().start(() -> overflowOutcomes.add(buffer.commit(item))));
+            rejected.add(item);
+            rejectedOutcomes.add(buffer.commit(item));
         }
-        assertTrue(awaitFlushCalls(flush, 21, 5_000), "20 件都该立刻就地落库，一件都不许挤进缓冲");
+        assertEquals(20, countState(rejectedOutcomes, MergeResult.State.FAILED), "满即拒：20 件全部直接失败");
         assertEquals(8, buffer.pending(), "拒收不许扩容，也不许挤掉已入队的件");
+        assertEquals(1, flush.callCount(), "只有卡住的那条 flush");
 
         flush.hold.countDown();
-        for (Thread thread : overflowThreads) {
-            thread.join(5_000);
-        }
         assertTrue(buffer.awaitIdle(5_000));
-        assertEquals(20, countTrue(overflowOutcomes), "就地落库的 20 件都该拿到成功结果，不是超时/失败");
 
         for (Job item : accepted) {
             assertTrue(flush.hasSeen(item), "已入队的件必须落库");
         }
-        for (Job item : overflow) {
-            assertTrue(flush.hasSeen(item), "被拒的件由调用线程就地落库，不能无声消失");
+        for (Job item : rejected) {
+            assertFalse(flush.hasSeen(item), "被拒的件从未入队，不许落库");
         }
-        assertEquals(1 + 8 + 20, flush.seenCount(), "先落库 1 件 + 收下 8 件 + 就地落库 20 件");
+        assertEquals(1 + 8, flush.seenCount(), "先落库 1 件 + 收下 8 件；被拒的 20 件不在其中");
         assertEquals(0, flush.duplicateCount(), "一件只能落一次");
         assertEquals(0, buffer.pending(), "排空后无积压");
     }
 
-    // ── 附加断言：单批上限 + 同分片保序 ────────────────────────────────────────
+    // ── 附加断言：单批上限 + 同 key 保序 ────────────────────────────────────────
 
     @Test
     @DisplayName("A6 单批不超过 maxBatch")
@@ -439,7 +521,7 @@ class MergeEngineTest {
         int threads = 40;
         RecordingFlush flush = new RecordingFlush();
         MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
-        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1, maxBatch, 5_000, 2_000, 2_000), strategy);
+        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1, maxBatch, 2_000, 2_000), strategy);
 
         List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
         runConcurrently(threads, threadNo -> results.add(buffer.commit(job(threadNo))));
@@ -451,13 +533,13 @@ class MergeEngineTest {
     }
 
     @Test
-    @DisplayName("A6 同分片内保持入队顺序（跨分片不保证）")
-    void sameShardKeepsSubmissionOrder() throws Exception {
+    @DisplayName("A6 同 key 内保持入队顺序（台账守卫式 UPDATE 的语义可推理）")
+    void sameKeyKeepsSubmissionOrder() throws Exception {
         int total = 20;
         RecordingFlush flush = new RecordingFlush();
         MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
         // 窗口给足，让 20 件在同一个窗口里排队
-        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1_000, 200, 5_000, 2_000, 6_000), strategy);
+        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1_000, 200, 2_000, 6_000), strategy);
 
         List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
         for (int i = 1; i <= total; i++) {
@@ -472,18 +554,18 @@ class MergeEngineTest {
         List<Object> landed = flush.payloadsOf(KEY);
         assertEquals(total, landed.size(), "件数不能少");
         for (int i = 0; i < total; i++) {
-            assertEquals(i + 1, ((Job) landed.get(i)).seq(), "同分片必须按入队序落库，第 " + i + " 件错位");
+            assertEquals(i + 1, ((Job) landed.get(i)).seq(), "同 key 必须按入队序落库，第 " + i + " 件错位");
         }
     }
 
     // ── 隔离：不同用途 ⇒ 不同引擎 ───────────────────────────────────────────────
 
     @Test
-    @DisplayName("两个用途各起一个引擎：同分片、同键、同窗口也各落各的组（不共享缓冲，也不共享事务）")
+    @DisplayName("两个用途各起一个引擎：同键、同窗口也各落各的组（不共享缓冲，也不共享事务）")
     void differentPurposesNeverShareAGroup() throws Exception {
         RecordingFlush deductFlush = new RecordingFlush();
         RecordingFlush claimFlush = new RecordingFlush();
-        MergeConfig config = new MergeConfig(8, 200, 200, 5_000, 2_000, 2_000);
+        MergeConfig config = new MergeConfig(8, 200, 200, 2_000, 2_000);
         MergeEngine<Job, Boolean> deductEngine = new MergeEngine<>(config,
                 new MergeStrategy<>("deduct", Job::shardKey, deductFlush));
         MergeEngine<Job, Boolean> claimEngine = new MergeEngine<>(config,
@@ -519,7 +601,7 @@ class MergeEngineTest {
         RecordingFlush flush = new RecordingFlush();
         flush.negativeOnFlush = true;
         MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
-        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 200, 10, 5_000, 5_000, 2_000), strategy);
+        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 200, 10, 5_000, 2_000), strategy);
 
         List<MergeResult<Boolean>> results = submitBurst(buffer, 3);
 
@@ -528,25 +610,37 @@ class MergeEngineTest {
     }
 
     @Test
-    @DisplayName("等超时回 TIMEOUT（不是 FAILED）：件仍在途，之后大概率照样落库")
-    void timeoutIsReportedAsUnknownResultNotFailure() throws Exception {
+    @DisplayName("没有等待上限：follower 一直等到落库权空出来、自己接班落库，拿 COMPLETED")
+    void followerWaitsUntilItsOwnItemLands() throws Exception {
         RecordingFlush flush = new RecordingFlush();
         flush.entered = new CountDownLatch(1);
         flush.hold = new CountDownLatch(1);
         MergeStrategy<Job, Boolean> strategy = strategyOf(flush);
-        // 等待预算 50ms 远小于闸门被按住的时间：一定先超时
-        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1, 10, 50, 2_000, 2_000), strategy);
+        // 窗口 1ms：leader 的单件立刻发车，然后被闸门按在落库上——此时 follower 只能等
+        MergeEngine<Job, Boolean> buffer = start(new MergeConfig(8, 1, 10, 2_000, 2_000), strategy);
 
-        List<MergeResult<Boolean>> results = Collections.synchronizedList(new ArrayList<>());
-        Thread caller = submitInBackground(job(1), results);
+        List<MergeResult<Boolean>> leaderOutcome = Collections.synchronizedList(new ArrayList<>());
+        List<MergeResult<Boolean>> followerOutcome = Collections.synchronizedList(new ArrayList<>());
+        Thread leader = submitInBackground(job(0), leaderOutcome);
         assertTrue(flush.entered.await(5, TimeUnit.SECONDS), "第一次 flush 应该已经进入落库");
-        caller.join(5_000);
+        Thread follower = submitInBackground(job(1), followerOutcome);
+        follower.join(200);
 
-        assertEquals(List.of(MergeResult.State.TIMEOUT), results.stream().map(MergeResult::state).toList(),
-                "超时必须是「结果未知」那一态，不能当失败处理");
+        // 前任卡在落库上：follower 不许带任何终态返回——没有等待上限就没有「结果未知」这一态
+        assertTrue(followerOutcome.isEmpty(), "落库被按住期间 follower 必须一直等，不能提前回一个『未知』");
+        assertEquals(1, buffer.pending(), "follower 的件在队列里等下一批");
+        assertTrue(leaderOutcome.isEmpty(), "leader 还卡在落库上，没有终态");
 
         flush.hold.countDown();
-        assertTrue(buffer.awaitIdle(5_000));
-        assertEquals(1, flush.seenCount(), "超时的件后来确实落库了 —— 这正是 TIMEOUT 存在的理由");
+        leader.join(5_000);
+        follower.join(5_000);
+
+        assertEquals(1, leaderOutcome.size());
+        assertEquals(MergeResult.State.COMPLETED, leaderOutcome.get(0).state(), "leader 的件照常落库");
+        assertEquals(List.of(MergeResult.State.COMPLETED),
+                followerOutcome.stream().map(MergeResult::state).toList(),
+                "执行权放出后 follower 接班落库，同样拿 COMPLETED");
+        assertEquals(2, flush.seenCount(), "两件都落过库");
+        assertEquals(0, buffer.pending());
     }
 }

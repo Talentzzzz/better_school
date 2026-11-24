@@ -6,37 +6,29 @@ package com.betterschool.infrastructure.merge;
  * <p>两件事分开装：「件有没有被送到落库函数」是基础设施事实（{@link State}），
  * 「落库怎么裁的」（扣到了 / 余量不足 / 确认成功）是域事实（{@link #result()}）。
  *
- * <p>{@link MergeEngine#commit} 只会产出 {@code COMPLETED} / {@code TIMEOUT} / {@code FAILED} 三态：
- * {@code BUFFER_FULL} / {@code CLOSED} 是「件没进缓冲」的入队事实，引擎在内部就把它降级成同步落库了，
- * 不外返给调用方。
+ * <p>{@link MergeEngine#commit} 只会产出 {@code COMPLETED} / {@code FAILED} 两态：等待没有上限，
+ * 所以不存在「结果未知」——返回时这件要么已提交、要么确定没提交。
+ * 「缓冲满 / 停机中」这类入队失败不进枚举——件从未进队列、必未落库，对调用方而言与落库失败无差别，
+ * 统一折成 {@link State#FAILED}（确定没落，可安全重试）。
  *
  * @param <R> 业务结果类型，由 {@link MergeStrategy} 决定
  */
 public final class MergeResult<R> {
 
-    /** 引擎终态：只说件走到哪一步，降级动作不在这里（见 {@link MergeEngine#commit}） */
+    /** 引擎终态：只说件走到哪一步 */
     public enum State {
 
         /** 已落库并回填业务结果 */
         COMPLETED,
 
-        /** 等结果超时：件仍在途，之后大概率仍会落库（结果未知，≠ 失败） */
-        TIMEOUT,
-
-        /** 分片缓冲已满：件从未入队、必未落库。引擎内部的入队事实，{@code commit} 就地降级，不外返 */
-        BUFFER_FULL,
-
-        /** 引擎已停机：件从未入队、必未落库。同上，引擎内部的入队事实 */
-        CLOSED,
-
-        /** 落库抛异常 / 漏回填 / 停机排空：事务已回滚或从未开始 ⇒ 可安全重试 */
+        /** 落库抛异常 / 漏回填 / 停机排空 / 入队被拒：事务已回滚或从未开始 ⇒ 可安全重试 */
         FAILED
     }
 
     private final State state;
     private final R result;
 
-    /** 包内可见：只由本包的回填与降级路径构造 */
+    /** 包内可见：只由本包的回填路径构造 */
     MergeResult(State state, R result) {
         this.state = state;
         this.result = result;
@@ -44,18 +36,6 @@ public final class MergeResult<R> {
 
     public static <R> MergeResult<R> completed(R result) {
         return new MergeResult<>(State.COMPLETED, result);
-    }
-
-    public static <R> MergeResult<R> timeout() {
-        return new MergeResult<>(State.TIMEOUT, null);
-    }
-
-    public static <R> MergeResult<R> bufferFull() {
-        return new MergeResult<>(State.BUFFER_FULL, null);
-    }
-
-    public static <R> MergeResult<R> closed() {
-        return new MergeResult<>(State.CLOSED, null);
     }
 
     public static <R> MergeResult<R> failed() {

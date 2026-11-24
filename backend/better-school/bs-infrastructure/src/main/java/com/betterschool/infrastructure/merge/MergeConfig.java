@@ -4,51 +4,55 @@ import lombok.EqualsAndHashCode;
 import lombok.ToString;
 
 /**
- * 引擎参数（不可变，构造即校验——配错要在启动瞬间炸掉，而不是上线后每笔提交都超时）。
+ * 引擎参数（不可变，构造即校验——配错要在启动瞬间炸掉，而不是上线后才暴露）。
  *
- * <p>引擎自身只校验三条：{@code shardCount} 是 2 的幂、{@code waitTimeoutMs > maxFlushDelayMillis}、
- * {@code shardCapacity >= maxBatch}。真正的并发上限「连接池 − 2」在装配层校验（引擎不认识 Hikari）。
+ * <p><b>per-invId leader 模型</b>：引擎没有分片数组、也没有常驻 flush 线程——flush 并发 =
+ * 并发热点 leader 数，天然受连接池约束，所以「shardCount ≤ 池 − 2」的装配校验随后台线程模型退役。
  *
- * @param shardCount           分片数（= 缓冲区数 = 常驻 flush 线程数），2 的幂
- * @param maxFlushDelayMillis  合并窗口：分片首件起算这么久后 flush，攒满可提前触发
- * @param maxBatch             单次 flush 最多取走的件数
- * @param waitTimeoutMs        调用方最长等待（排队 + 落库），超时返回 {@code TIMEOUT}
- * @param shardCapacity        单分片缓冲上限，满即不再攒批（改由提交线程同步落库）
- * @param drainTimeoutMs       停机排空上限
+ * <p><b>刻意没有「等待超时」参数</b>：调用方一直等到件落定（成功或确定失败）为止，不存在
+ * 「结果未知」的中间态。这条选择成立有一个前提——底层 SQL 必须有读超时
+ * （Connector/J 的 {@code socketTimeout}，配在 sharding.yaml 的 jdbcUrl 上）。否则一句永远不返回的
+ * {@code UPDATE} 会让所有等待者一起挂死，且没有任何信号。
+ *
+ * <p>本类只校验三条自身约束：{@code shardCount > 0}、{@code shardCapacity >= maxBatch}、
+ * {@code drainTimeoutMs > 0}。
+ *
+ * @param shardCount          【退役兼容参数】历史分片数的 yml 键（{@code merge.batch.shard-count}）
+ *                            保留一个版本，读进来只存不用——不再参与路由，也不再绑定任何线程；
+ *                            下一版本随 yml 键一并删除
+ * @param maxFlushDelayMillis leader 收集窗口（内核 {@code hotspot_update_max_wait_time} 的对应物）：
+ *                            首件建组起算这么久后发车，攒满可提前触发
+ * @param maxBatch            单次 flush 最多取走的件数（单条多行 SQL 的尺寸上界）
+ * @param shardCapacity       单个 invId Group 的缓冲上限，满即拒收（直接 {@code FAILED}，调用方重试）
+ * @param drainTimeoutMs      停机排空上限
  */
 @EqualsAndHashCode
 @ToString
 public final class MergeConfig {
 
-    /** 分片只决定路由桶，8 片够摊平 offer 争抢；flush 并发 = 分片数，默认取下限 */
+    /** 历史默认分片数：仅为 defaults() 数值口径兼容而保留，不再对应任何结构 */
     private static final int DEFAULT_SHARD_COUNT = 8;
     private static final int DEFAULT_WINDOW_MS = 5;
     private static final int DEFAULT_MAX_BATCH = 200;
-    private static final int DEFAULT_WAIT_TIMEOUT_MS = 100;
     private static final int DEFAULT_SHARD_CAPACITY = 2000;
     private static final long DEFAULT_DRAIN_TIMEOUT_MS = 5_000;
 
     private final int shardCount;
     private final int maxFlushDelayMillis;
     private final int maxBatch;
-    private final int waitTimeoutMs;
     private final int shardCapacity;
     private final long drainTimeoutMs;
 
     public MergeConfig(int shardCount,
                        int maxFlushDelayMillis,
                        int maxBatch,
-                       int waitTimeoutMs,
                        int shardCapacity,
                        long drainTimeoutMs) {
-        require(shardCount > 0 && Integer.bitCount(shardCount) == 1,
-                "merge.batch.shard-count(%s) 必须是 2 的幂：路由用 hash & (n-1)", shardCount);
+        require(shardCount > 0,
+                "merge.batch.shard-count 必须 > 0（当前 %s）", shardCount);
         require(maxFlushDelayMillis >= 0,
                 "merge.batch.max-flush-delay-millis 必须 >= 0（当前 %s）", maxFlushDelayMillis);
         require(maxBatch > 0, "merge.batch.max-batch 必须 > 0（当前 %s）", maxBatch);
-        require(waitTimeoutMs > maxFlushDelayMillis,
-                "merge.batch.wait-timeout-ms(%s) 必须 > max-flush-delay-millis(%s)，否则每笔都先超时后落库",
-                waitTimeoutMs, maxFlushDelayMillis);
         require(shardCapacity >= maxBatch,
                 "merge.batch.shard-capacity(%s) 必须 >= max-batch(%s)，否则永远攒不满一批就被拒",
                 shardCapacity, maxBatch);
@@ -57,17 +61,17 @@ public final class MergeConfig {
         this.shardCount = shardCount;
         this.maxFlushDelayMillis = maxFlushDelayMillis;
         this.maxBatch = maxBatch;
-        this.waitTimeoutMs = waitTimeoutMs;
         this.shardCapacity = shardCapacity;
         this.drainTimeoutMs = drainTimeoutMs;
     }
 
-    /** 默认参数：{@code 8 / 5ms / 200 / 100ms / 2000 / 5s} */
+    /** 默认参数：{@code 8(退役兼容) / 5ms / 200 / 2000 / 5s} */
     public static MergeConfig defaults() {
         return new MergeConfig(DEFAULT_SHARD_COUNT, DEFAULT_WINDOW_MS, DEFAULT_MAX_BATCH,
-                DEFAULT_WAIT_TIMEOUT_MS, DEFAULT_SHARD_CAPACITY, DEFAULT_DRAIN_TIMEOUT_MS);
+                DEFAULT_SHARD_CAPACITY, DEFAULT_DRAIN_TIMEOUT_MS);
     }
 
+    /** 【退役兼容】历史分片数：不再参与路由、不再绑定线程，仅为 yml 键一个版本兼容而保留 */
     public int shardCount() {
         return shardCount;
     }
@@ -80,27 +84,12 @@ public final class MergeConfig {
         return maxBatch;
     }
 
-    public int waitTimeoutMs() {
-        return waitTimeoutMs;
-    }
-
     public int shardCapacity() {
         return shardCapacity;
     }
 
     public long drainTimeoutMs() {
         return drainTimeoutMs;
-    }
-
-    /** 路由掩码：{@code shardCount} 是 2 的幂，{@code n - 1} 即全 1 位 */
-    int mask() {
-        return shardCount - 1;
-    }
-
-    /** 同一 shardKey 永远落同一分片；折叠高低位再取掩码，避免大量 key 挤进同一片（掩码恒正，负 hash 也安全） */
-    int shardOf(String key) {
-        int h = key.hashCode();
-        return (h ^ (h >>> 16)) & mask();
     }
 
     private static void require(boolean condition, String template, Object... args) {

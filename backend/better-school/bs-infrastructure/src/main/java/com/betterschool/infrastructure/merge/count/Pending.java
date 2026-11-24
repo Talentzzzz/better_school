@@ -1,21 +1,17 @@
 package com.betterschool.infrastructure.merge.count;
 
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 缓冲里的一件：事件 + 行主键 + （可选）等待者的 future。
+ * 队列里的一件：事件 + 行主键 + 等待者的 future。
  *
- * <p><b>不等结果的人连 future 都不分配</b>（{@code future == null}）：10k/s 的浏览如果每人一个
- * {@code CompletableFuture}，就是每秒一万次分配 + park/unpark，比落库本身还贵。这就是两个入口
- * 分开的理由（spec §2.2 否决了 {@code submit(key, payload, waitMode)}）。
+ * <p>统一等待语义后<b>每一件都有人等结果</b>（浏览也走 {@code commit}），件不再区分
+ * fire-and-forget 与 waiting 两种形态——future 一律分配。
  *
  * <h2>恰一个终态（I1 的一半）</h2>
  * {@link #complete(MergeState, Enum)} 用 {@link AtomicBoolean} 抢一次性：落库方法漏回填、
- * 排空超时、并发补齐三条路径都可能碰同一件，只有第一个赢家能写结果——第二个人返回 {@code false}，
+ * 停机回填、并发补齐三条路径都可能碰同一件，只有第一个赢家能写结果——第二个人返回 {@code false}，
  * 调用方据此决定要不要计 {@code failed}。{@code CompletableFuture.complete} 本身也是幂等的，
  * 但计数不能重复算，所以幂等必须在本类里体现，而不是依赖 future 的返回值。
  */
@@ -23,24 +19,12 @@ final class Pending {
 
     private final String shardKey;
     private final CountEvent event;
-    /** 等待者的 future；{@code null} = fire-and-forget（浏览类），回填是空操作 */
-    private final CompletableFuture<MergeResult<LikeState>> future;
+    private final CompletableFuture<MergeResult<LikeState>> future = new CompletableFuture<>();
     private final AtomicBoolean settled = new AtomicBoolean();
 
-    private Pending(String shardKey, CountEvent event, CompletableFuture<MergeResult<LikeState>> future) {
+    Pending(String shardKey, CountEvent event) {
         this.shardKey = shardKey;
         this.event = event;
-        this.future = future;
-    }
-
-    /** 等结果的件（点赞 / 取消赞 / 评论赞） */
-    static Pending waiting(String shardKey, CountEvent event) {
-        return new Pending(shardKey, event, new CompletableFuture<>());
-    }
-
-    /** 不等结果的件（浏览）：不分配 future */
-    static Pending fireAndForget(String shardKey, CountEvent event) {
-        return new Pending(shardKey, event, null);
     }
 
     String shardKey() {
@@ -69,32 +53,27 @@ final class Pending {
         if (!settled.compareAndSet(false, true)) {
             return false;
         }
-        if (future != null) {
-            future.complete(new MergeResult<>(state, result));
-        }
+        future.complete(new MergeResult<>(state, result));
         return true;
     }
 
-    /** 是否已有终态（落库后的「漏回填」判定用） */
+    /** 是否已有终态（等待者协议的谓词之一；leader 收集段也用它提前收手） */
     boolean isSettled() {
         return settled.get();
     }
 
     /**
-     * 阻塞等结果（只有 {@code commit} 会调）。
+     * 取已落定的终态；未落定返回 {@code null}。
      *
-     * <p>{@link ExecutionException} 不该出现（引擎只用 {@code complete} 回填，从不用
-     * {@code completeExceptionally}），真出现也按 {@link MergeState#FAILED} 兜住——不把技术细节
-     * 泄给调用方。
+     * <p>等待者协议不用 {@code future.get} 阻塞——等待发生在组的条件变量上（同一处顺带感知
+     * 接班与停机），future 只承载终态与业务结果。
      */
-    MergeResult<LikeState> await(long timeoutMs) throws TimeoutException, InterruptedException {
-        if (future == null) {
-            throw new IllegalStateException("fire-and-forget 的件不该有人等结果");
+    MergeResult<LikeState> resultIfSettled() {
+        if (!settled.get()) {
+            return null;
         }
-        try {
-            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
-        } catch (ExecutionException e) {
-            return MergeResult.failed();
-        }
+        MergeResult<LikeState> result = future.getNow(null);
+        // 理论到不了：settle 与 future.complete 同步完成。真出现按失败态兜住，不外泄技术细节
+        return result != null ? result : new MergeResult<>(MergeState.FAILED, null);
     }
 }

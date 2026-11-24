@@ -385,9 +385,10 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
 
     @Override
     public void recordPostView(String postId, String userId) {
-        // 浏览计数（UV 口径）：入队即返回，窗口过后一组一个事务——明细表 INSERT IGNORE + viewed_at
-        // 刷新 + 加速列 += 新增数。匿名访问落不了明细行（user_view_history 主键的一半是 user_id），
-        // 按「INSERT 成功才算浏览」的口径不计入；明细行即真相源，失败只记丢弃数（spec §1.2 / §3.2）
+        // 浏览计数（UV 口径，统一等待语义）：commit 等终态，窗口过后一组一个事务——明细表 INSERT IGNORE
+        // + viewed_at 刷新 + 加速列 += 新增数。匿名访问落不了明细行（user_view_history 主键的一半是
+        // user_id），按「INSERT 成功才算浏览」的口径不计入；明细行即真相源，失败/超时抛可重试，
+        // 重放被明细唯一键吸收（spec：浏览类从「允许丢」翻转为 commit 语义）
         if (userId == null) {
             return;
         }

@@ -31,7 +31,10 @@ dataSources:
   ds0:
     dataSourceClassName: com.zaxxer.hikari.HikariDataSource
     driverClassName: com.mysql.cj.jdbc.Driver
-    jdbcUrl: jdbc:mysql://localhost:3306/better_school?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    # 连接/读超时（官方 6.3.4 Networking，两项默认都是 0 = 永不超时）：不配时网络分区或服务端
+    # 不吭声会让这条 SQL 永久挂住、把内层连接占死——Hikari 的 connection-timeout 只管「借连接」，
+    # 管不到「已借出的那条 SQL 跑多久」。10s 相对 8ms 的正常落库宽三个数量级，不会误杀。
+    jdbcUrl: jdbc:mysql://localhost:3306/better_school?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=3000&socketTimeout=10000
     username: root
     password: bs123456
     # 内层池 = 直连 MySQL 的并发上限（外层还有一层 Spring 的 Hikari 包住 ShardingSphere，

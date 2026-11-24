@@ -4,7 +4,9 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -17,7 +19,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>{@code seen} 用<b>身份</b>（{@link IdentityHashMap}）而不是 equals：{@link CountEvent} 是 record，
  *       值相等不算「同一件」，只有同一对象才证明「这件被落库方法看到了一次」；</li>
  *   <li>{@code duplicates} &gt; 0 就是「一件被落库两次」——I1 的直接反例；</li>
- *   <li>{@code maxInFlight} &gt; 1 就是「同分片两条 flush 同时跑」——I2 的直接反例。</li>
+ *   <li>{@code maxInFlightOf(action, rowKey)} &gt; 1 就是「同 key 两条 flush 同时跑」——I2 的直接反例；
+ *       {@code maxDistinctKeysInFlight()} 则相反，它<b>应当</b> &gt; 1：不同 key 可并发 flush 是
+ *       per-invId leader 模型「撞片串行消除」的钉子。</li>
  * </ul>
  */
 final class RecordingFlushHandler implements ICountFlushHandler {
@@ -33,6 +37,12 @@ final class RecordingFlushHandler implements ICountFlushHandler {
 
     private final AtomicInteger inFlight = new AtomicInteger();
     private final AtomicInteger maxInFlight = new AtomicInteger();
+    /** 每个 key（动作 × 行主键）的在途 flush 计数：同 key 单飞（I2）按 key 看 */
+    private final Map<String, Integer> keyInFlight = new ConcurrentHashMap<>();
+    private final Map<String, Integer> maxKeyInFlight = new ConcurrentHashMap<>();
+    /** 同时在途的<b>不同 key</b> 数的最大值 */
+    private final AtomicInteger distinctKeysInFlight = new AtomicInteger();
+    private final AtomicInteger maxDistinctKeysInFlight = new AtomicInteger();
 
     /** 进入落库时的信号：测试用它确认「flush 已经开始」 */
     volatile CountDownLatch entered;
@@ -99,6 +109,7 @@ final class RecordingFlushHandler implements ICountFlushHandler {
     @Override
     public List<LikeState> flushGroup(CountAction action, String shardKey, List<CountEvent> events) {
         maxInFlight.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
+        trackKeyInFlight(action, shardKey);
         try {
             groups.add(new Group(action, shardKey, List.copyOf(events)));
             synchronized (seen) {
@@ -133,7 +144,25 @@ final class RecordingFlushHandler implements ICountFlushHandler {
             throw new IllegalStateException("落库替身被中断", e);
         } finally {
             inFlight.decrementAndGet();
+            untrackKeyInFlight(action, shardKey);
         }
+    }
+
+    private static String keyOf(CountAction action, String shardKey) {
+        return action + "|" + shardKey;
+    }
+
+    private void trackKeyInFlight(CountAction action, String shardKey) {
+        String key = keyOf(action, shardKey);
+        int now = keyInFlight.compute(key, (k, v) -> (v == null ? 0 : v) + 1);
+        maxKeyInFlight.compute(key, (k, v) -> Math.max(v == null ? 0 : v, now));
+        int distinct = distinctKeysInFlight.incrementAndGet();
+        maxDistinctKeysInFlight.accumulateAndGet(distinct, Math::max);
+    }
+
+    private void untrackKeyInFlight(CountAction action, String shardKey) {
+        keyInFlight.compute(keyOf(action, shardKey), (k, v) -> (v == null || v <= 1) ? null : v - 1);
+        distinctKeysInFlight.decrementAndGet();
     }
 
     int seenCount() {
@@ -158,8 +187,25 @@ final class RecordingFlushHandler implements ICountFlushHandler {
         return maxInFlight.get();
     }
 
+    /** 某个 key（动作 × 行主键）上的在途 flush 峰值：&gt; 1 = 同 key 单飞被破坏（I2 反例） */
+    int maxInFlightOf(CountAction action, String rowKey) {
+        return maxKeyInFlight.getOrDefault(keyOf(action, rowKey), 0);
+    }
+
+    /** 同时在不同 key 上落库的峰值：per-invId 模型下不同 key 应当能并发（&gt; 1） */
+    int maxDistinctKeysInFlight() {
+        return maxDistinctKeysInFlight.get();
+    }
+
     int callCount() {
         return groups.size();
+    }
+
+    /** 各次落库调用的形状快照（动作混组断言用） */
+    List<Group> callsSnapshot() {
+        synchronized (groups) {
+            return List.copyOf(groups);
+        }
     }
 
     int maxGroupSize() {

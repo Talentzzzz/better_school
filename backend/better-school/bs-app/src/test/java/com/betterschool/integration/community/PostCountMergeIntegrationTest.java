@@ -5,7 +5,6 @@ import com.betterschool.infrastructure.merge.count.CountEvent;
 import com.betterschool.infrastructure.merge.count.CountMerger;
 import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
 import com.betterschool.infrastructure.merge.count.LikeState;
-import com.betterschool.infrastructure.merge.count.ViewMergeWriter;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
@@ -27,16 +26,17 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <ul>
  *   <li><b>点赞 / 取消赞 / 评论赞</b>：提交给合并器 → 等窗口 → 一组一事务落库 → 返回。接口返回成功时
  *       计数<b>已经精确</b>，所以断言一律是「立刻相等」（C1）。</li>
- *   <li><b>浏览</b>：fire-and-forget，入队即返回，窗口过后一组一个事务三步落库——
+ *   <li><b>浏览</b>：commit 等终态（统一等待语义），窗口过后一组一个事务三步落库——
  *       {@code INSERT IGNORE INTO user_view_history}（affected = 新增 UV 数）→ 刷新本组 {@code viewed_at}
  *       → {@code post_view_count += 新增数}（feed-index-uv 票 02）。UV 口径：INSERT 成功才算浏览，
- *       重复进详情只刷 viewed_at 不加数，匿名访问不计数。仍然<b>允许丢</b>，丢弃数可读；
- *       排空后计数精确（重复浏览幂等，不存在「少计一次增量」的永久偏差）。</li>
+ *       重复进详情只刷 viewed_at 不加数，匿名访问不计数。浏览量与点赞量一样是「要么落了要么没落」
+ *       的提交语义——断言一律是「必须全落」，不再有「允许丢」；排空后计数精确
+ *       （重复浏览幂等，不存在「少计一次增量」的永久偏差）。</li>
  *   <li><b>详情读</b>：缓存只存内容、三个计数每次回库拼装（票 05），缓存命中路径的三个数恒等于
  *       库值（C5，{@code detailCountsNeverComeFromCache}）。</li>
  * </ul>
  */
-@DisplayName("帖子计数：点赞/取消赞同步合并写（返回即精确），浏览 fire-and-forget（允许丢）")
+@DisplayName("帖子计数：点赞/取消赞同步合并写（返回即精确），浏览 commit 等终态（必须全落）")
 class PostCountMergeIntegrationTest extends CommunityApiTestBase {
 
     /** 窗口之后才会有写：等排空用它，等不到即断言失败 */
@@ -44,9 +44,6 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
 
     @Autowired
     private CountMerger countMerger;
-
-    @Autowired
-    private ViewMergeWriter viewMergeWriter;
 
     @Autowired
     private ICountFlushHandler flushHandler;
@@ -94,7 +91,7 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
         assertSuccess(postJson("/api/community/posts/" + postId + "/like", null, liker), "点赞");
         publishCommentAndGetId(postId, commenter, "缓存不存计数");
 
-        // 排空在途浏览件，让 view_count 的库值在「取库值 → 读详情」之间保持静止（浏览允许丢，不能等它）
+        // 排空在途浏览件，让 view_count 的库值在「取库值 → 读详情」之间保持静止（浏览已等终态，此处兜底对齐）
         assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
         long likeInDb = postLikeCountOf(postId);
         long commentInDb = postCommentCountOf(postId);
@@ -162,7 +159,6 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
         Session reader = registerAndLogin("13800007010", "浏览者1");
         Session otherReader = registerAndLogin("13800007021", "浏览者2");
         String postId = publishPost(author, "浏览走 UV 口径的帖子");
-        long droppedBefore = viewMergeWriter.droppedViews();
 
         // 首次浏览：排空后明细 1 行、加速列 1
         assertSuccess(getJson("/api/community/posts/" + postId, reader), "首次浏览详情");
@@ -190,10 +186,6 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
         assertSuccess(getJson("/api/community/posts/" + postId, null), "匿名浏览详情");
         assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
         assertThat(postViewCountOf(postId)).as("匿名浏览不计数").isEqualTo(2);
-
-        // 丢弃数必须可读，且健康路径不该有丢弃（缓冲满 / 停机中才走降级）
-        assertThat(viewMergeWriter.droppedViews()).as("浏览丢弃数可读、健康路径为 0")
-                .isEqualTo(droppedBefore);
 
         // MQ 骨架已清零：浏览不再落任何计数消息（两个 topic 常量也已删除，这里用字面量兜住回归）
         assertThat(outboxCountOf("bs-post-count")).as("浏览不再走 outbox + MQ").isZero();

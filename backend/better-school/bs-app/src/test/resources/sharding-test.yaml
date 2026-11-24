@@ -6,7 +6,8 @@ dataSources:
   ds0:
     dataSourceClassName: com.zaxxer.hikari.HikariDataSource
     driverClassName: com.mysql.cj.jdbc.Driver
-    jdbcUrl: jdbc:mysql://localhost:13306/better_school_test?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    # connectTimeout / socketTimeout 与生产 sharding.yaml 同口径（默认 0 = 永不超时，不许留默认）
+    jdbcUrl: jdbc:mysql://localhost:13306/better_school_test?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=3000&socketTimeout=10000
     username: root
     password: bs123456
     maximumPoolSize: 20

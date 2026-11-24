@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code errand_view_count} 加速列，与帖子 / 商品同构；跑腿此前无浏览量，从切码起按 UV 精确累计）。
  *
  * <p>断言只看外部可观察状态：HTTP 详情响应 + MySQL 数据。浏览走真实详情链路
- * （fire-and-forget 合并写），断言前排空合并窗口。
+ * （commit 合并写、等终态必须全落），断言前排空合并窗口。
  */
 @DisplayName("跑腿浏览 UV：详情接线 viewCount / 首次计 1 / 重复只刷 viewed_at / 匿名不计")
 class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {

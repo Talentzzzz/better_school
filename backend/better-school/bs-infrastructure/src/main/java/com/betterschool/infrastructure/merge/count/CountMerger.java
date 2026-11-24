@@ -5,76 +5,77 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * 计数侧合并器：<b>固定 N 个分片排空线程（每分片一条常驻 daemon 平台线程）+ 入口路由</b>（spec §2.2）。
+ * 计数侧合并器：<b>per-invId leader 模型</b>（对齐数据库内核热点组提交，spec：合并引擎 per-invId
+ * leader 改造）。没有分片数组、没有常驻 flush 线程——以「动作 × 行主键」为键的动态热点组表替代
+ * 固定分片：第一条到达的请求惰性建组并成为 leader，在收集窗口内吸收 follower；到点/攒满后 leader
+ * 带全队一次落库（一组一个事务不变），发车即交出收集领导权——收集与落库流水线重叠；
+ * 组空闲即乐观删除。点赞 / 取消赞 / 评论赞 / 浏览统一走这一套提交语义。
  *
  * <h2>一件请求的一生</h2>
  * <pre>
- *   commit(postId, event)
- *     ├─ 按 shardOf(postId) 路由到分片
- *     ├─ 塞进该分片缓冲区（首件起算 maxFlushDelayMillis 合并窗口，攒满 maxBatch 提前唤醒摘批）
- *     ├─ park 在自己的 future 上，最多等 waitTimeoutMs
+ *   commit(rowId, event)
+ *     ├─ 按「动作 × 行主键」找组（惰性创建），锁内入队
+ *     ├─ 领导权空缺 → 接管：收集窗口内吸收 follower（攒满 maxBatch / 停机提前发车）
+ *     ├─ 领导权被占 → park 在组条件变量上等终态（最多 waitTimeoutMs）
  *     └─ 缓冲满 / 停机中 → 本线程用同一个落库方法落「组大小 1」（{@link #degrade}）
- *                    ↓（窗口到点 / 攒满，由分片自己的常驻线程接管）
- *   flush：锁内整块摘批 → 锁外按「动作 × 行主键」二次分组 → 一组一个事务落库 → 回填 → 有积压背靠背续跑
+ *                    ↓（窗口到点 / 攒满，由 leader 在自己的请求线程上发车）
+ *   flush：锁内摘批 → 锁内交收集领导权、占落库权 → 锁外落库（一组一个事务）→ 逐件回填
+ *          → 队列空则乐观删除出 map；非空则叫醒等待者接班（接班次数可观测）
  * </pre>
  *
- * <h2>两个入口，不做合并签名</h2>
- * {@link #commit} 等结果并返回 {@link MergeResult}（点赞 / 取消赞 / 评论赞），入队失败、超时、落库失败
- * 都由它自己兜成三态；{@link #submitAsync} 只返回 {@link SubmitOutcome}（浏览）。<b>不等的人连 future
- * 都不分配</b>：10k/s 的浏览若每人一个 future，每秒就是一万次分配 + park/unpark，比落库本身还贵。
+ * <h2>浏览语义已翻转（统一等待语义）</h2>
+ * 浏览与点赞共用 {@link #commit} 等结果——超时 = 结果未知（{@code TIMEOUT} → 上层
+ * {@code RETRY_LATER} → 重放被明细唯一键吸收）。不再有「允许丢」，也不再有不分配 future 的
+ * {@code submitAsync} 入口；两个入口两套等待模型、两套降级心智一并退役。
  *
- * <h2>一条实例</h2>
- * 点赞（等）与浏览（不等）共用同一份分片与线程——两个实例要 2×N 条常驻线程，而它们打的是
- * 同一批热点帖（同一条业务行必须落同一片，才能合并成一条 UPDATE）。
- *
- * <h2>背压与降级：同步入口引擎自己兜，异步入口交给 case 层</h2>
- * 引擎不说 {@code REJECTED}。同步入口 {@link #commit} 在缓冲满 / 停机中时，用<b>同一个落库方法</b>
- * 在本线程落「组大小 1」——这两种情况件从未入队、必未落库，就地补一次是安全的；对调用方而言它只会
- * 看到 {@code COMPLETED / TIMEOUT / FAILED}，不必自己判断要不要降级。异步入口不做这件事：浏览允许丢，
- * 而「丢了几个」是 case 层的读数（{@code ViewMergeWriter.droppedViews}），引擎不替它数。
- * 两套 SQL 迟早漂移，而漂移只在压力最大时暴露，所以降级必须复用同一个落库方法（spec §2.6）。
+ * <h2>背压与降级：引擎自己兜</h2>
+ * 引擎不说 {@code REJECTED}。{@code commit} 在缓冲满 / 停机中时，用<b>同一个落库方法</b>在本线程落
+ * 「组大小 1」——这两种情况件从未入队、必未落库，就地补一次是安全的；对调用方而言它只会看到
+ * {@code COMPLETED / TIMEOUT / FAILED}，不必自己判断要不要降级。两套 SQL 迟早漂移，而漂移只在
+ * 压力最大时暴露，所以降级必须复用同一个落库方法。
  *
  * <h2>五条不变量</h2>
  * I1 不丢件且恰一个终态（{@link Pending#complete} 幂等 + 漏回填补 {@code FAILED}）、
- * I2 同分片单飞（分片串行化落在「同一分片恰一条线程」上，结构即保证）、
- * I3 锁不跨 DB（临界区只碰内存）、I4 停机三步（停收 → 排空 → signal + join）、
- * I5 背压有界（满即不入队：同步入口就地降级、异步入口如实回 {@code CLOSED}；不扩容、不挤掉已入队件）。
+ * I2 同 key 单飞（落库权标志锁内置位，结构即保证）、I3 锁不跨 DB（临界区只碰内存）、
+ * I4 停机三步（停收 → 排空 → 残余回填 {@code FAILED}；无后台线程可 join）、
+ * I5 背压有界（满即不入队：入口就地降级；不扩容、不挤掉已入队件）。
  *
  * <h2>装配</h2>
  * {@code @Component}：参数来自 {@code bs-app} 的 {@code CountMergeConfig}，出口是
  * {@link CountFlushDispatcher}（按动作把一组交给拥有那张表的域仓储：社区仓储的点赞 / 取消赞 /
- * 评论赞 / 帖子浏览，交易仓储的商品浏览）。调用方有两个：{@link CountMergeWriter}（点赞类，等结果）
- * 与 {@link ViewMergeWriter}（浏览，不等结果）——同步入口的降级在本类里，case 层只做「三态 → 域出口」
- * 的翻译；异步入口的丢弃计数在 {@link ViewMergeWriter} 里。本类不认识 HTTP 语义。
+ * 评论赞 / 帖子浏览，交易仓储的商品浏览，跑腿仓储的跑腿浏览）。调用方有两个：
+ * {@link CountMergeWriter}（点赞类）与 {@link ViewMergeWriter}（浏览）——现在两类写入走同一套
+ * 等待语义，都只做「三态 → 域出口」的翻译。本类不认识 HTTP 语义。
  */
 @Slf4j
 @Component
 public class CountMerger {
 
-    /** 排空等待的兜底探测间隔：正常由 flush 完成信号唤醒，这里只防信号丢失 */
-    private static final long IDLE_PROBE_MS = 5;
+    /** 等待者条件等待的兜底探测间隔：正常由 flush 完成 / 接班信号唤醒，这里只防信号丢失 */
+    private static final long WAKEUP_PROBE_MS = 5;
 
     private final MergeConfig config;
     private final ICountFlushHandler flushHandler;
-    private final ShardFlusher[] shards;
+    /** 「动作 × 行主键」→ 热点组：惰性创建、空闲即乐观删除 */
+    private final Map<GroupKey, Group> groups = new ConcurrentHashMap<>();
 
-    /** 排空通知：flush 每走完一批就 signalAll，停机不用轮询 */
+    /** 排空通知：每走完一批就 signalAll，停机不用轮询 */
     private final ReentrantLock idleLock = new ReentrantLock();
     private final Condition idleSignal = idleLock.newCondition();
 
-    /** 是否接收新件：停机第一步置 false，入口立刻开始拒绝（不再往缓冲区里塞） */
+    /** 是否接收新件：停机第一步置 false，入口立刻开始拒绝（不再往队列里塞） */
     private volatile boolean accepting = true;
 
     private final AtomicLong accepted = new AtomicLong();
@@ -86,12 +87,15 @@ public class CountMerger {
     private final AtomicLong failed = new AtomicLong();
     private final AtomicLong drainedFailed = new AtomicLong();
     private final AtomicLong maxFlushNanos = new AtomicLong();
+    /** 接班次数：前任 leader 已发过车的组再次被接管（观测接班链活性） */
+    private final AtomicLong handovers = new AtomicLong();
 
     /**
      * @param flushHandler 落库方法（实现是 {@link CountFlushDispatcher}）。{@code @Lazy} 不是可选项：
-     *                     落库方法在 {@code CommunityRepository} / {@code TradeRepository} 上，
-     *                     而这两个仓储的写入入口又要调 {@link CountMergeWriter} / {@link ViewMergeWriter}
-     *                     → 本类 —— 出口与调用方互相指着，不延迟到 flush 时解析就是循环依赖。
+     *                     落库方法在 {@code CommunityRepository} / {@code TradeRepository} /
+     *                     {@code ErrandRepository} 上，而这些仓储的写入入口又要调
+     *                     {@link CountMergeWriter} / {@link ViewMergeWriter} → 本类 —— 出口与调用方
+     *                     互相指着，不延迟到 flush 时解析就是循环依赖。
      *                     合并器本来也只在落库那一刻才用到它，构造期不需要真的把它拿到手
      */
     public CountMerger(MergeConfig config, @Lazy ICountFlushHandler flushHandler) {
@@ -101,48 +105,72 @@ public class CountMerger {
         this.config = config;
         this.flushHandler = flushHandler;
 
-        // 每分片一条常驻 daemon 线程（count-merge-flush-<shardNo>），构造即开跑；
-        // flush 并发 = shardCount，其与连接池的不变量由装配层（CountMergeConfig）启动时校验
-        this.shards = new ShardFlusher[config.shardCount()];
-        for (int i = 0; i < config.shardCount(); i++) {
-            shards[i] = new ShardFlusher(i, config, this::flushBatch, this::signalIdle);
-        }
-
-        log.info("计数合并器启动：shardCount={}(mask={}), maxFlushDelayMillis={}, maxBatch={}, waitTimeoutMs={}, "
-                        + "shardCapacity={}, flush=每分片1条常驻线程(共{}), drainTimeoutMs={}",
-                config.shardCount(), config.mask(), config.maxFlushDelayMillis(), config.maxBatch(),
-                config.waitTimeoutMs(), config.shardCapacity(), config.shardCount(), config.drainTimeoutMs());
+        log.info("计数合并器启动（per-invId leader 模型）：收集窗口={}ms, maxBatch={}, waitTimeoutMs={}, "
+                + "groupCapacity={}, drainTimeoutMs={}",
+                config.maxFlushDelayMillis(), config.maxBatch(), config.waitTimeoutMs(),
+                config.shardCapacity(), config.drainTimeoutMs());
     }
 
     /**
-     * 提交一笔并等结果（点赞 / 取消赞 / 评论赞）：本类<b>等结果那条入口</b>，入队、等待、兜底在
-     * 一处闭环。叫 {@code commit} 而不是 {@code write}/{@code submit}：返回时这笔要么已随组提交、
-     * 要么确定没提交，是「提交语义」；而 {@code submitAsync} 在本类里已经占了「只管投、不等结果」。
+     * 提交一笔并等结果（点赞 / 取消赞 / 评论赞 / 浏览统一入口）：本类<b>唯一的对外入口</b>，
+     * 入队、等待、兜底在一处闭环。叫 {@code commit} 而不是 {@code write}/{@code submit}：
+     * 返回时这笔要么已随组提交、要么确定没提交，是「提交语义」。
      *
      * <p>缓冲满 / 停机中<b>不会返给调用方</b>：件从未入队、必未落库，就地用同一个落库方法落
      * 「组大小 1」（{@link #degrade}）。所以返回值只有三态——{@code COMPLETED} / {@code TIMEOUT} /
      * {@code FAILED}，调用方不必自己判断要不要降级。
      *
-     * @param shardKey 这组要更新的那一行的<b>业务主键</b>（postId / commentId 等字符串），<b>由调用方显式给</b>
+     * <p>超时收尾：等超时、准备返回 {@code TIMEOUT} 之前，若领导权空缺则自任 leader 清一次队
+     * ——把自己的 {@code TIMEOUT} 收敛为 {@code COMPLETED}，杜绝孤儿批；领导权被占则如实返回
+     * {@code TIMEOUT}（结果未知，件大概率仍会落库）。
+     *
+     * @param shardKey 这组要更新的那一行的<b>业务主键</b>（postId / commentId / productId 等
+     *                 字符串），<b>由调用方显式给</b>
      * @param event    事件本体；合并器不解析它来推导 key
      */
     public MergeResult<LikeState> commit(String shardKey, CountEvent event) {
-        Pending item = Pending.waiting(shardKey, event);
-        SubmitOutcome outcome = enqueue(item);
-        if (outcome != SubmitOutcome.ACCEPTED) {
-            // 未入队：满了或停机中。件从未进过缓冲区，必未 settle ⇒ 本线程就地落一组
-            return degrade(shardKey, event, outcome == SubmitOutcome.BUFFER_FULL ? "缓冲满" : "停机中");
+        GroupKey key = new GroupKey(event.action(), shardKey);
+        Pending mine = new Pending(shardKey, event);
+        Group group = groups.computeIfAbsent(key, k -> new Group(k, config));
+        Group.EnqueueOutcome outcome = group.enqueue(mine, accepting);
+        // 乐观删除竞态自愈：撞上刚被摘除的组就换组重建（同 key 永远收敛到同一个活组）
+        while (outcome == Group.EnqueueOutcome.GROUP_REMOVED) {
+            group = groups.computeIfAbsent(key, k -> new Group(k, config));
+            outcome = group.enqueue(mine, accepting);
         }
-        try {
-            return item.await(config.waitTimeoutMs());
-        } catch (TimeoutException e) {
-            // 件仍在缓冲区里，之后大概率仍会落库 —— 对外表达为「结果未知」，不是失败
-            timedOut.incrementAndGet();
-            return MergeResult.timeout();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            // 件没有丢（还在缓冲里），只是这个线程不再等了
-            return MergeResult.failed();
+        if (outcome != Group.EnqueueOutcome.ENQUEUED) {
+            if (group.tryRemoveIfIdle()) {
+                groups.remove(key, group);
+            }
+            return degrade(shardKey, event,
+                    outcome == Group.EnqueueOutcome.BUFFER_FULL ? "缓冲满" : "停机中");
+        }
+
+        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(config.waitTimeoutMs());
+        // false = 刚经历过一次「接管但没发成车」（预算耗尽），此刻再接管只会原样再退——
+        // 先等一个唤醒再试，避免接管-退出的自旋
+        boolean mayPromote = true;
+        while (true) {
+            MergeResult<LikeState> settled = mine.resultIfSettled();
+            if (settled != null) {
+                return settled;
+            }
+            if (mayPromote && group.tryPromote()) {
+                mayPromote = driveFlushCycles(group, mine, deadlineNanos);
+                continue;
+            }
+            long remainNanos = deadlineNanos - System.nanoTime();
+            if (remainNanos <= 0) {
+                if (mayPromote && group.tryPromote()) {
+                    mayPromote = driveFlushCycles(group, mine, deadlineNanos);
+                    continue;
+                }
+                timedOut.incrementAndGet();
+                // 件仍在队列里，之后大概率仍会落库 —— 对外是「结果未知」，不是失败
+                return MergeResult.timeout();
+            }
+            group.awaitWakeup(Math.min(remainNanos, TimeUnit.MILLISECONDS.toNanos(WAKEUP_PROBE_MS)));
+            mayPromote = true;
         }
     }
 
@@ -182,48 +210,13 @@ public class CountMerger {
     }
 
     /**
-     * 不等结果的入口（帖子 / 商品浏览）：入队即返回，不分配 future。
-     *
-     * @return {@code ACCEPTED} 已入队；另外两个由 case 层转为「丢弃并 droppedViews++」
-     */
-    public SubmitOutcome submitAsync(String shardKey, CountEvent event) {
-        return enqueue(Pending.fireAndForget(shardKey, event));
-    }
-
-    /**
-     * 唯一入队通道：停机检查 → 路由到分片收件 → 计数。两个入口只在「要不要 future」和
-     * 「拒收怎么翻译」上不同，计数口径必须共用一份。
-     *
-     * <p><b>计数守恒</b>：{@code accepted == flushed + failed + drainedFailed + 在途 + timedOut 后的在途}
-     * 之所以能对上，靠这里三条分支互斥且覆盖：{@code ACCEPTED} → {@code accepted++}；
-     * 分片拒绝时要么 {@code rejectedFull++}（件从未入队）、要么 {@code rejectedClosed++}（同前）。
-     */
-    private SubmitOutcome enqueue(Pending item) {
-        if (!accepting) {
-            rejectedClosed.incrementAndGet();
-            return SubmitOutcome.CLOSED;
-        }
-        if (!shards[config.shardOf(item.shardKey())].offer(item)) {
-            // 重读 accepting：close 与 offer 赛跑时（入队检查后分片才关闭），按停机算，不诬为背压
-            if (accepting) {
-                rejectedFull.incrementAndGet();
-                return SubmitOutcome.BUFFER_FULL;
-            }
-            rejectedClosed.incrementAndGet();
-            return SubmitOutcome.CLOSED;
-        }
-        accepted.incrementAndGet();
-        return SubmitOutcome.ACCEPTED;
-    }
-
-    /**
-     * 当前缓冲件数（全分片求和，无锁镜像）。只供 {@link #metrics()}、停机日志与同包测试做
+     * 当前缓冲件数（各组求和，无锁镜像）。只供 {@link #metrics()}、停机日志与同包测试做
      * 排空/背压断言用——近似读数，不做任何正确性决策，故不对外暴露。
      */
     int pending() {
         int total = 0;
-        for (ShardFlusher shard : shards) {
-            total += shard.pendingSize();
+        for (Group group : groups.values()) {
+            total += group.pendingSize();
         }
         return total;
     }
@@ -231,8 +224,7 @@ public class CountMerger {
     /**
      * 等排空（{@code close()} 与测试用）。
      *
-     * <p>判据是「所有分片缓冲都空」，由 flush 完成信号唤醒，探测间隔只防信号丢失；
-     * 在途的那一批（已摘批、尚未回填）不在此判据内，由 {@link #close()} 的 join 兜底。
+     * <p>判据是「所有组队列都空且没有在途 flush」，由 flush 完成信号唤醒，探测间隔只防信号丢失。
      */
     public boolean awaitIdle(long timeoutMs) {
         if (isIdle()) {
@@ -247,7 +239,7 @@ public class CountMerger {
                     return false;
                 }
                 try {
-                    idleSignal.awaitNanos(Math.min(remainNanos, TimeUnit.MILLISECONDS.toNanos(IDLE_PROBE_MS)));
+                    idleSignal.awaitNanos(Math.min(remainNanos, TimeUnit.MILLISECONDS.toNanos(WAKEUP_PROBE_MS)));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return isIdle();
@@ -259,48 +251,45 @@ public class CountMerger {
         }
     }
 
-    /** 读数快照（不依赖 micrometer，不开端点） */
+    /** 读数快照（不依赖 micrometer，不开端点）。{@code activeGroups} / {@code handovers} 是
+     * per-invId leader 模型的新增读数（窗口/批大小调参看它说话） */
     public MergeMetrics metrics() {
         return new MergeMetrics(pending(), accepted.get(), flushed.get(), batches.get(),
                 rejectedFull.get(), rejectedClosed.get(), timedOut.get(), failed.get(),
-                drainedFailed.get(), maxFlushNanos.get());
+                drainedFailed.get(), maxFlushNanos.get(), groups.size(), handovers.get());
     }
 
     /**
-     * 优雅停机（I4）：停收 → 排空 → 回填 + signal + join，顺序不能反。
+     * 优雅停机（I4）：停收 → 排空 → 残余回填 {@code FAILED}，顺序不能反。
      *
-     * <p>先杀线程会把缓冲区里的件变成「永远等不到的 future」；排空超时则显式回填，让调用方立刻
-     * 拿到可重试的结果，而不是干等 {@code waitTimeoutMs} 后猜。回填件数计入 {@code drainedFailed}，
-     * 这是「停机丢了多少」的唯一读数。收尾把各分片线程 signal 出等待（{@code failRemaining} 置
-     * {@code closed} 并 signal），再 {@code join(drainTimeout)}——线程只在 {@code closed} 且缓冲空时
-     * 退出，join 返回即代表在途 flush 已收尾。{@code HikariDataSource} 的销毁晚于本方法
-     * （Spring 按依赖逆序销毁），所以排空时落库用的连接仍然可用——不要调换顺序。
+     * <p>停收后先叫醒所有在位 leader 与等待者：leader 立即发车排空、等待者接班清队，在途 leader
+     * 与接班链排空即视为 idle。无后台线程可 join——发车都跑在调用方线程上。排空超时则把仍在
+     * 队列里的件显式回填 {@code FAILED}，让调用方立刻拿到可重试的结果，而不是干等
+     * {@code waitTimeoutMs} 后猜。回填件数计入 {@code drainedFailed}，这是「停机丢了多少」的唯一读数。
+     * {@code HikariDataSource} 的销毁晚于本方法（Spring 按依赖逆序销毁），所以排空时落库用的连接
+     * 仍然可用——不要调换顺序。
      */
     @PreDestroy
     public void close() {
         accepting = false;
+        for (Group group : groups.values()) {
+            group.markClosed();
+        }
         boolean drained = awaitIdle(config.drainTimeoutMs());
         int left = 0;
-        for (ShardFlusher shard : shards) {
-            int remaining = shard.failRemaining(drained ? "应用停机（竞态补收）" : "排空超时");
+        for (Group group : List.copyOf(groups.values())) {
+            int remaining = group.failRemaining(drained ? "应用停机（竞态补收）" : "排空超时");
             if (drained) {
-                // 正常排空后还会剩件，只可能是「close 与最后一个 offer 赛跑」漏进来的
+                // 正常排空后还会剩件，只可能是「close 与最后一个入队赛跑」漏进来的
                 failed.addAndGet(remaining);
             } else {
                 drainedFailed.addAndGet(remaining);
             }
             left += remaining;
+            groups.remove(group.key(), group);
         }
         if (left > 0) {
             log.warn("停机回填 {} 件未落库（从未进入事务，可安全重试）", left);
-        }
-        long joinDeadlineMillis = System.currentTimeMillis() + config.drainTimeoutMs();
-        for (int i = 0; i < shards.length; i++) {
-            long remainMs = Math.max(1, joinDeadlineMillis - System.currentTimeMillis());
-            if (!shards[i].joinFlushThread(remainMs)) {
-                log.warn("分片 {} 的 flush 线程未在 {}ms 内退出（大概率阻塞在落库上）：daemon 线程不阻塞 JVM 停机，放弃等待",
-                        i, remainMs);
-            }
         }
         log.info("计数合并器已停止：drained={}, 剩余积压={}, 读数={}", drained, pending(), metrics());
     }
@@ -308,33 +297,35 @@ public class CountMerger {
     // ── 落库路径 ──────────────────────────────────────────────────────────────
 
     /**
-     * 摘批后的落库：按「动作 × 行主键」二次分组，一组一个事务。
+     * 领导期：连续发车直到自己的件终态 / 预算耗尽 / 领导权被抢。
      *
-     * <p>一组一事务（不是一批一事务）：一组让锁集最小、失败只回滚一组、结果能精确回填到件；
-     * 一批一事务会让几个不相干的行以不同顺序被锁，多出一片死锁面。
+     * @return true = 还值得再尝试接管；false = 这次接管没发成车（预算耗尽 / 件已被回填），
+     *         先等一个唤醒再试
      */
-    private void flushBatch(List<Pending> pendingList) {
-        Map<GroupKey, List<Pending>> groups = new LinkedHashMap<>();
-        for (Pending item : pendingList) {
-            groups.computeIfAbsent(new GroupKey(item.event().action(), item.shardKey()),
-                    key -> new ArrayList<>()).add(item);
-        }
-        try {
-            for (Map.Entry<GroupKey, List<Pending>> entry : groups.entrySet()) {
-                flushOneGroup(entry.getKey(), entry.getValue());
+    private boolean driveFlushCycles(Group group, Pending mine, long deadlineNanos) {
+        while (!mine.isSettled()) {
+            List<Pending> batch = group.takeForFlush(mine, deadlineNanos);
+            if (batch == null) {
+                return false;
             }
-        } finally {
-            // 兜底：任何还没回填的件补 FAILED —— 绝不让等待者悬到超时（I1）
-            for (Pending item : pendingList) {
-                if (item.complete(MergeState.FAILED, null)) {
-                    failed.incrementAndGet();
-                }
+            flushOneGroup(group.key(), batch);
+            if (group.afterFlush()) {
+                groups.remove(group.key(), group);
+            }
+            signalIdle();
+            if (!group.tryPromote()) {
+                // 领导权被别的等待者抢走：回外层按等待者协议继续
+                return true;
             }
         }
+        return true;
     }
 
-    /** 落库一组 + 回填 + 计数。落库方法的异常只吞掉本组，别的组照常跑 */
-    private void flushOneGroup(GroupKey group, List<Pending> pendingList) {
+    /**
+     * 一批落库：同组同「动作 × 行主键」，一组一个事务（不是一批一事务——一批一事务会让几个
+     * 不相干的行以不同顺序被锁，多出一片死锁面）。
+     */
+    private void flushOneGroup(GroupKey key, List<Pending> pendingList) {
         List<CountEvent> countEventList = new ArrayList<>(pendingList.size());
         for (Pending item : pendingList) {
             countEventList.add(item.event());
@@ -343,10 +334,10 @@ public class CountMerger {
         long startNanos = System.nanoTime();
         List<LikeState> resultList = null;
         try {
-            resultList = flushHandler.flushGroup(group.action(), group.shardKey(), countEventList);
+            resultList = flushHandler.flushGroup(key.action(), key.rowKey(), countEventList);
         } catch (RuntimeException e) {
-            log.error("计数落库失败（整组失败，{} 件）：action={}, shardKey={}",
-                    pendingList.size(), group.action(), group.shardKey(), e);
+            log.error("计数落库失败（整组失败，{} 件）：action={}, rowKey={}",
+                    pendingList.size(), key.action(), key.rowKey(), e);
         } finally {
             batches.incrementAndGet();
             maxFlushNanos.accumulateAndGet(System.nanoTime() - startNanos, Math::max);
@@ -354,8 +345,8 @@ public class CountMerger {
 
         int resultCount = resultList == null ? 0 : resultList.size();
         if (resultCount > pendingList.size()) {
-            log.warn("落库方法返回的结果比入参多（{} > {}）：action={}, shardKey={}，多出的忽略",
-                    resultCount, pendingList.size(), group.action(), group.shardKey());
+            log.warn("落库方法返回的结果比入参多（{} > {}）：action={}, rowKey={}，多出的忽略",
+                    resultCount, pendingList.size(), key.action(), key.rowKey());
         }
         for (int i = 0; i < pendingList.size(); i++) {
             Pending item = pendingList.get(i);
@@ -382,51 +373,248 @@ public class CountMerger {
         }
     }
 
-    /** 所有分片缓冲都空（无锁：只读 volatile 镜像；在途批由 close 的 join 兜底） */
+    /** 所有组都没有积压、也没有在途 flush（无锁：只读 volatile 镜像） */
     private boolean isIdle() {
-        for (ShardFlusher shard : shards) {
-            if (!shard.isIdle()) {
+        for (Group group : groups.values()) {
+            if (!group.isIdle()) {
                 return false;
             }
         }
         return true;
     }
 
-    /** 二次分组的键：动作 × 行主键 */
-    private static final class GroupKey {
-
-        private final CountAction action;
-        private final String shardKey;
-
-        private GroupKey(CountAction action, String shardKey) {
-            this.action = action;
-            this.shardKey = shardKey;
-        }
-
-        public CountAction action() {
-            return action;
-        }
-
-        public String shardKey() {
-            return shardKey;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (!(o instanceof GroupKey other)) return false;
-            return Objects.equals(action, other.action)
-                    && Objects.equals(shardKey, other.shardKey);
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(action, shardKey);
-        }
+    /** 二次分组的键：动作 × 行主键（组身份；同 key 单飞、保序、一组一个事务都锚在它上） */
+    private record GroupKey(CountAction action, String rowKey) {
 
         @Override
         public String toString() {
-            return "GroupKey[action=" + action + ", shardKey=" + shardKey + "]";
+            return "GroupKey[action=" + action + ", rowKey=" + rowKey + "]";
+        }
+    }
+
+    // ── 热点组：per-invId 队列 + 领导权 + 落库权单飞（与通用引擎 MergeGroup 同构） ──
+
+    /**
+     * 一个「动作 × 行主键」的热点组：动态创建、空闲即乐观删除。双层并发控制——map 层乐观探测，
+     * 组内一把锁 + 一个条件变量；同 key 落库顺序 = 入队顺序（story 17），任一时刻至多一条
+     * flush 在途（story 18）。
+     */
+    private final class Group {
+
+        enum EnqueueOutcome {
+            ENQUEUED,
+            BUFFER_FULL,
+            CLOSED,
+            GROUP_REMOVED
+        }
+
+        private final GroupKey key;
+        private final int maxBatch;
+        private final int capacity;
+        private final long windowNanos;
+
+        private final ReentrantLock lock = new ReentrantLock();
+        private final Condition ready = lock.newCondition();
+        private final ArrayDeque<Pending> queue = new ArrayDeque<>();
+
+        private volatile int size;
+        private volatile boolean flushing;
+        private volatile boolean closed;
+        private boolean collectorActive;
+        private boolean removed;
+        private long departedBatches;
+
+        Group(GroupKey key, MergeConfig config) {
+            this.key = key;
+            this.maxBatch = config.maxBatch();
+            this.capacity = config.shardCapacity();
+            this.windowNanos = TimeUnit.MILLISECONDS.toNanos(config.maxFlushDelayMillis());
+        }
+
+        GroupKey key() {
+            return key;
+        }
+
+        EnqueueOutcome enqueue(Pending item, boolean engineAccepting) {
+            lock.lock();
+            try {
+                if (removed) {
+                    return EnqueueOutcome.GROUP_REMOVED;
+                }
+                if (!engineAccepting || closed) {
+                    return EnqueueOutcome.CLOSED;
+                }
+                if (queue.size() >= capacity) {
+                    return EnqueueOutcome.BUFFER_FULL;
+                }
+                queue.addLast(item);
+                size = queue.size();
+                if (queue.size() >= maxBatch) {
+                    ready.signalAll();
+                }
+                return EnqueueOutcome.ENQUEUED;
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        boolean tryPromote() {
+            lock.lock();
+            try {
+                if (removed || collectorActive) {
+                    return false;
+                }
+                collectorActive = true;
+                if (departedBatches > 0) {
+                    // 前任 leader 已发过车：这次接管是「接班」（story 12 的观测读数）
+                    handovers.incrementAndGet();
+                }
+                return true;
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        List<Pending> takeForFlush(Pending mine, long deadlineNanos) {
+            lock.lock();
+            try {
+                long windowDeadline = 0L;
+                while (true) {
+                    if (mine.isSettled()) {
+                        yieldLeadership();
+                        return null;
+                    }
+                    long now = System.nanoTime();
+                    if (windowDeadline == 0) {
+                        windowDeadline = now + windowNanos;
+                    }
+                    boolean triggered = !queue.isEmpty()
+                            && (closed || queue.size() >= maxBatch || now >= windowDeadline);
+                    if (triggered && !flushing) {
+                        List<Pending> batch = takeBatch();
+                        collectorActive = false;
+                        flushing = true;
+                        departedBatches++;
+                        ready.signalAll();
+                        return batch;
+                    }
+                    long remainNanos = triggered
+                            ? deadlineNanos - now
+                            : Math.min(deadlineNanos - now, windowDeadline - now);
+                    if (remainNanos <= 0) {
+                        yieldLeadership();
+                        return null;
+                    }
+                    try {
+                        ready.awaitNanos(remainNanos);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        yieldLeadership();
+                        return null;
+                    }
+                }
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        boolean afterFlush() {
+            lock.lock();
+            try {
+                flushing = false;
+                if (queue.isEmpty() && !collectorActive) {
+                    removed = true;
+                    ready.signalAll();
+                    return true;
+                }
+                ready.signalAll();
+                return false;
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        void markClosed() {
+            lock.lock();
+            try {
+                closed = true;
+                ready.signalAll();
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        int failRemaining(String reason) {
+            lock.lock();
+            try {
+                closed = true;
+                removed = true;
+                if (queue.isEmpty()) {
+                    ready.signalAll();
+                    return 0;
+                }
+                List<Pending> leftover = new ArrayList<>(queue);
+                queue.clear();
+                size = 0;
+                int filled = 0;
+                for (Pending item : leftover) {
+                    if (item.complete(MergeState.FAILED, null)) {
+                        filled++;
+                    }
+                }
+                log.warn("组 {} 未落库即回填 {} 件（原因：{}）", key, leftover.size(), reason);
+                ready.signalAll();
+                return filled;
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        boolean tryRemoveIfIdle() {
+            lock.lock();
+            try {
+                if (!queue.isEmpty() || collectorActive || flushing) {
+                    return false;
+                }
+                removed = true;
+                return true;
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        void awaitWakeup(long nanos) {
+            lock.lock();
+            try {
+                ready.awaitNanos(nanos);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        int pendingSize() {
+            return size;
+        }
+
+        boolean isIdle() {
+            return size == 0 && !flushing;
+        }
+
+        private List<Pending> takeBatch() {
+            int n = Math.min(maxBatch, queue.size());
+            List<Pending> batch = new ArrayList<>(n);
+            for (int i = 0; i < n; i++) {
+                batch.add(queue.pollFirst());
+            }
+            size = queue.size();
+            return batch;
+        }
+
+        private void yieldLeadership() {
+            collectorActive = false;
+            ready.signalAll();
         }
     }
 }

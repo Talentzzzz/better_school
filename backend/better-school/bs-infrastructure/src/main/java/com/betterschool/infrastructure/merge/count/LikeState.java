@@ -11,8 +11,8 @@ package com.betterschool.infrastructure.merge.count;
  *
  * <p><b>浏览类动作（{@code POST_VIEW} / {@code PRODUCT_VIEW}）没有逐件业务结果</b>：落库方法统一回
  * {@link #APPLIED} 当占位值，含义是「计数已推进」。引擎只用它判断「这一件被回填了」，不会把它翻成对外
- * 的业务结果（浏览入口 {@code submitAsync} 根本没有人等结果）；点赞路径若拿到它，
- * {@code CountMergeWriter} 会直接抛——占位值不允许混进等结果的那条路。
+ * 的业务结果（{@code ViewMergeWriter} 只看终态不看占位值）；点赞路径若拿到它，
+ * {@code CountMergeWriter} 会直接抛——占位值不允许混进点赞那条路。
  */
 public enum LikeState {
 
@@ -28,6 +28,6 @@ public enum LikeState {
     /** 取消的赞本来就不存在：语义是「已经是未赞状态」 */
     NOT_FOUND,
 
-    /** 浏览类动作的占位结果：本组的 UV 明细 + 加速列已落（没有人等浏览结果，也就没有「已赞/重复」可分） */
+    /** 浏览类动作的占位结果：本组的 UV 明细 + 加速列已落（浏览没有「已赞/重复」可分） */
     APPLIED
 }

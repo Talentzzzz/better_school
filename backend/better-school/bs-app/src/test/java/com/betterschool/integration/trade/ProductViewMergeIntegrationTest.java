@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>语义变更钉死在数据上：首次浏览计 1、重复浏览不计数只刷 viewed_at、<b>匿名不计入</b>
  * （旧口径匿名也累加 PV，随本票作废）、加速列恒等于明细行数；旧 PV 列 {@code product.view_count}
- * 随本票停写、票 06 删列（主表已无该列）。浏览走真实详情链路（fire-and-forget 合并写），断言前排空合并窗口。
+ * 随本票停写、票 06 删列（主表已无该列）。浏览走真实详情链路（commit 合并写、等终态必须全落），断言前排空合并窗口。
  */
 @DisplayName("商品浏览 UV：首次计 1 / 重复只刷 viewed_at / 匿名不计 / 加速列=明细行数")
 class ProductViewMergeIntegrationTest extends CommunityApiTestBase {

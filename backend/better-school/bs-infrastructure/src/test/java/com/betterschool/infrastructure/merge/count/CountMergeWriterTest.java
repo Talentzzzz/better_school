@@ -9,6 +9,8 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.betterschool.infrastructure.merge.count.CountAction.POST_LIKE;
@@ -17,12 +19,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 三条降级 + 超时/失败的对外翻译（票 03 验收；spec §2.6）。
+ * 三条降级 + 超时/失败的对外翻译（spec §2.6）。
  *
  * <p>纯内存：合并器是真的（参数调到能人为制造 {@code BUFFER_FULL} / {@code TIMEOUT}），落库方法是
  * 一个记账用的替身。断言的核心是<b>降级复用了同一个落库方法</b>——替身收到的组必须正好是「组大小 1」，
  * 事件也必须是那一笔，否则就是悄悄换了条 SQL。降级本身已下沉到 {@code CountMerger#commit}，
  * 本类不再持有落库方法，所以这些用例端到端地验「引擎降级 → 本类翻译」这一段。
+ *
+ * <p>per-invId leader 模型下超时只发生在<b>等待者</b>身上（leader 在落库上，不参与等待预算），
+ * 所以超时场景 = 前任 leader 卡在落库 + follower 等待预算耗尽。
  */
 class CountMergeWriterTest {
 
@@ -40,17 +45,9 @@ class CountMergeWriterTest {
         }
     }
 
-    /** 单分片、单件一批、够长的窗口：分片容量 1 ⇒ 第二笔必然 BUFFER_FULL */
+    /** 单组、单件容量、够长的窗口：容量 1 ⇒ 第二笔必然 BUFFER_FULL */
     private CountMergeWriter startFullBufferScenario() {
         merger = new CountMerger(new MergeConfig(1, 1_000, 1, 2_000, 1, 1_000), handler);
-        writer = new CountMergeWriter(merger);
-        return writer;
-    }
-
-    /** 窗口 1ms、等 60ms：落库方法故意慢 ⇒ 必然 TIMEOUT */
-    private CountMergeWriter startTimeoutScenario(long handlerSleepMs) {
-        handler.sleepMillis = handlerSleepMs;
-        merger = new CountMerger(new MergeConfig(1, 1, 10, 60, 100, 1_000), handler);
         writer = new CountMergeWriter(merger);
         return writer;
     }
@@ -70,10 +67,17 @@ class CountMergeWriterTest {
 
     @Test
     @DisplayName("缓冲满：调用方线程用同一个落库方法落「组大小 1」，不是另一套 SQL")
-    void bufferFullDegradesToSameFlushMethodWithSingleItem() {
+    void bufferFullDegradesToSameFlushMethodWithSingleItem() throws Exception {
         startFullBufferScenario();
-        // 先用不等结果的那条入口把分片塞满（容量 1），窗口 1s 内不会被 flush 走
-        assertEquals(SubmitOutcome.ACCEPTED, merger.submitAsync(POST_ID, new CountEvent(POST_LIKE, POST_ID, "1")));
+        // 后台提交把容量 1 的组塞满（leader 在收集窗口里等，件留在队列）；窗口 1s 内不会被 flush 走
+        List<MergeResult<LikeState>> filler = new CopyOnWriteArrayList<>();
+        Thread fillerThread = Thread.ofVirtual()
+                .start(() -> filler.add(merger.commit(POST_ID, new CountEvent(POST_LIKE, POST_ID, "1"))));
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (merger.pending() < 1) {
+            assertTrue(System.currentTimeMillis() < deadline, "第一笔该在队列里等窗口");
+            Thread.sleep(1);
+        }
 
         LikeStateVO state = writer.write(POST_LIKE, POST_ID, "2");
 
@@ -83,6 +87,9 @@ class CountMergeWriterTest {
         assertEquals(1, degraded.size(), "降级组大小恒为 1");
         assertEquals("2", degraded.get(0).userId(), "打的是这一笔请求本人");
         assertEquals(1, merger.metrics().rejectedFull(), "背压由合并器计数，不进用户视野");
+
+        // 让填充线程收尾（close 由 tearDown 触发排空），不影响上面的断言
+        fillerThread.join(5_000);
     }
 
     @Test
@@ -100,16 +107,30 @@ class CountMergeWriterTest {
 
     @Test
     @DisplayName("等超时：回可重试（SYSTEM_ERROR），不重试、不落第二笔")
-    void timeoutIsRetryableWithoutSecondWrite() {
-        startTimeoutScenario(400);
+    void timeoutIsRetryableWithoutSecondWrite() throws Exception {
+        handler.sleepMillis = 500;
+        handler.entered = new CountDownLatch(1);
+        merger = new CountMerger(new MergeConfig(1, 1, 10, 60, 100, 200), handler);
+        writer = new CountMergeWriter(merger);
 
+        // leader：后台提交，进收集窗 1ms 后发车，卡在人为慢的落库上（不参与等待预算）
+        List<MergeResult<LikeState>> leaderOutcome = new CopyOnWriteArrayList<>();
+        Thread leaderThread = Thread.ofVirtual().start(
+                () -> leaderOutcome.add(merger.commit(POST_ID, new CountEvent(POST_LIKE, POST_ID, "0"))));
+        assertTrue(handler.entered.await(5, TimeUnit.SECONDS), "leader 应该已经进入落库");
+
+        // follower：等待预算 60ms ≪ 落库 500ms，必然先超时（超时前会尝试接班，但落库权被前任占着）
         BusinessException e = assertThrows(BusinessException.class, () -> writer.write(POST_LIKE, POST_ID, "9"));
 
         assertEquals(ResponseCode.SYSTEM_ERROR.getCode(), e.getCode(), "对外是「系统繁忙，请稍后重试」");
         assertEquals(1, handler.callCount.get(), "超时只说明结果未知，不能再落一笔");
-        // 件仍在途：等它落完再断言，避免 teardown 的 close() 把在途件补 FAILED（那只影响读数）
-        assertTrue(merger.awaitIdle(2_000), "在途件应最终落库");
         assertEquals(1, merger.metrics().timedOut());
+
+        // 件仍在队列：无人接手时由停机排空显式回填 FAILED（可安全重试）
+        merger.close();
+        assertEquals(1, merger.metrics().drainedFailed());
+        leaderThread.join(5_000);
+        assertEquals(MergeState.COMPLETED, leaderOutcome.get(0).state(), "leader 的件照常落库");
     }
 
     @Test
@@ -146,11 +167,28 @@ class CountMergeWriterTest {
         private volatile LikeState nextState = LikeState.LIKED;
         private volatile boolean failNext;
         private volatile long sleepMillis;
+        /** 进入落库时的信号：测试用它确认「flush 已经开始」 */
+        volatile CountDownLatch entered;
+        /** 落库期间要等的闸门：测试用它制造「落库阻塞」 */
+        volatile CountDownLatch hold;
 
         @Override
         public List<LikeState> flushGroup(CountAction action, String shardKey, List<CountEvent> events) {
             callCount.incrementAndGet();
             batches.add(List.copyOf(events));
+            CountDownLatch startSignal = entered;
+            if (startSignal != null) {
+                startSignal.countDown();
+            }
+            try {
+                CountDownLatch gate = hold;
+                if (gate != null && !gate.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("落库替身等闸门超时");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("落库替身被中断", e);
+            }
             if (failNext) {
                 throw new IllegalStateException("模拟落库失败");
             }

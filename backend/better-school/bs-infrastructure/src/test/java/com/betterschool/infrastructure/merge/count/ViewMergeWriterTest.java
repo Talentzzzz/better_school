@@ -1,5 +1,7 @@
 package com.betterschool.infrastructure.merge.count;
 
+import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.exception.BusinessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -20,17 +22,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 浏览写入的<b>降级与可观测</b>（票 04：{@code submitAsync} + 缓冲满 / 停机中的「一次独立 +1」+ 丢弃计数）。
+ * 浏览写入的<b>统一等待语义</b>（spec：浏览类从 fire-and-forget 翻转为 commit 等终态）。
  *
- * <p>纯内存测试：引擎是 {@link CountMerger} 的真身（不是 mock），落库是 {@link ProbeHandler}，
- * 所以「入队即返回」「降级在调用方线程上同步写」「丢弃计数」三件事都能在不连库的前提下锁死。
- *
- * <p>三条断言口径：
+ * <p>纯内存测试：合并器是 {@link CountMerger} 的真身（不是 mock），落库是 {@link ProbeHandler}。
+ * 语义翻转后的三条断言口径：
  * <ul>
- *   <li><b>落库线程</b>：正常路径的落库跑在 {@code count-merge-flush-*} 池线程上，降级跑在
- *       <b>调用方线程</b>上——只看「落库被调过」区分不开这两条路，线程名能；</li>
- *   <li><b>降级组大小恒为 1</b>：降级不是「攒一批」，而是一次独立 {@code UPDATE … view_count + 1}；</li>
- *   <li><b>丢弃只计数、不抛</b>：浏览允许丢，用户不该看到一个「浏览失败」（spec §1.2）。</li>
+ *   <li><b>等终态</b>：{@code write} 返回时浏览必已落库（正常路径 flush 就跑在首位提交者自己的
+ *       线程上——per-invId leader 模型没有独立的合并线程池）；</li>
+ *   <li><b>降级在调用方线程上、组大小恒为 1</b>：缓冲满 / 停机中由引擎就地兜一次独立落库；</li>
+ *   <li><b>失败可见</b>：降级也失败时抛可重试异常——不再有「允许丢」与 {@code droppedViews}，
+ *       重放被明细唯一键吸收。</li>
  * </ul>
  */
 class ViewMergeWriterTest {
@@ -56,7 +57,7 @@ class ViewMergeWriterTest {
 
     private ViewMergeWriter start(MergeConfig config, ProbeHandler handler) {
         merger = new CountMerger(config, handler);
-        return new ViewMergeWriter(merger, handler);
+        return new ViewMergeWriter(merger);
     }
 
     /** 单热点、窄窗口：正常路径用 */
@@ -65,28 +66,52 @@ class ViewMergeWriterTest {
     }
 
     @Test
-    @DisplayName("入队即返回：落库跑在合并器线程池上，请求线程不等窗口、也不等落库")
-    void acceptedViewLandsOnFlushThreadNotOnCallerThread() throws Exception {
+    @DisplayName("等终态：write 返回时浏览必已落库；首位提交者自己发车（flush 跑在它线程上）")
+    void writeReturnsOnlyAfterViewIsFlushed() throws Exception {
+        ProbeHandler handler = new ProbeHandler();
+        ViewMergeWriter writer = start(hotConfig(), handler);
+
+        // write 是同步的：返回即已落库（窗口 1ms + 落库都在本次调用内完成）
+        writer.write(POST_VIEW, POST_ID, VIEWER);
+
+        assertEquals(1, handler.callCount(), "返回时必须已经落库");
+        assertEquals(Thread.currentThread().getName(), handler.callThreads().get(0),
+                "首位提交者自己发车：flush 跑在调用方线程上，不再有独立的合并线程池");
+        assertEquals(1, handler.seenEvents());
+        assertTrue(merger.awaitIdle(5_000));
+    }
+
+    @Test
+    @DisplayName("落库权被前任占住时，后续浏览等终态而不是丢给后台：最终全部落库")
+    void laterViewsWaitForTerminalStateWhilePreviousFlushInFlight() throws Exception {
         ProbeHandler handler = new ProbeHandler();
         handler.entered = new CountDownLatch(1);
         handler.hold = new CountDownLatch(1);
         ViewMergeWriter writer = start(hotConfig(), handler);
 
-        writer.write(POST_VIEW, POST_ID, VIEWER);
+        // 首位浏览者发车并被闸门挡住（在途 flush）
+        List<String> firstOutcome = Collections.synchronizedList(new ArrayList<>());
+        Thread firstThread = Thread.ofVirtual().start(() -> {
+            writer.write(POST_VIEW, POST_ID, VIEWER);
+            firstOutcome.add("done");
+        });
         assertTrue(handler.entered.await(5, TimeUnit.SECONDS), "第一件应该已经进入落库");
-        assertTrue(handler.callThreads().get(0).startsWith("count-merge-flush-"),
-                "落库必须跑在执行池线程上，实测 " + handler.callThreads().get(0));
 
-        // 落库被闸门挡住期间，提交必须立刻返回（同 A3：锁不跨 DB）
-        long startNanos = System.nanoTime();
-        writer.write(POST_VIEW, POST_ID, VIEWER);
-        long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
-        assertTrue(costMs < 100, "落库阻塞期间浏览入队必须毫秒级返回，实测 " + costMs + "ms");
+        // 第二件：等待落库权（等终态），在闸门放开前不该返回
+        List<String> secondOutcome = Collections.synchronizedList(new ArrayList<>());
+        Thread secondThread = Thread.ofVirtual().start(() -> {
+            writer.write(POST_VIEW, POST_ID, VIEWER);
+            secondOutcome.add("done");
+        });
+        Thread.sleep(100);
+        assertTrue(secondOutcome.isEmpty(), "统一等待语义：write 必须等终态，不能入队即回");
 
         handler.hold.countDown();
+        firstThread.join(5_000);
+        secondThread.join(5_000);
         assertTrue(merger.awaitIdle(5_000));
-        assertEquals(2, handler.seenEvents(), "两件都必须落库");
-        assertEquals(0, writer.droppedViews(), "正常入队不该有丢弃");
+        assertEquals(2, handler.seenEvents(), "两件都必须落库——不再有「允许丢」");
+        assertEquals(2, firstOutcome.size() + secondOutcome.size(), "两位调用方都拿到了终态");
     }
 
     @Test
@@ -101,9 +126,8 @@ class ViewMergeWriterTest {
 
         List<ProbeHandler.Call> calls = handler.callsSnapshot();
         assertEquals(2, calls.size(), "两个不同动作不该被合并进同一组");
-        // 两件打的是两个分片（postId / productId 路由不同），落库顺序不保证，按动作取
-        assertEquals(POST_ID, shardKeyOf(calls, POST_VIEW), "帖子浏览的分片键是 postId");
-        assertEquals(PRODUCT_ID, shardKeyOf(calls, PRODUCT_VIEW), "商品浏览的分片键是 productId");
+        assertEquals(POST_ID, shardKeyOf(calls, POST_VIEW), "帖子浏览的合并键是 postId");
+        assertEquals(PRODUCT_ID, shardKeyOf(calls, PRODUCT_VIEW), "商品浏览的合并键是 productId");
     }
 
     private static String shardKeyOf(List<ProbeHandler.Call> calls, CountAction action) {
@@ -116,21 +140,32 @@ class ViewMergeWriterTest {
 
     @Test
     @DisplayName("缓冲满 → 调用方线程同步一次 +1，不算丢弃、也不报错")
-    void bufferFullDegradesToSingleUpdateOnCallerThread() {
+    void bufferFullDegradesToSingleUpdateOnCallerThread() throws Exception {
         ProbeHandler handler = new ProbeHandler();
         // 窗口 500ms ≫ 两次 write 的间隔、容量 1（= maxBatch 下限）：第二件必然撞满，且第一件还没开始落库
         ViewMergeWriter writer = start(new MergeConfig(8, 500, 1, 5_000, 1, 2_000), handler);
 
-        writer.write(POST_VIEW, POST_ID, VIEWER);
+        List<String> filler = Collections.synchronizedList(new ArrayList<>());
+        Thread fillerThread = Thread.ofVirtual().start(() -> {
+            writer.write(POST_VIEW, POST_ID, VIEWER);
+            filler.add("done");
+        });
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (merger.pending() < 1) {
+            assertTrue(System.currentTimeMillis() < deadline, "第一件该在队列里等窗口");
+            Thread.sleep(1);
+        }
+
         writer.write(POST_VIEW, POST_ID, VIEWER);
 
         assertEquals(1, merger.metrics().rejectedFull(), "第二件应被背压拒收（容量 1）");
         assertEquals(1, handler.callCount(), "唯一一次落库就是降级那次：窗口还没到");
         ProbeHandler.Call degrade = handler.callsSnapshot().get(0);
         assertEquals(Thread.currentThread().getName(), degrade.thread(),
-                "降级必须在调用方线程上同步执行，不能绕回执行池");
+                "降级必须在调用方线程上同步执行");
         assertEquals(1, degrade.size(), "降级组大小恒为 1：一次独立 UPDATE … + 1");
-        assertEquals(0, writer.droppedViews(), "降级成功不算丢弃");
+
+        fillerThread.join(5_000);
     }
 
     @Test
@@ -146,25 +181,26 @@ class ViewMergeWriterTest {
         assertEquals(1, handler.callCount());
         assertEquals(Thread.currentThread().getName(), handler.callsSnapshot().get(0).thread());
         assertEquals(1, handler.callsSnapshot().get(0).size());
-        assertEquals(0, writer.droppedViews());
     }
 
     @Test
-    @DisplayName("降级也失败 → 丢弃并计数，绝不抛给用户")
-    void degradeFailureDropsAndCounts() {
+    @DisplayName("降级也失败 → 抛可重试异常：不再有「允许丢」，重放被明细唯一键吸收")
+    void degradeFailureIsRetryableInsteadOfSilentDrop() {
         ProbeHandler handler = new ProbeHandler();
         handler.throwOnFlush = true;
         ViewMergeWriter writer = start(hotConfig(), handler);
         merger.close();
 
-        writer.write(POST_VIEW, POST_ID, VIEWER);
-        writer.write(POST_VIEW, POST_ID, VIEWER);
-
-        assertEquals(2, writer.droppedViews(), "两次降级都失败 ⇒ droppedViews = 2");
+        for (int i = 0; i < 2; i++) {
+            BusinessException e = assertThrows(BusinessException.class,
+                    () -> writer.write(POST_VIEW, POST_ID, VIEWER),
+                    "统一等待语义：落库失败必须可见，可安全重试");
+            assertEquals(ResponseCode.SYSTEM_ERROR.getCode(), e.getCode());
+        }
     }
 
     @Test
-    @DisplayName("只接受浏览动作：点赞类走 commit，不许从这里溜进去")
+    @DisplayName("只接受浏览动作：点赞类走点赞入口，不许从这里溜进去")
     void rejectsNonViewAction() {
         ProbeHandler handler = new ProbeHandler();
         ViewMergeWriter writer = start(hotConfig(), handler);

@@ -7,33 +7,32 @@ import org.junit.jupiter.api.Test;
 import org.springframework.mock.env.MockEnvironment;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 /**
- * 「{@code shardCount <= 池 − 2}」这条约束必须<b>在启动时</b>炸：引擎不认识连接池，
- * 把它放进 {@link MergeConfig} 会变成「引擎校验一个自己用不到的参数」。
+ * 装配层只负责把 {@code merge.count.*} 读成不可变的 {@link MergeConfig}。
  *
- * <p>per-shard 常驻线程模型下 flush 并发 = shardCount（每分片一条 {@code count-merge-flush-*}），
- * 校验对象从旧的 flushThreads 换成 shardCount，口径不变。
+ * <p>per-invId leader 模型下没有常驻 flush 线程：flush 并发 = 并发热点 leader 数，天然受连接池
+ * 约束——「shardCount ≤ 池 − 2」的装配校验随后台线程模型一并退役。{@code shard-count} 键保留
+ * 一个版本兼容，读进来只存不用（不再参与路由）。
  *
- * <p>纯单元测试（{@link MockEnvironment}，不起 Spring、不连库）：这条规则是装配层的，
- * 不该为了它把整个应用上下文拉起来。
+ * <p>纯单元测试（{@link MockEnvironment}，不起 Spring、不连库）。
  */
 class CountMergeConfigTest {
 
     private final CountMergeConfig config = new CountMergeConfig();
 
     @Test
-    @DisplayName("什么都没配：落计数侧默认值（8 / 5ms / 200 / 100ms / 2000 / 5s）")
+    @DisplayName("什么都没配：落计数侧默认值（5ms 窗口 / 200 批 / 100ms 等待 / 2000 容量 / 5s 排空）")
     void fallsBackToEngineDefaults() {
         MergeConfig mergeConfig = config.mergeConfig(new MockEnvironment());
 
         assertEquals(MergeConfig.countDefaults(), mergeConfig);
-        assertEquals(8, mergeConfig.shardCount());
+        assertEquals(8, mergeConfig.shardCount(), "退役兼容参数的默认值保持不变");
     }
 
     @Test
-    @DisplayName("配置项逐条生效：merge.count.* 覆盖默认值")
+    @DisplayName("配置项逐条生效：merge.count.* 覆盖默认值（shard-count 读入不用，任意值都合法）")
     void readsEveryProperty() {
         MockEnvironment environment = new MockEnvironment()
                 .withProperty("merge.count.shard-count", "4")
@@ -41,8 +40,7 @@ class CountMergeConfigTest {
                 .withProperty("merge.count.max-batch", "100")
                 .withProperty("merge.count.wait-timeout-ms", "80")
                 .withProperty("merge.count.shard-capacity", "2000")
-                .withProperty("merge.count.drain-timeout-ms", "3000")
-                .withProperty("spring.datasource.hikari.maximum-pool-size", "10");
+                .withProperty("merge.count.drain-timeout-ms", "3000");
 
         MergeConfig mergeConfig = config.mergeConfig(environment);
 
@@ -55,32 +53,12 @@ class CountMergeConfigTest {
     }
 
     @Test
-    @DisplayName("shardCount = 池 − 2：合法（连接池就是真并发上限，flush 不能占满）")
-    void acceptsShardCountAtPoolMinusTwo() {
+    @DisplayName("shard-count 任意值都不再触发装配校验（分片路由已退役）")
+    void acceptsAnyShardCountWithoutPoolValidation() {
         MockEnvironment environment = new MockEnvironment()
-                .withProperty("spring.datasource.hikari.maximum-pool-size", "10")
-                .withProperty("merge.count.shard-count", "8");
+                .withProperty("merge.count.shard-count", "200")
+                .withProperty("spring.datasource.hikari.maximum-pool-size", "10");
 
-        assertEquals(8, config.mergeConfig(environment).shardCount());
-    }
-
-    @Test
-    @DisplayName("shardCount > 池 − 2：启动即失败（per-shard 模型下 flush 并发 = shardCount，"
-            + "占满连接后普通查询在 connection-timeout 上排队）")
-    void rejectsShardCountAbovePoolMinusTwo() {
-        MockEnvironment environment = new MockEnvironment()
-                .withProperty("spring.datasource.hikari.maximum-pool-size", "10")
-                .withProperty("merge.count.shard-count", "16");
-
-        assertThrows(IllegalStateException.class, () -> config.mergeConfig(environment));
-    }
-
-    @Test
-    @DisplayName("参数自身的约束仍在引擎侧：非 2 的幂分片数照旧构造即失败")
-    void stillDelegatesEngineLevelValidation() {
-        MockEnvironment environment = new MockEnvironment()
-                .withProperty("merge.count.shard-count", "200");
-
-        assertThrows(IllegalArgumentException.class, () -> config.mergeConfig(environment));
+        assertDoesNotThrow(() -> config.mergeConfig(environment));
     }
 }
