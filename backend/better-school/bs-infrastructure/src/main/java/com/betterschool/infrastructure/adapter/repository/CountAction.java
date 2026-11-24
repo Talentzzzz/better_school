@@ -1,10 +1,13 @@
-package com.betterschool.infrastructure.merge.count;
+package com.betterschool.infrastructure.adapter.repository;
 
 /**
- * 计数侧的写动作：合并器只按它做<b>二次分组</b>（动作 × 行主键），不解析它的语义。
+ * 计数写入的写动作：通用合并引擎只按它参与<b>分组</b>（动作 × 行主键），不解析它的语义。
+ *
+ * <p>它是仓储适配层的公共契约（三个仓储的计数写入共用），不属于合并引擎包——引擎在
+ * {@code infrastructure.merge}，只认识泛型件与 {@code MergeStrategy}，不认识这里。
  *
  * <p>六个动作打的行不一样（{@code spec §1.1}）：前三个与关系行同事务、必须精确；
- * 后三个是 fire-and-forget、允许丢。
+ * 后三个是 UV 口径（明细行 + 加速列）。
  */
 public enum CountAction {
 

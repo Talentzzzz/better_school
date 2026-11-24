@@ -1,10 +1,10 @@
 package com.betterschool.integration.errand;
 
 import com.betterschool.domain.errand.adapter.repository.IErrandRepository;
-import com.betterschool.infrastructure.merge.count.CountAction;
-import com.betterschool.infrastructure.merge.count.CountEvent;
-import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
-import com.betterschool.infrastructure.merge.count.LikeState;
+import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountEvent;
+import com.betterschool.infrastructure.adapter.repository.errand.ErrandRepository;
+import com.betterschool.infrastructure.adapter.repository.LikeState;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,7 +36,7 @@ class ErrandFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     private IErrandRepository errandRepository;
 
     @Autowired
-    private ICountFlushHandler flushHandler;
+    private ErrandRepository flushHandler;
 
     @Test
     @DisplayName("支付行诞生（reward 快照随行）；支付前取消不诞生（PENDING_PAYMENT → CANCELLED 不进大厅）")
@@ -138,19 +138,19 @@ class ErrandFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     void 浏览旁路推进热度键_未过审不补行() {
         String publishedId = insertOrder("PUBLISHED", "5.00");
 
-        List<LikeState> results = flushHandler.flushGroup(CountAction.ERRAND_VIEW, publishedId,
+        List<LikeState> results = flushHandler.flushViewGroup(publishedId,
                 List.of(viewEvent(publishedId, "u201"), viewEvent(publishedId, "u201"), viewEvent(publishedId, "u202")));
         assertThat(results).hasSize(3).containsOnly(LikeState.APPLIED);
         assertThat(indexViewCount(publishedId)).as("索引热度键按新增 UV 数 +N").isEqualTo(2);
         assertThat(acceleratedCountOf(publishedId)).as("窄表真源同步推进").isEqualTo(2);
 
         // 全重复组：幂等不动点
-        flushHandler.flushGroup(CountAction.ERRAND_VIEW, publishedId, List.of(viewEvent(publishedId, "u201")));
+        flushHandler.flushViewGroup(publishedId, List.of(viewEvent(publishedId, "u201")));
         assertThat(indexViewCount(publishedId)).as("重复浏览不计入").isEqualTo(2);
 
         // 未支付订单（行不存在）：浏览旁路 0 行不补行，窄表照常推进（交重建 job 兜底）
         String pendingId = insertOrder("PENDING_PAYMENT", "5.00");
-        flushHandler.flushGroup(CountAction.ERRAND_VIEW, pendingId, List.of(viewEvent(pendingId, "u203")));
+        flushHandler.flushViewGroup(pendingId, List.of(viewEvent(pendingId, "u203")));
         assertThat(feedRow(pendingId)).as("索引行缺失不被凭空补行").isNull();
         assertThat(acceleratedCountOf(pendingId)).as("窄表真源不受索引缺失影响").isEqualTo(1);
     }

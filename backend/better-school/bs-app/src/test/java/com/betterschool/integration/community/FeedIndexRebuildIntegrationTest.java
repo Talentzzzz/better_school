@@ -1,6 +1,6 @@
 package com.betterschool.integration.community;
 
-import com.betterschool.infrastructure.merge.count.CountMerger;
+import com.betterschool.infrastructure.adapter.repository.community.CommunityRepository;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.betterschool.trigger.job.FeedIndexRebuildJob;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -29,7 +29,7 @@ class FeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     @Autowired
     private FeedIndexRebuildJob feedIndexRebuildJob;
     @Autowired
-    private CountMerger countMerger;
+    private CommunityRepository flushHandler;
 
     @Test
     void 重建后索引行与post状态和窄表严格一致且修复缺行漂移() {
@@ -98,7 +98,7 @@ class FeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         view(lostRowId, viewer1);
         String orphanId = publishPost(author, "重建孤儿帖"); // 无浏览，人为插计数行
 
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
         // 漂移：直接改加速列（明细行数的真值是 2）
         jdbcTemplate.update("UPDATE post_view_count SET view_count = 999 WHERE post_id = ?", viewedId);
         // 缺行：真实浏览有明细，计数行被误删

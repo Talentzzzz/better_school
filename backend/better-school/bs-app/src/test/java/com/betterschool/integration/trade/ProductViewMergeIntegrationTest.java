@@ -1,10 +1,9 @@
 package com.betterschool.integration.trade;
 
-import com.betterschool.infrastructure.merge.count.CountAction;
-import com.betterschool.infrastructure.merge.count.CountEvent;
-import com.betterschool.infrastructure.merge.count.CountMerger;
-import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
-import com.betterschool.infrastructure.merge.count.LikeState;
+import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountEvent;
+import com.betterschool.infrastructure.adapter.repository.trade.TradeRepository;
+import com.betterschool.infrastructure.adapter.repository.LikeState;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
@@ -30,11 +29,9 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
 
     private static final long DRAIN_MILLIS = 5_000;
 
-    @Autowired
-    private CountMerger countMerger;
 
     @Autowired
-    private ICountFlushHandler flushHandler;
+    private TradeRepository flushHandler;
 
     @Test
     @DisplayName("登录浏览：明细落一行、加速列计 1，详情响应读计数表")
@@ -43,7 +40,7 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
         Session viewer = registerAndLogin("13700006001", "商品浏览者");
 
         assertSuccess(getJson("/api/trade/products/" + productId, viewer), "登录浏览商品详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         assertThat(historyCountOf(productId)).as("明细即事实源：一人一商品一行").isEqualTo(1);
         assertThat(acceleratedCountOf(productId)).as("加速列 = 明细行数").isEqualTo(1);
@@ -68,7 +65,7 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
                 LocalDateTime.class, viewer.userId(), productId);
 
         assertSuccess(getJson("/api/trade/products/" + productId, viewer), "重复浏览商品详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         assertThat(historyCountOf(productId)).as("重复浏览不新增明细行").isEqualTo(1);
         assertThat(acceleratedCountOf(productId)).as("重复浏览不计数").isEqualTo(1);
@@ -83,7 +80,7 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
     void 匿名浏览不计入() {
         String productId = insertOnSaleProduct("匿名浏览的手电筒");
         assertSuccess(getJson("/api/trade/products/" + productId, null), "匿名浏览商品详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         assertThat(historyCountOf(productId)).as("匿名落不了明细行（主键一半是 user_id）").isZero();
         assertThat(acceleratedCountOf(productId)).as("无明细则无计数").isZero();
@@ -96,7 +93,7 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
         Session viewerA = registerAndLogin("13700006003", "浏览者甲");
         Session viewerB = registerAndLogin("13700006004", "浏览者乙");
 
-        List<LikeState> results = flushHandler.flushGroup(CountAction.PRODUCT_VIEW, productId,
+        List<LikeState> results = flushHandler.flushViewGroup(productId,
                 List.of(viewEvent(productId, viewerA.userId()), viewEvent(productId, viewerA.userId()),
                         viewEvent(productId, viewerB.userId())));
 
@@ -106,7 +103,7 @@ class ProductViewMergeIntegrationTest extends CommunityApiTestBase {
         assertThat(acceleratedCountOf(productId)).as("加速列按新增 UV 数增量 = 明细行数").isEqualTo(2);
 
         // 再来一组全重复：INSERT IGNORE 全撞键，计数与明细都不动（幂等不动点）
-        flushHandler.flushGroup(CountAction.PRODUCT_VIEW, productId,
+        flushHandler.flushViewGroup(productId,
                 List.of(viewEvent(productId, viewerA.userId()), viewEvent(productId, viewerB.userId())));
         assertThat(historyCountOf(productId)).isEqualTo(2);
         assertThat(acceleratedCountOf(productId)).as("重复组不产生增量").isEqualTo(2);

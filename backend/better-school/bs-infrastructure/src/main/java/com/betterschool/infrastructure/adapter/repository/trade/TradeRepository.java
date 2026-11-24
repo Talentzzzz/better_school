@@ -13,10 +13,13 @@ import com.betterschool.domain.trade.model.valobj.ProductFeedIndexItemVO;
 import com.betterschool.domain.trade.model.valobj.ProductOrderEventVO;
 import com.betterschool.domain.trade.model.valobj.ProductOrderStatusVO;
 import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
-import com.betterschool.infrastructure.merge.count.CountAction;
-import com.betterschool.infrastructure.merge.count.CountEvent;
-import com.betterschool.infrastructure.merge.count.LikeState;
-import com.betterschool.infrastructure.merge.count.ViewMergeWriter;
+import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountEvent;
+import com.betterschool.infrastructure.adapter.repository.LikeState;
+import com.betterschool.infrastructure.merge.MergeConfig;
+import com.betterschool.infrastructure.merge.MergeEngine;
+import com.betterschool.infrastructure.merge.MergeResult;
+import com.betterschool.infrastructure.merge.MergeStrategy;
 import com.betterschool.infrastructure.dao.product.IProductDao;
 import com.betterschool.infrastructure.dao.product.po.Product;
 import com.betterschool.infrastructure.dao.productorder.IProductOrderDao;
@@ -46,8 +49,10 @@ import com.betterschool.types.exception.BusinessException;
 import com.betterschool.types.exception.FrameworkException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -73,9 +78,8 @@ import java.util.stream.Collectors;
  *
  * <p>本类同时承担计数合并器<b>商品浏览</b>那一组的落库方法（{@link #flushViewGroup}）：一组一个事务
  * 三步（{@code product_view_history} 明细 INSERT IGNORE → 全组刷 viewed_at → {@code product_view_count}
- * 加速列 += 新增数，market-feed-uv 票 02）。它不是 {@code ICountFlushHandler} 的实现，
- * 因为那个接口的方法签名带着基础设施的合并事件类型，而 {@code ITradeRepository} 是域接口——分发由
- * {@code CountFlushDispatcher} 在基础设施层完成。
+ * 加速列 += 新增数，market-feed-uv 票 02）。合并器实例由本类自己持有（构造后自建，出口绑定
+ * {@code this::flushViewGroup}），不依赖任何跨仓储的分发层。
  */
 @Slf4j
 @Repository
@@ -100,8 +104,36 @@ public class TradeRepository implements ITradeRepository {
     private final OutboxMessageStore outboxMessageStore;
     private final ITimeoutRepository timeoutRepository;
     private final TransactionTemplate transactionTemplate;
-    /** 浏览类写入的唯一通道（fire-and-forget，窗口后一组一个事务三步落 UV 明细 + 加速列） */
-    private final ViewMergeWriter viewMergeWriter;
+    /**
+     * 商品浏览的合并引擎（通用 {@link MergeEngine}，本仓储独占一个实例：它只写 product_view_* 这几张表）。
+     * 非 final：出口是 {@code this::flushViewGroup}，只能在依赖注入完成后再建。
+     */
+    private MergeEngine<CountEvent, LikeState> viewEngine;
+
+    /**
+     * 引擎由本类自建（通用引擎不是 Spring 托管对象，谁用谁 new），策略里只有两件业务知识：
+     * 分组键 = 商品业务主键，落库 = 本类的 {@link #flushViewGroup}。
+     */
+    @Autowired
+    void initViewEngine(MergeConfig mergeConfig) {
+        this.viewEngine = new MergeEngine<>(mergeConfig, new MergeStrategy<>(
+                "product-view",
+                CountEvent::targetId,
+                group -> flushViewGroup(group.get(0).targetId(), group)));
+    }
+
+    /** 停机排空：引擎不是 Spring 托管对象，销毁由持有者发起 */
+    @PreDestroy
+    void closeViewEngine() {
+        if (viewEngine != null) {
+            viewEngine.close();
+        }
+    }
+
+    /** 排空等待（排障与集成测试读数用，业务路径不调）：true = 当前无在途件 */
+    public boolean awaitIdle(long timeoutMs) {
+        return viewEngine == null || viewEngine.awaitIdle(timeoutMs);
+    }
     /** 卖家昵称头像批量回查（SQL 层零 JOIN：商品列表/详情的 bs_user 信息在这里多查一次拼装） */
     private final IUserDao userDao;
 
@@ -431,7 +463,7 @@ public class TradeRepository implements ITradeRepository {
 
     @Override
     public void recordProductView(String productId, String userId) {
-        // 浏览计数（UV 口径，统一等待语义）：commit 等终态，窗口过后一组一个事务——明细表 INSERT IGNORE
+        // 浏览计数（UV 口径，统一等待语义）：commit 等终态，一组一个事务——明细表 INSERT IGNORE
         // + viewed_at 刷新 + 加速列 += 新增数。匿名访问落不了明细行（product_view_history 主键的一半
         // 是 user_id），按「INSERT 成功才算浏览」的口径不计入（商品语义变更：旧口径匿名也累加 PV）；
         // 失败/超时抛可重试，重放被明细唯一键吸收（spec：浏览类从「允许丢」翻转为 commit 语义）
@@ -439,7 +471,25 @@ public class TradeRepository implements ITradeRepository {
             return;
         }
         // 商品业务 ID 已是 UUID 字符串（uuid-biz-id 票 05）：合并器键直传
-        viewMergeWriter.write(CountAction.PRODUCT_VIEW, productId, userId);
+        writeView(CountAction.PRODUCT_VIEW, productId, userId);
+    }
+
+    /**
+     * 浏览类写入：提交给合并器并等终态。{@code TIMEOUT} / {@code FAILED} 都抛可重试——
+     * 前者件大概率仍会落库，后者确定没落；重放被 UV 明细唯一键吸收，不会重复计。
+     * {@code BUFFER_FULL} / {@code CLOSED} 不该冒到这里：引擎在入队阶段已就地降级。
+     */
+    private void writeView(CountAction action, String rowId, String userId) {
+        MergeResult<LikeState> outcome = viewEngine.commit(new CountEvent(action, rowId, userId));
+        if (!outcome.isCompleted()) {
+            throw retryable(action, rowId, "确定没落（整组已回滚 / 件未入队），可安全重试");
+        }
+    }
+
+    /** 可重试：行一定没动（或重试会被 UV 明细唯一键吸收），对外统一「系统繁忙，请稍后重试」 */
+    private static BusinessException retryable(CountAction action, String rowId, String detail) {
+        log.warn("商品浏览写入需重试：action={}, rowId={}, 原因={}", action, rowId, detail);
+        return new BusinessException(ResponseCode.SYSTEM_ERROR, ResponseCode.SYSTEM_ERROR.getInfo());
     }
 
     @Override
@@ -484,9 +534,9 @@ public class TradeRepository implements ITradeRepository {
      *
      * <p><b>为什么计数按「影响行数」而不是「事件数」加</b>：前端双击、HTTP 重试、降级并发写都会产生
      * 重复键，{@code INSERT IGNORE} 的影响行数恰好是本组真正插入的行数，加速列与明细行条数就永远对得上。
-     * 不重试、不回补：浏览允许丢，丢了下次浏览的 INSERT 会把缺的 UV 补上。
+     * 失败/超时由调用方重试，重放撞明细唯一键被吸收、不会重复计。
      *
-     * <p><b>为什么要回一组占位结果</b>：浏览件没有业务结果（没有人在等），但引擎把「null / 缺位」
+     * <p><b>为什么要回一组占位结果</b>：浏览件没有「已赞 / 重复」可分，但引擎把「null / 缺位」
      * 当作漏回填并补 {@code FAILED}——那会让 {@code flushed} 漏掉这些件，合并比与
      * 「accepted − flushed」两个读数同时失真。
      *

@@ -1,9 +1,9 @@
 package com.betterschool.integration.errand;
 
 import com.betterschool.domain.errand.adapter.repository.IErrandRepository;
-import com.betterschool.infrastructure.merge.count.CountAction;
-import com.betterschool.infrastructure.merge.count.CountEvent;
-import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
+import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountEvent;
+import com.betterschool.infrastructure.adapter.repository.errand.ErrandRepository;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.betterschool.trigger.job.MarketFeedIndexRebuildJob;
 import org.junit.jupiter.api.DisplayName;
@@ -38,7 +38,7 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     private IErrandRepository errandRepository;
 
     @Autowired
-    private ICountFlushHandler flushHandler;
+    private ErrandRepository flushHandler;
 
     @Test
     @DisplayName("重建后索引行与订单状态/悬赏/feed_time/热度严格一致，并修复缺行与跨表直改的漂移")
@@ -181,7 +181,7 @@ class ErrandFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         List<CountEvent> events = Arrays.stream(userIds)
                 .map(userId -> new CountEvent(CountAction.ERRAND_VIEW, orderId, userId))
                 .toList();
-        flushHandler.flushGroup(CountAction.ERRAND_VIEW, orderId, events);
+        flushHandler.flushViewGroup(orderId, events);
     }
 
     /** 索引行整行（无行 = null） */

@@ -5,10 +5,10 @@ import com.betterschool.domain.trade.model.entity.ProductEntity;
 import com.betterschool.domain.trade.model.entity.ProductOrderEntity;
 import com.betterschool.domain.trade.model.valobj.ProductCategoryVO;
 import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
-import com.betterschool.infrastructure.merge.count.CountAction;
-import com.betterschool.infrastructure.merge.count.CountEvent;
-import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
-import com.betterschool.infrastructure.merge.count.LikeState;
+import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountEvent;
+import com.betterschool.infrastructure.adapter.repository.trade.TradeRepository;
+import com.betterschool.infrastructure.adapter.repository.LikeState;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -37,7 +37,7 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     private ITradeRepository tradeRepository;
 
     @Autowired
-    private ICountFlushHandler flushHandler;
+    private TradeRepository flushHandler;
 
     @Test
     @DisplayName("草稿提交诞生索引行（price 快照随行）；下架→重提 ODKU 刷新 feed_time 与 price")
@@ -154,20 +154,20 @@ class ProductFeedIndexSyncIntegrationTest extends CommunityApiTestBase {
     void 浏览旁路推进热度键_未上架不补行() {
         String onSaleId = insertProduct("ON_SALE", "10.00");
 
-        List<LikeState> results = flushHandler.flushGroup(CountAction.PRODUCT_VIEW, onSaleId,
+        List<LikeState> results = flushHandler.flushViewGroup(onSaleId,
                 List.of(viewEvent(onSaleId, "u101"), viewEvent(onSaleId, "u101"), viewEvent(onSaleId, "u102")));
         assertThat(results).hasSize(3).containsOnly(LikeState.APPLIED);
         assertThat(indexViewCount(onSaleId)).as("索引热度键按新增 UV 数 +N").isEqualTo(2);
         assertThat(acceleratedCountOf(onSaleId)).as("窄表真源同步推进").isEqualTo(2);
 
         // 全重复组：INSERT IGNORE 全撞键，索引热度键与窄表都不动（幂等不动点）
-        flushHandler.flushGroup(CountAction.PRODUCT_VIEW, onSaleId,
+        flushHandler.flushViewGroup(onSaleId,
                 List.of(viewEvent(onSaleId, "u101")));
         assertThat(indexViewCount(onSaleId)).as("重复浏览不计入").isEqualTo(2);
 
         // 未上架商品（行不存在）：浏览旁路 0 行不补行，窄表照常推进（交重建 job 兜底）
         String draftId = insertProduct("DRAFT", "10.00");
-        flushHandler.flushGroup(CountAction.PRODUCT_VIEW, draftId, List.of(viewEvent(draftId, "u103")));
+        flushHandler.flushViewGroup(draftId, List.of(viewEvent(draftId, "u103")));
         assertThat(feedRow(draftId)).as("索引行缺失不被凭空补行").isNull();
         assertThat(acceleratedCountOf(draftId)).as("窄表真源不受索引缺失影响").isEqualTo(1);
     }

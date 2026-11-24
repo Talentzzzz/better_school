@@ -1,9 +1,9 @@
 package com.betterschool.integration.community;
 
-import com.betterschool.infrastructure.merge.count.CountAction;
-import com.betterschool.infrastructure.merge.count.CountEvent;
-import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
-import com.betterschool.infrastructure.merge.count.LikeState;
+import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountEvent;
+import com.betterschool.infrastructure.adapter.repository.community.CommunityRepository;
+import com.betterschool.infrastructure.adapter.repository.LikeState;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -32,7 +32,7 @@ class LikeCountFlushHandlerIntegrationTest extends CommunityApiTestBase {
     private static final String COMMENT_ID = "9900002";
 
     @Autowired
-    private ICountFlushHandler flushHandler;
+    private CommunityRepository flushHandler;
 
     @Test
     @DisplayName("点赞：同批三件里两件撞键，只把 DUPLICATE 回给命中的，计数按影响行数加")

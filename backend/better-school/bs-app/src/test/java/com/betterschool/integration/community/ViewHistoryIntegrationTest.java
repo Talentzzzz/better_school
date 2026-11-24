@@ -1,6 +1,6 @@
 package com.betterschool.integration.community;
 
-import com.betterschool.infrastructure.merge.count.CountMerger;
+import com.betterschool.infrastructure.adapter.repository.community.CommunityRepository;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
@@ -30,7 +30,7 @@ class ViewHistoryIntegrationTest extends CommunityApiTestBase {
     private static final int POST_COUNT = 25;
 
     @Autowired
-    private CountMerger countMerger;
+    private CommunityRepository flushHandler;
 
     @Test
     void 历史倒序与分页不重不漏且total精确() {
@@ -40,7 +40,7 @@ class ViewHistoryIntegrationTest extends CommunityApiTestBase {
             String postId = publishPost(author, "历史夹具帖" + i);
             assertSuccess(getJson("/api/community/posts/" + postId, viewer), "浏览详情");
         }
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         List<String> expected = jdbcTemplate.queryForList(
                 "SELECT post_id FROM user_view_history WHERE user_id = ? "
@@ -100,7 +100,7 @@ class ViewHistoryIntegrationTest extends CommunityApiTestBase {
         assertSuccess(getJson("/api/community/posts/" + kept, viewer), "浏览保留帖");
         assertSuccess(getJson("/api/community/posts/" + removed, viewer), "浏览将删帖");
         assertSuccess(getJson("/api/community/posts/" + ownPost, viewer), "浏览本人帖");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         assertSuccess(deleteJson("/api/community/posts/" + removed, author), "作者删帖");
 
@@ -123,7 +123,7 @@ class ViewHistoryIntegrationTest extends CommunityApiTestBase {
         // 只浏览前两帖：后一帖未浏览
         assertSuccess(getJson("/api/community/posts/" + posts.get(0), viewer), "浏览第一帖");
         assertSuccess(getJson("/api/community/posts/" + posts.get(1), viewer), "浏览第二帖");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         JsonNode feed = getJson("/api/community/posts?sort=time&pageSize=10", viewer);
         assertSuccess(feed, "主页 feed");

@@ -1,10 +1,9 @@
 package com.betterschool.integration.errand;
 
-import com.betterschool.infrastructure.merge.count.CountAction;
-import com.betterschool.infrastructure.merge.count.CountEvent;
-import com.betterschool.infrastructure.merge.count.CountMerger;
-import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
-import com.betterschool.infrastructure.merge.count.LikeState;
+import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountEvent;
+import com.betterschool.infrastructure.adapter.repository.errand.ErrandRepository;
+import com.betterschool.infrastructure.adapter.repository.LikeState;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
@@ -29,11 +28,9 @@ class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {
 
     private static final long DRAIN_MILLIS = 5_000;
 
-    @Autowired
-    private CountMerger countMerger;
 
     @Autowired
-    private ICountFlushHandler flushHandler;
+    private ErrandRepository flushHandler;
 
     @Test
     @DisplayName("登录浏览：明细落一行、加速列计 1，详情响应 viewCount 接线计数表")
@@ -45,7 +42,7 @@ class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {
         assertThat(first.path("viewCount").asLong())
                 .as("返回即精确：无收集窗口，浏览件在本次请求内已落库，读到的库值含自己这一票")
                 .isEqualTo(1);
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         assertThat(historyCountOf(orderId)).as("明细即事实源：一人一单一行").isEqualTo(1);
         assertThat(acceleratedCountOf(orderId)).as("加速列 = 明细行数").isEqualTo(1);
@@ -70,7 +67,7 @@ class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {
 
         assertSuccess(getJson("/api/errand/orders/" + orderId, viewer), "重复浏览跑腿详情");
         assertSuccess(getJson("/api/errand/orders/" + orderId, null), "匿名浏览跑腿详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         assertThat(historyCountOf(orderId)).as("重复浏览不新增明细行、匿名落不了明细行").isEqualTo(1);
         assertThat(acceleratedCountOf(orderId)).as("两者都不计数").isEqualTo(1);
@@ -87,7 +84,7 @@ class ErrandViewMergeIntegrationTest extends CommunityApiTestBase {
         Session viewerA = registerAndLogin("13800008003", "浏览者甲");
         Session viewerB = registerAndLogin("13800008004", "浏览者乙");
 
-        List<LikeState> results = flushHandler.flushGroup(CountAction.ERRAND_VIEW, orderId,
+        List<LikeState> results = flushHandler.flushViewGroup(orderId,
                 List.of(viewEvent(orderId, viewerA.userId()), viewEvent(orderId, viewerA.userId()),
                         viewEvent(orderId, viewerB.userId())));
 

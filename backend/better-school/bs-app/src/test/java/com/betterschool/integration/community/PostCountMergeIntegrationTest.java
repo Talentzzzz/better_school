@@ -1,10 +1,9 @@
 package com.betterschool.integration.community;
 
-import com.betterschool.infrastructure.merge.count.CountAction;
-import com.betterschool.infrastructure.merge.count.CountEvent;
-import com.betterschool.infrastructure.merge.count.CountMerger;
-import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
-import com.betterschool.infrastructure.merge.count.LikeState;
+import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountEvent;
+import com.betterschool.infrastructure.adapter.repository.community.CommunityRepository;
+import com.betterschool.infrastructure.adapter.repository.LikeState;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
@@ -42,11 +41,9 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
     /** 等合并器排空用它，等不到即断言失败（无收集窗口，正常路径本已落库，这里只兜在途件） */
     private static final long DRAIN_MILLIS = 5_000;
 
-    @Autowired
-    private CountMerger countMerger;
 
     @Autowired
-    private ICountFlushHandler flushHandler;
+    private CommunityRepository flushHandler;
 
     @Test
     @DisplayName("点赞返回成功时 关系行数 == 窄表计数，无需等待；重复赞报错且不重复计")
@@ -92,7 +89,7 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
         publishCommentAndGetId(postId, commenter, "缓存不存计数");
 
         // 排空在途浏览件，让 view_count 的库值在「取库值 → 读详情」之间保持静止（浏览已等终态，此处兜底对齐）
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
         long likeInDb = postLikeCountOf(postId);
         long commentInDb = postCommentCountOf(postId);
         int viewInDb = postViewCountOf(postId);
@@ -162,7 +159,7 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
 
         // 首次浏览：排空后明细 1 行、加速列 1
         assertSuccess(getJson("/api/community/posts/" + postId, reader), "首次浏览详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
         assertThat(viewHistoryRowCount(postId, reader.userId())).as("明细行已落").isEqualTo(1);
         assertThat(postViewCountOf(postId)).as("首次浏览 UV = 1").isEqualTo(1);
 
@@ -170,7 +167,7 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
         jdbcTemplate.update("UPDATE user_view_history SET viewed_at = '2000-01-01' WHERE post_id = ? AND user_id = ?",
                 postId, reader.userId());
         assertSuccess(getJson("/api/community/posts/" + postId, reader), "重复浏览详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
         assertThat(postViewCountOf(postId)).as("重复浏览不计数").isEqualTo(1);
         assertThat(viewedAtOf(postId, reader.userId()))
                 .as("重复浏览刷新 viewed_at（远古值被拨回当下）")
@@ -178,13 +175,13 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
 
         // 第二个浏览者：+1；浏览没有取消语义，计数只增不减
         assertSuccess(getJson("/api/community/posts/" + postId, otherReader), "第二人浏览详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
         assertThat(postViewCountOf(postId)).as("两个 UV").isEqualTo(2);
         assertThat(viewHistoryRowCount(postId, otherReader.userId())).isEqualTo(1);
 
         // 匿名访问：落不了明细行（user_view_history 主键的一半是 user_id），按「INSERT 成功才算浏览」不计入
         assertSuccess(getJson("/api/community/posts/" + postId, null), "匿名浏览详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
         assertThat(postViewCountOf(postId)).as("匿名浏览不计数").isEqualTo(2);
 
         // MQ 骨架已清零：浏览不再落任何计数消息（两个 topic 常量也已删除，这里用字面量兜住回归）

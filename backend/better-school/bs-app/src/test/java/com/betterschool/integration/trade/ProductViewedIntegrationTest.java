@@ -1,6 +1,6 @@
 package com.betterschool.integration.trade;
 
-import com.betterschool.infrastructure.merge.count.CountMerger;
+import com.betterschool.infrastructure.adapter.repository.trade.TradeRepository;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
@@ -30,7 +30,7 @@ class ProductViewedIntegrationTest extends CommunityApiTestBase {
     private static final int PAGE_SIZE = 2;
 
     @Autowired
-    private CountMerger countMerger;
+    private TradeRepository flushHandler;
 
     @Test
     @DisplayName("登录浏览详情后列表该商品 viewed=true、未浏览的 false；筛选直查路径同样带标记；详情为 null")
@@ -41,7 +41,7 @@ class ProductViewedIntegrationTest extends CommunityApiTestBase {
         Session viewer = registerAndLogin("13700001502", "浏览者");
 
         assertSuccess(getJson("/api/trade/products/" + viewedProductId, viewer), "浏览商品详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后浏览明细必须落库").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("窗口过后浏览明细必须落库").isTrue();
 
         JsonNode data = fetchPage(viewer, null, "");
         assertThat(viewedOf(data, viewedProductId)).as("浏览过的商品在列表里已读").isTrue();
@@ -64,7 +64,7 @@ class ProductViewedIntegrationTest extends CommunityApiTestBase {
 
         // 匿名也能看详情，但不落浏览明细（匿名不计入），列表照常可浏览
         assertSuccess(getJson("/api/trade/products/" + seeded.get(0), null), "匿名浏览商品详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         List<String> walked = new ArrayList<>();
         JsonNode data = fetchPage(null, null, "");

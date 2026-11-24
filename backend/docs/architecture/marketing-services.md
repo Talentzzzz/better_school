@@ -175,8 +175,8 @@ schema / xxl-job-tasks）已删除；xxl 注册收敛为单体唯一 seed `bette
 > 营销侧**尚未接入超时中心**（零接入方；内嵌化票 08 只定规格）：将来落表 / 落码的确定落法，
 > 见 [`../architecture/timeout.md`](timeout.md)。
 > 库存合并已整条进进程（hot-row-merge-l2w256，ADR-0013）：无消息、无桶、无兜底，
-> 两个库存引擎（计数 `merge/count`、库存 `merge` 根）两套并存、功能不同不归并，
-> 见 [`../marketing/architecture/merge.md`](../marketing/architecture/merge.md)。
+> 库存与计数共用同一个通用引擎（`infrastructure/merge`，谁用谁 new `MergeEngine`；
+> 计数不再有专用引擎子包），见 [`../marketing/architecture/merge.md`](../marketing/architecture/merge.md)。
 
 ## 7. 前端联调
 

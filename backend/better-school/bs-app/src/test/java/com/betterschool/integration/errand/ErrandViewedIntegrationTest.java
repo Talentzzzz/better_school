@@ -1,6 +1,6 @@
 package com.betterschool.integration.errand;
 
-import com.betterschool.infrastructure.merge.count.CountMerger;
+import com.betterschool.infrastructure.adapter.repository.errand.ErrandRepository;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
@@ -30,7 +30,7 @@ class ErrandViewedIntegrationTest extends CommunityApiTestBase {
     private static final int PAGE_SIZE = 2;
 
     @Autowired
-    private CountMerger countMerger;
+    private ErrandRepository flushHandler;
 
     @Test
     @DisplayName("登录浏览详情后大厅该单 viewed=true、未浏览的 false；详情为 null")
@@ -41,7 +41,7 @@ class ErrandViewedIntegrationTest extends CommunityApiTestBase {
         Session viewer = registerAndLogin("13600001502", "跑腿浏览者");
 
         assertSuccess(getJson("/api/errand/orders/" + viewedOrderId, viewer), "浏览跑腿详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后浏览明细必须落库").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("窗口过后浏览明细必须落库").isTrue();
 
         JsonNode data = fetchPage(viewer, null);
         assertThat(viewedOf(data, viewedOrderId)).as("浏览过的订单在大厅里已读").isTrue();
@@ -63,7 +63,7 @@ class ErrandViewedIntegrationTest extends CommunityApiTestBase {
         List<String> seeded = seedPublishedOrders(publisher, 3);
 
         assertSuccess(getJson("/api/errand/orders/" + seeded.get(0), null), "匿名浏览跑腿详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
 
         List<String> walked = new ArrayList<>();
         JsonNode data = fetchPage(null, null);

@@ -73,17 +73,20 @@ cn.xxx.infrastructure/
 ├── adapter/                     实现层（只有 {port, repository} 两棵树）
 │   ├── repository/
 │   │   └── <域>/                实现 domain 仓储接口：XxxRepository implements IxxxRepository
-│   │       （repository 根包可放横跨多域、无归属域的组件，先例 CountFlushDispatcher——
-│   │         放这里消解「技术包→adapter」反向依赖）
+│   │       （repository 根包放横跨多域、无归属域的写入契约/组件，先例 CountAction /
+│   │         CountEvent / LikeState——三个仓储的计数写入共用，但不属于合并引擎）
 │   └── port/
 │       └── <域>/                实现 domain 端口：   XxxPort implements IxxxPort
 ├── cache/                       缓存（域子包，如 post/）
 ├── dao/                         MyBatis Mapper 接口：IxxxDao（@Mapper），按域分包
 │   └── <域>/po/                 持久化对象 PO（与表对应），base/Page 分页对象
-├── merge/                       合并引擎根 = 库存引擎（键对齐 application.yml merge.batch.*）；
-│   └── count/                   计数引擎子包（键对齐 merge.count.*）。两套并存、功能不同不归并；
-│                                三处收集段同一发车口径：**队列非空即发**（无收集窗口，maxBatch 只是单批上界，
-│                                见 docs/architecture/merge-window-removal-spec.md）
+├── merge/                       通用攒批引擎（键对齐 application.yml merge.batch.*）：
+│                                只有 MergeConfig / MergeEngine / MergeGroup / MergeItem /
+│                                MergeResult / MergeStrategy 六件，不认识任何业务表。谁用谁
+│                                new MergeEngine(config, strategy)，并在自己的 @PreDestroy 里
+│                                close()。库存（InventoryQuotaMergeWriter）与计数（三个仓储各自
+│                                一个实例）都用它，没有专用引擎子包。发车口径：队列非空即发
+│                                （无收集窗口，maxBatch 只是单批上界）
 ├── mergevirtual/                专属虚拟线程 leader 模型引擎（同语义并存候选，调用方暂不切换；
 │                                复用 merge 包公开类型 MergeConfig/MergeStrategy/MergeResult，
 │                                见 backend/docs/architecture/merge-virtual-leader-engine-spec.md；
@@ -97,9 +100,9 @@ cn.xxx.infrastructure/
 
 - **技术包按需建，不建空包**；`adapter/{port, repository}` 与技术包平级。
 - **依赖方向单向：adapter → 技术包**。repository / port 实现想用什么就从 dao / merge / cache / outbox /
-  ws 等平级技术包取用；**技术包禁止 import `adapter.{port, repository}`**。横跨多域、无归属域的组件
-  不要落在技术包里往上调用 adapter——落 `adapter/repository` 根包（先例 `CountFlushDispatcher`：从
-  merge/count 移入 repository 根包，bean 名随 FQCN 变但注入全按类型不受影响）。
+  ws 等平级技术包取用；**技术包禁止 import `adapter.{port, repository}`**。横跨多域、无归属域的
+  写入契约落 `adapter/repository` 根包（先例 `CountAction` / `CountEvent` / `LikeState`：
+  三个仓储共用，供各自 `MergeEngine` 的件与结果使用）。
 - gateway 只定义调用外部的接口，由 adapter 层调用，通常用不到。
 - repository / port 的类名与 domain 接口一一对应（去掉 `I`）；实现按域分包。
 - **一域一仓储**：每个业务域恰一个 `XxxRepository implements I<域>Repository`；实现类内可注入**多个 DAO**

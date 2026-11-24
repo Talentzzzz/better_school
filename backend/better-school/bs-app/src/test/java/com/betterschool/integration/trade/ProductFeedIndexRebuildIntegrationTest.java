@@ -1,9 +1,9 @@
 package com.betterschool.integration.trade;
 
 import com.betterschool.domain.trade.adapter.repository.ITradeRepository;
-import com.betterschool.infrastructure.merge.count.CountAction;
-import com.betterschool.infrastructure.merge.count.CountEvent;
-import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
+import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountEvent;
+import com.betterschool.infrastructure.adapter.repository.trade.TradeRepository;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.betterschool.trigger.job.MarketFeedIndexRebuildJob;
 import org.junit.jupiter.api.DisplayName;
@@ -34,7 +34,7 @@ class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
     private ITradeRepository tradeRepository;
 
     @Autowired
-    private ICountFlushHandler flushHandler;
+    private TradeRepository flushHandler;
 
     @Test
     @DisplayName("重建后索引行与商品状态/价格/feed_time/热度严格一致，并修复缺行与跨表直改的漂移")
@@ -173,7 +173,7 @@ class ProductFeedIndexRebuildIntegrationTest extends CommunityApiTestBase {
         List<CountEvent> events = java.util.Arrays.stream(userIds)
                 .map(userId -> new CountEvent(CountAction.PRODUCT_VIEW, productId, userId))
                 .toList();
-        flushHandler.flushGroup(CountAction.PRODUCT_VIEW, productId, events);
+        flushHandler.flushViewGroup(productId, events);
     }
 
     /** 索引行整行（无行 = null） */

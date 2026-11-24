@@ -15,10 +15,13 @@ import com.betterschool.domain.search.model.valobj.SearchEntityType;
 import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
 import com.betterschool.domain.timeout.adapter.repository.ITimeoutRepository;
 import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
-import com.betterschool.infrastructure.merge.count.CountAction;
-import com.betterschool.infrastructure.merge.count.CountEvent;
-import com.betterschool.infrastructure.merge.count.LikeState;
-import com.betterschool.infrastructure.merge.count.ViewMergeWriter;
+import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountEvent;
+import com.betterschool.infrastructure.adapter.repository.LikeState;
+import com.betterschool.infrastructure.merge.MergeConfig;
+import com.betterschool.infrastructure.merge.MergeEngine;
+import com.betterschool.infrastructure.merge.MergeResult;
+import com.betterschool.infrastructure.merge.MergeStrategy;
 import com.betterschool.infrastructure.dao.errand.IErrandDao;
 import com.betterschool.infrastructure.dao.errand.IErrandFeedIndexDao;
 import com.betterschool.infrastructure.dao.errand.IErrandOrderEventDao;
@@ -34,8 +37,10 @@ import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -67,7 +72,36 @@ public class ErrandRepository implements IErrandRepository {
     private final IErrandViewCountDao errandViewCountDao;
     /** 浏览 UV 明细表（errand_view_history 单表，原 IErrandDao 拆分） */
     private final IErrandViewHistoryDao errandViewHistoryDao;
-    private final ViewMergeWriter viewMergeWriter;
+    /**
+     * 跑腿浏览的合并引擎（通用 {@link MergeEngine}，本仓储独占一个实例：它只写 errand_view_* 这几张表）。
+     * 非 final：出口是 {@code this::flushViewGroup}，只能在依赖注入完成后再建。
+     */
+    private MergeEngine<CountEvent, LikeState> viewEngine;
+
+    /**
+     * 引擎由本类自建（通用引擎不是 Spring 托管对象，谁用谁 new），策略里只有两件业务知识：
+     * 分组键 = 跑腿单业务主键，落库 = 本类的 {@link #flushViewGroup}。
+     */
+    @Autowired
+    void initViewEngine(MergeConfig mergeConfig) {
+        this.viewEngine = new MergeEngine<>(mergeConfig, new MergeStrategy<>(
+                "errand-view",
+                CountEvent::targetId,
+                group -> flushViewGroup(group.get(0).targetId(), group)));
+    }
+
+    /** 停机排空：引擎不是 Spring 托管对象，销毁由持有者发起 */
+    @PreDestroy
+    void closeViewEngine() {
+        if (viewEngine != null) {
+            viewEngine.close();
+        }
+    }
+
+    /** 排空等待（排障与集成测试读数用，业务路径不调）：true = 当前无在途件 */
+    public boolean awaitIdle(long timeoutMs) {
+        return viewEngine == null || viewEngine.awaitIdle(timeoutMs);
+    }
     private final OutboxMessageStore outboxMessageStore;
     private final ITimeoutRepository timeoutRepository;
     private final ObjectMapper objectMapper;
@@ -887,14 +921,31 @@ public class ErrandRepository implements IErrandRepository {
 
     @Override
     public void recordOrderView(String orderId, String userId) {
-        // 浏览计数（UV 口径，统一等待语义）：commit 等终态，窗口过后一组一个事务——明细表 INSERT IGNORE
+        // 浏览计数（UV 口径，统一等待语义）：commit 等终态，一组一个事务——明细表 INSERT IGNORE
         // + viewed_at 刷新 + 加速列 += 新增数。匿名访问落不了明细行（errand_view_history 主键的一半
         // 是 user_id），按「INSERT 成功才算浏览」的口径不计入；失败/超时抛可重试，
         // 重放被明细唯一键吸收（spec：浏览类从「允许丢」翻转为 commit 语义）
         if (userId == null) {
             return;
         }
-        viewMergeWriter.write(CountAction.ERRAND_VIEW, orderId, userId);
+        writeView(CountAction.ERRAND_VIEW, orderId, userId);
+    }
+
+    /**
+     * 浏览类写入：提交给通用引擎并等终态（{@code COMPLETED} / {@code FAILED} 两态）。
+     * {@code FAILED} 确定没落（整组回滚 / 件未入队），抛可重试；重放被 UV 明细唯一键吸收，不会重复计。
+     */
+    private void writeView(CountAction action, String rowId, String userId) {
+        MergeResult<LikeState> outcome = viewEngine.commit(new CountEvent(action, rowId, userId));
+        if (!outcome.isCompleted()) {
+            throw retryable(action, rowId, "确定没落（整组已回滚 / 件未入队），可安全重试");
+        }
+    }
+
+    /** 可重试：行一定没动（或重试会被 UV 明细唯一键吸收），对外统一「系统繁忙，请稍后重试」 */
+    private static BusinessException retryable(CountAction action, String rowId, String detail) {
+        log.warn("跑腿浏览写入需重试：action={}, rowId={}, 原因={}", action, rowId, detail);
+        return new BusinessException(ResponseCode.SYSTEM_ERROR, ResponseCode.SYSTEM_ERROR.getInfo());
     }
 
     @Override
@@ -924,9 +975,9 @@ public class ErrandRepository implements IErrandRepository {
      *
      * <p><b>为什么计数按「影响行数」而不是「事件数」加</b>：前端双击、HTTP 重试、降级并发写都会产生
      * 重复键，{@code INSERT IGNORE} 的影响行数恰好是本组真正插入的行数，加速列与明细行条数就永远对得上。
-     * 不重试、不回补：浏览允许丢，丢了下次浏览的 INSERT 会把缺的 UV 补上。
+     * 失败/超时由调用方重试，重放撞明细唯一键被吸收、不会重复计。
      *
-     * <p><b>为什么要回一组占位结果</b>：浏览件没有业务结果（没有人在等），但引擎把「null / 缺位」
+     * <p><b>为什么要回一组占位结果</b>：浏览件没有「已赞 / 重复」可分，但引擎把「null / 缺位」
      * 当作漏回填并补 {@code FAILED}——那会让 {@code flushed} 漏掉这些件，合并比与
      * 「accepted − flushed」两个读数同时失真。
      */
