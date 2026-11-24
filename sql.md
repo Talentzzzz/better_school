@@ -15,7 +15,7 @@
 
 来源：`backend/better-school/sql/schema.sql` 前段 · 本文档收录 34 张业务表（含全库唯一的 `outbox_message`）+ 16 张 `timeout_task` 分表。以下 10 张不在本文档范围：want_to_buy、errand_order_member、agent_review_log 已随求购/多人单下线及审核去 agent 化删除；sensitive_word、content_review、review_task、content_report 已随审核功能整体下线删除；errand_evaluation、user_daily_active、delay_outbox_message 本轮重构不收录；`errand_order` / `errand_order_event` / `errand_feed_index` / `errand_view_history` / `errand_view_count` 随跑腿业务下线删除。原第 30 张「超时注册意图表」已随超时内嵌化票 03 删除——注册改为业务事务内直插 `timeout_task` 分表，见下节。
 
-> **未展开表**（在 schema.sql 里、本文档尚未收录 DDL，形状以 schema.sql 为准）：`product_inventory`（商品库存台账，remaining 防超卖唯一真源）与 `product_stock_event`（商品库存流水）——trade 域防超卖票落表时本节漏更；补齐归后续文档票。
+> **未展开表**（在 schema.sql 里、本文档尚未收录 DDL，形状以 schema.sql 为准）：`product_inventory`（商品库存台账，remaining 防超卖唯一真源）与 `product_stock_event`（商品库存流水）——idle 域防超卖票落表时本节漏更；补齐归后续文档票。
 
 社区（帖子/评论/二手）、用户、钱包、chat（会话/消息/时间线，仅 1v1）、通知、二手托管交易、信用分、outbox。
 

@@ -45,7 +45,7 @@ public class SecurityConfig {
                         // 公开资料免登录（作者主页/「我的」页资料区）；PUT /profile 与 /privacy 仍走 anyRequest().authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/user/*/profile").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/community/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/trade/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/idle/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/search/**").permitAll()
                         // 营销域免登录（合并前 marketing SecurityConfig）：抽奖 banner 与奖品目录访客可见
                         .requestMatchers(HttpMethod.GET, "/api/lottery/activity", "/api/lottery/prizes").permitAll()

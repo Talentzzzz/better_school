@@ -6,7 +6,7 @@
 
 | 库 | 归属 | DDL 来源 | 表文档 |
 | --- | --- | --- | --- |
-| `better_school` | 单体（`backend/better-school/bs-*`） | `sql/init-dev.sql` + `sql/schema.sql` | [user](user.md) · [community](community.md) · [community_comment](community_comment.md) · [trade](trade.md) · [chat](chat.md) · [outbox](outbox.md) · [timeout](timeout.md) |
+| `better_school` | 单体（`backend/better-school/bs-*`） | `sql/init-dev.sql` + `sql/schema.sql` | [user](user.md) · [community](community.md) · [community_comment](community_comment.md) · [idle](idle.md) · [chat](chat.md) · [outbox](outbox.md) · [timeout](timeout.md) |
 
 ## 表清单（业务表，另见 timeout.md 的 16 张分表）
 
@@ -27,13 +27,13 @@
 |post_comment_like_count|[community_comment](community_comment.md)|评论点赞计数表（专用窄行，计数真源）|
 |post_comment_like|[community_comment](community_comment.md)|评论点赞表|
 |post_comment_feed_index|[community_comment](community_comment.md)|根评论热评排序投影（只服务「最热」序）|
-|product|[trade](trade.md)|二手商品表|
-|product_favorite|[trade](trade.md)|商品收藏表|
-|product_order|[trade](trade.md)|二手商品托管订单表|
-|product_order_event|[trade](trade.md)|商品订单状态流转记录（只插不改）|
-|product_feed_index|[trade](trade.md)|商品推荐排序投影（一商品一行）|
-|product_view_history|[trade](trade.md)|商品浏览明细（UV 事实源）|
-|product_view_count|[trade](trade.md)|商品浏览 UV 加速列|
+|product|[idle](idle.md)|二手商品表|
+|product_favorite|[idle](idle.md)|商品收藏表|
+|product_order|[idle](idle.md)|二手商品托管订单表|
+|product_order_event|[idle](idle.md)|商品订单状态流转记录（只插不改）|
+|product_feed_index|[idle](idle.md)|商品推荐排序投影（一商品一行）|
+|product_view_history|[idle](idle.md)|商品浏览明细（UV 事实源）|
+|product_view_count|[idle](idle.md)|商品浏览 UV 加速列|
 |room|[chat](chat.md)|会话表（1v1，纯取号器 + 会话真相）|
 |user_pair_room|[chat](chat.md)|用户对 → 1v1 会话映射（查重与反查专用）|
 |user_room|[chat](chat.md)|用户会话状态（每用户每会话一行；会话列表排序键/已读水位/隐藏位，预览读时现算）|

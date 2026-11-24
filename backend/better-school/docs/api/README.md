@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 登录注册与公开资料 | [user.md](user.md) | `/api/user` |
 | 校园墙（帖子/评论/点赞） | [community.md](community.md) | `/api/community` |
-| 二手交易（商品/订单/收藏） | [trade.md](trade.md) | `/api/trade` |
+| 二手交易（商品/订单/收藏） | (idle.md)(idle.md) | `/api/idle` |
 | 私信 / 通知（含已读水位线） | [chat.md](chat.md) | `/api/chat` |
 | 文件上传（MinIO） | [files.md](files.md) | `/api/files` |
 | 站内搜索 | [search.md](search.md) | `/api/search` |

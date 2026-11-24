@@ -8,7 +8,7 @@ import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
 import com.betterschool.domain.community.model.entity.PostEntity;
 import com.betterschool.domain.search.model.valobj.SearchPageVO;
-import com.betterschool.domain.trade.model.entity.ProductEntity;
+import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.user.model.entity.UserEntity;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import com.betterschool.types.enums.ResponseCode;

@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listLikedPosts, listMyPosts, listCommentedPosts } from '@/api/community'
-import { listMyProducts } from '@/api/trade'
+import { listMyProducts } from '@/api/idle'
 import { searchPosts, searchProducts, searchUsers } from '@/api/search'
 import type { PostSummary, Product, UserSummary } from '@/types/api'
 import PostCard from '@/components/PostCard.vue'

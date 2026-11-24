@@ -3,7 +3,7 @@ package com.betterschool.usecase.timeout;
 import com.betterschool.domain.timeout.adapter.port.callback.ITimeoutTaskCallbackPort;
 import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
 import com.betterschool.types.common.Constants;
-import com.betterschool.usecase.trade.ProductOrderCase;
+import com.betterschool.usecase.idle.ProductOrderCase;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

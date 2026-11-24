@@ -3,7 +3,7 @@ package com.betterschool.integration.job;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.betterschool.integration.support.VtJobFanoutProbe;
 import com.betterschool.trigger.job.SearchIndexRebuildJob;
-import com.betterschool.trigger.job.TradeExpireScanJob;
+import com.betterschool.trigger.job.IdleExpireScanJob;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,11 +26,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("调度扇出 seam：扇出项跑在虚拟线程上")
 class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
 
-    private static final String TRADE_EXPIRE_PREFIX_PATTERN = "trade-expire-product-\\d+";
+    private static final String IDLE_EXPIRE_PREFIX_PATTERN = "idle-expire-product-\\d+";
     private static final String REBUILD_PREFIX = "search-rebuild-";
 
     @Autowired
-    private TradeExpireScanJob tradeExpireScanJob;
+    private IdleExpireScanJob idleExpireScanJob;
 
     @Autowired
     private SearchIndexRebuildJob searchIndexRebuildJob;
@@ -42,7 +42,7 @@ class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
         insertExpiredProduct();
 
         VtJobFanoutProbe.reset();
-        tradeExpireScanJob.scan(null);
+        idleExpireScanJob.scan(null);
 
         assertThat(VtJobFanoutProbe.itemCount())
                 .as("扇出项应被调用——计数为 0 即该 job 被改回串行（不经扇出模板）").isPositive();
@@ -51,7 +51,7 @@ class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
         assertThat(VtJobFanoutProbe.threadNames())
                 .as("扇出线程按模板命名：前缀 + 自增序号")
                 .isNotEmpty()
-                .allSatisfy(name -> assertThat(name).matches(TRADE_EXPIRE_PREFIX_PATTERN));
+                .allSatisfy(name -> assertThat(name).matches(IDLE_EXPIRE_PREFIX_PATTERN));
     }
 
     @Test

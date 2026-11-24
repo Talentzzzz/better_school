@@ -164,8 +164,8 @@ export interface CommentReply {
   createdAt: string
 }
 
-// ---------- trade ----------
-export type TradeCategory =
+// ---------- idle ----------
+export type IdleCategory =
   | 'DIGITAL'
   | 'BOOKS'
   | 'DAILY'
@@ -183,7 +183,7 @@ export interface Product {
   images: string[]
   price: number
   tradeLocation: string
-  category: TradeCategory
+  category: IdleCategory
   status: string
   viewCount: number
   favoriteCount: number

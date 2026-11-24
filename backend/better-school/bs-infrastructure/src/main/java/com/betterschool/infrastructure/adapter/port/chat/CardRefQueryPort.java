@@ -4,9 +4,9 @@ import com.betterschool.domain.chat.adapter.port.ICardRefQueryPort;
 import com.betterschool.domain.community.adapter.repository.ICommunityRepository;
 import com.betterschool.domain.community.model.entity.PostEntity;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
-import com.betterschool.domain.trade.adapter.repository.ITradeRepository;
-import com.betterschool.domain.trade.model.entity.ProductEntity;
-import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
+import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
+import com.betterschool.domain.idle.model.entity.ProductEntity;
+import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
 public class CardRefQueryPort implements ICardRefQueryPort {
 
     private final ICommunityRepository communityRepository;
-    private final ITradeRepository tradeRepository;
+    private final IIdleRepository idleRepository;
 
     @Override
     public PostStatusVO findPostStatus(String postId) {
@@ -30,7 +30,7 @@ public class CardRefQueryPort implements ICardRefQueryPort {
 
     @Override
     public ProductStatusVO findProductStatus(String productId) {
-        ProductEntity productEntity = tradeRepository.findById(productId);
+        ProductEntity productEntity = idleRepository.findById(productId);
         return productEntity == null ? null : productEntity.getStatus();
     }
 }

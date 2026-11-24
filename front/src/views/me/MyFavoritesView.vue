@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { listFavorites } from '@/api/trade'
+import { listFavorites } from '@/api/idle'
 import type { Product } from '@/types/api'
 import ProductCard from '@/components/ProductCard.vue'
 import EmptyState from '@/components/EmptyState.vue'

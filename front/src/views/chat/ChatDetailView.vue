@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listMembers, listMessages, recallMessage, sendMessage } from '@/api/chat'
-import { getProduct } from '@/api/trade'
+import { getProduct } from '@/api/idle'
 import { getPost } from '@/api/community'
 import { uploadImage } from '@/api/files'
 import type { ChatMessage, RoomMember } from '@/types/api'

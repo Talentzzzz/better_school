@@ -1,6 +1,6 @@
 package com.betterschool.trigger.http;
 
-import com.betterschool.api.ITradeService;
+import com.betterschool.api.IIdleService;
 import com.betterschool.api.dto.ProductDraftSaveRequestDTO;
 import com.betterschool.api.dto.ProductEditRequestDTO;
 import com.betterschool.api.dto.ProductOrderResponseDTO;
@@ -8,12 +8,12 @@ import com.betterschool.api.dto.ProductPublishRequestDTO;
 import com.betterschool.api.dto.ProductResponseDTO;
 import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
-import com.betterschool.usecase.trade.TradePublishCase;
-import com.betterschool.domain.trade.model.entity.ProductEntity;
-import com.betterschool.domain.trade.model.entity.ProductOrderEntity;
-import com.betterschool.domain.trade.model.valobj.ProductFeedPageVO;
-import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
-import com.betterschool.domain.trade.service.product.IProductService;
+import com.betterschool.usecase.idle.IdlePublishCase;
+import com.betterschool.domain.idle.model.entity.ProductEntity;
+import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
+import com.betterschool.domain.idle.model.valobj.ProductFeedPageVO;
+import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
+import com.betterschool.domain.idle.service.product.IProductService;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -36,15 +36,15 @@ import java.util.Set;
  * 二手交易 HTTP 入口：浏览免登录，发布/收藏需登录
  */
 @RestController
-@RequestMapping("/api/trade")
+@RequestMapping("/api/idle")
 @RequiredArgsConstructor
-public class ProductController implements ITradeService {
+public class ProductController implements IIdleService {
 
     private static final int MAX_PAGE_SIZE = 50;
 
     private final IProductService productService;
-    private final TradePublishCase tradePublishCase;
-    private final com.betterschool.usecase.trade.ProductOrderCase productOrderCase;
+    private final IdlePublishCase idlePublishCase;
+    private final com.betterschool.usecase.idle.ProductOrderCase productOrderCase;
 
     @Override
     @GetMapping("/products")
@@ -75,7 +75,7 @@ public class ProductController implements ITradeService {
     @Override
     @PostMapping("/products")
     public Response<String> publishProduct(@Valid @RequestBody ProductPublishRequestDTO request) {
-        String productId = tradePublishCase.publishProduct(SecurityUtils.currentUserId(), request.getTitle(),
+        String productId = idlePublishCase.publishProduct(SecurityUtils.currentUserId(), request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
                 request.getTradeLocation(), request.getCategory(), request.getQuantity());
         return Response.ok(productId);
@@ -84,7 +84,7 @@ public class ProductController implements ITradeService {
     @Override
     @PostMapping("/products/draft")
     public Response<String> saveProductDraft(@Valid @RequestBody ProductDraftSaveRequestDTO request) {
-        String productId = tradePublishCase.saveProductDraft(SecurityUtils.currentUserId(), request.getTitle(),
+        String productId = idlePublishCase.saveProductDraft(SecurityUtils.currentUserId(), request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
                 request.getTradeLocation(), request.getCategory(), request.getQuantity());
         return Response.ok(productId);
@@ -94,7 +94,7 @@ public class ProductController implements ITradeService {
     @PutMapping("/products/{productId}/draft")
     public Response<Void> updateProductDraft(@PathVariable String productId,
                                              @Valid @RequestBody ProductDraftSaveRequestDTO request) {
-        tradePublishCase.updateProductDraft(SecurityUtils.currentUserId(), productId, request.getTitle(),
+        idlePublishCase.updateProductDraft(SecurityUtils.currentUserId(), productId, request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
                 request.getTradeLocation(), request.getCategory(), request.getQuantity());
         return Response.ok(null);
@@ -103,14 +103,14 @@ public class ProductController implements ITradeService {
     @Override
     @PostMapping("/products/{productId}/submit")
     public Response<Void> submitProductDraft(@PathVariable String productId) {
-        tradePublishCase.submitProductDraft(SecurityUtils.currentUserId(), productId);
+        idlePublishCase.submitProductDraft(SecurityUtils.currentUserId(), productId);
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/takedown")
     public Response<Void> takeDownProduct(@PathVariable String productId) {
-        tradePublishCase.takeDownProduct(SecurityUtils.currentUserId(), productId);
+        idlePublishCase.takeDownProduct(SecurityUtils.currentUserId(), productId);
         return Response.ok(null);
     }
 
@@ -118,7 +118,7 @@ public class ProductController implements ITradeService {
     @PutMapping("/products/{productId}")
     public Response<Void> editProduct(@PathVariable String productId,
                                       @Valid @RequestBody ProductEditRequestDTO request) {
-        tradePublishCase.editOnSaleProduct(SecurityUtils.currentUserId(), productId, request.getTitle(),
+        idlePublishCase.editOnSaleProduct(SecurityUtils.currentUserId(), productId, request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice());
         return Response.ok(null);
     }
@@ -155,7 +155,7 @@ public class ProductController implements ITradeService {
     @Override
     @PostMapping("/products/{productId}/stock")
     public Response<Void> restockProduct(@PathVariable String productId, @RequestParam Integer quantity) {
-        tradePublishCase.restockProduct(SecurityUtils.currentUserId(), productId, quantity);
+        idlePublishCase.restockProduct(SecurityUtils.currentUserId(), productId, quantity);
         return Response.ok(null);
     }
 

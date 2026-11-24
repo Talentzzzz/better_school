@@ -3,7 +3,7 @@ package com.betterschool.domain.search.service;
 import com.betterschool.domain.community.model.entity.PostEntity;
 import com.betterschool.domain.search.model.valobj.SearchPageVO;
 import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
-import com.betterschool.domain.trade.model.entity.ProductEntity;
+import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.user.model.entity.UserEntity;
 
 /**

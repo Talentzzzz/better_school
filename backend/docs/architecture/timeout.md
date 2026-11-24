@@ -37,7 +37,7 @@
 
 1. `TimeoutTaskCallbackDispatcher` 实现 domain 端口却落在 `usecase.timeout`——分发要调其它域的 case，
    infrastructure 看不到 case 层。这是「端口由 infrastructure 实现」的显式例外（同款说明见 CLAUDE.md §4）。
-2. 业务仓储（trade 侧）在自己的事务里
+2. 业务仓储（idle 侧）在自己的事务里
    注入 `ITimeoutRepository` 注册超时行——「域不注入他域仓储」的显式例外。同事务注册是内嵌化的全部前提，
    注册必须落在**已经开着事务的那个仓储方法**里；域服务本身仍不注入超时仓储，也不自持事务边界（见 CLAUDE.md §1/§3）。
 
@@ -95,7 +95,7 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 
 | taskType | 注册点 | 计时起点 | bizId |
 | --- | --- | --- | --- |
-| `PRODUCT_ORDER_PAY_TIMEOUT` | `TradeRepository.createOrderWithLock` | 下单时刻 + 15min | 裸 `productOrderId` |
+| `PRODUCT_ORDER_PAY_TIMEOUT` | `IdleRepository.createOrderWithLock` | 下单时刻 + 15min | 裸 `productOrderId` |
 
 **三分支幂等**（裁决权全在库上，与「读-判-写」时序无关）：
 
@@ -207,7 +207,7 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 
 判据（防「内嵌中心 + 域内扫描」长期并存）：
 
-- **deadline 已是业务列、动作在同域** → 域内扫描（现状：`tradeExpireScan` / `productTimeoutScan`
+- **deadline 已是业务列、动作在同域** → 域内扫描（现状：`idleExpireScan` / `productTimeoutScan`
   都不收编）。
 - **deadline 无处存放 / 动作跨域 / 需要重试-退避-死信-管理面** → 超时中心。
 

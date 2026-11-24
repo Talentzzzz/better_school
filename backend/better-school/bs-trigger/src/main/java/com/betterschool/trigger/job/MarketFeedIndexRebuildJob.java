@@ -1,6 +1,6 @@
 package com.betterschool.trigger.job;
 
-import com.betterschool.domain.trade.service.product.IProductService;
+import com.betterschool.domain.idle.service.product.IProductService;
 import com.xxl.job.core.handler.annotation.XxlJob;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

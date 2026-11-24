@@ -1,7 +1,7 @@
 package com.betterschool.integration.job;
 
 import com.betterschool.domain.community.adapter.repository.ICommunityRepository;
-import com.betterschool.domain.trade.adapter.repository.ITradeRepository;
+import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
 import com.betterschool.domain.user.adapter.repository.IUserRepository;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -34,7 +34,7 @@ class UnboundedQueryCursorIntegrationTest extends CommunityApiTestBase {
     private ICommunityRepository communityRepository;
 
     @Autowired
-    private ITradeRepository tradeRepository;
+    private IIdleRepository idleRepository;
 
     @Autowired
     private IUserRepository userRepository;
@@ -69,7 +69,7 @@ class UnboundedQueryCursorIntegrationTest extends CommunityApiTestBase {
             insertProductFixture(userId);
         }
 
-        assertPagedToEmpty(cursor -> tradeRepository.listIdsAfter(cursor, PAGE), 3, "");
+        assertPagedToEmpty(cursor -> idleRepository.listIdsAfter(cursor, PAGE), 3, "");
     }
 
     /**

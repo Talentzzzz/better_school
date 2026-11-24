@@ -30,7 +30,7 @@
 - **不加 `user_id` 列**（票 02 显式结论，理由入档）
 
 ## 注意
-- **谁在写**：业务仓储在**业务事务内直插**（超时行与业务行同生同死）：`TradeRepository.createOrderWithLock`；各分支幂等在 `TimeoutRepository.register`
+- **谁在写**：业务仓储在**业务事务内直插**（超时行与业务行同生同死）：`IdleRepository.createOrderWithLock`；各分支幂等在 `TimeoutRepository.register`
 - **谁在读**：扫描/结算（`TimeoutTaskScanCase` + `TimeoutTaskScanService`）与死信管理面（`TimeoutTaskAdminController`）；`selectDueBatch` 等按槽位捞批的语句由仓储统一塞 hint，**别绕开仓储直接调 `ITimeoutTaskDao`**——漏塞 hint 时写语句被路由校验拒掉、读语句退化成 16 表广播
 - 死信没有独立表：回调失败到上限的行留在本表置 `FAILED`，管理面 `/api/admin/timeout-tasks/dead-letters` 直接读它（列表是唯一允许跨 16 表广播的查询）
 - hint 是 TransmittableThreadLocal：纪律是「**hint 作用域先于子线程的创建/提交**」（票 01 界定），不是「必须同线程」

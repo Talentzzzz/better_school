@@ -5,9 +5,9 @@ import { useAuthStore } from '@/stores/auth'
 import { useChatRoomsStore } from '@/stores/chatRooms'
 import { useNoticesStore } from '@/stores/notices'
 import { useWaterfall } from '@/composables/useWaterfall'
-import { listProducts } from '@/api/trade'
-import type { TradeCategory } from '@/types/api'
-import { TRADE_CATEGORIES, type SortOrder } from '@/utils/trade'
+import { listProducts } from '@/api/idle'
+import type { IdleCategory } from '@/types/api'
+import { IDLE_CATEGORIES, type SortOrder } from '@/utils/idle'
 import ProductCard from '@/components/ProductCard.vue'
 import MarketEntryRow, { type EntryKey } from '@/components/MarketEntryRow.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -30,13 +30,13 @@ const MARKET_SORTS: { value: SortOrder; label: string }[] = [
 ]
 
 // 二手
-const productCategory = ref<'' | TradeCategory>('')
+const productCategory = ref<'' | IdleCategory>('')
 const productSort = ref<SortOrder>('time')
 
 /** 分类 chips（六类 + 全部） */
-const categoryChips: { value: '' | TradeCategory; label: string }[] = [
+const categoryChips: { value: '' | IdleCategory; label: string }[] = [
   { value: '', label: '全部' },
-  ...TRADE_CATEGORIES
+  ...IDLE_CATEGORIES
 ]
 
 const {

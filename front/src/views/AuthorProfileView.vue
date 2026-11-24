@@ -6,7 +6,7 @@ import { useChatRoomsStore } from '@/stores/chatRooms'
 import { createDirectRoom } from '@/api/chat'
 import { getPublicProfile } from '@/api/user'
 import { listUserComments, listUserLikedPosts, listUserPosts } from '@/api/community'
-import { listUserProducts } from '@/api/trade'
+import { listUserProducts } from '@/api/idle'
 import type {
   AuthorProfileComment,
   PostSummary,

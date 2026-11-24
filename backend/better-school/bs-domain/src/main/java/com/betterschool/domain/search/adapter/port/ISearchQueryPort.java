@@ -1,7 +1,7 @@
 package com.betterschool.domain.search.adapter.port;
 
 import com.betterschool.domain.community.model.entity.PostEntity;
-import com.betterschool.domain.trade.model.entity.ProductEntity;
+import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.user.model.entity.UserEntity;
 
 import java.util.List;
@@ -28,7 +28,7 @@ public interface ISearchQueryPort {
     /** 帖子索引全量重建的游标页：post_id 字典序 > lastPostId 取 limit 条（业务 id 是 UUID 字符串） */
     List<String> listPostIdsAfter(String lastPostId, int limit);
 
-    // ---------- 商品（trade） ----------
+    // ---------- 商品（idle） ----------
 
     /** 单个商品；不存在返回 null（业务 id 是 UUID 字符串） */
     ProductEntity findProduct(String productId);

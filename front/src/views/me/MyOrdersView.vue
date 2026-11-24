@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { listMyProductOrders } from '@/api/trade'
+import { listMyProductOrders } from '@/api/idle'
 import { useWaterfall } from '@/composables/useWaterfall'
 import type { ProductOrder } from '@/types/api'
 import { formatMoney, formatTime } from '@/utils/format'
@@ -69,7 +69,7 @@ onMounted(() => {
         v-for="o in idleList"
         :key="o.orderId"
         class="order-row"
-        @click="router.push(`/trade/order/${o.orderId}`)"
+        @click="router.push(`/idle/order/${o.orderId}`)"
       >
         <div class="order-head">
           <span class="order-status">{{ statusText(o.status, idleRole === 'buy' ? 'buyer' : 'seller') }}</span>

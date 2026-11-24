@@ -22,7 +22,7 @@ import com.betterschool.domain.search.model.valobj.PostSearchDocVO;
 import com.betterschool.domain.search.model.valobj.ProductSearchDocVO;
 import com.betterschool.domain.search.model.valobj.SearchPageVO;
 import com.betterschool.domain.search.model.valobj.UserSearchDocVO;
-import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
+import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
 import com.betterschool.domain.user.model.valobj.UserStatusVO;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;

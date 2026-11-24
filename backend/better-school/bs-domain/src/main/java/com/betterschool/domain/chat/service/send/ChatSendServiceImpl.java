@@ -12,7 +12,7 @@ import com.betterschool.domain.chat.model.valobj.DirectRoomPairVO;
 import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
 import com.betterschool.domain.chat.model.valobj.RoomSourceEnum;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
-import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
+import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
 import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;

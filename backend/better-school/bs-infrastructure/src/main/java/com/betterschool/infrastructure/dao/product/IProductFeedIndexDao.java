@@ -1,7 +1,7 @@
 package com.betterschool.infrastructure.dao.product;
 
-import com.betterschool.domain.trade.model.valobj.ProductFeedCursorVO;
-import com.betterschool.domain.trade.model.valobj.ProductFeedIndexItemVO;
+import com.betterschool.domain.idle.model.valobj.ProductFeedCursorVO;
+import com.betterschool.domain.idle.model.valobj.ProductFeedIndexItemVO;
 import com.betterschool.infrastructure.dao.product.po.ProductFeedIndexRow;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;

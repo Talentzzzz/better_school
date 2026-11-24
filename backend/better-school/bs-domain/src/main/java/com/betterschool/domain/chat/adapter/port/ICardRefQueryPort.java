@@ -1,7 +1,7 @@
 package com.betterschool.domain.chat.adapter.port;
 
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
-import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
+import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
 
 /**
  * 业务卡片引用只读查询端口（chat 域的跨域只读声明）：只取引用对象的当前状态，不存在返回 null。

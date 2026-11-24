@@ -1,7 +1,7 @@
 package com.betterschool.trigger.job;
 
-import com.betterschool.domain.trade.model.valobj.ProductFundOrphanScanSummaryVO;
-import com.betterschool.usecase.trade.ProductFundOrphanScanCase;
+import com.betterschool.domain.idle.model.valobj.ProductFundOrphanScanSummaryVO;
+import com.betterschool.usecase.idle.ProductFundOrphanScanCase;
 import com.xxl.job.core.context.XxlJobHelper;
 import com.xxl.job.core.handler.annotation.XxlJob;
 import lombok.RequiredArgsConstructor;

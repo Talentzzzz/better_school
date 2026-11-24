@@ -194,7 +194,7 @@ class AuthorProfileIntegrationTest extends CommunityApiTestBase {
         insertProduct(author.userId(), "DRAFT", "草稿商品");
         insertProduct(author.userId(), "SOLD", "已售商品");
 
-        JsonNode response = getJson("/api/trade/users/" + author.userId() + "/products", null);
+        JsonNode response = getJson("/api/idle/users/" + author.userId() + "/products", null);
         assertSuccess(response, "访客读闲置 tab");
         assertThat(productIdsOf(response.path("data"))).containsExactly(onSale);
         assertThat(response.path("data").path("total").asLong()).isEqualTo(1);

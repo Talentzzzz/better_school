@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Product } from '@/types/api'
 import { formatCount, formatMoney } from '@/utils/format'
-import { tradeCategoryText } from '@/utils/trade'
+import { idleCategoryText } from '@/utils/idle'
 import AppAvatar from '@/components/AppAvatar.vue'
 import AppImage from '@/components/AppImage.vue'
 
@@ -14,7 +14,7 @@ const props = defineProps<{ product: Product }>()
       <AppImage
         :src="props.product.images[0]"
         :seed="props.product.productId"
-        :text="tradeCategoryText(props.product.category) || '二手'"
+        :text="idleCategoryText(props.product.category) || '二手'"
         ratio="1:1"
       />
     </div>
