@@ -19,7 +19,7 @@ import com.betterschool.domain.post.service.post.IPostService;
 import com.betterschool.domain.post.model.entity.PostEntity;
 import com.betterschool.domain.post.model.valobj.FeedPageVO;
 import com.betterschool.domain.post.model.valobj.PostStatusVO;
-import com.betterschool.domain.post.service.comment.ICommentService;
+import com.betterschool.domain.post.service.post.IPostService;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -51,7 +51,6 @@ public class PostController {
     private static final int FEED_SUMMARY_MAX_LENGTH = 50;
 
     private final IPostService postService;
-    private final ICommentService commentService;
     private final PostPublishCase postPublishCase;
     private final CommentPublishCase commentPublishCase;
     private final PostLikeCase postLikeCase;
@@ -181,8 +180,8 @@ public class PostController {
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         String viewerId = SecurityUtils.currentUserId();
-        long total = commentService.countCommentsByUser(userId, viewerId);
-        List<PostCommentEntity> commentList = commentService.listCommentsByUser(userId, viewerId, page, pageSize);
+        long total = postService.countCommentsByUser(userId, viewerId);
+        List<PostCommentEntity> commentList = postService.listCommentsByUser(userId, viewerId, page, pageSize);
         List<UserCommentResponseDTO> dtoList = commentList.stream().map(this::toUserCommentDTO).toList();
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
@@ -262,9 +261,9 @@ public class PostController {
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         // total 为他人可见口径（不含待审）：sort=new 时作者行数可能多于 total（多出自己的审核中评论）；
         // sort=hot 只收已过审根评论、不自见，行数恒等于 total（票 01，默认档也是 hot）
-        long total = commentService.countVisibleRootComments(postId);
+        long total = postService.countVisibleRootComments(postId);
         List<PostCommentEntity> commentList =
-                commentService.listComments(postId, SecurityUtils.currentUserId(), sort, page, pageSize);
+                postService.listComments(postId, SecurityUtils.currentUserId(), sort, page, pageSize);
         Set<String> likedIds = likedCommentIdsOf(commentList, SecurityUtils.currentUserId());
         List<PostCommentResponseDTO> dtoList = commentList.stream()
                 .map(comment -> toCommentResponseDTO(comment, likedIds.contains(comment.getCommentId()))).toList();
@@ -287,8 +286,8 @@ public class PostController {
         int size = pageSize != null ? Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE) : (page == 1 ? 3 : 10);
         int offset = pageSize != null ? (page - 1) * size : (page == 1 ? 0 : 3 + (page - 2) * 10);
         String viewerId = SecurityUtils.currentUserId();
-        long total = commentService.countReplies(commentId, viewerId);
-        List<PostCommentEntity> replyList = commentService.listReplies(commentId, viewerId, offset, size);
+        long total = postService.countReplies(commentId, viewerId);
+        List<PostCommentEntity> replyList = postService.listReplies(commentId, viewerId, offset, size);
         Set<String> likedIds = likedCommentIdsOf(replyList, SecurityUtils.currentUserId());
         List<CommentReplyResponseDTO> dtoList = replyList.stream()
                 .map(reply -> toReplyResponseDTO(reply, likedIds.contains(reply.getCommentId()))).toList();
@@ -303,7 +302,7 @@ public class PostController {
 
     @DeleteMapping("/comments/{commentId}")
     public Response<Void> deleteComment(@PathVariable String commentId) {
-        commentService.deleteComment(commentId, SecurityUtils.currentUserId());
+        postService.deleteComment(commentId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
@@ -344,7 +343,7 @@ public class PostController {
     /** 当前用户已点赞的评论 id 集合（根评论与子回复通用；未登录为空集；批量查询避免 N+1） */
     private Set<String> likedCommentIdsOf(List<PostCommentEntity> commentList, String currentUserId) {
         List<String> commentIds = commentList.stream().map(PostCommentEntity::getCommentId).toList();
-        return new HashSet<>(commentService.listLikedCommentIds(currentUserId, commentIds));
+        return new HashSet<>(postService.listLikedCommentIds(currentUserId, commentIds));
     }
 
     /**

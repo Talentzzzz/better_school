@@ -5,7 +5,7 @@ import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
 import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
 import com.betterschool.domain.notification.service.INotificationService;
 import com.betterschool.domain.post.model.entity.PostCommentEntity;
-import com.betterschool.domain.post.service.comment.ICommentService;
+import com.betterschool.domain.post.service.post.IPostService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -22,11 +22,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class CommentLikeCase {
 
-    private final ICommentService commentService;
+    private final IPostService postService;
     private final INotificationService notificationService;
 
     public void like(String commentId, String userId) {
-        PostCommentEntity commentEntity = commentService.likeComment(commentId, userId);
+        PostCommentEntity commentEntity = postService.likeComment(commentId, userId);
         if (commentEntity.getUserId().equals(userId)) {
             return; // 自赞不发
         }
@@ -49,7 +49,7 @@ public class CommentLikeCase {
     }
 
     public void unlike(String commentId, String userId) {
-        commentService.unlikeComment(commentId, userId);
+        postService.unlikeComment(commentId, userId);
         // 取消赞不撤回已发通知
     }
 }

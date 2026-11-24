@@ -1,7 +1,7 @@
 package com.betterschool.usecase.post;
 
 import com.betterschool.domain.post.model.entity.PostCommentEntity;
-import com.betterschool.domain.post.service.comment.ICommentService;
+import com.betterschool.domain.post.service.post.IPostService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -12,13 +12,14 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class CommentPublishCase {
 
-    private final ICommentService commentService;
+    private final IPostService postService;
+
 
     public PostCommentEntity addComment(String postId, String userId, String content) {
-        return commentService.addComment(postId, userId, content);
+        return postService.addComment(postId, userId, content);
     }
 
     public PostCommentEntity addReply(String targetCommentId, String userId, String content) {
-        return commentService.addReply(targetCommentId, userId, content);
+        return postService.addReply(targetCommentId, userId, content);
     }
 }
