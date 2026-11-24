@@ -1,7 +1,7 @@
-package com.betterschool.types.timeout;
+package com.betterschool.infrastructure.timeout;
 
 /**
- * 超时域常量：timeout_task 分表规格（原独立超时工程的 Constants，内嵌化后随域迁入本工程）。
+ * 超时组件的分表规格常量（原独立超时工程的 Constants，随组件内嵌迁入）。
  * <p>
  * 「库 × 表」两维表达（用户 2026-10-16 拍板保留）：槽位是<b>全局展平编号</b> {@code g}（0..TOTAL-1），
  * {@code db = g / TABLES_PER_DB}、{@code table = g % TABLES_PER_DB}。
@@ -10,6 +10,9 @@ package com.betterschool.types.timeout;
  * ⚠️ 硬约束：{@code DB_COUNT > 1} 与「超时行与业务写入同事务」<b>互斥</b>（业务行留在原库、
  * 超时行按 hash 落到另一个库时同事务立刻失效）。这里保留的是<b>表达</b>，不是<b>开关</b>：
  * 要启用的前提是业务表也按同一分片键一起分库（见 backend/docs/architecture/timeout.md §0）。
+ * <p>
+ * 为什么放在组件包里而不是 {@code types}：这几个数是<b>这台的机器规格</b>（分表数、槽位数、数据源前缀），
+ * 只被本组件与 sharding.yaml 消费，不属于跨模块共享的通用常量。
  */
 public final class TimeoutConstants {
 

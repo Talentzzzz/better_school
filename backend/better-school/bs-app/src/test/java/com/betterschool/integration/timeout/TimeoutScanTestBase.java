@@ -1,11 +1,13 @@
 package com.betterschool.integration.timeout;
 
-import com.betterschool.domain.timeout.adapter.repository.ITimeoutRepository;
-import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.infrastructure.timeout.ScanSummary;
+import com.betterschool.infrastructure.timeout.TimeoutConstants;
+import com.betterschool.infrastructure.timeout.TimeoutScanner;
+import com.betterschool.infrastructure.timeout.TimeoutTaskEntity;
+import com.betterschool.infrastructure.timeout.TimeoutTaskShardSlots;
+import com.betterschool.infrastructure.timeout.TimeoutTaskStore;
+import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.integration.support.TimeoutTaskCallbackProbe;
-import com.betterschool.infrastructure.sharding.TimeoutTaskShardSlots;
-import com.betterschool.types.timeout.TimeoutConstants;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,18 +37,21 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 物理断言必须**绕过 ShardingSphere**（物理分表不在逻辑元数据里，经 SS 连接点名 timeout_task_NN 是
  * TableNotFoundException，票 01/02 已定位）——裸连地址复用 {@code timeout-it.raw-mysql-url}。
  */
-abstract class TimeoutScanTestBase extends CommunityApiTestBase {
+abstract class TimeoutScanTestBase extends PostApiTestBase {
 
     static final String TASK_TYPE = "PRODUCT_ORDER_PAY_TIMEOUT";
     /** 槽位总数：认领条件的上界，用例按它造满 16 张表 */
     static final int TOTAL_SLOTS = TimeoutConstants.TOTAL_SLOTS;
 
     @Autowired
-    protected ITimeoutRepository timeoutRepository;
+    protected TimeoutTaskStore timeoutTaskStore;
 
-    /** 回调 seam 探针：@Primary 顶掉生产的进程内分发器，默认原样委派（见探针类注释） */
+    /** 回调 seam 探针：由 {@link #scan} 显式递给扫描器，默认原样委派真装配（见探针类注释） */
     @Autowired
     protected TimeoutTaskCallbackProbe callbackProbe;
+
+    @Autowired
+    protected TimeoutScanner timeoutScanner;
 
     @Value("${timeout-it.raw-mysql-url}")
     private String rawMysqlUrl;
@@ -56,9 +61,9 @@ abstract class TimeoutScanTestBase extends CommunityApiTestBase {
     private String rawDbPassword;
 
     /**
-     * 探针是 {@code @Primary} 单例、Spring context 又是跨测试类缓存的：桩住的模式（按失败回报 / 并发闩）
-     * 不会随用例结束消失，会漏给**下一个共用 context 的测试类**（类执行顺序由 surefire 定，不由用例定）。
-     * 所以进出都摆回默认（委派真分发器）并清空观测——{@code @AfterEach} 是真正的兜底：
+     * 探针是跨测试类共享 context 的单例：桩住的模式（按失败回报 / 并发闩）不会随用例结束消失，
+     * 会漏给**下一个共用 context 的测试类**（类执行顺序由 surefire 定，不由用例定）。
+     * 所以进出都摆回默认（委派真装配）并清空观测——{@code @AfterEach} 是真正的兜底：
      * 用例断言失败时后面的代码不跑，只有它一定跑得到。
      */
     @BeforeEach
@@ -74,7 +79,7 @@ abstract class TimeoutScanTestBase extends CommunityApiTestBase {
      * Java 只传时长，action_time/next_fire_time 由 SQL 侧 TIMESTAMPADD 按数据库时钟落库）
      */
     protected void registerDue(String taskType, String bizId, int minutesFromNow) {
-        assertThat(timeoutRepository.register(
+        assertThat(timeoutTaskStore.register(
                 TimeoutTaskEntity.newWaiting(taskType, bizId, minutesFromNow * 60L)))
                 .as("注册超时任务 %s/%s 失败", taskType, bizId)
                 .isTrue();
@@ -82,6 +87,14 @@ abstract class TimeoutScanTestBase extends CommunityApiTestBase {
 
     protected void registerDue(String bizId, int minutesFromNow) {
         registerDue(TASK_TYPE, bizId, minutesFromNow);
+    }
+
+    /**
+     * 跑一轮扫描：到点动作递探针（生产递 {@code trigger.job.TimeoutActionRouter}）——扫描器的回调 seam
+     * 是入参，测试不再靠 {@code @Primary} 顶掉生产实现。
+     */
+    protected ScanSummary scan(int shardIndex, int shardTotal) {
+        return timeoutScanner.scan(shardIndex, shardTotal, callbackProbe);
     }
 
     /** 某一行的槽位（物理分表的编号就是它） */

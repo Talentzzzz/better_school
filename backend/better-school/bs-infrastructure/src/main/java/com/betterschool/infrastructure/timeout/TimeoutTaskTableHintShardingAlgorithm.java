@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.sharding;
+package com.betterschool.infrastructure.timeout;
 
 import org.apache.shardingsphere.sharding.api.sharding.hint.HintShardingAlgorithm;
 import org.apache.shardingsphere.sharding.api.sharding.hint.HintShardingValue;
@@ -14,6 +14,9 @@ import java.util.Set;
  * 槽位 → 表名走 {@link TimeoutTaskShardSlots#tableNameOf}，与仓储层按 bizId 算槽位是同一个类
  * ——扫描按槽位直达的那张表，必须是写入按 bizId 算出的同一张表（核心约束，单点函数收敛在
  * TimeoutTaskShardSlots）。库维见 {@link TimeoutTaskDbHintShardingAlgorithm}。
+ * <p>
+ * 类名被 {@code sharding.yaml} / {@code sharding-test.yaml} 的 {@code algorithmClassName} 按 FQCN 引用
+ * ——改包名/改名必须同步两份 YAML。
  */
 public class TimeoutTaskTableHintShardingAlgorithm implements HintShardingAlgorithm<Integer> {
 

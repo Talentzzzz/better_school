@@ -7,14 +7,14 @@ import com.betterschool.api.dto.TaskKeyDTO;
 import com.betterschool.api.dto.TaskKeysRequestDTO;
 import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
-import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
-import com.betterschool.domain.timeout.model.valobj.DeadLetterPageVO;
-import com.betterschool.domain.timeout.model.valobj.DeadLetterResendOutcomeVO;
-import com.betterschool.domain.timeout.model.valobj.TaskKeyVO;
+import com.betterschool.infrastructure.timeout.DeadLetterPage;
+import com.betterschool.infrastructure.timeout.DeadLetterResendOutcome;
+import com.betterschool.infrastructure.timeout.TaskKey;
+import com.betterschool.infrastructure.timeout.TimeoutDeadLetterAdmin;
+import com.betterschool.infrastructure.timeout.TimeoutTaskEntity;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
-import com.betterschool.usecase.timeout.TimeoutTaskDeadLetterCase;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -60,7 +60,7 @@ public class TimeoutTaskAdminController implements ITimeoutTaskAdminService {
      */
     private static final int MAX_PAGE = 1000;
 
-    private final TimeoutTaskDeadLetterCase timeoutTaskDeadLetterCase;
+    private final TimeoutDeadLetterAdmin timeoutDeadLetterAdmin;
 
     /** 死信列表：按最近进死信的顺序翻页（{@code updated_at} 倒序），分页参数在这里夹紧 */
     @Override
@@ -71,9 +71,9 @@ public class TimeoutTaskAdminController implements ITimeoutTaskAdminService {
         requireAdmin();
         int safePage = Math.min(Math.max(page, 1), MAX_PAGE);
         int safePageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
-        DeadLetterPageVO pageVO = timeoutTaskDeadLetterCase.pageDeadLetters(safePage, safePageSize);
-        return Response.ok(new PageResult<>(safePage, safePageSize, pageVO.getTotal(),
-                pageVO.getTasks().stream().map(TimeoutTaskAdminController::toDTO).toList()));
+        DeadLetterPage deadLetterPage = timeoutDeadLetterAdmin.page(safePage, safePageSize);
+        return Response.ok(new PageResult<>(safePage, safePageSize, deadLetterPage.getTotal(),
+                deadLetterPage.getTasks().stream().map(TimeoutTaskAdminController::toDTO).toList()));
     }
 
     /**
@@ -87,8 +87,8 @@ public class TimeoutTaskAdminController implements ITimeoutTaskAdminService {
         if (request == null || request.getKeys() == null || request.getKeys().isEmpty()) {
             throw illegalParam("重发入参缺 keys（单条也请放进列表）");
         }
-        List<TaskKeyVO> keys = request.getKeys().stream().map(TimeoutTaskAdminController::toKeyVO).toList();
-        DeadLetterResendOutcomeVO outcome = timeoutTaskDeadLetterCase.resendDeadLetters(keys);
+        List<TaskKey> keys = request.getKeys().stream().map(TimeoutTaskAdminController::toKey).toList();
+        DeadLetterResendOutcome outcome = timeoutDeadLetterAdmin.resend(keys);
 
         DeadLetterResendResultDTO result = new DeadLetterResendResultDTO();
         outcome.getSuccessList().forEach(key -> result.getSuccessList().add(toKeyDTO(key)));
@@ -104,7 +104,7 @@ public class TimeoutTaskAdminController implements ITimeoutTaskAdminService {
         if (request == null) {
             throw illegalParam("取消入参为空");
         }
-        boolean canceled = timeoutTaskDeadLetterCase.cancelDeadLetter(
+        boolean canceled = timeoutDeadLetterAdmin.cancel(
                 requireText(request.getTaskType(), "taskType"), requireText(request.getBizId(), "bizId"));
         return Response.ok(canceled);
     }
@@ -116,14 +116,14 @@ public class TimeoutTaskAdminController implements ITimeoutTaskAdminService {
         }
     }
 
-    private static TaskKeyVO toKeyVO(TaskKeyDTO key) {
+    private static TaskKey toKey(TaskKeyDTO key) {
         if (key == null) {
             throw illegalParam("重发入参含空键");
         }
-        return TaskKeyVO.of(requireText(key.getTaskType(), "taskType"), requireText(key.getBizId(), "bizId"));
+        return TaskKey.of(requireText(key.getTaskType(), "taskType"), requireText(key.getBizId(), "bizId"));
     }
 
-    private static TaskKeyDTO toKeyDTO(TaskKeyVO key) {
+    private static TaskKeyDTO toKeyDTO(TaskKey key) {
         return new TaskKeyDTO(key.getTaskType(), key.getBizId());
     }
 

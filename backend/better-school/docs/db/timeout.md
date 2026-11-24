@@ -1,11 +1,11 @@
 # timeout 域表（timeout_task_00 .. timeout_task_15）
 
-> 业务：内嵌在单体里的超时中心（原独立工程已随内嵌化下线，域与存储落地见 `.scratch/timeout-inline/issues/02-embedded-timeout-domain.md`）；归属模块：timeout（domain.timeout + infrastructure）
+> 业务：内嵌在单体里的超时中心（原独立工程已随内嵌化下线，域与存储落地见 `.scratch/timeout-inline/issues/02-embedded-timeout-domain.md`）；归属模块：`infrastructure/timeout` 技术组件（原 `domain.timeout`「技术域」已整体并入技术包，2026-11-24）
 > DDL 唯一事实源：`sql/schema.sql`（16 张分表逐张写出）。逻辑表形状与运维口径另见根目录 [`sql.md`](../../../../../sql.md) §1、架构见 [`backend/docs/architecture/timeout.md`](../../../docs/architecture/timeout.md)
 
 ## timeout_task_00 .. 15（16 张同构分表）
 
-业务/测试 SQL **只写逻辑表 `timeout_task`**，物理分表由 ShardingSphere 的 hint 强制路由（`bs-app/src/main/resources/sharding.yaml` + `bs-infrastructure/.../sharding/TimeoutTaskShardSlots`）。经 SS 连接点名物理表是 `TableNotFoundException`（物理表不在逻辑元数据里）；物理名只给分片算法与裸 MySQL 运维连接用。
+业务/测试 SQL **只写逻辑表 `timeout_task`**，物理分表由 ShardingSphere 的 hint 强制路由（`bs-app/src/main/resources/sharding.yaml` + `bs-infrastructure/.../timeout/TimeoutTaskShardSlots`）。经 SS 连接点名物理表是 `TableNotFoundException`（物理表不在逻辑元数据里）；物理名只给分片算法与裸 MySQL 运维连接用。
 
 |字段|类型|约束|说明|
 |----|----|----|----|
@@ -30,8 +30,8 @@
 - **不加 `user_id` 列**（票 02 显式结论，理由入档）
 
 ## 注意
-- **谁在写**：业务仓储在**业务事务内直插**（超时行与业务行同生同死）：`IdleRepository.createOrderWithLock`；各分支幂等在 `TimeoutRepository.register`
-- **谁在读**：扫描/结算（`TimeoutTaskScanCase` + `TimeoutTaskScanService`）与死信管理面（`TimeoutTaskAdminController`）；`selectDueBatch` 等按槽位捞批的语句由仓储统一塞 hint，**别绕开仓储直接调 `ITimeoutTaskDao`**——漏塞 hint 时写语句被路由校验拒掉、读语句退化成 16 表广播
+- **谁在写**：业务仓储在**业务事务内直插**（超时行与业务行同生同死）：`IdleRepository.createOrderWithLock`；各分支幂等在 `TimeoutTaskStore.register`
+- **谁在读**：扫描/结算（`TimeoutScanner` + `TimeoutSettler`）与死信管理面（`TimeoutTaskAdminController` → `TimeoutDeadLetterAdmin`）；`selectDueBatch` 等按槽位捞批的语句由 `TimeoutTaskStore` 统一塞 hint，**别绕开它直接调 `ITimeoutTaskDao`**——漏塞 hint 时写语句被路由校验拒掉、读语句退化成 16 表广播
 - 死信没有独立表：回调失败到上限的行留在本表置 `FAILED`，管理面 `/api/admin/timeout-tasks/dead-letters` 直接读它（列表是唯一允许跨 16 表广播的查询）
 - hint 是 TransmittableThreadLocal：纪律是「**hint 作用域先于子线程的创建/提交**」（票 01 界定），不是「必须同线程」
 - 集成测试（`TimeoutShardingRouteIntegrationTest`）用裸 MySQL 连接逐张断言「槽位 = 实际落库物理表」；物理断言必须绕过 SS

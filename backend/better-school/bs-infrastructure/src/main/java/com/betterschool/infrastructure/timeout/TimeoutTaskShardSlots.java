@@ -1,17 +1,14 @@
-package com.betterschool.infrastructure.sharding;
-
-import com.betterschool.types.timeout.TimeoutConstants;
+package com.betterschool.infrastructure.timeout;
 
 import java.util.Locale;
 
 /**
- * 槽位公式：写入与扫描（票 04）两个方向<b>必须</b>共用这一个函数，否则扫描会漏掉写入落在别的分表上的行
- * ——这是超时中心内嵌化的核心约束，不是优化点。
+ * 槽位公式：写入与扫描两个方向<b>必须</b>共用这一个函数，否则扫描会漏掉写入落在别的分表上的行
+ * ——这是超时组件内嵌化的核心约束，不是优化点。
  * <p>
- * 与原独立工程的差异只有一处：hash 输入从 {@code (task_type, biz_id)} 改为
- * <b>{@code biz_id}</b>——同一业务对象的多种超时（PAY_TIMEOUT/LOCK_TIMEOUT）与多轮次（复合 bizId 的
- * {@code :seq} 轮次）落同一张表；{@code uk_type_biz (task_type, biz_id)} 的全局唯一性不受影响
- * （同键行永远同表，uk 在表内依旧唯一）。
+ * hash 输入是 {@code biz_id}（不是 {@code (task_type, biz_id)}）：同一业务对象的多种超时
+ * （PAY_TIMEOUT/LOCK_TIMEOUT）与多轮次（复合 bizId 的 {@code :seq} 轮次）落同一张表；
+ * {@code uk_type_biz (task_type, biz_id)} 的全局唯一性不受影响（同键行永远同表，uk 在表内依旧唯一）。
  * <p>
  * 哈希用 {@link String#hashCode()}：算法由 JLS 写死（{@code s[0]*31^(n-1) + ...}），
  * 跨 JVM、跨版本稳定，正是「同 key 永远同表」需要的性质。

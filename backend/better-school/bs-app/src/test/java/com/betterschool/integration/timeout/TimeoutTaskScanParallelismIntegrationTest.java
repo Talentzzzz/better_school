@@ -1,7 +1,6 @@
 package com.betterschool.integration.timeout;
 
-import com.betterschool.domain.timeout.model.valobj.ScanSummaryVO;
-import com.betterschool.usecase.timeout.TimeoutTaskScanCase;
+import com.betterschool.infrastructure.timeout.ScanSummary;
 import com.zaxxer.hikari.HikariDataSource;
 import com.zaxxer.hikari.HikariPoolMXBean;
 import org.junit.jupiter.api.DisplayName;
@@ -37,9 +36,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 class TimeoutTaskScanParallelismIntegrationTest extends TimeoutScanTestBase {
 
     @Autowired
-    private TimeoutTaskScanCase timeoutTaskScanCase;
-
-    @Autowired
     private HikariDataSource dataSource;
 
     @Value("${timeout.scan.parallelism}")
@@ -49,7 +45,7 @@ class TimeoutTaskScanParallelismIntegrationTest extends TimeoutScanTestBase {
     void 单实例认领16张分表时并发不超过并行度() {
         List<String> bizIds = registerOneDueTaskPerSlot("scan-par-all-");
 
-        ScanSummaryVO summary = scanWithConcurrencyProbe(bizIds, 0, 1);
+        ScanSummary summary = scanWithConcurrencyProbe(bizIds, 0, 1);
 
         assertThat(summary.getSlotCount()).isEqualTo(TOTAL_SLOTS);
         assertThat(summary.getTaskCount()).isEqualTo(TOTAL_SLOTS);
@@ -64,7 +60,7 @@ class TimeoutTaskScanParallelismIntegrationTest extends TimeoutScanTestBase {
         List<String> bizIds = registerOneDueTaskPerSlot("scan-par-half-");
 
         // shardIndex = 0、shardTotal = 2：本实例认领 8 张表（偶数槽位）
-        ScanSummaryVO summary = scanWithConcurrencyProbe(bizIds, 0, 2);
+        ScanSummary summary = scanWithConcurrencyProbe(bizIds, 0, 2);
 
         assertThat(summary.getSlotCount()).isEqualTo(TOTAL_SLOTS / 2);
         assertThat(summary.getTaskCount()).isEqualTo(TOTAL_SLOTS / 2);
@@ -85,14 +81,14 @@ class TimeoutTaskScanParallelismIntegrationTest extends TimeoutScanTestBase {
     }
 
     /** 摆探针（闩 + 观测）跑一轮扫描，并断言并行度的三条证据；返回本轮账 */
-    private ScanSummaryVO scanWithConcurrencyProbe(List<String> bizIds, int shardIndex, int shardTotal) {
+    private ScanSummary scanWithConcurrencyProbe(List<String> bizIds, int shardIndex, int shardTotal) {
         callbackProbe.stubSuccess();
         // 池宽度 = min(并行度, 本实例认领到的表数)：两个档（16 张 / 8 张）都断言这一条
         int expectedConcurrency = Math.max(1, Math.min(parallelism, claimedSlotCount(shardIndex, shardTotal)));
         callbackProbe.armConcurrencyBarrier(expectedConcurrency);
 
-        ScanSummaryVO[] summary = new ScanSummaryVO[1];
-        int hikariPeak = runWithHikariPeakSampling(() -> summary[0] = timeoutTaskScanCase.scan(shardIndex, shardTotal));
+        ScanSummary[] summary = new ScanSummary[1];
+        int hikariPeak = runWithHikariPeakSampling(() -> summary[0] = scan(shardIndex, shardTotal));
 
         assertThat(callbackProbe.barrierTimeouts())
                 .as("回调没凑满 %d 个并发 = 没并行起来（或池宽度小于并行度）", expectedConcurrency)

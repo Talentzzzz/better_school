@@ -1,6 +1,6 @@
 # 超时中心（内嵌形态）
 
-> 归属：单体 `backend/better-school/` 的 `timeout` 技术域。超时任务与业务写入**同事务、同库、同进程**。
+> 归属：单体 `backend/better-school/` 的超时技术组件 `infrastructure/timeout`（原 `domain.timeout`「技术域」历史遗留已整体并入技术包，2026-11-24）。超时任务与业务写入**同事务、同库、同进程**。
 > 本文只写「怎么跑起来、怎么改不翻车」；接口见
 > [`../../better-school/docs/api/timeout.md`](../../better-school/docs/api/timeout.md)，
 > 库表见 [`../../better-school/docs/db/timeout.md`](../../better-school/docs/db/timeout.md)。
@@ -25,21 +25,19 @@
 
 | 模块 | 落点 | 内容 |
 | --- | --- | --- |
-| `bs-types` | `types.timeout` | `TimeoutConstants`：逻辑表名、`DB_COUNT=1`、`TABLES_PER_DB=16`、`TOTAL_SLOTS`、ds 前缀 |
-| `bs-domain` | `domain.timeout` | `model.entity.TimeoutTaskEntity`、状态/键/结算结果等 VO、`ITimeoutRepository`、`service.scan` 与 `service.deadletter`、端口 `ITimeoutTaskCallbackPort` |
-| `bs-infrastructure` | `infrastructure.timeout` | PO/DAO、mapper 接口、`TimeoutRepository`、`sharding`（槽位函数 + 库维/表维两个 hint 算法） |
-| `bs-case` | `usecase.timeout` | `TimeoutTaskScanCase`（认领 + 有界并行 + 结算）、`TimeoutTaskCallbackDispatcher`、`TimeoutTaskDeadLetterCase` |
-| `bs-trigger` | `trigger.job` / `trigger.http.timeout` | `TimeoutTaskScanJob`（取分片参数）、`TimeoutTaskAdminController`（死信管理面） |
+| `bs-infrastructure` | `infrastructure.timeout` | 组件整体（一个包）：`TimeoutConstants`（规格常量）、`TimeoutTaskEntity` / `TimeoutTaskStatus` / 各结算与死信值对象、`TimeoutTaskStore`（16 分表唯一读写口 + hint）、`TimeoutScanner`（认领 + 有界并行 + 循环拉批到空）、`TimeoutSettler`（分桶 + 退避）、`TimeoutDeadLetterAdmin`（死信管理面）、`ITimeoutHandler`（到点动作 SPI）、`ITimeoutBucketWriter`（结算写出缝，单测用）、槽位函数 `TimeoutTaskShardSlots` 与库/表维两个 hint 算法；DAO/PO 仍按惯例住 `dao/timeout` |
+| `bs-trigger` | `trigger.job` / `trigger.http.timeout` | `TimeoutTaskScanJob`（取分片参数 + 递入装配）、`TimeoutActionRouter`（taskType → 业务动作的装配点，实现 `ITimeoutHandler`）、`TimeoutTaskAdminController`（死信管理面，直调组件） |
 | `bs-api` | `api` / `api.dto` | `ITimeoutTaskAdminService` + 管理面 DTO（**不建 Dubbo 契约**——没有跨进程边） |
 | `bs-app` | `config` / `mybatis/mapper` | `ShardingSelfCheck`、`sharding.yaml`（dev）与测试侧 `sharding-test.yaml`、`TimeoutTaskMapper.xml` |
 
-**两处照规范该解释的例外**：
+**装配为什么在 trigger**（组件化后唯一的落位要点）：
 
-1. `TimeoutTaskCallbackDispatcher` 实现 domain 端口却落在 `usecase.timeout`——分发要调其它域的 case，
-   infrastructure 看不到 case 层。这是「端口由 infrastructure 实现」的显式例外（同款说明见 CLAUDE.md §4）。
-2. 业务仓储（idle 侧）在自己的事务里
-   注入 `ITimeoutRepository` 注册超时行——「域不注入他域仓储」的显式例外。同事务注册是内嵌化的全部前提，
-   注册必须落在**已经开着事务的那个仓储方法**里；域服务本身仍不注入超时仓储，也不自持事务边界（见 CLAUDE.md §1/§3）。
+1. 到点动作要调业务域的 case——infra 看不见 case 层、case 也看不见 infra，trigger 两边都看得见，
+   所以 taskType → 动作的装配落在 `trigger/job/TimeoutActionRouter`（实现组件的 `ITimeoutHandler` SPI）。
+   同款先例：`FileController → FileStorage`、各域仓储直用 `ISearchIndex`。
+2. 业务仓储（idle 侧）在自己的事务里调用同层技术组件 `TimeoutTaskStore.register(...)` 注册超时行
+   （infra → infra，不构成「域注入他域仓储」）。同事务注册是内嵌化的全部前提，注册必须落在
+   **已经开着事务的那个仓储方法**里；域服务本身仍不注入超时组件，也不自持事务边界（见 CLAUDE.md §1/§3）。
 
 ## 2. 数据面：16 张分表，与业务同库
 
@@ -91,7 +89,7 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 
 ## 3. 注册：业务事务内直插（票 03）
 
-接入点在**仓储自己的事务方法**里调 `ITimeoutRepository.register`：
+接入点在**仓储自己的事务方法**里调 `TimeoutTaskStore.register`：
 
 | taskType | 注册点 | 计时起点 | bizId |
 | --- | --- | --- | --- |
@@ -123,7 +121,7 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 | `executor_fail_retry_count` | `0` | 调度层不重试，周期重扫即重试 |
 | `misfire_strategy` | `FIRE_ONCE_NOW` | 错过补一次 |
 
-一次 tick（`TimeoutTaskScanCase`）：
+一次 tick（`TimeoutScanner.scan(shardIndex, shardTotal, handler)`）：
 
 1. 认领槽位：`g % shardTotal == shardIndex && g < 16`。实例数 > 16 时多出的实例空转（正常形态，不是错误）。
 2. **一个 tick 固定一个 `dueBefore`**；每槽**循环拉批到空**（单批 ≤ `timeout.scan.batch-size` = 200，
@@ -160,8 +158,8 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 
 ## 6. 回调：进程内分发（票 05）
 
-`TimeoutTaskScanCase` 到点后逐项调用 `ITimeoutTaskCallbackPort`，生产实现是
-`usecase.timeout.TimeoutTaskCallbackDispatcher`——按 `taskType` switch 到既有域动作：
+扫描器到点后逐项调用 `ITimeoutHandler`，生产装配是
+`trigger.job.TimeoutActionRouter`——按 `taskType` switch 到既有域动作：
 
 | taskType | 动作 | 说明 |
 | --- | --- | --- |
@@ -216,7 +214,7 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 1. 在业务域的 `Constants` 加 `taskType`（taskType 是业务词汇，留在业务域）；
 2. 在业务仓储的**事务方法**里 `timeoutRepository.register(TimeoutTaskEntity.newWaiting(...))`，
    `action_time` 用业务计时起点；
-3. 在 `TimeoutTaskCallbackDispatcher` 加分支，调该域的状态机动作（条件 UPDATE 自带幂等）；
+3. 在 `trigger/job/TimeoutActionRouter` 加一条 case 分支，调该域的状态机动作（条件 UPDATE 自带幂等）；
 4. 补一条「注册 → 到点 → 回调 → 状态落定」集成测试；复合 `bizId` 要在分发里加自己的解析形状。
 
 **不要做**：加 `user_id` 列；恢复回调路由列；用 `outbox_message` 承载注册；建 Dubbo 契约；
@@ -230,7 +228,7 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 - `SHOW TABLES` 经 SS 是**原样透传**（返回物理表名），逻辑库可见性要用 JDBC `DatabaseMetaData.getTables` 断言。
 - 测试 profile 的 `xxl.job.executor.appname` 必须另起一个（`better-school-executor-test`）：否则 admin 里启用的
   `timeoutTaskScan` 会每 10s 真扫测试库，与用例自己调的 `scan()` 抢同一批行（症状：批次账莫名多出回调）。
-- `CommunityApiTestBase` 每用例清 16 张物理分表：业务表 TRUNCATE 会重置自增 id，而超时行不清会污染下一用例
+- `PostApiTestBase` 每用例清 16 张物理分表：业务表 TRUNCATE 会重置自增 id，而超时行不清会污染下一用例
   （同 bizId 被三分支吸收）。
 - 相关集成测试：`TimeoutShardingRouteIntegrationTest`、`TimeoutTaskScanIntegrationTest`（含多实例/退避/死信/竞态）、
   `TimeoutTaskScanParallelismIntegrationTest`、`TimeoutDeadLetterSurfaceIntegrationTest`。
@@ -251,7 +249,7 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 | --- | --- |
 | 缺 `!SINGLE` → 业务表 `TableNotFoundException`，启动不报错 | `sharding.yaml` 里显式 `!SINGLE`，且放在 `!SHARDING` 之前 |
 | `SHOW TABLES` 看到物理表名 ≠ 逻辑库可见性 | 用 JDBC `DatabaseMetaData.getTables` 断言 |
-| 漏塞 hint 的写语句被路由校验拒掉；读语句退化成 16 表广播 | 别绕开 `TimeoutRepository` 直接调 DAO |
+| 漏塞 hint 的写语句被路由校验拒掉；读语句退化成 16 表广播 | 别绕开 `TimeoutTaskStore` 直接调 DAO |
 | `INTERVAL ?` 参数被解析器丢掉 | 退避时刻在 Java 算好，作为 `LocalDateTime` 参数传 |
 | `IN ()` 语法错误 | 空桶不发语句（域服务 + 仓储两层都挡） |
 | 退避配成 0 → 一个 tick 跑光 16 次重试 | `base-seconds` / `max-seconds` 都兜底 ≥ 1s |

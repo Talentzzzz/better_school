@@ -1,9 +1,9 @@
 package com.betterschool.integration.timeout;
 
-import com.betterschool.infrastructure.sharding.TimeoutTaskShardSlots;
+import com.betterschool.infrastructure.timeout.TimeoutTaskShardSlots;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.betterschool.integration.support.CommunityApiTestBase.Session;
+import com.betterschool.integration.support.PostApiTestBase.Session;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;

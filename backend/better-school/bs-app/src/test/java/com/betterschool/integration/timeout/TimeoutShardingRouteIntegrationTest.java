@@ -1,9 +1,9 @@
 package com.betterschool.integration.timeout;
 
-import com.betterschool.domain.timeout.adapter.repository.ITimeoutRepository;
-import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
-import com.betterschool.infrastructure.sharding.TimeoutTaskShardSlots;
-import com.betterschool.integration.support.CommunityApiTestBase;
+import com.betterschool.infrastructure.timeout.TimeoutTaskEntity;
+import com.betterschool.infrastructure.timeout.TimeoutTaskShardSlots;
+import com.betterschool.infrastructure.timeout.TimeoutTaskStore;
+import com.betterschool.integration.support.PostApiTestBase;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 裸连地址从 application-test.yml 的 {@code timeout-it.raw-mysql-url} 注入（与 sharding-test.yaml
  * 的 jdbcUrl 同源；测试代码不另写地址，见 backend/CLAUDE.md §10）。
  */
-class TimeoutShardingRouteIntegrationTest extends CommunityApiTestBase {
+class TimeoutShardingRouteIntegrationTest extends PostApiTestBase {
 
     @Value("${timeout-it.raw-mysql-url}")
     private String rawMysqlUrl;
@@ -41,7 +41,7 @@ class TimeoutShardingRouteIntegrationTest extends CommunityApiTestBase {
     private String rawPassword;
 
     @Autowired
-    private ITimeoutRepository timeoutRepository;
+    private TimeoutTaskStore timeoutTaskStore;
 
     @Test
     void slotComputedFromKeyMatchesPhysicalTable() throws Exception {
@@ -54,9 +54,9 @@ class TimeoutShardingRouteIntegrationTest extends CommunityApiTestBase {
             // 注册（事务内直插的仓储原语，票 03 接管注册语义）：WAITING、next_fire_time = action_time
             //（时刻一律数据库时钟，Java 只传时长）
             TimeoutTaskEntity taskEntity = TimeoutTaskEntity.newWaiting(taskType, bizId, 3600L);
-            assertThat(timeoutRepository.insertIfAbsent(taskEntity))
+            assertThat(timeoutTaskStore.insertIfAbsent(taskEntity))
                     .as("新键插入应成功").isTrue();
-            assertThat(timeoutRepository.findByKey(taskType, bizId))
+            assertThat(timeoutTaskStore.findByKey(taskType, bizId))
                     .as("按键读回（hint 同槽位）应命中").isNotNull();
 
             // 验收断言：槽位 = 实际落库的物理表——槽位那张恰 1 行，其余 15 张全 0
@@ -70,21 +70,21 @@ class TimeoutShardingRouteIntegrationTest extends CommunityApiTestBase {
             }
 
             // 同键重注册 = 幂等（uk_type_biz 撞键翻返回值，不抛异常）
-            assertThat(timeoutRepository.insertIfAbsent(taskEntity))
+            assertThat(timeoutTaskStore.insertIfAbsent(taskEntity))
                     .as("同键二次插入应返回 false（已存在）").isFalse();
 
             // 业务取消（软置 CANCELED，只打未终态行）→ 终态复活（改期 + 计数清零）
-            assertThat(timeoutRepository.cancelActive(taskType, bizId)).isTrue();
-            assertThat(timeoutRepository.findByKey(taskType, bizId).getStatus().name()).isEqualTo("CANCELED");
-            assertThat(timeoutRepository.cancelActive(taskType, bizId))
+            assertThat(timeoutTaskStore.cancelActive(taskType, bizId)).isTrue();
+            assertThat(timeoutTaskStore.findByKey(taskType, bizId).getStatus().name()).isEqualTo("CANCELED");
+            assertThat(timeoutTaskStore.cancelActive(taskType, bizId))
                     .as("终态行再取消应无副作用").isFalse();
 
             // 复活传时长 2h：action_time/next_fire_time 由 SQL 侧 TIMESTAMPADD 按数据库时钟刷新
             //（DB 时钟 ≈ 本机时钟，±5s 容差给两条时钟读数留余量）
             TimeoutTaskEntity reviveEntity = TimeoutTaskEntity.newWaiting(taskType, bizId, 7200L);
-            assertThat(timeoutRepository.reviveTerminal(reviveEntity))
+            assertThat(timeoutTaskStore.reviveTerminal(reviveEntity))
                     .as("终态行应被复活").isTrue();
-            TimeoutTaskEntity afterReviveEntity = timeoutRepository.findByKey(taskType, bizId);
+            TimeoutTaskEntity afterReviveEntity = timeoutTaskStore.findByKey(taskType, bizId);
             assertThat(afterReviveEntity.getStatus().name()).isEqualTo("WAITING");
             assertThat(afterReviveEntity.getNextFireTime())
                     .as("复活刷新 next_fire_time = 落库时刻 + 2h")

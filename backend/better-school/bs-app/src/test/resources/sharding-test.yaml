@@ -35,12 +35,12 @@ rules:
         type: CLASS_BASED
         props:
           strategy: HINT
-          algorithmClassName: com.betterschool.infrastructure.sharding.TimeoutTaskDbHintShardingAlgorithm
+          algorithmClassName: com.betterschool.infrastructure.timeout.TimeoutTaskDbHintShardingAlgorithm
       timeout-task-table-hint:
         type: CLASS_BASED
         props:
           strategy: HINT
-          algorithmClassName: com.betterschool.infrastructure.sharding.TimeoutTaskTableHintShardingAlgorithm
+          algorithmClassName: com.betterschool.infrastructure.timeout.TimeoutTaskTableHintShardingAlgorithm
 
 props:
   sql-show: false

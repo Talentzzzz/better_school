@@ -2,7 +2,7 @@
 
 > 业务：事务性本地消息表（RocketMQ 最终一致）；归属模块：outbox（infrastructure）
 > DDL 唯一事实源：`sql/schema.sql`（票 05 全库重写；monolith-restructure 票 07 合库后**全库唯一一份**，形状取合并前 marketing 侧超集——单体侧旧形状退役）。**`delay_outbox_message` / `DelayOutboxMessageStore` / `DelayOutboxMessageSender` 整条延迟 outbox 链路已删除，无此表、无此代码**
-> **原来的超时注册意图表 / `TimeoutRegisterOutboxStore` / `TimeoutRegisterOutboxSender` 整条注册 outbox 链路已删除（超时内嵌化票 03）**：注册改为业务事务内直插 `timeout_task` 分表（16 张，见 schema.sql），三分支幂等在 `TimeoutRepository.register`。用法见 [`backend/docs/architecture/timeout.md`](../../../docs/architecture/timeout.md)
+> **原来的超时注册意图表 / `TimeoutRegisterOutboxStore` / `TimeoutRegisterOutboxSender` 整条注册 outbox 链路已删除（超时内嵌化票 03）**：注册改为业务事务内直插 `timeout_task` 分表（16 张，见 schema.sql），三分支幂等在 `TimeoutTaskStore.register`。用法见 [`backend/docs/architecture/timeout.md`](../../../docs/architecture/timeout.md)
 
 # outbox_message（本地消息表 outbox）
 
@@ -28,4 +28,4 @@
 - **谁在读/改**：只有 `OutboxMessageSender`：事务提交后即时 `asyncSend` 一次（降延迟），失败按下发重试计数决定 `retry_count+1` 或置 state=2；状态标记走高并发设计（RocketMQ 回调线程只入内存队列，专用标记线程批量 update）
 - **兜底扫描**：`@XxlJob("outboxScan")` cron `0/30 * * * * ?` 重发全部 state=0 行，覆盖「提交后进程崩溃 / broker 宕机」；多实例需加扫描锁，重复发送由消费端按 `msg_id` 幂等兜底
 - 消费侧按 `msg_id` 幂等，因此重发安全；本表只有 0/1/2 三态，无软删列
-- 集成测试每用例 TRUNCATE 本表（`CommunityApiTestBase` 的表隔离清单）——断言待发消息要么按 `destination + state=0` 查，要么在清库前查
+- 集成测试每用例 TRUNCATE 本表（`PostApiTestBase` 的表隔离清单）——断言待发消息要么按 `destination + state=0` 查，要么在清库前查

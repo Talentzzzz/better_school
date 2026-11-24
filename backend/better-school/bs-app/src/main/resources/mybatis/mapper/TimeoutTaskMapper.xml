@@ -4,7 +4,7 @@
 
     <!-- 全部 SQL 写逻辑表 timeout_task：物理分表由 ShardingSphere 的 hint 强制路由决定
          （见 app 模块 resources/sharding.yaml 头注释）。**调用方必须先经仓储层把全局槽位塞进
-         HintManager（库维 + 表维两个 hint 值）**——TimeoutRepository 统一做这件事，别直接调本接口：
+         HintManager（库维 + 表维两个 hint 值）**——TimeoutTaskStore 统一做这件事，别直接调本接口：
          漏塞 hint 时写语句会被路由校验拒掉、读语句会退化成 16 表广播。
          列里没有回调路由列：进程内分发后按应用名路由的列已删（内嵌化票 02）。 -->
 

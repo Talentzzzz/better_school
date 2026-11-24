@@ -1,15 +1,15 @@
-package com.betterschool.domain.timeout.model.valobj;
+package com.betterschool.infrastructure.timeout;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 /**
  * 一次扫描 tick 的账：认领了几个槽、拉了几批、处理了几行、成功几行、进重试几行、进死信几行。
- * （日志文案在触发层的 job 里拼，域对象只管数字。）
+ * （日志文案在 job 里拼，组件只管数字。）
  */
 @Getter
 @AllArgsConstructor
-public class ScanSummaryVO {
+public class ScanSummary {
 
     /** 本实例本次认领的槽位数（槽位 ≥ 实例数时 = TOTAL / shardTotal 上下取整） */
     private final int slotCount;

@@ -1,6 +1,5 @@
-package com.betterschool.infrastructure.sharding;
+package com.betterschool.infrastructure.timeout;
 
-import com.betterschool.types.timeout.TimeoutConstants;
 import org.apache.shardingsphere.sharding.api.sharding.hint.HintShardingAlgorithm;
 import org.apache.shardingsphere.sharding.api.sharding.hint.HintShardingValue;
 
@@ -16,6 +15,9 @@ import java.util.Set;
  * 全部落 {@code ds0}——<b>不得配置第二个库</b>：超时行落到别的库 = 与业务写入不再同一条连接 =
  * 同事务前提失效（硬约束，见 TimeoutConstants 与架构文档）。表维见
  * {@link TimeoutTaskTableHintShardingAlgorithm}，槽位分解单点在 {@link TimeoutTaskShardSlots}。
+ * <p>
+ * 类名被 {@code sharding.yaml} / {@code sharding-test.yaml} 的 {@code algorithmClassName} 按 FQCN 引用
+ * ——改包名/改名必须同步两份 YAML。
  */
 public class TimeoutTaskDbHintShardingAlgorithm implements HintShardingAlgorithm<Integer> {
 
