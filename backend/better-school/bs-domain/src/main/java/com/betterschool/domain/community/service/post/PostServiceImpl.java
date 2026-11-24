@@ -9,6 +9,7 @@ import com.betterschool.domain.community.model.valobj.FeedIndexItemVO;
 import com.betterschool.domain.community.model.valobj.FeedPageVO;
 import com.betterschool.domain.community.model.valobj.LikeStateVO;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
+import com.betterschool.types.common.SearchPageVO;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -259,6 +261,33 @@ public class PostServiceImpl implements ICommunityPostService {
     @Override
     public List<String> listViewedPostIds(String userId, List<String> postIds) {
         return communityRepository.selectViewedPostIds(userId, postIds);
+    }
+
+    @Override
+    public SearchPageVO<PostEntity> searchPosts(String keyword, int page, int pageSize) {
+        // 索引只负责命中与排序：命中 id 回库批量反查，按 id 顺序重排（IN 查询不保序），
+        // 命中后状态已变化的实体在这里被过滤掉——本域才是「公开」的最终判据
+        SearchPageVO<String> idPage = communityRepository.searchPostIds(keyword, page, pageSize);
+        if (idPage.getItems().isEmpty()) {
+            return new SearchPageVO<>(idPage.getTotal(), List.of());
+        }
+        Map<String, PostEntity> byId = communityRepository.listByIds(idPage.getItems()).stream()
+                .filter(post -> post.getStatus() == PostStatusVO.NORMAL)
+                .collect(Collectors.toMap(PostEntity::getPostId, Function.identity()));
+        return new SearchPageVO<>(idPage.getTotal(), idPage.getItems().stream()
+                .map(byId::get)
+                .filter(Objects::nonNull)
+                .toList());
+    }
+
+    @Override
+    public void syncSearchDoc(String postId) {
+        communityRepository.syncPostSearchDoc(postId);
+    }
+
+    @Override
+    public int rebuildSearchIndex() {
+        return communityRepository.rebuildPostSearchIndex();
     }
 
     private PostEntity getNormalPost(String postId) {

@@ -1,6 +1,5 @@
 package com.betterschool.infrastructure.search;
 
-import com.betterschool.domain.search.adapter.repository.ISearchRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -16,12 +15,12 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class SearchIndexInitializer implements ApplicationRunner {
 
-    private final ISearchRepository searchRepository;
+    private final ISearchIndex searchIndex;
 
     @Override
     public void run(ApplicationArguments args) {
         try {
-            searchRepository.ensureIndices();
+            searchIndex.ensureIndices();
             log.info("[SearchIndexInitializer] ES 索引检查/创建完成");
         } catch (Exception e) {
             log.error("[SearchIndexInitializer] ES 索引初始化失败（应用继续启动，可稍后触发全量重建）", e);

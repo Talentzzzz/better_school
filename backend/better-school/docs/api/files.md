@@ -12,4 +12,4 @@
   - 未登录 → HTTP 401（SecurityConfig 统一 JSON）
   - 非 jpg/png/webp、Content-Type 与扩展名不符、>5MB、文件为空 → code 400
   - MinIO 不可用 → code 999（"文件上传失败"）
-- 流程: Controller 读 multipart → FileUploadCase 校验白名单/大小 → MinioFileStorage（infrastructure）putObject 到 `uploads/yyyyMM/uuid.ext`，桶与公开读策略在启动/首次上传时自动保证
+- 流程: `FileController`（trigger）读 multipart → 直调 `infrastructure/file/FileStorage`（技术组件，白名单/大小校验在组件内）→ MinIO putObject 到 `uploads/yyyyMM/uuid.ext`，桶与公开读策略在启动/首次上传时自动保证。技术能力不占 domain 段，故无 case 编排与 domain 端口

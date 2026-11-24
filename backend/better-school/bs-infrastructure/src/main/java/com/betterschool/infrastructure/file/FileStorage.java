@@ -1,6 +1,6 @@
-package com.betterschool.infrastructure.adapter.port.file;
+package com.betterschool.infrastructure.file;
 
-import com.betterschool.domain.file.adapter.port.IFileStoragePort;
+import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import io.minio.BucketExistsArgs;
@@ -20,19 +20,25 @@ import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * MinIO 对象存储实现：启动时建桶 + 公开读策略（失败不阻断启动，首次上传时重试）；
- * 访问 URL = publicUrl（默认 endpoint）+ bucket + objectKey，桶公开读保证浏览器可直接加载图片
+ * 对象存储技术组件（MinIO）：白名单校验（扩展名 + Content-Type + 大小）内聚在组件内，
+ * 上传成功返回可直接访问的 URL。
+ * <p>
+ * 技术能力不占 domain 段（见 CLAUDE.md §1「不得为技术能力开 port」），整体落技术包；
+ * 由 trigger 直接注入（同 {@code infrastructure/ws} 待遇，bs-trigger → bs-infrastructure），
+ * 仓储/其他技术包若要存文件也从本包取用。
+ * <p>
+ * 访问 URL = publicUrl（默认 endpoint）+ bucket + objectKey，桶公开读保证浏览器可直接加载图片。
  */
 @Slf4j
 @Component
-public class FileStoragePort implements IFileStoragePort {
+public class FileStorage {
 
     private static final DateTimeFormatter MONTH_DIR = DateTimeFormatter.ofPattern("yyyyMM");
 
     private final MinioProperties minioProperties;
     private final MinioClient minioClient;
 
-    public FileStoragePort(MinioProperties minioProperties) {
+    public FileStorage(MinioProperties minioProperties) {
         this.minioProperties = minioProperties;
         this.minioClient = MinioClient.builder()
                 .endpoint(minioProperties.getEndpoint())
@@ -53,8 +59,32 @@ public class FileStoragePort implements IFileStoragePort {
         }
     }
 
-    @Override
-    public String store(byte[] content, String extension, String contentType) {
+    /**
+     * 上传图片：校验通过后交 MinIO，返回可公开访问的 URL
+     *
+     * @param content     文件字节
+     * @param fileName    原始文件名（用于取扩展名）
+     * @param contentType 请求声明的 MIME 类型
+     */
+    public String uploadImage(byte[] content, String fileName, String contentType) {
+        if (content == null || content.length == 0) {
+            throw new BusinessException(ResponseCode.PARAM_ERROR, "文件为空");
+        }
+        if (content.length > Constants.UPLOAD_IMAGE_MAX_BYTES) {
+            throw new BusinessException(ResponseCode.PARAM_ERROR, "单张图片不能超过 5MB");
+        }
+        String extension = extensionOf(fileName);
+        String expectedContentType = Constants.UPLOAD_IMAGE_CONTENT_TYPES.get(extension);
+        if (expectedContentType == null) {
+            throw new BusinessException(ResponseCode.PARAM_ERROR, "仅支持 jpg/png/webp 图片");
+        }
+        if (!expectedContentType.equals(contentType)) {
+            throw new BusinessException(ResponseCode.PARAM_ERROR, "文件内容与扩展名不符");
+        }
+        return store(content, extension, contentType);
+    }
+
+    private String store(byte[] content, String extension, String contentType) {
         try {
             ensureBucket();
             String objectKey = "uploads/" + LocalDateTime.now().format(MONTH_DIR) + "/" + UUID.randomUUID() + "." + extension;
@@ -73,6 +103,17 @@ public class FileStoragePort implements IFileStoragePort {
             log.error("MinIO 存储文件失败", e);
             throw new BusinessException(ResponseCode.SYSTEM_ERROR, "文件上传失败，请稍后重试");
         }
+    }
+
+    private String extensionOf(String fileName) {
+        if (fileName == null) {
+            return "";
+        }
+        int dotIndex = fileName.lastIndexOf('.');
+        if (dotIndex < 0 || dotIndex == fileName.length() - 1) {
+            return "";
+        }
+        return fileName.substring(dotIndex + 1).toLowerCase();
     }
 
     /**

@@ -1,7 +1,7 @@
 package com.betterschool.integration.job;
 
 import com.betterschool.integration.support.CommunityApiTestBase;
-import com.betterschool.integration.support.FakeSearchRepository;
+import com.betterschool.integration.support.FakeSearchIndex;
 import com.betterschool.trigger.job.SearchIndexRebuildJob;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 本测试盯住三件事——重建能跑到头（游标真的在推进）、只有公开状态的实体进索引（过滤没丢）、
  * 每类的全部合格行都回填了（扇出结果在主线程汇总没漏）。
  *
- * <p>ES 侧用 {@link FakeSearchRepository} 替身（测试栈刻意不连 ES），断言的是重建算法而非 ES 语义。
+ * <p>ES 侧用 {@link FakeSearchIndex} 替身（测试栈刻意不连 ES），断言的是重建算法而非 ES 语义。
  */
 @DisplayName("搜索索引全量重建：游标拉批到空批 + 批内扇出 + 状态过滤")
 class SearchIndexRebuildJobIntegrationTest extends CommunityApiTestBase {
@@ -36,16 +36,16 @@ class SearchIndexRebuildJobIntegrationTest extends CommunityApiTestBase {
         String onSaleProductId = insertProduct(author.userId(), "ON_SALE");
         insertProduct(author.userId(), "SOLD");
 
-        FakeSearchRepository.reset();
+        FakeSearchIndex.reset();
         searchIndexRebuildJob.rebuild(null);
 
-        assertThat(FakeSearchRepository.clearedIndexes())
+        assertThat(FakeSearchIndex.clearedIndexes())
                 .as("三类索引各清一次，顺序固定").containsExactly("post", "product", "user");
-        assertThat(FakeSearchRepository.postIds())
+        assertThat(FakeSearchIndex.postIds())
                 .as("只有 NORMAL 帖子进索引，草稿帖不进").containsExactly(visiblePostId);
-        assertThat(FakeSearchRepository.productIds())
+        assertThat(FakeSearchIndex.productIds())
                 .as("只有 ON_SALE 商品进索引，已售不进").containsExactly(onSaleProductId);
-        assertThat(FakeSearchRepository.userIds())
+        assertThat(FakeSearchIndex.userIds())
                 .as("全部 NORMAL 用户进索引").containsExactlyInAnyOrder(author.userId(), other.userId());
     }
 

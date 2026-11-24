@@ -3,6 +3,7 @@ package com.betterschool.domain.user.adapter.repository;
 import com.betterschool.domain.user.model.entity.UserEntity;
 import com.betterschool.domain.user.model.valobj.UserBriefVO;
 import com.betterschool.domain.user.model.valobj.UserRoleVO;
+import com.betterschool.types.common.SearchPageVO;
 
 import java.util.List;
 
@@ -62,4 +63,15 @@ public interface IUserRepository {
      * 与 listByIds 分开是刻意的——展示路径不该把 phone 等敏感列读进内存
      */
     List<UserBriefVO> listBriefByIds(List<String> userIdList);
+
+    // ---------- 搜索索引（技术能力，落本域仓储：backend/CLAUDE.md §1） ----------
+
+    /** 用户检索：ES 命中只回 id（相关度倒序）与近似总数，展示字段由领域服务回库组装 */
+    SearchPageVO<String> searchUserIds(String keyword, int page, int pageSize);
+
+    /** 按 id 反查用户刷新搜索文档：仍 NORMAL 则写入、否则删除（幂等自愈，重复消息无副作用） */
+    void syncUserSearchDoc(String userId);
+
+    /** 用户索引全量重建（清空 + 游标分批回填），返回回填条数 */
+    int rebuildUserSearchIndex();
 }

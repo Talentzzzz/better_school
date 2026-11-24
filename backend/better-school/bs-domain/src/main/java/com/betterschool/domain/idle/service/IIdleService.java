@@ -6,6 +6,7 @@ import com.betterschool.domain.idle.model.valobj.ProductCancelResult;
 import com.betterschool.domain.idle.model.valobj.ProductConfirmResult;
 import com.betterschool.domain.idle.model.valobj.ProductFeedPageVO;
 import com.betterschool.domain.idle.model.valobj.ProductPayResult;
+import com.betterschool.types.common.SearchPageVO;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -158,4 +159,18 @@ public interface IIdleService {
 
     /** 待支付超时（超时中心回调触发）：PENDING_PAYMENT → CANCELLED + 商品回 ON_SALE（幂等忽略） */
     void handlePayTimeout(String orderId);
+
+    // ==================== 站内搜索：索引增量同步 / 全量重建 ====================
+
+    /**
+     * 站内搜索：关键词命中本域仓储的倒排索引后回库组装成实体（相关度顺序保持），
+     * 只返回 ON_SALE 商品——索引侧状态过滤是冗余兜底，这里才是最终判据
+     */
+    SearchPageVO<ProductEntity> searchProducts(String keyword, int page, int pageSize);
+
+    /** 搜索文档同步：按 id 反查，仍在售则写入索引、否则删除（幂等自愈，重复消息无副作用） */
+    void syncSearchDoc(String productId);
+
+    /** 商品索引全量重建（清空 + 游标分批回填），返回回填条数 */
+    int rebuildSearchIndex();
 }

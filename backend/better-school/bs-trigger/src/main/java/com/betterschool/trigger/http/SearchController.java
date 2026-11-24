@@ -7,10 +7,13 @@ import com.betterschool.api.dto.UserSearchResponseDTO;
 import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
 import com.betterschool.domain.community.model.entity.PostEntity;
-import com.betterschool.domain.search.model.valobj.SearchPageVO;
+import com.betterschool.domain.community.service.post.ICommunityPostService;
 import com.betterschool.domain.idle.model.entity.ProductEntity;
+import com.betterschool.domain.idle.service.IIdleService;
 import com.betterschool.domain.user.model.entity.UserEntity;
+import com.betterschool.domain.user.service.profile.IUserProfileService;
 import com.betterschool.trigger.http.security.SecurityUtils;
+import com.betterschool.types.common.SearchPageVO;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -24,8 +27,8 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 站内搜索 HTTP 入口：免登录浏览。
- * ES 只负责命中 + 排序，展示字段由搜索服务按 id 从 MySQL 反查组装（相关度顺序保持）
+ * 站内搜索 HTTP 入口：免登录浏览，三个 tab 各查各的域（不经 case 编排——没有跨域组合）。
+ * 关键词命中在本域仓储的倒排索引，展示字段由领域服务按 id 回库组装（相关度顺序保持）
  */
 @RestController
 @RequestMapping("/api/search")
@@ -34,9 +37,9 @@ public class SearchController implements ISearchService {
 
     private static final int MAX_PAGE_SIZE = 50;
 
-    /** 域名服务与 api 契约同名，字段用全限定名区分 */
-    private final com.betterschool.domain.search.service.ISearchService searchService;
-    private final com.betterschool.domain.community.service.post.ICommunityPostService postService;
+    private final ICommunityPostService postService;
+    private final IIdleService idleService;
+    private final IUserProfileService userProfileService;
 
     @Override
     @GetMapping("/posts")
@@ -47,7 +50,7 @@ public class SearchController implements ISearchService {
         requireKeyword(keyword);
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
-        SearchPageVO<PostEntity> result = searchService.searchPosts(keyword.trim(), page, pageSize);
+        SearchPageVO<PostEntity> result = postService.searchPosts(keyword.trim(), page, pageSize);
         String currentUserId = SecurityUtils.currentUserId();
         Set<String> likedIds = new HashSet<>(postService.listLikedPostIds(currentUserId,
                 result.getItems().stream().map(PostEntity::getPostId).toList()));
@@ -65,7 +68,7 @@ public class SearchController implements ISearchService {
         requireKeyword(keyword);
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
-        SearchPageVO<ProductEntity> result = searchService.searchProducts(keyword.trim(), page, pageSize);
+        SearchPageVO<ProductEntity> result = idleService.searchProducts(keyword.trim(), page, pageSize);
         List<ProductResponseDTO> dtoList = result.getItems().stream()
                 .map(product -> toProductDTO(product)).toList();
         return Response.ok(new PageResult<>(page, pageSize, result.getTotal(), dtoList));
@@ -80,7 +83,7 @@ public class SearchController implements ISearchService {
         requireKeyword(keyword);
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
-        SearchPageVO<UserEntity> result = searchService.searchUsers(keyword.trim(), page, pageSize);
+        SearchPageVO<UserEntity> result = userProfileService.searchUsers(keyword.trim(), page, pageSize);
         List<UserSearchResponseDTO> dtoList = result.getItems().stream()
                 .map(user -> new UserSearchResponseDTO(user.getUserId(), user.getNickname(), user.getAvatar()))
                 .toList();

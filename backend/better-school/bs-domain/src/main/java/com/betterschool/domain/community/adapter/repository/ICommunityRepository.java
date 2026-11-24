@@ -6,6 +6,7 @@ import com.betterschool.domain.community.model.valobj.FeedCursorVO;
 import com.betterschool.domain.community.model.valobj.FeedIndexItemVO;
 import com.betterschool.domain.community.model.valobj.LikeStateVO;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
+import com.betterschool.types.common.SearchPageVO;
 
 import java.util.List;
 
@@ -104,6 +105,17 @@ public interface ICommunityRepository {
 
     /** 落一条"搜索索引同步"待发送消息（必须与帖子状态变更同事务调用，实现层写 outbox 表） */
     void saveSearchSyncMessage(String postId);
+
+    // ---------- 搜索索引（技术能力，落本域仓储：backend/CLAUDE.md §1） ----------
+
+    /** 帖子检索：ES 命中只回 id（相关度倒序）与近似总数，展示字段由领域服务回库组装 */
+    SearchPageVO<String> searchPostIds(String keyword, int page, int pageSize);
+
+    /** 按 id 反查帖子刷新搜索文档：仍公开则写入、否则删除（幂等自愈，重复消息无副作用） */
+    void syncPostSearchDoc(String postId);
+
+    /** 帖子索引全量重建（清空 + 游标分批回填），返回回填条数 */
+    int rebuildPostSearchIndex();
 
     // ---------- 帖子：多写原子用例（实现内编程式事务，REQUIRED） ----------
 

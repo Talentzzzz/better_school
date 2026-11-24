@@ -2,6 +2,7 @@ package com.betterschool.domain.community.service.post;
 
 import com.betterschool.domain.community.model.entity.PostEntity;
 import com.betterschool.domain.community.model.valobj.FeedPageVO;
+import com.betterschool.types.common.SearchPageVO;
 
 import java.util.List;
 
@@ -86,4 +87,16 @@ public interface ICommunityPostService {
 
     /** 当前用户浏览过的帖子 id 集合（feed 已读灰显批量回显；userId 为 null 返回空集） */
     List<String> listViewedPostIds(String userId, List<String> postIds);
+
+    /**
+     * 站内搜索：关键词命中本域仓储的倒排索引后回库组装成实体（相关度顺序保持），
+     * 只返回 NORMAL 帖——索引侧状态过滤是冗余兜底，这里才是最终判据
+     */
+    SearchPageVO<PostEntity> searchPosts(String keyword, int page, int pageSize);
+
+    /** 搜索文档同步：按 id 反查，仍公开则写入索引、否则删除（幂等自愈，重复消息无副作用） */
+    void syncSearchDoc(String postId);
+
+    /** 帖子索引全量重建（清空 + 游标分批回填），返回回填条数 */
+    int rebuildSearchIndex();
 }

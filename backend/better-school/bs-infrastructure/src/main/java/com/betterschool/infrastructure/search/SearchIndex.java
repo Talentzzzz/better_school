@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.repository.search;
+package com.betterschool.infrastructure.search;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.ElasticsearchException;
@@ -13,22 +13,14 @@ import co.elastic.clients.elasticsearch.core.BulkRequest;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
 import co.elastic.clients.elasticsearch.core.SearchRequest;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
-import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 import co.elastic.clients.elasticsearch.indices.CreateIndexRequest;
 import co.elastic.clients.json.JsonData;
-import com.betterschool.domain.community.model.valobj.PostStatusVO;
-import com.betterschool.domain.search.adapter.repository.ISearchRepository;
-import com.betterschool.domain.search.model.valobj.PostSearchDocVO;
-import com.betterschool.domain.search.model.valobj.ProductSearchDocVO;
-import com.betterschool.domain.search.model.valobj.SearchPageVO;
-import com.betterschool.domain.search.model.valobj.UserSearchDocVO;
-import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
-import com.betterschool.domain.user.model.valobj.UserStatusVO;
+import com.betterschool.types.common.SearchPageVO;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Repository;
+import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.util.List;
@@ -37,36 +29,31 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 搜索仓储：Elasticsearch 实现。索引只存 id + 检索/过滤字段（ik_max_word 索引分词 / ik_smart 搜索分词），
- * 展示字段由调用方按 id 从 MySQL 反查组装，避免双写漂移。同步幂等：消费方反查不满足公开条件即删文档。
+ * 倒排索引技术组件（Elasticsearch）：索引只存 id + 检索/过滤字段，
+ * 展示字段由调用方按 id 回业务库反查组装，避免双写漂移。
+ *
+ * <p>本类不认识任何业务实体与状态枚举——索引名/字段来自 {@link SearchIndexName}，
+ * 状态白名单与文档对象由各域仓储传入（依赖方向：仓储实现 → 技术组件）。
  */
 @Slf4j
-@Repository
+@Component
 @RequiredArgsConstructor
-public class SearchRepository implements ISearchRepository {
+public class SearchIndex implements ISearchIndex {
 
     private final ElasticsearchClient client;
     private final ObjectMapper objectMapper;
 
-    /** 状态过滤：与展示层"公开可见"判定一致（冗余兜底，最终以 domain 反查为准） */
-    private static final List<String> PUBLIC_POST_STATUSES =
-            List.of(PostStatusVO.NORMAL.name());
-    private static final List<String> PUBLIC_PRODUCT_STATUSES =
-            List.of(ProductStatusVO.ON_SALE.name());
-    private static final List<String> PUBLIC_USER_STATUSES =
-            List.of(UserStatusVO.NORMAL.name());
-
     @Override
     public void ensureIndices() {
         try {
-            createIndexIfAbsent("bs_post", mappings -> {
+            createIndexIfAbsent(SearchIndexName.POST, mappings -> {
                 mappings.properties("postId", p -> p.keyword(k -> k));
                 mappings.properties("title", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
                 mappings.properties("content", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
                 mappings.properties("status", p -> p.keyword(k -> k));
                 mappings.properties("createdAt", p -> p.date(d -> d));
             });
-            createIndexIfAbsent("bs_product", mappings -> {
+            createIndexIfAbsent(SearchIndexName.PRODUCT, mappings -> {
                 mappings.properties("productId", p -> p.keyword(k -> k));
                 mappings.properties("title", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
                 mappings.properties("description", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
@@ -75,7 +62,7 @@ public class SearchRepository implements ISearchRepository {
                 mappings.properties("status", p -> p.keyword(k -> k));
                 mappings.properties("createdAt", p -> p.date(d -> d));
             });
-            createIndexIfAbsent("bs_user", mappings -> {
+            createIndexIfAbsent(SearchIndexName.USER, mappings -> {
                 mappings.properties("userId", p -> p.keyword(k -> k));
                 mappings.properties("nickname", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
                 mappings.properties("status", p -> p.keyword(k -> k));
@@ -96,14 +83,12 @@ public class SearchRepository implements ISearchRepository {
                     mappingConfig.accept(mapping);
                     return mapping;
                 })));
-        log.info("[SearchRepository] 创建索引 {}", indexName);
+        log.info("[SearchIndex] 创建索引 {}", indexName);
     }
 
     @Override
-    public void clearIndex(String entityType) {
-        String indexName = indexOf(entityType);
+    public void recreate(String indexName) {
         try {
-            // 删除再重建：重建期间旧数据不可见，避免新旧混合
             if (client.indices().exists(request -> request.index(indexName)).value()) {
                 client.indices().delete(request -> request.index(indexName));
             }
@@ -114,35 +99,16 @@ public class SearchRepository implements ISearchRepository {
     }
 
     @Override
-    public SearchPageVO<String> searchPosts(String keyword, int page, int pageSize) {
-        // post 文档 _id 即 UUID 字符串 post_id，原样返回（与 user 同口径）
-        return search("bs_post", List.of("title", "content"), PUBLIC_POST_STATUSES, keyword, page, pageSize,
-                Function.identity());
-    }
-
-    @Override
-    public SearchPageVO<String> searchProducts(String keyword, int page, int pageSize) {
-        return search("bs_product", List.of("title", "description", "tradeLocation"),
-                PUBLIC_PRODUCT_STATUSES, keyword, page, pageSize, Function.identity());
-    }
-
-    @Override
-    public SearchPageVO<String> searchUsers(String keyword, int page, int pageSize) {
-        // user 文档 _id 即 UUID 字符串 user_id，原样返回
-        return search("bs_user", List.of("nickname"), PUBLIC_USER_STATUSES, keyword, page, pageSize,
-                Function.identity());
-    }
-
-    private <I> SearchPageVO<I> search(String indexName, List<String> searchFieldList, List<String> publicStatusList,
-                                       String keyword, int page, int pageSize, Function<String, I> idOf) {
+    public SearchPageVO<String> search(String indexName, List<String> searchFields, List<String> publicStatuses,
+                                       String keyword, int page, int pageSize) {
         if (keyword == null || keyword.isBlank()) {
             return new SearchPageVO<>(0, List.of());
         }
         try {
             SearchResponse<JsonData> response = client.search(buildSearchRequest(
-                    indexName, searchFieldList, publicStatusList, keyword, page, pageSize), JsonData.class);
-            List<I> idList = response.hits().hits().stream()
-                    .map(hit -> idOf.apply(hit.id()))
+                    indexName, searchFields, publicStatuses, keyword, page, pageSize), JsonData.class);
+            List<String> idList = response.hits().hits().stream()
+                    .map(hit -> hit.id())
                     .toList();
             long total = response.hits().total() == null ? 0 : response.hits().total().value();
             return new SearchPageVO<>(total, idList);
@@ -158,9 +124,9 @@ public class SearchRepository implements ISearchRepository {
     }
 
     /** 布尔查询分步构建，避免 lambda 深嵌套（multi_match 关键词 + status 公开集过滤） */
-    private SearchRequest buildSearchRequest(String indexName, List<String> searchFieldList, List<String> publicStatusList,
+    private SearchRequest buildSearchRequest(String indexName, List<String> searchFields, List<String> publicStatuses,
                                              String keyword, int page, int pageSize) {
-        List<FieldValue> statusValueList = publicStatusList.stream().map(FieldValue::of).toList();
+        List<FieldValue> statusValueList = publicStatuses.stream().map(FieldValue::of).toList();
         TermsQueryField statusField = TermsQueryField.of(terms -> terms.value(statusValueList));
         TermsQuery statusQuery = new TermsQuery.Builder()
                 .field("status")
@@ -168,7 +134,7 @@ public class SearchRepository implements ISearchRepository {
                 .build();
         MultiMatchQuery multiMatchQuery = new MultiMatchQuery.Builder()
                 .query(keyword)
-                .fields(searchFieldList)
+                .fields(searchFields)
                 .build();
         Query query = new Query.Builder()
                 .bool(boolQuery -> boolQuery
@@ -184,37 +150,22 @@ public class SearchRepository implements ISearchRepository {
                 .build();
     }
 
-    @Override
-    public void bulkUpsertPostDocs(List<PostSearchDocVO> postSearchDocList) {
-        bulkUpsert("bs_post", postSearchDocList, PostSearchDocVO::getPostId);
-    }
-
-    @Override
-    public void bulkUpsertProductDocs(List<ProductSearchDocVO> productSearchDocList) {
-        bulkUpsert("bs_product", productSearchDocList, ProductSearchDocVO::getProductId);
-    }
-
-    @Override
-    public void bulkUpsertUserDocs(List<UserSearchDocVO> userSearchDocList) {
-        bulkUpsert("bs_user", userSearchDocList, UserSearchDocVO::getUserId);
-    }
-
     /**
      * 文档序列化用 Spring ObjectMapper（JavaTimeModule，createdAt 输出 ISO 字符串，ES date 默认格式可解析），
      * 经 JsonData 走原始 JSON 通道，避免 client 内部 mapper 序列化 POJO 的日期格式差异
      */
-    // 文档 _id 类型随实体：业务 id 统一是 UUID 字符串（uuid-biz-id 票 05）
-    private <T, I> void bulkUpsert(String indexName, List<T> docList, java.util.function.Function<T, I> idGetter) {
-        if (docList.isEmpty()) {
+    @Override
+    public <T> void bulkUpsert(String indexName, List<T> documents, Function<T, String> idOf) {
+        if (documents == null || documents.isEmpty()) {
             return;
         }
         try {
             BulkRequest.Builder bulkRequest = new BulkRequest.Builder();
-            for (T doc : docList) {
+            for (T doc : documents) {
                 ObjectNode jsonNode = objectMapper.valueToTree(doc);
                 bulkRequest.operations(operation -> operation.index(indexOperation -> indexOperation
                         .index(indexName)
-                        .id(String.valueOf(idGetter.apply(doc)))
+                        .id(idOf.apply(doc))
                         .document(JsonData.of(jsonNode))));
             }
             BulkResponse response = client.bulk(bulkRequest.build());
@@ -231,39 +182,16 @@ public class SearchRepository implements ISearchRepository {
     }
 
     @Override
-    public void deletePostDoc(String postId) {
-        deleteDoc("bs_post", postId);
-    }
-
-    @Override
-    public void deleteProductDoc(String productId) {
-        deleteDoc("bs_product", productId);
-    }
-
-    @Override
-    public void deleteUserDoc(String userId) {
-        deleteDoc("bs_user", userId);
-    }
-
-    private void deleteDoc(String indexName, Object id) {
+    public void deleteDoc(String indexName, String documentId) {
         try {
-            client.delete(request -> request.index(indexName).id(String.valueOf(id)).refresh(Refresh.True));
+            client.delete(request -> request.index(indexName).id(documentId).refresh(Refresh.True));
         } catch (ElasticsearchException e) {
             if (e.status() != 404) {
                 throw e;
             }
             // 404：文档不存在，幂等忽略
         } catch (IOException e) {
-            throw new IllegalStateException("ES 删除文档失败 index=" + indexName + ", id=" + id, e);
+            throw new IllegalStateException("ES 删除文档失败 index=" + indexName + ", id=" + documentId, e);
         }
-    }
-
-    private String indexOf(String entityType) {
-        return switch (entityType) {
-            case "post" -> "bs_post";
-            case "product" -> "bs_product";
-            case "user" -> "bs_user";
-            default -> throw new IllegalArgumentException("未知实体类型：" + entityType);
-        };
     }
 }

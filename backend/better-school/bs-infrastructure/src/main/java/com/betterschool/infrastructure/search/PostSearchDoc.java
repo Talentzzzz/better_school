@@ -1,14 +1,15 @@
-package com.betterschool.domain.search.model.valobj;
+package com.betterschool.infrastructure.search;
 
 import lombok.Data;
 
 import java.time.LocalDateTime;
 
 /**
- * 帖子索引文档：仅 id + 检索/过滤字段；展示字段（likeCount/作者昵称头像）由 MySQL 反查组装，避免双写漂移
+ * 帖子索引文档：仅 id + 检索/过滤字段；展示字段（点赞数 / 作者昵称头像）由业务库反查组装，避免双写漂移。
+ * 技术组件内部结构，领域层不引用（domain 不依赖 infrastructure）
  */
 @Data
-public class PostSearchDocVO {
+public class PostSearchDoc {
 
     /** 帖子业务 ID（UUID 字符串，ES 侧 keyword 字段，与 DB 同表示） */
     private String postId;

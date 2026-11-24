@@ -1,7 +1,5 @@
 package com.betterschool.infrastructure.adapter.repository.idle;
 
-import com.betterschool.domain.search.model.valobj.SearchEntityType;
-import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
 import com.betterschool.domain.timeout.adapter.repository.ITimeoutRepository;
 import com.betterschool.domain.timeout.model.entity.TimeoutTaskEntity;
 import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
@@ -43,7 +41,13 @@ import com.betterschool.infrastructure.dao.productorder.IProductOrderEventDao;
 import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.infrastructure.dao.user.po.User;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
+import com.betterschool.infrastructure.search.ISearchIndex;
+import com.betterschool.infrastructure.search.ProductSearchDoc;
+import com.betterschool.infrastructure.search.SearchIndexName;
 import com.betterschool.types.common.Constants;
+import com.betterschool.types.common.SearchEntityType;
+import com.betterschool.types.common.SearchPageVO;
+import com.betterschool.types.common.SearchSyncMessage;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import com.betterschool.types.exception.FrameworkException;
@@ -103,6 +107,8 @@ public class IdleRepository implements IIdleRepository {
     private final ObjectMapper objectMapper;
     private final OutboxMessageStore outboxMessageStore;
     private final ITimeoutRepository timeoutRepository;
+    /** 倒排索引技术组件（技术能力：本域仓储直接用，不为它开 domain port） */
+    private final ISearchIndex searchIndex;
     private final TransactionTemplate transactionTemplate;
     /**
      * 商品浏览的合并引擎（通用 {@link MergeEngine}，本仓储独占一个实例：它只写 product_view_* 这几张表）。
@@ -516,6 +522,59 @@ public class IdleRepository implements IIdleRepository {
     public void saveSearchSyncMessage(String productId) {
         outboxMessageStore.save(Constants.SEARCH_SYNC_TOPIC,
                 new SearchSyncMessage(SearchEntityType.PRODUCT.name().toLowerCase(), productId));
+    }
+
+    @Override
+    public SearchPageVO<String> searchProductIds(String keyword, int page, int pageSize) {
+        // ES 侧 status 过滤只是冗余兜底（索引可能短暂滞后），最终公开判定在领域服务回库后做
+        return searchIndex.search(SearchIndexName.PRODUCT, SearchIndexName.PRODUCT_SEARCH_FIELDS,
+                List.of(ProductStatusVO.ON_SALE.name()), keyword, page, pageSize);
+    }
+
+    @Override
+    public void syncProductSearchDoc(String productId) {
+        ProductEntity productEntity = findById(productId);
+        if (productEntity != null && productEntity.getStatus() == ProductStatusVO.ON_SALE) {
+            searchIndex.bulkUpsert(SearchIndexName.PRODUCT, List.of(toProductSearchDoc(productEntity)),
+                    ProductSearchDoc::getProductId);
+        } else {
+            searchIndex.deleteDoc(SearchIndexName.PRODUCT, productId);
+        }
+    }
+
+    @Override
+    public int rebuildProductSearchIndex() {
+        searchIndex.recreate(SearchIndexName.PRODUCT);
+        int total = 0;
+        String cursor = "";
+        while (true) {
+            List<String> idList = listIdsAfter(cursor, ISearchIndex.DEFAULT_REBUILD_BATCH_SIZE);
+            if (idList.isEmpty()) {
+                break;
+            }
+            // 批内一次 IN 回查 + Java 侧过滤（SQL 层零 JOIN 的收口点），游标推进到空批是唯一终止条件
+            List<ProductSearchDoc> docList = listByIds(idList).stream()
+                    .filter(product -> product.getStatus() == ProductStatusVO.ON_SALE)
+                    .map(this::toProductSearchDoc)
+                    .toList();
+            searchIndex.bulkUpsert(SearchIndexName.PRODUCT, docList, ProductSearchDoc::getProductId);
+            total += docList.size();
+            cursor = idList.get(idList.size() - 1);
+        }
+        return total;
+    }
+
+    /** 实体 → 索引文档：只取检索/过滤字段，价格/图片等展示字段不进索引（避免双写漂移） */
+    private ProductSearchDoc toProductSearchDoc(ProductEntity productEntity) {
+        ProductSearchDoc doc = new ProductSearchDoc();
+        doc.setProductId(productEntity.getProductId());
+        doc.setTitle(productEntity.getTitle());
+        doc.setDescription(productEntity.getDescription());
+        doc.setTradeLocation(productEntity.getTradeLocation());
+        doc.setCategory(productEntity.getCategory().name());
+        doc.setStatus(productEntity.getStatus().name());
+        doc.setCreatedAt(productEntity.getCreatedAt());
+        return doc;
     }
 
     // ---------- 计数合并器的落库方法：商品浏览（UV 口径，market-feed-uv 票 02） ----------

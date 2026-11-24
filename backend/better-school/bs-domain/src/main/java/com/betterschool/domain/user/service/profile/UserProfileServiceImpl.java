@@ -3,6 +3,8 @@ package com.betterschool.domain.user.service.profile;
 import com.betterschool.domain.user.adapter.repository.IUserRepository;
 import com.betterschool.domain.user.model.entity.UserEntity;
 import com.betterschool.domain.user.model.valobj.GenderVO;
+import com.betterschool.domain.user.model.valobj.UserStatusVO;
+import com.betterschool.types.common.SearchPageVO;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +12,10 @@ import org.springframework.stereotype.Service;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -62,6 +68,33 @@ public class UserProfileServiceImpl implements IUserProfileService {
         userEntity.setShowLiked(nextLiked);
         userEntity.setShowComments(nextComments);
         return userEntity;
+    }
+
+    @Override
+    public SearchPageVO<UserEntity> searchUsers(String keyword, int page, int pageSize) {
+        // 索引只负责命中与排序：命中 id 回库批量反查，按 id 顺序重排（IN 查询不保序），
+        // 命中后状态已变化的实体在这里被过滤掉——本域才是「可搜」的最终判据
+        SearchPageVO<String> idPage = userRepository.searchUserIds(keyword, page, pageSize);
+        if (idPage.getItems().isEmpty()) {
+            return new SearchPageVO<>(idPage.getTotal(), List.of());
+        }
+        Map<String, UserEntity> byId = userRepository.listByIds(idPage.getItems()).stream()
+                .filter(user -> user.getStatus() == UserStatusVO.NORMAL)
+                .collect(Collectors.toMap(UserEntity::getUserId, Function.identity()));
+        return new SearchPageVO<>(idPage.getTotal(), idPage.getItems().stream()
+                .map(byId::get)
+                .filter(Objects::nonNull)
+                .toList());
+    }
+
+    @Override
+    public void syncSearchDoc(String userId) {
+        userRepository.syncUserSearchDoc(userId);
+    }
+
+    @Override
+    public int rebuildSearchIndex() {
+        return userRepository.rebuildUserSearchIndex();
     }
 
     /** 签名归一：trim 后空串＝清空（落 NULL）；超长报参数错误 */

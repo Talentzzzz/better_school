@@ -1,4 +1,4 @@
-package com.betterschool.domain.search.model.valobj;
+package com.betterschool.types.common;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -7,7 +7,7 @@ import java.util.List;
 
 /**
  * 搜索分页结果：total 为索引命中总数（近似值），items 按相关度排序；
- * 命中反查阶段 T 为实体 id（Long），组装阶段 T 为实体
+ * 命中阶段 T 为业务 id（UUID 字符串），组装阶段 T 为领域实体
  */
 @Data
 @AllArgsConstructor

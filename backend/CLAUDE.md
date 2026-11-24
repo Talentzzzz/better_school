@@ -38,7 +38,7 @@ types →（无内部依赖）
 - **domain 服务禁止互相注入（领域嵌套）**：跨域写组合的编排一律放 case 层（顺序调用，无跨域事务）；域方法返回"外部动作需求"结果对象（如 ProductPayResult）。**跨域只读一律经消费方域定义的 port**：需要读他域数据时，在**消费方域**的 `domain/<X>/adapter/port/…` 定义 port（判据留在消费方域，port 里不放判据逻辑），实现落 `infrastructure/adapter/port/<域>/`（实现内可只读他域仓储）；域层从此**只注入本域仓储 + 本域 port**，不再注入他域仓储接口、不再注入 `TransactionTemplate`。
 - **跨服务同一条规矩**：Dubbo 读外部服务（单体的用户中心等）也在**消费方域**声明 `I<域>XxxPort`，各域各持一份域内读视图（单体 chat / community 的 `IUserQueryPort` 是现成先例）。**`domain` 下只有业务域，没有 `common` 段**——「很多域都要」不是建一个共享域的理由；`marketing.{layer}.common.*` 只放非域公共件（框架装配 / 统一响应 / JWT / outbox / wire 契约）——单体收口后该口径由「各层 `common` 段只放非域公共件、不放域模型与端口」继续沿用。同理，**配置项跟表走**：某张配置表配的是谁，就归谁的域（有效期归各自的桶域、返利规则归返利域），不设「配置域」。
 - **port 只留跨域调用（含 dubbo——本质也是调他域）；技术能力一律走本域仓储**：业务用 WS 推送/Redis/MQ(outbox) 等技术设施，都做成自己域仓储上的方法（如 chat 域 `IChatRepository.pushMessage/pushRead/pushRecall`、notification 域 `pushNotif`），仓储实现在 infrastructure 里委托技术组件——不得为技术能力开 port。
-- **WS 是独立技术组件，整体落 `infrastructure/ws/`（同 MQ 待遇）**：连接机器（注册表/心跳/互踢/多实例路由/实例订阅）与组件 API（`IWsConnectionHub` 连接登记+投递、`IWsTicketStore` 票据）与协议信封（`WsFrame/WsFrameType`，组装收口在 `WsFrameFactory`）同住 infrastructure/ws——不进 domain（非业务域）、不进 types（types 只放常量/枚举/异常）、不散在 adapter/port 下。业务侧推送：各域仓储声明 `pushXxx(userId, 本域推送事件)`（只传事件对象，不碰帧信封），仓储实现经 `WsFrameFactory` 组帧后委托 `IWsConnectionHub`；chat/notification 的推送用例均经本域仓储投递，不得各自再声明第二套推送出口；一个用户一条全局连接，多业务按帧类型（MSG/READ/RECALL/NOTIF…）复用。trigger 连接端（ws/）注入组件 API（bs-trigger → bs-infrastructure 依赖边；bs-case 不依赖 infra）。domain 只放业务域——技术能力不占 domain 段（既有 `domain.timeout` 历史遗留除外）。
+- **WS 是独立技术组件，整体落 `infrastructure/ws/`（同 MQ 待遇）**：连接机器（注册表/心跳/互踢/多实例路由/实例订阅）与组件 API（`IWsConnectionHub` 连接登记+投递、`IWsTicketStore` 票据）与协议信封（`WsFrame/WsFrameType`，组装收口在 `WsFrameFactory`）同住 infrastructure/ws——不进 domain（非业务域）、不进 types（types 只放常量/枚举/异常）、不散在 adapter/port 下。业务侧推送：各域仓储声明 `pushXxx(userId, 本域推送事件)`（只传事件对象，不碰帧信封），仓储实现经 `WsFrameFactory` 组帧后委托 `IWsConnectionHub`；chat/notification 的推送用例均经本域仓储投递，不得各自再声明第二套推送出口；一个用户一条全局连接，多业务按帧类型（MSG/READ/RECALL/NOTIF…）复用。trigger 连接端（ws/）注入组件 API（bs-trigger → bs-infrastructure 依赖边；bs-case 不依赖 infra）。domain 只放业务域——技术能力不占 domain 段（既有 `domain.timeout` 历史遗留除外）。**无业务归属的技术能力直接落技术包、由 trigger 注入**（先例 `infrastructure/file/FileStorage`：图片上传，校验内聚在组件里，不设 case 编排、不开 domain port——原先的 `domain.file` 端口已按此条删除）。
 - **一域一仓储**：每个业务域**恰有一个** `I<域>Repository` 接口与一个实现（读写同一接口）。实现内可注入多个 DAO（`I<域>Dao` 等）；PO、mapper XML、DAO 不因合并而变。
 - **事务落位在仓储内**：需要事务时，域服务构造参数/实体后**只调一次**仓储方法；由**仓储方法自身**在实现里用编程式事务（`TransactionTemplate`，传播恒 `REQUIRED`）把一次操作的多次读改写收成一个原子用例，并在调用方既有事务中合流。**域服务不注入 `TransactionTemplate`**，也不自持事务边界。仓储方法的事务必须是 REQUIRED——取号序/原子性/与域服务事务合流都依赖它。
 - **跨域一致性 = 幂等 + 重试，禁止 case 层包多域事务**：每个域方法自己域内事务原子；重试安全靠"状态机条件 UPDATE / 流水唯一键（wallet_detail uk_order_type、user_credit_detail uk_user_reason_ref）/ 事件流水判定（product_order_event 同订单 event_seq 顺序，如取消重试 = 最新事件已是本人取消即幂等返回）"；资金/信用分操作一律**流水先行插入**（INSERT IGNORE，冲突 = 已处理过幂等跳过），流水表是事实源。失败恢复：MQ 路径靠 broker 自动重试，HTTP 路径返回失败让客户端重试。
@@ -91,8 +91,14 @@ cn.xxx.infrastructure/
 │                                复用 merge 包公开类型 MergeConfig/MergeStrategy/MergeResult，
 │                                见 backend/docs/architecture/merge-virtual-leader-engine-spec.md；
 │                                发车口径与 merge 相同：队列非空即发）
+├── file/                        对象存储（MinIO）技术组件 FileStorage：白名单校验 + 上传，
+│                                返回公开读 URL；trigger 直接注入（技术能力不开 domain port，
+│                                同 ws 待遇），仓储要存文件也从本包取用
 ├── outbox/                      本地消息表发送器与扫描
-├── search/  security/  sharding/ ws/   其余技术包（ws = WS 连接机器 + IWsConnectionHub，见 §1）
+├── search/                      倒排索引技术组件 ISearchIndex（Elasticsearch）：只认索引名 / 检索字段 /
+│                                文档对象，不认识业务实体与状态枚举；各域仓储直接注入，自传索引名与
+│                                状态白名单（判据留域），索引只存可搜字段、展示字段回库反查
+├── security/  sharding/ ws/     其余技术包（ws = WS 连接机器 + IWsConnectionHub，见 §1）
 └── gateway/                     调用外部 http/rpc 的接口定义（按需建，当前工程没有；gateway/dto 放外部 DTO）
 ```
 

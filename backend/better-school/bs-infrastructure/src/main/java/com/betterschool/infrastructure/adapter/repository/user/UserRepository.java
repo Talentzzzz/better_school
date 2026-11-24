@@ -1,7 +1,5 @@
 package com.betterschool.infrastructure.adapter.repository.user;
 
-import com.betterschool.domain.search.model.valobj.SearchEntityType;
-import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
 import com.betterschool.domain.user.adapter.repository.IUserRepository;
 import com.betterschool.domain.user.model.entity.UserEntity;
 import com.betterschool.domain.user.model.valobj.GenderVO;
@@ -17,8 +15,14 @@ import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.infrastructure.dao.user.po.User;
 import com.betterschool.infrastructure.dao.user.po.UserBrief;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
+import com.betterschool.infrastructure.search.ISearchIndex;
+import com.betterschool.infrastructure.search.SearchIndexName;
+import com.betterschool.infrastructure.search.UserSearchDoc;
 import com.betterschool.infrastructure.security.JwtService;
 import com.betterschool.types.common.Constants;
+import com.betterschool.types.common.SearchEntityType;
+import com.betterschool.types.common.SearchPageVO;
+import com.betterschool.types.common.SearchSyncMessage;
 import lombok.RequiredArgsConstructor;
 import org.redisson.api.RBucket;
 import org.redisson.api.RedissonClient;
@@ -52,6 +56,9 @@ public class UserRepository implements IUserRepository {
     private final OutboxMessageStore outboxMessageStore;
 
     private final JwtService jwtService;
+
+    /** 倒排索引技术组件（技术能力：本域仓储直接用，不为它开 domain port） */
+    private final ISearchIndex searchIndex;
 
     private final TransactionTemplate transactionTemplate;
 
@@ -159,6 +166,55 @@ public class UserRepository implements IUserRepository {
     @Override
     public List<String> listUserIdsAfter(String lastUserId, int limit) {
         return userDao.selectIdsAfter(lastUserId, limit);
+    }
+
+    @Override
+    public SearchPageVO<String> searchUserIds(String keyword, int page, int pageSize) {
+        // ES 侧 status 过滤只是冗余兜底（索引可能短暂滞后），最终公开判定在领域服务回库后做
+        return searchIndex.search(SearchIndexName.USER, SearchIndexName.USER_SEARCH_FIELDS,
+                List.of(UserStatusVO.NORMAL.name()), keyword, page, pageSize);
+    }
+
+    @Override
+    public void syncUserSearchDoc(String userId) {
+        UserEntity userEntity = findById(userId);
+        if (userEntity != null && userEntity.getStatus() == UserStatusVO.NORMAL) {
+            searchIndex.bulkUpsert(SearchIndexName.USER, List.of(toUserSearchDoc(userEntity)),
+                    UserSearchDoc::getUserId);
+        } else {
+            searchIndex.deleteDoc(SearchIndexName.USER, userId);
+        }
+    }
+
+    @Override
+    public int rebuildUserSearchIndex() {
+        searchIndex.recreate(SearchIndexName.USER);
+        int total = 0;
+        String cursor = "";
+        while (true) {
+            List<String> idList = listUserIdsAfter(cursor, ISearchIndex.DEFAULT_REBUILD_BATCH_SIZE);
+            if (idList.isEmpty()) {
+                break;
+            }
+            // 批内一次 IN 回查 + Java 侧过滤，游标推进到空批是唯一终止条件
+            List<UserSearchDoc> docList = listByIds(idList).stream()
+                    .filter(user -> user.getStatus() == UserStatusVO.NORMAL)
+                    .map(this::toUserSearchDoc)
+                    .toList();
+            searchIndex.bulkUpsert(SearchIndexName.USER, docList, UserSearchDoc::getUserId);
+            total += docList.size();
+            cursor = idList.get(idList.size() - 1);
+        }
+        return total;
+    }
+
+    /** 实体 → 索引文档：用户只有昵称可搜，头像/简介等展示字段不进索引 */
+    private UserSearchDoc toUserSearchDoc(UserEntity userEntity) {
+        UserSearchDoc doc = new UserSearchDoc();
+        doc.setUserId(userEntity.getUserId());
+        doc.setNickname(userEntity.getNickname());
+        doc.setStatus(userEntity.getStatus().name());
+        return doc;
     }
 
     @Override

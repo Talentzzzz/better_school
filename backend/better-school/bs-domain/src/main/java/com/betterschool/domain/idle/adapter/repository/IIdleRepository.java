@@ -6,6 +6,7 @@ import com.betterschool.domain.idle.model.valobj.ProductCategoryVO;
 import com.betterschool.domain.idle.model.valobj.ProductFeedCursorVO;
 import com.betterschool.domain.idle.model.valobj.ProductFeedIndexItemVO;
 import com.betterschool.domain.idle.model.valobj.ProductOrderEventVO;
+import com.betterschool.types.common.SearchPageVO;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -117,6 +118,17 @@ public interface IIdleRepository {
 
     /** 落一条"搜索索引同步"待发送消息（必须与商品状态变更同事务调用，实现层写 outbox 表） */
     void saveSearchSyncMessage(String productId);
+
+    // ---------- 搜索索引（技术能力，落本域仓储：backend/CLAUDE.md §1） ----------
+
+    /** 商品检索：ES 命中只回 id（相关度倒序）与近似总数，展示字段由领域服务回库组装 */
+    SearchPageVO<String> searchProductIds(String keyword, int page, int pageSize);
+
+    /** 按 id 反查商品刷新搜索文档：仍 ON_SALE 则写入、否则删除（幂等自愈，重复消息无副作用） */
+    void syncProductSearchDoc(String productId);
+
+    /** 商品索引全量重建（清空 + 游标分批回填），返回回填条数 */
+    int rebuildProductSearchIndex();
 
     // ---------- 商品托管订单 ----------
 

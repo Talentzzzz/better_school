@@ -1,6 +1,7 @@
 package com.betterschool.domain.user.service.profile;
 
 import com.betterschool.domain.user.model.entity.UserEntity;
+import com.betterschool.types.common.SearchPageVO;
 
 import java.util.Collection;
 import java.util.List;
@@ -31,4 +32,16 @@ public interface IUserProfileService {
 
     /** 隐私开关（部分更新：null＝该项不改）；返回更新后的用户 */
     UserEntity updatePrivacy(String userId, Boolean showLiked, Boolean showComments);
+
+    /**
+     * 站内搜索：昵称命中本域仓储的倒排索引后回库组装成实体（相关度顺序保持），
+     * 只返回 NORMAL 用户——索引侧状态过滤是冗余兜底，这里才是最终判据
+     */
+    SearchPageVO<UserEntity> searchUsers(String keyword, int page, int pageSize);
+
+    /** 搜索文档同步：按 id 反查，仍 NORMAL 则写入索引、否则删除（幂等自愈，重复消息无副作用） */
+    void syncSearchDoc(String userId);
+
+    /** 用户索引全量重建（清空 + 游标分批回填），返回回填条数 */
+    int rebuildSearchIndex();
 }

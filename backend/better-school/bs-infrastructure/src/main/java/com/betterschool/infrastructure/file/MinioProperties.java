@@ -1,4 +1,4 @@
-package com.betterschool.infrastructure.adapter.port.file;
+package com.betterschool.infrastructure.file;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;

@@ -1,8 +1,8 @@
 package com.betterschool.trigger.listener;
 
-import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
-import com.betterschool.domain.search.service.ISearchService;
 import com.betterschool.types.common.Constants;
+import com.betterschool.types.common.SearchSyncMessage;
+import com.betterschool.usecase.search.SearchSyncCase;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,14 +20,14 @@ import org.springframework.stereotype.Component;
 @RocketMQMessageListener(topic = Constants.SEARCH_SYNC_TOPIC, consumerGroup = "bs-search-sync-group")
 public class SearchSyncConsumer implements RocketMQListener<String> {
 
-    private final ISearchService searchService;
+    private final SearchSyncCase searchSyncCase;
     private final ObjectMapper objectMapper;
 
     @Override
     public void onMessage(String payload) {
         try {
             SearchSyncMessage message = objectMapper.readValue(payload, SearchSyncMessage.class);
-            searchService.handleSync(message);
+            searchSyncCase.sync(message);
             log.info("[SearchSyncConsumer] 索引同步 type={}, id={}", message.getType(), message.getId());
         } catch (Exception e) {
             log.error("[SearchSyncConsumer] 索引同步失败 payload={}", payload, e);

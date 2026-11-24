@@ -7,8 +7,6 @@ import com.betterschool.domain.community.model.valobj.FeedCursorVO;
 import com.betterschool.domain.community.model.valobj.FeedIndexItemVO;
 import com.betterschool.domain.community.model.valobj.LikeStateVO;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
-import com.betterschool.domain.search.model.valobj.SearchEntityType;
-import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
 import com.betterschool.infrastructure.cache.post.PostDetailCache;
 import com.betterschool.infrastructure.adapter.repository.CountAction;
 import com.betterschool.infrastructure.adapter.repository.CountEvent;
@@ -37,7 +35,13 @@ import com.betterschool.infrastructure.dao.post.po.PostRelationRow;
 import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.infrastructure.dao.user.po.User;
 import com.betterschool.infrastructure.outbox.OutboxMessageStore;
+import com.betterschool.infrastructure.search.ISearchIndex;
+import com.betterschool.infrastructure.search.PostSearchDoc;
+import com.betterschool.infrastructure.search.SearchIndexName;
 import com.betterschool.types.common.Constants;
+import com.betterschool.types.common.SearchEntityType;
+import com.betterschool.types.common.SearchPageVO;
+import com.betterschool.types.common.SearchSyncMessage;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -112,6 +116,8 @@ public class CommunityRepository implements ICommunityRepository {
     private final ObjectMapper objectMapper;
     private final OutboxMessageStore outboxMessageStore;
     private final PostDetailCache postDetailCache;
+    /** 倒排索引技术组件（技术能力：本域仓储直接用，不为它开 domain port） */
+    private final ISearchIndex searchIndex;
     private final TransactionTemplate transactionTemplate;
     /**
      * 计数合并引擎（通用 {@link MergeEngine}）：本仓储的四个动作（点赞 / 取消赞 / 评论赞 / 帖子浏览）
@@ -416,6 +422,57 @@ public class CommunityRepository implements ICommunityRepository {
     public void saveSearchSyncMessage(String postId) {
         outboxMessageStore.save(Constants.SEARCH_SYNC_TOPIC,
                 new SearchSyncMessage(SearchEntityType.POST.name().toLowerCase(), String.valueOf(postId)));
+    }
+
+    @Override
+    public SearchPageVO<String> searchPostIds(String keyword, int page, int pageSize) {
+        // ES 侧 status 过滤只是冗余兜底（索引可能短暂滞后），最终公开判定在领域服务回库后做
+        return searchIndex.search(SearchIndexName.POST, SearchIndexName.POST_SEARCH_FIELDS,
+                List.of(PostStatusVO.NORMAL.name()), keyword, page, pageSize);
+    }
+
+    @Override
+    public void syncPostSearchDoc(String postId) {
+        PostEntity postEntity = findPostById(postId);
+        if (postEntity != null && postEntity.getStatus() == PostStatusVO.NORMAL) {
+            searchIndex.bulkUpsert(SearchIndexName.POST, List.of(toPostSearchDoc(postEntity)),
+                    PostSearchDoc::getPostId);
+        } else {
+            searchIndex.deleteDoc(SearchIndexName.POST, postId);
+        }
+    }
+
+    @Override
+    public int rebuildPostSearchIndex() {
+        searchIndex.recreate(SearchIndexName.POST);
+        int total = 0;
+        String cursor = "";
+        while (true) {
+            List<String> idList = listIdsAfter(cursor, ISearchIndex.DEFAULT_REBUILD_BATCH_SIZE);
+            if (idList.isEmpty()) {
+                break;
+            }
+            // 批内一次 IN 回查 + Java 侧过滤（SQL 层零 JOIN 的收口点），游标推进到空批是唯一终止条件
+            List<PostSearchDoc> docList = listByIds(idList).stream()
+                    .filter(post -> post.getStatus() == PostStatusVO.NORMAL)
+                    .map(this::toPostSearchDoc)
+                    .toList();
+            searchIndex.bulkUpsert(SearchIndexName.POST, docList, PostSearchDoc::getPostId);
+            total += docList.size();
+            cursor = idList.get(idList.size() - 1);
+        }
+        return total;
+    }
+
+    /** 实体 → 索引文档：只取检索/过滤字段，展示字段不进索引（避免双写漂移） */
+    private PostSearchDoc toPostSearchDoc(PostEntity postEntity) {
+        PostSearchDoc doc = new PostSearchDoc();
+        doc.setPostId(postEntity.getPostId());
+        doc.setTitle(postEntity.getTitle());
+        doc.setContent(postEntity.getContent());
+        doc.setStatus(postEntity.getStatus().name());
+        doc.setCreatedAt(postEntity.getCreatedAt());
+        return doc;
     }
 
     @Override
