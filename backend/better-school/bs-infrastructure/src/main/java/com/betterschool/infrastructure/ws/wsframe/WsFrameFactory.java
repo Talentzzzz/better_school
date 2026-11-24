@@ -3,7 +3,6 @@ package com.betterschool.infrastructure.ws.wsframe;
 import com.betterschool.domain.chat.model.valobj.ChatMessagePushEvent;
 import com.betterschool.domain.chat.model.valobj.ChatReadPushEvent;
 import com.betterschool.domain.chat.model.valobj.ChatRecallPushEvent;
-import com.betterschool.domain.errand.model.valobj.ErrandOrderPushEvent;
 import com.betterschool.domain.notification.model.valobj.NotifyPushMessage;
 import com.betterschool.types.ws.WsCloseCodes;
 
@@ -65,14 +64,6 @@ public final class WsFrameFactory {
                 message.getContent(),
                 emptyIfNull(message.getRefType()),
                 emptyIfNull(message.getRefId())),
-                now());
-    }
-
-    /** ORDER：payload={orderId, status}，前端收到即重拉订单详情 */
-    public static WsFrame<WsOrderPayload> order(ErrandOrderPushEvent event) {
-        return new WsFrame<>(WsFrameType.ORDER, new WsOrderPayload(
-                event.getOrderId(),
-                event.getStatus()),
                 now());
     }
 

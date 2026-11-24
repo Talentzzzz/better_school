@@ -22,7 +22,7 @@ public class UserRegisterCase {
 
     public UserAuthResult register(String phone, String code, String nickname) {
         UserEntity userEntity = userAuthService.register(phone, code, nickname);
-        // 注册即送 1000 校园币（虚拟钱包，跑腿托管演示用）
+        // 注册即送 1000 校园币（虚拟钱包演示用）
         walletAccountService.ensureWallet(userEntity.getUserId());
         return new UserAuthResult(userEntity,
                 userRepository.generateToken(userEntity.getUserId(), userEntity.getRole().name()));

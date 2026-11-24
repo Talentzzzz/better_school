@@ -11,8 +11,6 @@ import lombok.Getter;
 @AllArgsConstructor
 public enum CreditReasonTypeVO {
 
-    ERRAND_TAKER_CANCEL(-20, "跑腿接单后取消", null),
-    ERRAND_TIMEOUT(-20, "跑腿超时未完成", null),
     ADMIN_ADJUST(0, "管理员调分", null),
     ADMIN_BAN(0, "管理员封禁", null),
     ADMIN_UNBAN(0, "管理员解封", null),

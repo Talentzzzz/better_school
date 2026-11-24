@@ -19,10 +19,10 @@ public interface IWalletAccountService {
     /** mock 充值（v1 虚拟币，无真实支付） */
     void recharge(String userId, BigDecimal amount);
 
-    /** 冻结悬赏：流水先行（uk 幂等），余额不足抛 400 */
+    /** 冻结金额：流水先行（uk 幂等），余额不足抛 400 */
     void freeze(String userId, BigDecimal amount, String orderId);
 
-    /** 冻结（带流水类型，uk_order_type 幂等按域区分：跑腿 FROZEN / 商品 PRODUCT_FROZEN） */
+    /** 冻结（带流水类型，uk_order_type 幂等按域区分：商品 PRODUCT_FROZEN） */
     void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type);
 
     /** 冻结（带业务轮次）：同一订单同类型多轮合法冻结（撤单重发再支付等业务轮次），uk 按 biz_round 区分 */

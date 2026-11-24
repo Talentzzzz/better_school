@@ -2,18 +2,15 @@ package com.betterschool.domain.search.service;
 
 import com.betterschool.domain.community.model.entity.PostEntity;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
-import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
-import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
 import com.betterschool.domain.search.adapter.port.ISearchQueryPort;
 import com.betterschool.domain.search.adapter.repository.ISearchRepository;
-import com.betterschool.domain.search.model.valobj.ErrandSearchDocVO;
 import com.betterschool.domain.search.model.valobj.PostSearchDocVO;
 import com.betterschool.domain.search.model.valobj.ProductSearchDocVO;
 import com.betterschool.domain.search.model.valobj.SearchPageVO;
 import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
 import com.betterschool.domain.search.model.valobj.UserSearchDocVO;
-import com.betterschool.domain.trade.model.entity.ProductEntity;
-import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
+import com.betterschool.domain.idle.model.entity.ProductEntity;
+import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
 import com.betterschool.domain.user.model.entity.UserEntity;
 import com.betterschool.domain.user.model.valobj.UserStatusVO;
 import com.betterschool.types.concurrent.VirtualThreadFanout;
@@ -21,11 +18,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.BiFunction;
@@ -43,11 +38,6 @@ public class SearchServiceImpl implements ISearchService {
     /** 全量重建的游标批大小：批 = 一次「拉批 + 批内扇出」，宽度 = 批大小 */
     private static final int REBUILD_BATCH_SIZE = 500;
 
-    /** 公开可搜索的订单状态：仅"进行中未被接单方/发布方锁定"的公开单（锁单中 LOCKED 从不进搜索索引） */
-    private static final Set<ErrandStatusVO> PUBLIC_ERRAND_STATUSES =
-            EnumSet.of(ErrandStatusVO.PUBLISHED, ErrandStatusVO.CONFIRMED,
-                    ErrandStatusVO.PICKED_UP, ErrandStatusVO.DELIVERED);
-
     private final ISearchRepository searchRepository;
     private final ISearchQueryPort searchQueryPort;
     private final VirtualThreadFanout fanout;
@@ -58,7 +48,6 @@ public class SearchServiceImpl implements ISearchService {
         switch (message.getType()) {
             case "post" -> syncPost(message.getId());
             case "product" -> syncProduct(message.getId());
-            case "errand" -> syncErrand(message.getId());
             case "user" -> syncUser(message.getId());
             default -> log.warn("[SearchSync] 未知实体类型 type={}, id={}", message.getType(), message.getId());
         }
@@ -79,15 +68,6 @@ public class SearchServiceImpl implements ISearchService {
             searchRepository.bulkUpsertProductDocs(List.of(toProductSearchDocVO(productEntity)));
         } else {
             searchRepository.deleteProductDoc(productId);
-        }
-    }
-
-    private void syncErrand(String orderId) {
-        ErrandOrderEntity orderEntity = searchQueryPort.findErrand(orderId);
-        if (orderEntity != null && PUBLIC_ERRAND_STATUSES.contains(orderEntity.getStatus())) {
-            searchRepository.bulkUpsertErrandDocs(List.of(toErrandSearchDocVO(orderEntity)));
-        } else {
-            searchRepository.deleteErrandDoc(orderId);
         }
     }
 
@@ -125,18 +105,6 @@ public class SearchServiceImpl implements ISearchService {
     }
 
     @Override
-    public SearchPageVO<ErrandOrderEntity> searchErrands(String keyword, int page, int pageSize) {
-        SearchPageVO<String> idPage = searchRepository.searchErrands(keyword, page, pageSize);
-        if (idPage.getItems().isEmpty()) {
-            return new SearchPageVO<>(idPage.getTotal(), List.of());
-        }
-        Map<String, ErrandOrderEntity> byId = searchQueryPort.listErrandsByIds(idPage.getItems()).stream()
-                .filter(order -> PUBLIC_ERRAND_STATUSES.contains(order.getStatus()))
-                .collect(Collectors.toMap(ErrandOrderEntity::getOrderId, Function.identity()));
-        return new SearchPageVO<>(idPage.getTotal(), orderByIds(idPage.getItems(), byId));
-    }
-
-    @Override
     public SearchPageVO<UserEntity> searchUsers(String keyword, int page, int pageSize) {
         SearchPageVO<String> idPage = searchRepository.searchUsers(keyword, page, pageSize);
         if (idPage.getItems().isEmpty()) {
@@ -157,7 +125,6 @@ public class SearchServiceImpl implements ISearchService {
     public void rebuildAllIndices() {
         rebuildPosts();
         rebuildProducts();
-        rebuildErrands();
         rebuildUsers();
         log.info("[SearchRebuild] 全量重建完成");
     }
@@ -198,12 +165,6 @@ public class SearchServiceImpl implements ISearchService {
                 this::productSearchDocOf, searchRepository::bulkUpsertProductDocs);
     }
 
-    private void rebuildErrands() {
-        rebuild("errand", "search-rebuild-errand-", "",
-                (cursor, limit) -> searchQueryPort.listErrandIdsAfter(cursor, limit),
-                this::errandSearchDocOf, searchRepository::bulkUpsertErrandDocs);
-    }
-
     private void rebuildUsers() {
         rebuild("user", "search-rebuild-user-", "",
                 (cursor, limit) -> searchQueryPort.listUserIdsAfter(cursor, limit),
@@ -224,14 +185,6 @@ public class SearchServiceImpl implements ISearchService {
         return searchQueryPort.listProductsByIds(List.of(productId)).stream()
                 .filter(product -> product.getStatus() == ProductStatusVO.ON_SALE)
                 .map(this::toProductSearchDocVO)
-                .findFirst()
-                .orElse(null);
-    }
-
-    private ErrandSearchDocVO errandSearchDocOf(String orderId) {
-        return searchQueryPort.listErrandsByIds(List.of(orderId)).stream()
-                .filter(order -> PUBLIC_ERRAND_STATUSES.contains(order.getStatus()))
-                .map(this::toErrandSearchDocVO)
                 .findFirst()
                 .orElse(null);
     }
@@ -263,19 +216,6 @@ public class SearchServiceImpl implements ISearchService {
         doc.setCategory(productEntity.getCategory().name());
         doc.setStatus(productEntity.getStatus().name());
         doc.setCreatedAt(productEntity.getCreatedAt());
-        return doc;
-    }
-
-    private ErrandSearchDocVO toErrandSearchDocVO(ErrandOrderEntity orderEntity) {
-        ErrandSearchDocVO doc = new ErrandSearchDocVO();
-        doc.setOrderId(orderEntity.getOrderId());
-        doc.setTitle(orderEntity.getTitle());
-        doc.setDescription(orderEntity.getDescription());
-        doc.setPickupLocation(orderEntity.getPickupLocation());
-        doc.setDeliveryLocation(orderEntity.getDeliveryLocation());
-        doc.setType(orderEntity.getType().name());
-        doc.setStatus(orderEntity.getStatus().name());
-        doc.setCreatedAt(orderEntity.getCreatedAt());
         return doc;
     }
 

@@ -7,7 +7,7 @@
 
 | 域段 | 内容 | 表文档 |
 | --- | --- | --- |
-| 单体平铺域（社区 / 用户 / 钱包 / chat / 通知 / 跑腿 / 交易 / 信用分 / 超时 / outbox） | 38 张业务表 + 16 张 `timeout_task` 分表 | [`../../better-school/docs/db/README.md`](../../better-school/docs/db/README.md) |
+| 单体平铺域（社区 / 用户 / 钱包 / chat / 通知 / 交易 / 信用分 / 超时 / outbox） | 33 张业务表 + 16 张 `timeout_task` 分表 | [`../../better-school/docs/db/README.md`](../../better-school/docs/db/README.md) |
 | 营销并入域（points / raffle / rebate / inventory） | 22 张表（含与单体合流的 outbox） | [points](../marketing/db/points.md) / [draw](../marketing/db/draw.md) / [inventory](../marketing/db/inventory.md) |
 
 - **跨域纪律不因合库改变**：一个物理事务只写一个仓储（一个域）的表（ADR-0016）；

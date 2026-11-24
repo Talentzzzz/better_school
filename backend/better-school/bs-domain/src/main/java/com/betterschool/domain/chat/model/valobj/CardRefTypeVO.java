@@ -6,5 +6,5 @@ package com.betterschool.domain.chat.model.valobj;
  */
 public enum CardRefTypeVO {
 
-    PRODUCT, POST, ERRAND
+    PRODUCT, POST
 }

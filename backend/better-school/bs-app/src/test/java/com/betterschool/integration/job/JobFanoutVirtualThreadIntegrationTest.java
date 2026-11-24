@@ -3,7 +3,7 @@ package com.betterschool.integration.job;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.betterschool.integration.support.VtJobFanoutProbe;
 import com.betterschool.trigger.job.SearchIndexRebuildJob;
-import com.betterschool.trigger.job.TradeExpireScanJob;
+import com.betterschool.trigger.job.IdleExpireScanJob;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,16 +21,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>票 05 起每日信用任务（{@code DailyCreditJob} 及其 {@code user_daily_active} 事实源）随 sql.md 下线，
  * 变体 B 的「游标拉批到空」改由搜索索引全量重建承担——它同样是「游标推进到空批才是终止条件」的形状。
- * 跑腿超时兜底扫描已随「超时场景统一由超时中心回调收口」下线，变体 A 改由商品到期下架扫描承担。
+ * 变体 A 由商品到期下架扫描承担。
  */
 @DisplayName("调度扇出 seam：扇出项跑在虚拟线程上")
 class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
 
-    private static final String TRADE_EXPIRE_PREFIX_PATTERN = "trade-expire-product-\\d+";
+    private static final String IDLE_EXPIRE_PREFIX_PATTERN = "idle-expire-product-\\d+";
     private static final String REBUILD_PREFIX = "search-rebuild-";
 
     @Autowired
-    private TradeExpireScanJob tradeExpireScanJob;
+    private IdleExpireScanJob idleExpireScanJob;
 
     @Autowired
     private SearchIndexRebuildJob searchIndexRebuildJob;
@@ -42,7 +42,7 @@ class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
         insertExpiredProduct();
 
         VtJobFanoutProbe.reset();
-        tradeExpireScanJob.scan(null);
+        idleExpireScanJob.scan(null);
 
         assertThat(VtJobFanoutProbe.itemCount())
                 .as("扇出项应被调用——计数为 0 即该 job 被改回串行（不经扇出模板）").isPositive();
@@ -51,17 +51,16 @@ class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
         assertThat(VtJobFanoutProbe.threadNames())
                 .as("扇出线程按模板命名：前缀 + 自增序号")
                 .isNotEmpty()
-                .allSatisfy(name -> assertThat(name).matches(TRADE_EXPIRE_PREFIX_PATTERN));
+                .allSatisfy(name -> assertThat(name).matches(IDLE_EXPIRE_PREFIX_PATTERN));
     }
 
     @Test
     @DisplayName("变体 B 游标拉批到空：搜索索引全量重建的扇出项为虚拟线程")
     void variantBFanoutItemsRunOnVirtualThreads() {
         Session author = registerAndLogin("13900001102", "重建作者");
-        // 四类索引各摆一行可进索引的数据：重建的每一类都要有扇出项，断言才盯得住线程模型
+        // 三类索引各摆一行可进索引的数据：重建的每一类都要有扇出项，断言才盯得住线程模型
         publishPost(author, "扇出重建帖");
         insertOnSaleProduct(author.userId());
-        insertPublishedErrand(author.userId());
 
         VtJobFanoutProbe.reset();
         searchIndexRebuildJob.rebuild(null);
@@ -89,14 +88,6 @@ class JobFanoutVirtualThreadIntegrationTest extends CommunityApiTestBase {
     private void insertOnSaleProduct(String userId) {
         jdbcTemplate.update("INSERT INTO product (product_id, user_id, title, category, state, "
                 + "create_time, update_time) VALUES (?, ?, '扇出商品', 'BOOKS', 'ON_SALE', NOW(), NOW())",
-                UUID.randomUUID().toString(), userId);
-    }
-
-    /** 直插一行已发布跑腿单（口径同上） */
-    private void insertPublishedErrand(String userId) {
-        jdbcTemplate.update("INSERT INTO errand_order (errand_order_id, publisher_id, type, description, "
-                + "pickup_location, delivery_location, reward, state, create_time, update_time) "
-                + "VALUES (?, ?, 'BUY', '扇出单', '宿舍楼', '食堂', 5.00, 'PUBLISHED', NOW(), NOW())",
                 UUID.randomUUID().toString(), userId);
     }
 }

@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TimeoutTaskScanServiceTest {
 
     private static final String TASK_TYPE = "PRODUCT_ORDER_PAY_TIMEOUT";
-    private static final String TASK_TYPE_SECOND = "ERRAND_PAY_TIMEOUT";
+    private static final String TASK_TYPE_SECOND = "PRODUCT_ORDER_REFUND_TIMEOUT";
     private static final int SLOT = 7;
     /** 退避底数 / 封顶 / 上限：与 application(-test).yml 的 timeout.retry.* 同值 */
     private static final long BASE_SECONDS = 30;
@@ -94,9 +94,9 @@ class TimeoutTaskScanServiceTest {
         List<TimeoutTaskEntity> batch = List.of(
                 task("order-1", 0),
                 task("order-2", 0),
-                task(TASK_TYPE_SECOND, "errand-1", 0));
+                task(TASK_TYPE_SECOND, "biz-1", 0));
 
-        // 只有商品那两行回调成功；跑腿的项没有回报（按失败进重试）
+        // 只有前两行回调成功；另一任务类型的项没有回报（按失败进重试）
         SettleOutcomeVO outcome = service.settle(batch, CallbackReportVO.of(Set.of(
                 TaskKeyVO.of(TASK_TYPE, "order-1"), TaskKeyVO.of(TASK_TYPE, "order-2"))));
 

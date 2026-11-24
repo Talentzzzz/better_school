@@ -1,9 +1,9 @@
 package com.betterschool.integration.community;
 
-import com.betterschool.infrastructure.merge.count.CountAction;
-import com.betterschool.infrastructure.merge.count.CountEvent;
-import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
-import com.betterschool.infrastructure.merge.count.LikeState;
+import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountEvent;
+import com.betterschool.infrastructure.adapter.repository.community.CommunityRepository;
+import com.betterschool.infrastructure.adapter.repository.LikeState;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 落库方法的**批内撞键定位**（票 03 验收：只把 {@code DUPLICATE} 回给命中的那几个）。
  *
- * <p>为什么不在 HTTP 层测：一批 = 同一 5ms 窗口内、同一个帖子上的若干笔赞。用 HTTP 造出「同批」需要
+ * <p>为什么不在 HTTP 层测：一批 = 落到同一个热点组（同一帖子）上的若干笔赞。用 HTTP 造出「同批」需要
  * 精确的并发时序，而这里要验的是落库方法自己的裁决——它在合并器眼里就是一个「给一组事件、回一组结果」
  * 的函数，直接调它就是最短路径，也最稳定。
  *
@@ -32,7 +32,7 @@ class LikeCountFlushHandlerIntegrationTest extends CommunityApiTestBase {
     private static final String COMMENT_ID = "9900002";
 
     @Autowired
-    private ICountFlushHandler flushHandler;
+    private CommunityRepository flushHandler;
 
     @Test
     @DisplayName("点赞：同批三件里两件撞键，只把 DUPLICATE 回给命中的，计数按影响行数加")

@@ -22,6 +22,10 @@ import java.util.concurrent.locks.ReentrantLock;
  * 公开类型（{@link MergeConfig} / {@link MergeStrategy} / {@link MergeResult}），调用方切换零改动
  * ——只把引擎类名换掉。当前调用方<b>暂不切换</b>，替换决策在新引擎测试充分后另立票。
  *
+ * <p><b>并存定位</b>：本类是<b>有虚拟线程环境的终态形态</b>（结构性单飞、零交接空档）；
+ * 旧引擎是<b>通用组件的兜底形态</b>（JDK 8+、零后台线程，兼容不能用虚拟线程的项目）。两者是
+ * 「不同运行时前提下的形态」，不是性能档位；语义变更必须在两包（含 count 子包共三处）同票落地。
+ *
  * <pre>
  *   commit(item)
  *     ├─ 按 strategy.getShardKey(item) 找组（惰性创建），锁内入队（撞上死组则换组重建）
@@ -29,8 +33,8 @@ import java.util.concurrent.locks.ReentrantLock;
  *     ├─ 入队成功 → park 在自己的件上等终态（终态 CAS + 精确 unpark，无任何接班分支）
  *     └─ 缓冲满 / 停机中 → 直接返回 FAILED（件从未入队、必未落库，调用方重试安全）
  *                    ↓（leader 线程上）
- *   supervisor 循环：收集窗口攒批 → 一组一个事务落库 → 逐件回填 → 队列空则置死组、
- *   摘出 map、线程退出；任何 Throwable 被就地消化为整组 FAILED 并继续
+ *   supervisor 循环：队列非空即摘批（单批 ≤maxBatch，无收集窗口）→ 一组一个事务落库 → 逐件回填
+ *   → 队列空则置死组、摘出 map、线程退出；任何 Throwable 被就地消化为整组 FAILED 并继续
  * </pre>
  *
  * <h2>spawn 备忘（spec 固化的三点，改 spawn 路径前先读）</h2>
@@ -66,7 +70,7 @@ import java.util.concurrent.locks.ReentrantLock;
  *       线程上，leader 不退位，同一行任一时刻至多一条 flush 在途。不再需要任何执行权标志；
  *       （将来若要在收集与落库之间做流水线重叠，必须引入独立落库权标志，属后续演进）</li>
  *   <li><b>I3 锁不跨 DB</b>：组锁只护队列与标志位；落库在锁外（组对象上没有任何跨落库持有的锁）；</li>
- *   <li><b>I4 停机三步</b>：停收（{@code accepting=false}）→ markClosed（窗口作废、leader 立即
+ *   <li><b>I4 停机三步</b>：停收（{@code accepting=false}）→ markClosed（停收、leader 立即
  *       排空）→ awaitIdle 超时后残余回填 {@code FAILED}。虚拟 leader 天生 daemon，close 无需
  *       join——停机不依赖后台线程 join；</li>
  *   <li><b>I5 背压有界</b>：满即拒、不扩容、不挤掉已入队件。<b>背压不加新闸门</b>（spec 拍板）：
@@ -137,10 +141,9 @@ public class VirtualMergeEngine<T, R> {
         this.config = Objects.requireNonNull(config, "VirtualMergeEngine.config 不能为 null");
         this.strategy = Objects.requireNonNull(strategy, "VirtualMergeEngine.strategy 不能为 null");
         this.leaderFactory = Objects.requireNonNull(leaderFactory, "VirtualMergeEngine.leaderFactory 不能为 null");
-        log.info("合并引擎启动（专属虚拟线程 leader 模型）：strategy={}, 收集窗口={}ms, maxBatch={}, "
-                        + "groupCapacity={}, drainTimeoutMs={}",
-                strategy.getName(), config.maxFlushDelayMillis(), config.maxBatch(),
-                config.shardCapacity(), config.drainTimeoutMs());
+        log.info("合并引擎启动（专属虚拟线程 leader 模型）：strategy={}, 发车条件=队列非空即发（无收集窗口）, "
+                        + "maxBatch={}, groupCapacity={}, drainTimeoutMs={}",
+                strategy.getName(), config.maxBatch(), config.shardCapacity(), config.drainTimeoutMs());
     }
 
     /**

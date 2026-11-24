@@ -10,12 +10,13 @@ import com.betterschool.domain.community.model.valobj.PostStatusVO;
 import com.betterschool.domain.search.model.valobj.SearchEntityType;
 import com.betterschool.domain.search.model.valobj.SearchSyncMessage;
 import com.betterschool.infrastructure.cache.post.PostDetailCache;
-import com.betterschool.infrastructure.merge.count.CountAction;
-import com.betterschool.infrastructure.merge.count.CountEvent;
-import com.betterschool.infrastructure.merge.count.CountMergeWriter;
-import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
-import com.betterschool.infrastructure.merge.count.LikeState;
-import com.betterschool.infrastructure.merge.count.ViewMergeWriter;
+import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountEvent;
+import com.betterschool.infrastructure.adapter.repository.LikeState;
+import com.betterschool.infrastructure.merge.MergeConfig;
+import com.betterschool.infrastructure.merge.MergeEngine;
+import com.betterschool.infrastructure.merge.MergeResult;
+import com.betterschool.infrastructure.merge.MergeStrategy;
 import com.betterschool.infrastructure.dao.comment.IPostCommentDao;
 import com.betterschool.infrastructure.dao.comment.IPostCommentCountDao;
 import com.betterschool.infrastructure.dao.comment.IPostCommentFeedIndexDao;
@@ -41,8 +42,10 @@ import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -73,15 +76,15 @@ import java.util.stream.Collectors;
  * 多写原子用例在实现内用编程式事务（默认 REQUIRED）。
  * PO / Mapper XML 位置不变；帖子详情缓存仍只依赖 IPostDao（不经本类）。
  *
- * <p>本类同时是计数合并器的<b>落库方法</b>（{@link ICountFlushHandler}）：点赞 / 取消赞 / 评论赞 /
+ * <p>本类同时是计数写入的<b>落库方法</b>（{@link #flushGroup}）：点赞 / 取消赞 / 评论赞 /
  * 帖子浏览的「一组一个事务」在这里，和域内的其他读改写共用同一套 DAO 与事务模板——事务边界不出仓储
- * （{@code backend/CLAUDE.md} §1/§3）。商品浏览的落库方法在同层的 {@code TradeRepository}，
- * 由 {@code CountFlushDispatcher} 按动作分发。
+ * （{@code backend/CLAUDE.md} §1/§3）。通用合并引擎由本类自己 new（出口就是本类的
+ * {@code flushGroup}），四个动作共用一个实例，保证同一动作 × 同一行任一时刻至多一条 flush。
  */
 @Slf4j
 @Repository
 @RequiredArgsConstructor
-public class CommunityRepository implements ICommunityRepository, ICountFlushHandler {
+public class CommunityRepository implements ICommunityRepository {
 
     private final IPostDao postDao;
     private final IPostCommentDao commentDao;
@@ -110,10 +113,42 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     private final OutboxMessageStore outboxMessageStore;
     private final PostDetailCache postDetailCache;
     private final TransactionTemplate transactionTemplate;
-    /** 点赞类写入的唯一通道（合并器 + 三条降级） */
-    private final CountMergeWriter countMergeWriter;
-    /** 浏览类写入的唯一通道（fire-and-forget，窗口后一条 UPDATE … + N） */
-    private final ViewMergeWriter viewMergeWriter;
+    /**
+     * 计数合并引擎（通用 {@link MergeEngine}）：本仓储的四个动作（点赞 / 取消赞 / 评论赞 / 帖子浏览）
+     * 共用一个实例——同一张表共用一个引擎，才能保证「同一动作 × 同一行任一时刻至多一条 flush」。
+     * 非 final：出口是 {@code this::flushGroup}，只能在依赖注入完成后再建。
+     */
+    private MergeEngine<CountEvent, LikeState> countEngine;
+
+    /**
+     * 引擎由本类自建（通用引擎不是 Spring 托管对象，谁用谁 new），策略里只有两件业务知识：
+     * 分组键 = 「动作 × 行主键」（点赞与浏览打不同的表、同一动作不同行也不能混组），
+     * 落库 = 本类的 {@link #flushGroup}。
+     *
+     * <p>用 {@code @Autowired} 方法而不是构造参数：{@code @RequiredArgsConstructor} 生成的构造器里
+     * 依赖还没注入完，而 flush 出口必须是本实例；引擎构造期不调用它，注入完再建是安全的。
+     */
+    @Autowired
+    void initCountEngine(MergeConfig mergeConfig) {
+        this.countEngine = new MergeEngine<>(mergeConfig, new MergeStrategy<>(
+                "community-count",
+                // '\u0000' 不会出现在业务 ID（UUID）里，拼出来既严格区分动作又不会与行主键歧义
+                event -> event.action().name() + '\u0000' + event.targetId(),
+                group -> flushGroup(group.get(0).action(), group.get(0).targetId(), group)));
+    }
+
+    /** 停机排空：引擎不是 Spring 托管对象，销毁由持有者发起（顺序在数据源销毁之前） */
+    @PreDestroy
+    void closeCountEngine() {
+        if (countEngine != null) {
+            countEngine.close();
+        }
+    }
+
+    /** 排空等待（排障与集成测试读数用，业务路径不调）：true = 当前无在途件 */
+    public boolean awaitIdle(long timeoutMs) {
+        return countEngine == null || countEngine.awaitIdle(timeoutMs);
+    }
 
     // ---------- 帖子 ----------
 
@@ -385,14 +420,14 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
 
     @Override
     public void recordPostView(String postId, String userId) {
-        // 浏览计数（UV 口径，统一等待语义）：commit 等终态，窗口过后一组一个事务——明细表 INSERT IGNORE
+        // 浏览计数（UV 口径，统一等待语义）：commit 等终态，一组一个事务——明细表 INSERT IGNORE
         // + viewed_at 刷新 + 加速列 += 新增数。匿名访问落不了明细行（user_view_history 主键的一半是
         // user_id），按「INSERT 成功才算浏览」的口径不计入；明细行即真相源，失败/超时抛可重试，
         // 重放被明细唯一键吸收（spec：浏览类从「允许丢」翻转为 commit 语义）
         if (userId == null) {
             return;
         }
-        viewMergeWriter.write(CountAction.POST_VIEW, postId, userId);
+        writeView(CountAction.POST_VIEW, postId, userId);
     }
 
     @Override
@@ -407,14 +442,63 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
 
     @Override
     public LikeStateVO likePostWithMergedCount(String postId, String userId) {
-        // 合并写：提交给合并器 → 5ms 窗口 → 一组一事务（INSERT IGNORE 关系行 + 计数 +N）→ 返回时计数已精确。
-        // 缓冲满 / 停机中的同步降级、等超时的可重试翻译都在 CountMergeWriter（降级复用同一个落库方法）
-        return countMergeWriter.write(CountAction.POST_LIKE, postId, userId);
+        // 合并写：提交给通用引擎 → 一组一事务（INSERT IGNORE 关系行 + 计数 +N）→ 返回时计数已精确。
+        // 引擎只回两态，FAILED 在这里翻成可重试（件确定没落）
+        return writeLike(CountAction.POST_LIKE, postId, userId);
     }
 
     @Override
     public LikeStateVO unlikePostWithMergedCount(String postId, String userId) {
-        return countMergeWriter.write(CountAction.POST_UNLIKE, postId, userId);
+        return writeLike(CountAction.POST_UNLIKE, postId, userId);
+    }
+
+    /**
+     * 点赞类写入：提交给通用引擎并等终态（{@code COMPLETED} / {@code FAILED} 两态）。
+     *
+     * <p>{@code FAILED} 对用户表现为「系统繁忙」：确定没落（整组回滚 / 件从未入队），重试安全
+     * ——重复赞被关系行唯一键吸收成 {@code DUPLICATE}。引擎没有「等待超时」这一态：等待的终点由
+     * 底层 SQL 的 socketTimeout 保证（见 {@code MergeConfig} 类注释）。
+     */
+    private LikeStateVO writeLike(CountAction action, String rowId, String userId) {
+        MergeResult<LikeState> outcome = countEngine.commit(new CountEvent(action, rowId, userId));
+        if (!outcome.isCompleted()) {
+            throw retryable(action, rowId, "确定没落（整组已回滚 / 件未入队），可安全重试");
+        }
+        return toLikeStateVO(outcome.result(), action);
+    }
+
+    /**
+     * 浏览类写入：与点赞同一套提交语义，但没有业务结果可分——落了就是落了。
+     * {@code APPLIED} 只是引擎要求的占位值，这里不看它。
+     */
+    private void writeView(CountAction action, String rowId, String userId) {
+        MergeResult<LikeState> outcome = countEngine.commit(new CountEvent(action, rowId, userId));
+        if (!outcome.isCompleted()) {
+            throw retryable(action, rowId, "确定没落（整组已回滚 / 件未入队），可安全重试");
+        }
+    }
+
+    /** 引擎的结果枚举 → 域的结果枚举；两套枚举分开，域不依赖基础设施的合并器包 */
+    private static LikeStateVO toLikeStateVO(LikeState state, CountAction action) {
+        if (state == null) {
+            throw new IllegalStateException("落库方法回填了 null 业务结果：" + action);
+        }
+        return switch (state) {
+            case LIKED -> LikeStateVO.LIKED;
+            case UNLIKED -> LikeStateVO.UNLIKED;
+            case DUPLICATE -> LikeStateVO.DUPLICATE;
+            case NOT_FOUND -> LikeStateVO.NOT_FOUND;
+            // APPLIED 是浏览件的占位值；出现在点赞路径 = 落库方法用错了动作分支
+            case APPLIED -> throw new IllegalStateException("浏览占位结果不该出现在点赞路径：" + action);
+        };
+    }
+
+    /**
+     * 可重试：行一定没动（或重试会被唯一键吸收），对外统一「系统繁忙，请稍后重试」。
+     */
+    private static BusinessException retryable(CountAction action, String rowId, String detail) {
+        log.warn("计数写入需重试：action={}, rowId={}, 原因={}", action, rowId, detail);
+        return new BusinessException(ResponseCode.SYSTEM_ERROR, ResponseCode.SYSTEM_ERROR.getInfo());
     }
 
     // ---------- 计数合并器的落库方法：一组一个事务（spec §3.1） ----------
@@ -436,16 +520,15 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
      * 影响行数就是增量——同一套「影响行数 = 计数增量」的裁决逻辑，只是裁决键从点赞关系唯一键换成了
      * {@code (user_id, post_id)} 主键。
      */
-    @Override
     public List<LikeState> flushGroup(CountAction action, String shardKey, List<CountEvent> countEventList) {
         return switch (action) {
             case POST_LIKE -> transactionTemplate.execute(status -> likePosts(shardKey, countEventList));
             case POST_UNLIKE -> transactionTemplate.execute(status -> unlikePosts(shardKey, countEventList));
             case COMMENT_LIKE -> transactionTemplate.execute(status -> likeComments(shardKey, countEventList));
             case POST_VIEW -> transactionTemplate.execute(status -> viewPosts(shardKey, countEventList));
-            // 商品/跑腿浏览打的是各自的 UV 表，落库方法在 TradeRepository / ErrandRepository；由 CountFlushDispatcher 分流
-            case PRODUCT_VIEW, ERRAND_VIEW -> throw new IllegalArgumentException(
-                    "商品/跑腿浏览的落库方法在 TradeRepository / ErrandRepository，不该由社区仓储处理：" + action);
+            // 商品浏览打的是自己的 UV 表，落在 IdleRepository 持有的合并器实例里，不该由社区仓储处理
+            case PRODUCT_VIEW -> throw new IllegalArgumentException(
+                    "商品浏览的落库方法在 IdleRepository，不该由社区仓储处理：" + action);
         };
     }
 
@@ -460,10 +543,10 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
      *
      * <p><b>为什么计数按「影响行数」而不是「事件数」加</b>：与点赞同理——前端双击、HTTP 重试、
      * 降级并发写都会产生重复键，{@code INSERT IGNORE} 的影响行数恰好是本组真正插入的行数，
-     * 加速列与明细行条数就永远对得上（feed-index-uv map 定稿）。不重试、不回补：浏览允许丢，
-     * 丢了下次浏览的 INSERT 会把缺的 UV 补上。
+     * 加速列与明细行条数就永远对得上（feed-index-uv map 定稿）。失败/超时由调用方重试，
+     * 重放撞明细唯一键被吸收、不会重复计。
      *
-     * <p><b>为什么要回一组占位结果</b>：浏览件没有业务结果（没有人在等），但必须回一组与入参等长、
+     * <p><b>为什么要回一组占位结果</b>：浏览件没有「已赞 / 重复」可分，但必须回一组与入参等长、
      * 非 null 的占位值。引擎把「null / 缺位」当作落库方法漏回填，会补 {@code FAILED} 并计入
      * {@code failed}；那样 {@code flushed} 会漏掉这些件，合并比与「accepted − flushed」两个读数同时失真。
      */
@@ -559,7 +642,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     }
 
     /**
-     * 逐件回填业务结果，顺序与入参一致（{@link ICountFlushHandler} 的约定）。
+     * 逐件回填业务结果，顺序与入参一致（落库方法的约定）。
      *
      * <p>三个来源要分开，<b>点赞与取消赞的方向正好相反</b>，所以不能只传一个「被跳过」值：
      * <ul>
@@ -797,7 +880,7 @@ public class CommunityRepository implements ICommunityRepository, ICountFlushHan
     @Override
     public LikeStateVO likeCommentWithMergedCount(String commentId, String userId) {
         // 与帖子点赞同一条合并通道，只是 shardKey 取评论主键：一评一条 UPDATE（计数落 post_comment_like_count 窄表，票 02）
-        return countMergeWriter.write(CountAction.COMMENT_LIKE, commentId, userId);
+        return writeLike(CountAction.COMMENT_LIKE, commentId, userId);
     }
 
     @Override

@@ -17,10 +17,10 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <h2>执行权协议：一个 leader 独占「收集 + 落库」</h2>
  * <ol>
- *   <li><b>执行权</b>（{@code hasLeader}）：没有 leader 时由到达者竞选上位；在任者在收集窗口内吸收
- *       follower，攒满 / 停机则提前发车；</li>
+ *   <li><b>执行权</b>（{@code hasLeader}）：没有 leader 时由到达者竞选上位；在任者只看队列——
+ *       <b>队列非空即发车</b>（没有收集窗口，也没有「攒满才发」的等待，见类注释末节的论证）；</li>
  *   <li><b>持有到本批落库结束</b>：leader 摘批后<b>不放权</b>，直接在自己的请求线程上落库
- *       （一组一个事务），落库完再看队列——还有件就接着收集下一批，没件才放手。因此
+ *       （一组一个事务），落库完再看队列——还有件就接着摘下一批，没件才放手。因此
  *       「同一 invId 任一时刻至多一条 flush」是由<b>执行权互斥直接保证</b>的，不需要额外的
  *       「落库权」标志。收集与落库因此是串行的：落库期间队列只进不出，代价换来的是少一个状态、
  *       少一条「等落库权」的等待路径、少一类竞态；</li>
@@ -32,6 +32,22 @@ import java.util.concurrent.locks.ReentrantLock;
  *       （{@link #yieldLeadership()}）接手，不广播。组空闲即整体消亡，长尾 invId 不产生常驻
  *       内存开销。</li>
  * </ol>
+ *
+ * <h2>为什么没有收集窗口（改回去之前先读这段）</h2>
+ * <p>对照物是数据库内核的组提交（PolarDB-X Inventory Hint）：内核的「收集窗」<b>就是 leader 持行锁
+ * 处理的那段时间本身</b>——落库期间 follower 源源进队，提交即清空、立即下一轮，没有额外 sleep。
+ * 本引擎同构：串行形态下「落库耗时」天然就是收集窗，所以发车条件只有一条——<b>队列里有货就走</b>。
+ * 两条结构安全性（这是「去掉窗口不会把 DB 打穿」的全部依据）：
+ * <ol>
+ *   <li><b>DB 打不穿</b>：串行执行下事务速率 = 1/flush 耗时，而 flush 耗时（行锁临界区 + 提交）
+ *       ≈ DB 单行事务周期，所以事务速率<b>天然 ≤ DB 天花板</b>——节流阀就是 flush 耗时本身，
+ *       不需要窗口来「保护 DB」；</li>
+ *   <li><b>合并比自动伸缩</b>：合并比 = 到达速率 × flush 耗时。低速率下每批 1 件（延迟最低），
+ *       高速率下自动变大而事务速率仍 = 1/flush，稳态自平衡，不积压也不拒收。</li>
+ * </ol>
+ * <p>窗口唯一的理论残值（突发头部聚拢）也已不存在：那一刻队列里本来就有货，发车时一次性
+ * {@code min(maxBatch, size)} 取走，头部只多付一个小事务。<b>不要再把窗口当「DB 保护」加回来</b>
+ * ——决策与论证见 {@code backend/docs/architecture/merge-window-removal-spec.md}。
  *
  * <p><b>改这里之前先读这条</b>：单飞现在是「执行权独占」的推论，不是独立约束。若将来要在收集与
  * 落库之间做流水线重叠（让下一批 leader 在上一批落库时就开始攒批），<b>必须同时引入一个落库权
@@ -45,8 +61,9 @@ import java.util.concurrent.locks.ReentrantLock;
 final class MergeGroup<T, R> {
 
     /**
-     * 窗口已过又无件可发时的重查间隔，与引擎等待者的探测间隔同口径：{@code awaitNanos} 唤不醒
-     * 「别人的件被回填」这件事（unpark 只作用于 {@code park}），只能靠它定期重查谓词。
+     * 队列空时 leader 的重查间隔（<b>不是收集窗口</b>）：正常由 {@link #enqueue} 的 signal 立刻唤醒，
+     * 这里只兜两件 {@code awaitNanos} 感知不到的事——自己的件被别人回填（{@code unpark} 只作用于
+     * {@code park}）、以及信号丢失。
      */
     private static final long WAKEUP_PROBE_MS = 5;
 
@@ -61,11 +78,10 @@ final class MergeGroup<T, R> {
     private final String key;
     private final int maxBatch;
     private final int capacity;
-    private final long windowNanos;
 
     private final ReentrantLock lock = new ReentrantLock();
     /**
-     * 执行权持有者专用条件：<b>只剩 leader 在等</b>（等窗口 / 攒满 / 停机），同一时刻至多一个，
+     * 执行权持有者专用条件：<b>只剩 leader 在等</b>（等新件），同一时刻至多一个，
      * 所以这里的 signalAll 最多叫醒一根线程，不再是跟随者的惊群源。跟随者睡在自己的件上。
      */
     private final Condition ready = lock.newCondition();
@@ -73,7 +89,7 @@ final class MergeGroup<T, R> {
     /** 待合并队列（锁内访问，FIFO——同一 invId 的落库顺序 = 入队顺序） */
     private final ArrayDeque<MergeItem<T, R>> queue = new ArrayDeque<>();
 
-    /** 停机位：置位后收集窗口作废，leader 立即发车排空（close 的第一步） */
+    /** 停机位：置位后入口停收、leader 立即排空（close 的第一步） */
     private volatile boolean closed;
 
     /**
@@ -94,7 +110,6 @@ final class MergeGroup<T, R> {
         this.key = key;
         this.maxBatch = config.maxBatch();
         this.capacity = config.shardCapacity();
-        this.windowNanos = TimeUnit.MILLISECONDS.toNanos(config.maxFlushDelayMillis());
     }
 
     String key() {
@@ -119,11 +134,9 @@ final class MergeGroup<T, R> {
                 return EnqueueOutcome.BUFFER_FULL;
             }
             queue.addLast(item);
-            if (queue.size() >= maxBatch) {
-                // 攒满提前唤醒：leader 若在窗口等待中则立即发车（正在落库时 signal 落空无害，
-                // 它回到收集段时会重查谓词，届时队列已满，直接发车）
-                ready.signalAll();
-            }
+            // 队列非空即发：每进一件都要叫醒可能正空等的 leader。落库进行中时这次 signal 落空无害
+            // （leader 回到收集段会重查队列）；没有等待者时 signal 只是一次空队列判断，成本可忽略
+            ready.signalAll();
             return EnqueueOutcome.ENQUEUED;
         } finally {
             lock.unlock();
@@ -149,14 +162,17 @@ final class MergeGroup<T, R> {
     }
 
     /**
-     * 收集段：等到「有件可发 + 触发条件」（窗口到点 / 攒满 / 停机）就摘批发车。
+     * 收集段：<b>队列非空就摘批发车</b>——没有窗口、没有「攒满才发」，收集窗就是落库耗时本身
+     * （论证见类注释「为什么没有收集窗口」）。
      *
      * <p><b>摘批不放权</b>：调用方拿到批后直接去落库，落库期间仍然持有执行权——所以这一刻不可能
      * 有第二个线程在写同一行。
      *
-     * <p><b>没有总预算、不因等待而退出</b>：窗口到点仍无「可发」条件就接着攒，攒满或停机才发车；
-     * 窗口已过又一件都没有时，退回探测间隔轮询——自己的件可能被别的批回填，而 {@code unpark}
-     * 唤不醒 {@link Condition#awaitNanos}，只能靠超时重查发现「该收手了」。
+     * <p>队列空时才等：等 {@link #enqueue} 的 signal（新件到）、等停机（{@code close} 的 signal），
+     * 外加一个探测间隔兜底——自己的件可能被别的批回填，而 {@code unpark} 唤不醒
+     * {@link Condition#awaitNanos}，只能靠超时重查发现「该收手了」。
+     *
+     * <p><b>没有总预算、不因等待而退出</b>：只有「自己的件终态」与「被中断」两条收手路径。
      *
      * @param mine 本线程自己的件（它被回填 / 失败时立即收手）
      * @return 摘走的批（非空）；{@code null} = 未发车（自己的件已终态 / 被中断），执行权已交还
@@ -164,25 +180,17 @@ final class MergeGroup<T, R> {
     List<MergeItem<T, R>> takeForFlush(MergeItem<T, R> mine) {
         lock.lock();
         try {
-            long windowDeadline = 0L;
             while (true) {
                 if (mine.isCompleted()) {
                     // 自己的件已被别人回填（停机回填 / 别的批）：收手，执行权交还
                     yieldLeadershipLocked();
                     return null;
                 }
-                long now = System.nanoTime();
-                if (windowDeadline == 0) {
-                    windowDeadline = now + windowNanos;
-                }
-                if (!queue.isEmpty() && (closed || queue.size() >= maxBatch || now >= windowDeadline)) {
+                if (!queue.isEmpty()) {
                     return takeBatch();
                 }
-                long remainNanos = now < windowDeadline
-                        ? windowDeadline - now
-                        : TimeUnit.MILLISECONDS.toNanos(WAKEUP_PROBE_MS);
                 try {
-                    ready.awaitNanos(remainNanos);
+                    ready.awaitNanos(TimeUnit.MILLISECONDS.toNanos(WAKEUP_PROBE_MS));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     yieldLeadershipLocked();
@@ -226,7 +234,7 @@ final class MergeGroup<T, R> {
         }
     }
 
-    /** 停机第一步：置停机位并叫醒在位 leader——窗口作废，立即发车排空。 */
+    /** 停机第一步：置停机位并叫醒在位 leader——入口停收，队列里剩下的件由 leader 立即排空。 */
     void markClosed() {
         lock.lock();
         try {

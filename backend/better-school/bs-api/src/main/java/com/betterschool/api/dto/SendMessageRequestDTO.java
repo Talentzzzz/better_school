@@ -24,7 +24,7 @@ public class SendMessageRequestDTO {
     /** TEXT=裸文本 / IMAGE=JSON{url,width,height} / CARD 恒空 */
     private String content;
 
-    /** CARD 引用类型：PRODUCT/POST/ERRAND */
+    /** CARD 引用类型：PRODUCT/POST */
     private String refType;
 
     private String refId;

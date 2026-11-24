@@ -6,11 +6,9 @@ import { useChatRoomsStore } from '@/stores/chatRooms'
 import { createDirectRoom } from '@/api/chat'
 import { getPublicProfile } from '@/api/user'
 import { listUserComments, listUserLikedPosts, listUserPosts } from '@/api/community'
-import { listUserProducts } from '@/api/trade'
-import { listUserErrands } from '@/api/errand'
+import { listUserProducts } from '@/api/idle'
 import type {
   AuthorProfileComment,
-  ErrandOrder,
   PostSummary,
   Product,
   PublicUserProfile
@@ -21,25 +19,22 @@ import PostCard from '@/components/PostCard.vue'
 import ProductCard from '@/components/ProductCard.vue'
 import ProfileCommentRow from '@/components/ProfileCommentRow.vue'
 import SettingsSheet from '@/components/SettingsSheet.vue'
-import { formatCount, formatMoney, formatTime } from '@/utils/format'
-import { errandTypeText } from '@/utils/errand'
+import { formatCount } from '@/utils/format'
 
-type Tab = 'posts' | 'liked' | 'comments' | 'products' | 'errands'
+type Tab = 'posts' | 'liked' | 'comments' | 'products'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'posts', label: '笔记' },
   { key: 'liked', label: '赞过' },
   { key: 'comments', label: '评论' },
-  { key: 'products', label: '闲置' },
-  { key: 'errands', label: '跑腿' }
+  { key: 'products', label: '闲置' }
 ]
 
 const EMPTY_TEXT: Record<Tab, string> = {
   posts: '还没有笔记',
   liked: '还没有赞过的内容',
   comments: '还没有评论',
-  products: '还没有闲置',
-  errands: '还没有跑腿'
+  products: '还没有闲置'
 }
 
 const route = useRoute()
@@ -60,13 +55,11 @@ const posts = ref<PostSummary[]>([])
 const likedPosts = ref<PostSummary[]>([])
 const comments = ref<AuthorProfileComment[]>([])
 const products = ref<Product[]>([])
-const errands = ref<ErrandOrder[]>([])
 const loaded = ref<Record<Tab, boolean>>({
   posts: false,
   liked: false,
   comments: false,
-  products: false,
-  errands: false
+  products: false
 })
 const inflight = new Set<Tab>()
 
@@ -100,8 +93,6 @@ async function loadTab(target: Tab) {
       comments.value = (await listUserComments(userId.value)).list
     } else if (target === 'products') {
       products.value = (await listUserProducts(userId.value)).list
-    } else {
-      errands.value = (await listUserErrands(userId.value)).list
     }
     loaded.value[target] = true
   } finally {
@@ -115,8 +106,7 @@ function resetContent() {
   likedPosts.value = []
   comments.value = []
   products.value = []
-  errands.value = []
-  loaded.value = { posts: false, liked: false, comments: false, products: false, errands: false }
+  loaded.value = { posts: false, liked: false, comments: false, products: false }
 }
 
 function goBack() {
@@ -244,30 +234,6 @@ onMounted(() => {
             </div>
           </div>
         </template>
-
-        <!-- 跑腿：列表（与评论同口径，不画分割线） -->
-        <div v-else class="rows">
-          <EmptyState v-if="!loading && !errands.length" :text="EMPTY_TEXT.errands" />
-          <button v-for="order in errands" :key="order.orderId" class="errand" @click="router.push(`/errand/${order.orderId}`)">
-            <div class="row-between">
-              <span class="badge">{{ errandTypeText(order.type) }}</span>
-              <span class="reward">
-                ¥{{ formatMoney(order.reward) }}
-              </span>
-            </div>
-            <div class="edesc ellipsis-3">{{ order.title ?? order.description }}</div>
-            <div class="route">
-              <span class="ellipsis">{{ order.pickupLocation }}</span>
-              <span class="arrow">→</span>
-              <span class="ellipsis">{{ order.deliveryLocation }}</span>
-            </div>
-            <div class="emeta">
-              <AppAvatar :src="order.publisherAvatar" :name="order.publisherNickname" :size="16" />
-              <span class="ellipsis pname">{{ order.publisherNickname }}</span>
-              <span class="pfav">{{ formatTime(order.createdAt) }}</span>
-            </div>
-          </button>
-        </div>
       </template>
     </div>
 
@@ -460,76 +426,9 @@ onMounted(() => {
   }
 }
 
-/* 评论与跑腿：不画分割线，靠 14px 行距自然分隔 */
+/* 评论：不画分割线，靠 14px 行距自然分隔 */
 .rows {
   padding-bottom: 8px;
-}
-
-.errand {
-  display: block;
-  width: 100%;
-  padding: 14px 16px;
-  text-align: left;
-
-  &:active {
-    background: $bg-secondary;
-  }
-}
-
-.row-between {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-}
-
-.badge {
-  padding: 2px 7px;
-  border-radius: 5px;
-  background: rgba(255, 36, 66, 0.1);
-  color: $primary;
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.reward {
-  color: $primary;
-  font-size: 13px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.edesc {
-  margin-top: 8px;
-  font-size: 14px;
-  line-height: 1.5;
-  color: $text-1;
-}
-
-.route {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 6px 8px;
-  border-radius: $radius-sm;
-  background: $bg-secondary;
-  color: $text-2;
-  font-size: 11px;
-
-  .arrow {
-    flex-shrink: 0;
-    color: $text-4;
-  }
-}
-
-.emeta {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 8px;
-  color: $text-3;
-  font-size: 10px;
 }
 
 .pname {

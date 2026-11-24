@@ -23,8 +23,9 @@ import org.springframework.core.env.Environment;
 public class MergeEngineConfig {
 
     /**
-     * 合并引擎参数。未配置的项落 {@link MergeConfig#defaults()}（5ms 窗口 / 200 批 / 2000 组容量 /
-     * 5s 排空）。没有「等待超时」——等待的终点由底层 SQL 的 socketTimeout 保证。
+     * 合并引擎参数。未配置的项落 {@link MergeConfig#defaults()}（200 批 / 2000 组容量 / 5s 排空；
+     * 窗口参数已退役，默认值仅为 yml 键兼容保留）。没有「等待超时」——等待的终点由底层 SQL 的
+     * socketTimeout 保证。
      */
     @Bean
     public MergeConfig mergeConfig(Environment environment) {
@@ -36,8 +37,9 @@ public class MergeEngineConfig {
                 environment.getProperty("merge.batch.shard-capacity", Integer.class, defaults.shardCapacity()),
                 environment.getProperty("merge.batch.drain-timeout-ms", Long.class, defaults.drainTimeoutMs()));
 
-        log.info("合并引擎装配（per-invId leader 模型）：merge.batch.shard-count={}（退役兼容键，读入不用），"
-                        + "收集窗口={}ms，flush 并发 = 并发热点 leader 数（受连接池自然约束）",
+        log.info("合并引擎装配（per-invId leader 模型）：merge.batch.shard-count={}、"
+                        + "merge.batch.max-flush-delay-millis={}（均为退役兼容键，读入不用），"
+                        + "发车条件 = 队列非空即发（无收集窗口），flush 并发 = 并发热点 leader 数（受连接池自然约束）",
                 config.shardCount(), config.maxFlushDelayMillis());
         return config;
     }

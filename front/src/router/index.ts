@@ -27,13 +27,11 @@ const router = createRouter({
     },
     { path: '/publish', component: () => import('@/views/PublishIndexView.vue'), meta: { requiresAuth: true } },
     { path: '/publish/post', component: () => import('@/views/post/PostPublishView.vue'), meta: { requiresAuth: true } },
-    { path: '/publish/product', component: () => import('@/views/trade/ProductPublishView.vue'), meta: { requiresAuth: true } },
-    { path: '/publish/errand', component: () => import('@/views/errand/ErrandPublishView.vue'), meta: { requiresAuth: true } },
+    { path: '/publish/product', component: () => import('@/views/idle/ProductPublishView.vue'), meta: { requiresAuth: true } },
     { path: '/login', component: () => import('@/views/auth/LoginView.vue') },
     { path: '/search', component: () => import('@/views/SearchView.vue') },
     { path: '/post/:id(\\d+)', component: () => import('@/views/post/PostDetailView.vue') },
-    { path: '/product/:id(\\d+)', component: () => import('@/views/trade/ProductDetailView.vue') },
-    { path: '/errand/:id(\\d+)', component: () => import('@/views/errand/ErrandDetailView.vue') },
+    { path: '/product/:id(\\d+)', component: () => import('@/views/idle/ProductDetailView.vue') },
     { path: '/user/:userId(\\d+)', component: () => import('@/views/AuthorProfileView.vue'), meta: { tabbar: true } },
     { path: '/settings/profile', component: () => import('@/views/settings/ProfileEditView.vue'), meta: { requiresAuth: true } },
     { path: '/settings/privacy', component: () => import('@/views/settings/PrivacySettingsView.vue'), meta: { requiresAuth: true } },
@@ -47,12 +45,14 @@ const router = createRouter({
     { path: '/marketing/prizes', component: () => import('@/views/marketing/MyPrizesView.vue'), meta: { requiresAuth: true } },
     { path: '/me/wallet', component: () => import('@/views/me/WalletView.vue'), meta: { requiresAuth: true } },
     { path: '/me/credit', component: () => import('@/views/me/CreditView.vue'), meta: { requiresAuth: true } },
-    // 聚合订单页：订单类唯一入口（?tab=errand|idle）；收藏仍走 /me/favorites
+    // 聚合订单页：订单类唯一入口（?tab=idle）；收藏仍走 /me/favorites
     { path: '/me/orders', component: () => import('@/views/me/MyOrdersView.vue'), meta: { requiresAuth: true } },
     { path: '/me/favorites', component: () => import('@/views/me/MyFavoritesView.vue'), meta: { requiresAuth: true } },
     { path: '/me/post-drafts', component: () => import('@/views/post/PostDraftBoxView.vue'), meta: { requiresAuth: true } },
     { path: '/me/history', component: () => import('@/views/me/ViewHistoryView.vue'), meta: { requiresAuth: true } },
-    { path: '/trade/order/:id(\\d+)', component: () => import('@/views/trade/ProductOrderView.vue'), meta: { requiresAuth: true } },
+    { path: '/idle/order/:id(\\d+)', component: () => import('@/views/idle/ProductOrderView.vue'), meta: { requiresAuth: true } },
+    // 更名前路由的兼容跳转：老分享链接落到 /trade/order/:id 时转到新路径，下个大版本移除
+    { path: '/trade/order/:id(\\d+)', redirect: to => `/idle/order/${to.params.id}` },
     { path: '/:pathMatch(.*)*', redirect: '/home' }
   ]
 })

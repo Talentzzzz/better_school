@@ -19,7 +19,7 @@ import java.util.UUID;
  * （营销侧不同步调单体，单体停 → 营销照跑）。
  * <p>
  * 两类通知统一 {@code scope = BOTTOM_SYSTEM}（底部消息页 system tab，不进市集消息页）、
- * {@code ref_type = MARKETING}、type 取营销枚举（不复用 ORDER_EVENT）。
+ * {@code ref_type = MARKETING}、type 取营销枚举（不复用通知域的事件类型）。
  * 幂等 = {@code notification.dedup_key}（营销票 04 定的 {@code MARKETING:...} 形状，原样随事件携带）：
  * broker 重投 / outbox 补发只落一条；业务异常不吞，上抛交 broker 重试（重放由 dedup_key 幂等）。
  */

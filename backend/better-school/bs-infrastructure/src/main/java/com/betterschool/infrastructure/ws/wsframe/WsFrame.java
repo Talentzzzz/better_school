@@ -5,7 +5,7 @@ import lombok.Getter;
 /**
  * WS 协议信封（JSON 文本帧）：{type, payload?, ts}——与业务无关，所有业务通用。
  * roomId/seq 等业务字段一律随 payload 下发（形状按 type 解释，线上契约由同包
- * 各 Ws*Payload 类显式承载：WsMsgPayload/WsReadPayload/WsRecallPayload/WsNotifPayload/WsOrderPayload/WsKickPayload），
+ * 各 Ws*Payload 类显式承载：WsMsgPayload/WsReadPayload/WsRecallPayload/WsNotifPayload/WsKickPayload），
  * 信封不开业务专属槽位。
  * <p>泛型参数 T = payload 的契约类型，只声明组帧那一刻的载荷形状；帧一出工厂进入传输链
  * （hub → pusher → router → Redis）即按 {@code WsFrame<?>} 传递——各帧载荷类型互异，

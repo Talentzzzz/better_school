@@ -1,8 +1,7 @@
 package com.betterschool.domain.search.adapter.port;
 
 import com.betterschool.domain.community.model.entity.PostEntity;
-import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
-import com.betterschool.domain.trade.model.entity.ProductEntity;
+import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.user.model.entity.UserEntity;
 
 import java.util.List;
@@ -29,7 +28,7 @@ public interface ISearchQueryPort {
     /** 帖子索引全量重建的游标页：post_id 字典序 > lastPostId 取 limit 条（业务 id 是 UUID 字符串） */
     List<String> listPostIdsAfter(String lastPostId, int limit);
 
-    // ---------- 商品（trade） ----------
+    // ---------- 商品（idle） ----------
 
     /** 单个商品；不存在返回 null（业务 id 是 UUID 字符串） */
     ProductEntity findProduct(String productId);
@@ -39,17 +38,6 @@ public interface ISearchQueryPort {
 
     /** 商品索引全量重建的游标页：product_id 字典序 > lastProductId 取 limit 条（业务 id 是 UUID 字符串） */
     List<String> listProductIdsAfter(String lastProductId, int limit);
-
-    // ---------- 跑腿单（errand） ----------
-
-    /** 单个跑腿单；不存在返回 null（业务 id 是 UUID 字符串） */
-    ErrandOrderEntity findErrand(String orderId);
-
-    /** 按 id 列表查询（不分状态；返回顺序与入参无关，调用方按 id 重排） */
-    List<ErrandOrderEntity> listErrandsByIds(List<String> orderIds);
-
-    /** 跑腿索引全量重建的游标页：errand_order_id 字典序 > lastOrderId 取 limit 条（业务 id 是 UUID 字符串） */
-    List<String> listErrandIdsAfter(String lastOrderId, int limit);
 
     // ---------- 用户（user） ----------
 

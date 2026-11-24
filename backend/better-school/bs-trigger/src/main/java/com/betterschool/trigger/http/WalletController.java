@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 虚拟钱包 HTTP 入口：全部需登录（跑腿资金托管底座）
+ * 虚拟钱包 HTTP 入口：全部需登录（资金托管底座）
  */
 @RestController
 @RequestMapping("/api/wallet")

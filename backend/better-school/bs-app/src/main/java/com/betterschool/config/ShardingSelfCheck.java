@@ -30,9 +30,9 @@ import java.util.Set;
 @Configuration
 public class ShardingSelfCheck {
 
-    /** 代表性业务表：覆盖社区/跑腿/商品三条主链路（有任意一张不可见即整库锁死形态） */
+    /** 代表性业务表：覆盖社区/商品两条主链路（有任意一张不可见即整库锁死形态） */
     private static final List<String> MUST_BE_VISIBLE =
-            List.of("timeout_task", "bs_user", "post", "errand_order", "product_order");
+            List.of("timeout_task", "bs_user", "post", "product_order");
 
     @Bean
     public ApplicationRunner shardingRouteSelfCheck(DataSource dataSource) {

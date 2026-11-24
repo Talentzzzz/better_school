@@ -53,13 +53,6 @@ NotifyEventConsumer（通知域唯一写入口）
   首次登录该账号（无水位）静默对齐不回放历史存量。NOTIF 帧就地推进水位。
 - 前端未读角标：NOTIF 帧到达对应 scope 未读 +1，进通知页 markRead 后以服务端口径重拉对齐。
 
-## ORDER 帧：订单状态实时刷新
-
-- 跑腿订单每个状态迁移点成功后由域服务写 outbox `bs-order-push`（`ErrandOrderPushEvent{orderId,status}`）→
-  `OrderPushConsumer`（反序列化 + 调 case）→ `ErrandOrderCase.pushStatus` 决定订单双方投递 →
-  经 errand 本域仓储 `deliverWsFrame` 委托 infra WS 组件推 WS `ORDER` 帧给发布方+接单方在线者。
-- 详情页收到帧（匹配当前 orderId）即重拉详情；推送是加速路径，漏推由详情页拉取/通知中心兜底。
-
 ## 关键文件
 
 | 层 | 文件 |
@@ -69,8 +62,8 @@ NotifyEventConsumer（通知域唯一写入口）
 | 事件消费+落库+通道路由 | `bs-trigger/.../listener/NotifyEventConsumer.java`（通知域唯一写入口） |
 | 路由定义 | `bs-domain/.../notification/model/valobj/NotificationTypeVO.java`（Channel 枚举） |
 | 系统消息投递 | `bs-case/.../usecase/notification/SystemMessageCase.java` |
-| 通道消费方 | `bs-trigger/.../listener/NotifyChatConsumer.java` / `NotifyPushConsumer.java` / `OrderPushConsumer.java`（后两者均为反序列化 + 调 case） |
-| 推送决策 | `bs-case/.../usecase/notification/NotifyPushCase.java`（NOTIF 组帧）/ `usecase/errand/ErrandOrderCase.java`（pushStatus 双方投递决策） |
-| WS 投递出口  | 各域仓储方法 `deliverWsFrame`（`IChatRepository`/`INotificationRepository`/`IErrandRepository`）→ 仓储实现委托组件 `bs-infrastructure/.../ws/`（IWsConnectionHub） 
-| WS 帧 | `bs-domain/.../chat/model/valobj/WsFrameType.java` 增 NOTIF / ORDER |
+| 通道消费方 | `bs-trigger/.../listener/NotifyChatConsumer.java` / `NotifyPushConsumer.java`（均为反序列化 + 调 case） |
+| 推送决策 | `bs-case/.../usecase/notification/NotifyPushCase.java`（NOTIF 组帧） |
+| WS 投递出口  | 各域仓储方法 `deliverWsFrame`（`IChatRepository`/`INotificationRepository`）→ 仓储实现委托组件 `bs-infrastructure/.../ws/`（IWsConnectionHub） 
+| WS 帧 | `bs-domain/.../chat/model/valobj/WsFrameType.java` 增 NOTIF |
 | 前端 | `stores/notices.ts`（横幅队列/水位补放/未读）+ `components/NotifBanner.vue` + `App.vue` 挂载 |

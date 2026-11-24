@@ -2,11 +2,9 @@ package com.betterschool.infrastructure.adapter.port.search;
 
 import com.betterschool.domain.community.adapter.repository.ICommunityRepository;
 import com.betterschool.domain.community.model.entity.PostEntity;
-import com.betterschool.domain.errand.adapter.repository.IErrandRepository;
-import com.betterschool.domain.errand.model.entity.ErrandOrderEntity;
 import com.betterschool.domain.search.adapter.port.ISearchQueryPort;
-import com.betterschool.domain.trade.adapter.repository.ITradeRepository;
-import com.betterschool.domain.trade.model.entity.ProductEntity;
+import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
+import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.user.adapter.repository.IUserRepository;
 import com.betterschool.domain.user.model.entity.UserEntity;
 import lombok.RequiredArgsConstructor;
@@ -15,7 +13,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 搜索同步只读查询端口实现：只读 community / trade / errand / user 四域的读路径（含各自缓存口径），
+ * 搜索同步只读查询端口实现：只读 community / idle / user 三域的读路径（含各自缓存口径），
  * 只把实体取回来交 search 判定「进不进索引」。
  * 落位在 adapter/port（不是 repository），跨域只读边的伸手点集中在这里
  */
@@ -24,8 +22,7 @@ import java.util.List;
 public class SearchQueryPort implements ISearchQueryPort {
 
     private final ICommunityRepository communityRepository;
-    private final ITradeRepository tradeRepository;
-    private final IErrandRepository errandRepository;
+    private final IIdleRepository idleRepository;
     private final IUserRepository userRepository;
 
     @Override
@@ -45,32 +42,17 @@ public class SearchQueryPort implements ISearchQueryPort {
 
     @Override
     public ProductEntity findProduct(String productId) {
-        return tradeRepository.findById(productId);
+        return idleRepository.findById(productId);
     }
 
     @Override
     public List<ProductEntity> listProductsByIds(List<String> productIds) {
-        return tradeRepository.listByIds(productIds);
+        return idleRepository.listByIds(productIds);
     }
 
     @Override
     public List<String> listProductIdsAfter(String lastProductId, int limit) {
-        return tradeRepository.listIdsAfter(lastProductId, limit);
-    }
-
-    @Override
-    public ErrandOrderEntity findErrand(String orderId) {
-        return errandRepository.findById(orderId);
-    }
-
-    @Override
-    public List<ErrandOrderEntity> listErrandsByIds(List<String> orderIds) {
-        return errandRepository.listByIds(orderIds);
-    }
-
-    @Override
-    public List<String> listErrandIdsAfter(String lastOrderId, int limit) {
-        return errandRepository.listIdsAfter(lastOrderId, limit);
+        return idleRepository.listIdsAfter(lastProductId, limit);
     }
 
     @Override

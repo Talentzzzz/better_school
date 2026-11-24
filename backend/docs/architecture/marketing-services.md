@@ -161,7 +161,7 @@ schema / xxl-job-tasks）已删除；xxl 注册收敛为单体唯一 seed `bette
 
 跨域纪律**不因合库改变**（ADR-0016）：一个物理事务只写一个仓储（一个域）的表，跨域一致性 =
 两段各自本地事务 + 资金先行 + 流水唯一键幂等 + 孤儿扫描补偿（`drawCountPurchaseScan` /
-`errandFundOrphanScan` / `productFundOrphanScan` 口径）。表所有权原则也照旧：用户表归 user 域
+`productFundOrphanScan` 口径）。表所有权原则也照旧：用户表归 user 域
 独占写，营销域只存 `user_id`、读经消费方域的 port（进程内实现）或 case 层编排直调用户域。
 
 同库内跨表展示的数据（如抽奖的中奖记录关联 `virtual_inventory_quota` 带出面额与库存）
@@ -175,8 +175,8 @@ schema / xxl-job-tasks）已删除；xxl 注册收敛为单体唯一 seed `bette
 > 营销侧**尚未接入超时中心**（零接入方；内嵌化票 08 只定规格）：将来落表 / 落码的确定落法，
 > 见 [`../architecture/timeout.md`](timeout.md)。
 > 库存合并已整条进进程（hot-row-merge-l2w256，ADR-0013）：无消息、无桶、无兜底，
-> 两个库存引擎（计数 `merge/count`、库存 `merge` 根）两套并存、功能不同不归并，
-> 见 [`../marketing/architecture/merge.md`](../marketing/architecture/merge.md)。
+> 库存与计数共用同一个通用引擎（`infrastructure/merge`，谁用谁 new `MergeEngine`；
+> 计数不再有专用引擎子包），见 [`../marketing/architecture/merge.md`](../marketing/architecture/merge.md)。
 
 ## 7. 前端联调
 

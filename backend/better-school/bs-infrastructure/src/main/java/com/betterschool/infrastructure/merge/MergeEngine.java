@@ -16,8 +16,9 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <p>没有分片数组、没有常驻后台线程——以 {@code invId}（业务行主键）为键的动态
  * {@link MergeGroup} 表替代固定分片：第一条到达的请求惰性创建该 invId 的 Group 并成为 leader，
- * 在收集窗口内吸收 follower；到点/攒满后 leader 带全队一次落库（一组一个事务不变），
- * <b>落库期间不放权</b>——落库完还有件就接着收集下一批，队列空了才放手，所以同一行任一时刻
+ * <b>队列非空即发车</b>（没有收集窗口——收集窗就是落库耗时本身，见 {@link MergeGroup} 类注释的
+ * 内核对照与结构安全性论证）；leader 带全队一次落库（一组一个事务不变，单批上界 {@code maxBatch}），
+ * <b>落库期间不放权</b>——落库完还有件就接着摘下一批，队列空了才放手，所以同一行任一时刻
  * 只有它这一条 flush；
  * Group 空闲即从表中乐观删除（删除竞态由 {@code removed} 标志 + 换组重试闭环，DB 行锁 +
  * 唯一键再兜一层）。并行度随热点行数自伸缩，不再被分片数钉死。
@@ -25,17 +26,22 @@ import java.util.concurrent.locks.ReentrantLock;
  * <pre>
  *   commit(item)
  *     ├─ 按 strategy.getShardKey(item) 找组（惰性创建），锁内入队
- *     ├─ 执行权空缺 → 接管：收集窗口内吸收 follower（攒满 / 停机提前发车）
+ *     ├─ 执行权空缺 → 接管：队列有货就摘批（单批 ≤maxBatch），队列空则等新件 / 等停机
  *     ├─ 执行权被占 → 睡在自己的件上等终态（无等待上限，终态/点名/探测三种唤醒）
  *     └─ 缓冲满 / 停机中 → 直接返回 FAILED（件从未入队、必未落库，调用方重试安全）
- *                    ↓（窗口到点 / 攒满，由 leader 在自己的请求线程上发车）
+ *                    ↓（队列非空即由 leader 在自己的请求线程上发车）
  *   flush：锁内摘批（≤maxBatch）→ 锁外落库（一组一个事务，执行权不撒手）
- *          → 逐件回填 → 队列空则摘出 map；非空则本线程接着收集下一批
+ *          → 逐件回填 → 队列空则摘出 map；非空则本线程接着摘下一批
  * </pre>
  *
  * <p><b>一个引擎 = 一个用途 = 一个策略</b>：{@link MergeStrategy} 在构造时注入并定格，件里不带它。
  * 因此 {@code T} / {@code R} 就是这一类的载荷与结果。要接第二个用途就再建一个引擎——
  * 预扣与确认仍是两个实例，两类失败域不共享缓冲（story 22）。
+ *
+ * <p><b>与 mergevirtual 的并存定位</b>：本类（请求线程客串 leader、零后台线程、JDK 8+ 可用）是
+ * 通用组件的<b>兜底形态</b>——不能用虚拟线程的项目也能直接拿走；{@code mergevirtual}（每组一根
+ * 专属虚拟 leader，结构性单飞、零交接空档）是<b>有虚拟线程环境的终态形态</b>。两者是「不同运行时
+ * 前提下的形态」，不是性能档位；语义变更必须在两包（含 count 子包共三处）同票落地。
  *
  * <p><b>不是 Spring 托管对象</b>：实例数与生命周期由持有者决定，所以由各写入组件 {@code new}
  * 出来、并在它自己的 {@code @PreDestroy} 里调 {@link #close()}。无后台线程可 join。
@@ -80,10 +86,9 @@ public class MergeEngine<T, R> {
     public MergeEngine(MergeConfig config, MergeStrategy<T, R> strategy) {
         this.config = Objects.requireNonNull(config, "MergeEngine.config 不能为 null");
         this.strategy = Objects.requireNonNull(strategy, "MergeEngine.strategy 不能为 null");
-        log.info("合并引擎启动（per-invId leader 模型）：strategy={}, 收集窗口={}ms, maxBatch={}, "
-                        + "groupCapacity={}, drainTimeoutMs={}",
-                strategy.getName(), config.maxFlushDelayMillis(), config.maxBatch(),
-                config.shardCapacity(), config.drainTimeoutMs());
+        log.info("合并引擎启动（per-invId leader 模型）：strategy={}, 发车条件=队列非空即发（无收集窗口）, "
+                        + "maxBatch={}, groupCapacity={}, drainTimeoutMs={}",
+                strategy.getName(), config.maxBatch(), config.shardCapacity(), config.drainTimeoutMs());
     }
 
     /**

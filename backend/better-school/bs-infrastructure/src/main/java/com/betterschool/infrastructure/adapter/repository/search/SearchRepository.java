@@ -17,14 +17,12 @@ import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 import co.elastic.clients.elasticsearch.indices.CreateIndexRequest;
 import co.elastic.clients.json.JsonData;
 import com.betterschool.domain.community.model.valobj.PostStatusVO;
-import com.betterschool.domain.errand.model.valobj.ErrandStatusVO;
 import com.betterschool.domain.search.adapter.repository.ISearchRepository;
-import com.betterschool.domain.search.model.valobj.ErrandSearchDocVO;
 import com.betterschool.domain.search.model.valobj.PostSearchDocVO;
 import com.betterschool.domain.search.model.valobj.ProductSearchDocVO;
 import com.betterschool.domain.search.model.valobj.SearchPageVO;
 import com.betterschool.domain.search.model.valobj.UserSearchDocVO;
-import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
+import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
 import com.betterschool.domain.user.model.valobj.UserStatusVO;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -55,9 +53,6 @@ public class SearchRepository implements ISearchRepository {
             List.of(PostStatusVO.NORMAL.name());
     private static final List<String> PUBLIC_PRODUCT_STATUSES =
             List.of(ProductStatusVO.ON_SALE.name());
-    private static final List<String> PUBLIC_ERRAND_STATUSES =
-            List.of(ErrandStatusVO.PUBLISHED.name(), ErrandStatusVO.CONFIRMED.name(),
-                    ErrandStatusVO.PICKED_UP.name(), ErrandStatusVO.DELIVERED.name());
     private static final List<String> PUBLIC_USER_STATUSES =
             List.of(UserStatusVO.NORMAL.name());
 
@@ -77,16 +72,6 @@ public class SearchRepository implements ISearchRepository {
                 mappings.properties("description", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
                 mappings.properties("tradeLocation", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
                 mappings.properties("category", p -> p.keyword(k -> k));
-                mappings.properties("status", p -> p.keyword(k -> k));
-                mappings.properties("createdAt", p -> p.date(d -> d));
-            });
-            createIndexIfAbsent("bs_errand", mappings -> {
-                mappings.properties("orderId", p -> p.keyword(k -> k));
-                mappings.properties("title", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
-                mappings.properties("description", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
-                mappings.properties("pickupLocation", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
-                mappings.properties("deliveryLocation", p -> p.text(t -> t.analyzer("ik_max_word").searchAnalyzer("ik_smart")));
-                mappings.properties("type", p -> p.keyword(k -> k));
                 mappings.properties("status", p -> p.keyword(k -> k));
                 mappings.properties("createdAt", p -> p.date(d -> d));
             });
@@ -139,12 +124,6 @@ public class SearchRepository implements ISearchRepository {
     public SearchPageVO<String> searchProducts(String keyword, int page, int pageSize) {
         return search("bs_product", List.of("title", "description", "tradeLocation"),
                 PUBLIC_PRODUCT_STATUSES, keyword, page, pageSize, Function.identity());
-    }
-
-    @Override
-    public SearchPageVO<String> searchErrands(String keyword, int page, int pageSize) {
-        return search("bs_errand", List.of("title", "description", "pickupLocation", "deliveryLocation"),
-                PUBLIC_ERRAND_STATUSES, keyword, page, pageSize, Function.identity());
     }
 
     @Override
@@ -216,11 +195,6 @@ public class SearchRepository implements ISearchRepository {
     }
 
     @Override
-    public void bulkUpsertErrandDocs(List<ErrandSearchDocVO> errandSearchDocList) {
-        bulkUpsert("bs_errand", errandSearchDocList, ErrandSearchDocVO::getOrderId);
-    }
-
-    @Override
     public void bulkUpsertUserDocs(List<UserSearchDocVO> userSearchDocList) {
         bulkUpsert("bs_user", userSearchDocList, UserSearchDocVO::getUserId);
     }
@@ -267,11 +241,6 @@ public class SearchRepository implements ISearchRepository {
     }
 
     @Override
-    public void deleteErrandDoc(String orderId) {
-        deleteDoc("bs_errand", orderId);
-    }
-
-    @Override
     public void deleteUserDoc(String userId) {
         deleteDoc("bs_user", userId);
     }
@@ -293,7 +262,6 @@ public class SearchRepository implements ISearchRepository {
         return switch (entityType) {
             case "post" -> "bs_post";
             case "product" -> "bs_product";
-            case "errand" -> "bs_errand";
             case "user" -> "bs_user";
             default -> throw new IllegalArgumentException("未知实体类型：" + entityType);
         };

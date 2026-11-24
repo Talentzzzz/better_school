@@ -20,8 +20,12 @@ import lombok.ToString;
  * @param shardCount          【退役兼容参数】历史分片数的 yml 键（{@code merge.batch.shard-count}）
  *                            保留一个版本，读进来只存不用——不再参与路由，也不再绑定任何线程；
  *                            下一版本随 yml 键一并删除
- * @param maxFlushDelayMillis leader 收集窗口（内核 {@code hotspot_update_max_wait_time} 的对应物）：
- *                            首件建组起算这么久后发车，攒满可提前触发
+ * @param maxFlushDelayMillis 【退役兼容参数】历史「leader 收集窗口」的 yml 键
+ *                            （{@code merge.batch.max-flush-delay-millis}）：保留一个版本，
+ *                            <b>读入不参与发车判定</b>。收集窗口已整体删除——队列非空即发车，
+ *                            收集窗就是落库耗时本身（决策与结构安全性论证见
+ *                            {@code backend/docs/architecture/merge-window-removal-spec.md}）；
+ *                            下一版本随 yml 键一并删除
  * @param maxBatch            单次 flush 最多取走的件数（单条多行 SQL 的尺寸上界）
  * @param shardCapacity       单个 invId Group 的缓冲上限，满即拒收（直接 {@code FAILED}，调用方重试）
  * @param drainTimeoutMs      停机排空上限
@@ -54,8 +58,8 @@ public final class MergeConfig {
                 "merge.batch.max-flush-delay-millis 必须 >= 0（当前 %s）", maxFlushDelayMillis);
         require(maxBatch > 0, "merge.batch.max-batch 必须 > 0（当前 %s）", maxBatch);
         require(shardCapacity >= maxBatch,
-                "merge.batch.shard-capacity(%s) 必须 >= max-batch(%s)，否则永远攒不满一批就被拒",
-                shardCapacity, maxBatch);
+                "merge.batch.shard-capacity(%s) 必须 >= max-batch(%s)，否则单批上界永远取不到、"
+                        + "队列先满即拒", shardCapacity, maxBatch);
         require(drainTimeoutMs > 0, "merge.batch.drain-timeout-ms 必须 > 0（当前 %s）", drainTimeoutMs);
 
         this.shardCount = shardCount;
@@ -76,6 +80,7 @@ public final class MergeConfig {
         return shardCount;
     }
 
+    /** 【退役兼容】历史收集窗口：不参与发车判定（队列非空即发），仅为 yml 键一个版本兼容而保留 */
     public int maxFlushDelayMillis() {
         return maxFlushDelayMillis;
     }

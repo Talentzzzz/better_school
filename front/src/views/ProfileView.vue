@@ -6,13 +6,11 @@ import { useUiStateStore, type ProfileMainTab } from '@/stores/uiState'
 import { getMyCredit } from '@/api/credit'
 import { listMyPosts, listLikedPosts, listUserComments } from '@/api/community'
 import { getPublicProfile } from '@/api/user'
-import { listMyProducts } from '@/api/trade'
-import { listMyErrandOrders } from '@/api/errand'
-import type { AuthorProfileComment, ErrandOrder, PostSummary, Product, PublicUserProfile } from '@/types/api'
+import { listMyProducts } from '@/api/idle'
+import type { AuthorProfileComment, PostSummary, Product, PublicUserProfile } from '@/types/api'
 import { toast } from '@/components/Toast'
 import { confirmDialog } from '@/components/ConfirmDialog'
 import { formatCount, formatMoney, formatTime } from '@/utils/format'
-import { ERRAND_STATUS_TEXT } from '@/utils/errand'
 import { DRAFT_BOX_STATUSES, POST_STATUS_TEXT } from '@/utils/postStatus'
 import AppAvatar from '@/components/AppAvatar.vue'
 import AppImage from '@/components/AppImage.vue'
@@ -31,8 +29,6 @@ const posts = ref<PostSummary[]>([])
 const likedPosts = ref<PostSummary[]>([])
 const myComments = ref<AuthorProfileComment[]>([])
 const myProducts = ref<Product[]>([])
-const pubErrands = ref<ErrandOrder[]>([])
-const errandsLoading = ref(false)
 const loading = ref(true)
 const tabLoading = ref(false)
 
@@ -53,8 +49,7 @@ const MAIN_TABS: { key: ProfileMainTab; label: string }[] = [
   { key: 'posts', label: '笔记' },
   { key: 'liked', label: '赞过' },
   { key: 'comments', label: '评论' },
-  { key: 'products', label: '闲置' },
-  { key: 'errands', label: '跑腿' }
+  { key: 'products', label: '闲置' }
 ]
 
 /** 性别圆底标（与作者主页资料区同口径；未设置性别则不展示） */
@@ -107,20 +102,11 @@ const TAB_LOADERS: Record<ProfileMainTab, () => Promise<void>> = {
     if (!auth.userId) return
     myComments.value = (await listUserComments(auth.userId, 1, 50).catch(() => null))?.list ?? myComments.value
   },
-  errands: loadErrands,
   products: async () => {
     myProducts.value = (await listMyProducts(1, 50).catch(() => null))?.list ?? myProducts.value
   }
 }
 
-async function loadErrands() {
-  errandsLoading.value = true
-  try {
-    pubErrands.value = (await listMyErrandOrders('publish', { pageSize: 50 }).catch(() => null))?.list ?? []
-  } finally {
-    errandsLoading.value = false
-  }
-}
 
 // 同页内切 tab：离开存本 tab 的 scrollY，切入恢复（数据留在这里，位置才自洽）
 const scrollPos = {} as Record<ProfileMainTab, number>
@@ -320,21 +306,21 @@ watch(() => auth.isLoggedIn, (v) => v && load())
 
       <!-- 闲置：只留「我发布的」（我收藏的 / 我购买的收进聚合订单页与收藏页） -->
       <div v-else-if="ui.profileTab === 'products'">
-        <div v-if="myProducts.length" class="errand-rows">
+        <div v-if="myProducts.length" class="profile-rows">
           <button
             v-for="p in myProducts"
             :key="p.productId"
-            class="errand-row"
+            class="profile-row"
             @click="router.push(`/product/${p.productId}`)"
           >
             <AppImage :src="p.images[0]" :seed="p.productId" ratio="1:1" class="post-thumb" />
-            <div class="errand-l">
-              <div class="errand-desc ellipsis">{{ p.title }}</div>
-              <div class="errand-loc ellipsis">¥{{ formatMoney(p.price) }} · {{ p.tradeLocation }}</div>
+            <div class="profile-l">
+              <div class="profile-desc ellipsis">{{ p.title }}</div>
+              <div class="profile-loc ellipsis">¥{{ formatMoney(p.price) }} · {{ p.tradeLocation }}</div>
             </div>
-            <div class="errand-r">
-              <span class="errand-status">{{ PRODUCT_STATUS_TEXT[p.status] || p.status }}</span>
-              <span class="errand-status">❤ {{ p.favoriteCount }} 人想要</span>
+            <div class="profile-r">
+              <span class="profile-status">{{ PRODUCT_STATUS_TEXT[p.status] || p.status }}</span>
+              <span class="profile-status">❤ {{ p.favoriteCount }} 人想要</span>
             </div>
           </button>
         </div>
@@ -346,32 +332,6 @@ watch(() => auth.isLoggedIn, (v) => v && load())
         />
       </div>
 
-      <!-- 跑腿：只留「我发布的」（我接的收进聚合订单页） -->
-      <template v-else>
-        <div v-if="pubErrands.length" class="errand-rows">
-          <button
-            v-for="o in pubErrands"
-            :key="o.orderId"
-            class="errand-row"
-            @click="router.push(`/errand/${o.orderId}`)"
-          >
-            <div class="errand-l">
-              <div class="errand-desc ellipsis">{{ o.title ?? o.description }}</div>
-              <div class="errand-loc ellipsis">{{ o.pickupLocation }} → {{ o.deliveryLocation }}</div>
-            </div>
-            <div class="errand-r">
-              <span class="errand-reward">¥{{ formatMoney(o.reward) }}</span>
-              <span class="errand-status">{{ ERRAND_STATUS_TEXT[o.status] || o.status }}</span>
-            </div>
-          </button>
-        </div>
-        <EmptyState
-          v-else-if="!errandsLoading"
-          text="还没有发布过跑腿单"
-          button-text="去发一单"
-          @click="router.push('/publish/errand')"
-        />
-      </template>
     </div>
 
     <button class="logout-btn" @click="onLogout">退出登录</button>
@@ -691,11 +651,11 @@ watch(() => auth.isLoggedIn, (v) => v && load())
   color: #2e9e44;
 }
 
-.errand-rows {
+.profile-rows {
   border-top: 0.5px solid $line;
 }
 
-.errand-row {
+.profile-row {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -709,7 +669,7 @@ watch(() => auth.isLoggedIn, (v) => v && load())
   }
 }
 
-.errand-l {
+.profile-l {
   flex: 1;
   min-width: 0;
   display: flex;
@@ -717,17 +677,17 @@ watch(() => auth.isLoggedIn, (v) => v && load())
   gap: 4px;
 }
 
-.errand-desc {
+.profile-desc {
   font-size: 15px;
   font-weight: 500;
 }
 
-.errand-loc {
+.profile-loc {
   font-size: 11px;
   color: $text-3;
 }
 
-.errand-r {
+.profile-r {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -735,13 +695,8 @@ watch(() => auth.isLoggedIn, (v) => v && load())
   flex-shrink: 0;
 }
 
-.errand-reward {
-  color: $primary;
-  font-size: 14px;
-  font-weight: 600;
-}
 
-.errand-status {
+.profile-status {
   padding: 1px 6px;
   border-radius: $radius-sm;
   background: $bg-secondary;

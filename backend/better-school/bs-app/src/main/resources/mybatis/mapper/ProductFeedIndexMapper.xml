@@ -9,7 +9,7 @@
          而不是全表 filesort。排序键随行带出，供编下一页游标。
          热度档三段收敛（uuid-biz-id 票 05）：view_count 同值按 create_time DESC、product_id DESC
          收敛成确定序（业务 ID 是 UUID 无序，不能再拿它当时间代理） -->
-    <select id="selectFeedIndex" resultType="com.betterschool.domain.trade.model.valobj.ProductFeedIndexItemVO">
+    <select id="selectFeedIndex" resultType="com.betterschool.domain.idle.model.valobj.ProductFeedIndexItemVO">
         SELECT product_id, feed_time, create_time, price, view_count
         FROM product_feed_index
         WHERE state = 'ON_SALE'

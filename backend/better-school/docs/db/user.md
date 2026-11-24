@@ -41,7 +41,7 @@
 ## 关联
 - 1:1 → virtual_wallet / user_credit（user_id）
 - 1:N → wallet_detail / user_credit_detail（user_id）
-- 被 post.user_id / post_comment.user_id / product.user_id / errand_order.publisher_id|taker_id / product_order.buyer_id|seller_id / notification|timeline.user_id 引用（一律存 `user_id`）
+- 被 post.user_id / post_comment.user_id / product.user_id / product_order.buyer_id|seller_id / notification|timeline.user_id 引用（一律存 `user_id`）
 
 ## 谁在写 / 注意
 - 资料编辑只写 `signature`/`gender`（`UserMapper.updateProfile`），隐私设置只写 `show_liked`/`show_comments`（`updatePrivacy`），登录只写 `nickname`/`avatar`/`last_login_at`（`updateById`）——**三条语句各管一摊，不要合并成通用 updateById**，防止登录写覆盖其他域数据
@@ -50,7 +50,7 @@
 
 # virtual_wallet
 
-> 业务：校园币钱包（跑腿悬赏与商品交易共用托管）；归属模块：wallet
+> 业务：校园币钱包（商品交易托管）；归属模块：wallet
 
 |字段|类型|约束|说明|
 |----|----|----|----|
@@ -69,16 +69,16 @@
 
 # wallet_detail
 
-> 业务：钱包流水（资金事实源，跑腿 + 商品共用一表，靠 `type` 前缀区分）；归属模块：wallet
+> 业务：钱包流水（资金事实源，靠 `type` 前缀区分商品类型）；归属模块：wallet
 
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
 |wallet_id|varchar(36)|NOT NULL|钱包业务 ID（引用 `virtual_wallet.wallet_id`）|
 |user_id|varchar(36)|NOT NULL, INDEX(idx_user)|流水归属用户（INCOME 为收款方）|
-|type|varchar(20)|NOT NULL|RECHARGE/FROZEN/UNFROZEN/INCOME（跑腿）+ PRODUCT_FROZEN/PRODUCT_UNFROZEN/PRODUCT_INCOME（商品）|
+|type|varchar(20)|NOT NULL|RECHARGE/PRODUCT_FROZEN/PRODUCT_UNFROZEN/PRODUCT_INCOME|
 |amount|decimal(10,2)|NOT NULL|变动金额（正数，方向由 `type` 表达）|
-|order_id|varchar(36)|NULL, INDEX(uk_order_type 首列)|关联订单业务 ID（跑腿=`errand_order_id`、商品=`product_order_id`，UUID 字符串；RECHARGE 为 NULL）|
+|order_id|varchar(36)|NULL, INDEX(uk_order_type 首列)|关联订单业务 ID（商品=`product_order_id`，UUID 字符串；RECHARGE 为 NULL）|
 |biz_round|int|NOT NULL, DEFAULT 0|业务轮次：同一订单同类型多轮资金操作的去重维度（预留，当前恒 0）|
 |create_time|datetime|NOT NULL|创建时间|
 |update_time|datetime|NOT NULL|更新时间|
@@ -114,8 +114,8 @@
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
 |user_id|varchar(36)|NOT NULL, INDEX(idx_user)|变动用户|
 |change|int|NOT NULL|信用分变化量（可为负；列名是 SQL 关键字 `change`，SQL 里必须反引号）|
-|reason_type|varchar(30)|NOT NULL|原因类型，取 `CreditReasonTypeVO` 枚举名：ERRAND_TAKER_CANCEL(-20) / ERRAND_TIMEOUT(-20) / TRADE_COMPLAINT(-20，预留未接入) / ADMIN_ADJUST / ADMIN_BAN / ADMIN_UNBAN(0)|
-|ref_id|varchar(36)|NULL|关联业务 ID（跑腿类=`errand_order_id` UUID；ADMIN 类为 NULL）|
+|reason_type|varchar(30)|NOT NULL|原因类型，取 `CreditReasonTypeVO` 枚举名：TRADE_COMPLAINT(-20，预留未接入) / ADMIN_ADJUST / ADMIN_BAN / ADMIN_UNBAN(0)|
+|ref_id|varchar(36)|NULL|关联业务 ID（内容类=被罚内容 UUID；ADMIN 类为 NULL）|
 |create_time|datetime|NOT NULL|创建时间（也是「每日上限」统计的时间窗依据）|
 |update_time|datetime|NOT NULL|更新时间|
 

@@ -6,16 +6,16 @@ better-school 演示数据一键灌入（作品演示用，可重复执行）。
 
 规模（约为原始手工版的 10 倍以上，重复执行会继续追加）：
   - 12 个演示用户 + 1 个已存在的本人号（phone 见 USERS）
-  - ~190 篇帖子 / ~160 件商品 / ~100 个跑腿单（其中 30+ 条 DAYS_365 一年期长期单）
+  - ~190 篇帖子 / ~160 件商品
   - 每帖 3~6 条评论 + 大量楼中楼回复，评论点赞/帖子点赞/商品收藏全量铺开
   - 配图全部是按关键词从 Wikimedia Commons 拉取的**真实照片**（磁盘缓存，
     缺图时用 picsum.photos 真实图库兜底），经 /api/files/upload 真传 MinIO
 
 流程：
   1. 注册/登录演示用户
-  2. 钱包充值（跑腿支付/押金用）
-  3. 发布帖子/商品/跑腿单（发布即对外可见，无需审批）
-  4. 造互动：点赞、收藏、评论、楼中楼、评论点赞、跑腿状态机推进
+  2. 钱包充值（商品交易托管用）
+  3. 发布帖子/商品（发布即对外可见，无需审批）
+  4. 造互动：点赞、收藏、评论、楼中楼、评论点赞
 
 用法：
   python backend/scripts/seed-demo.py            # 全量
@@ -502,52 +502,6 @@ PRODUCT_LOCATIONS = ['南区宿舍6栋楼下', '图书馆南门', '北区车棚'
                      '南区快递站门口', '研究生公寓楼下', '东区滑板场旁', '图书馆西门', '南区宿舍3栋楼下',
                      '北区快递柜旁', '大学生活动中心门口', '西区食堂门口', '南门岗亭']
 
-ERRAND_LONG = [
-    ('EXPRESS_PICKUP', '长期单：本学期工作日每天16:00帮取南区驿站包裹，接单后私聊取件码', '南区菜鸟驿站', '东区宿舍12栋', 10, 'parcel boxes'),
-    ('BUY', '长期单：每周一三五中午帮带二食堂麻辣香锅打包，固定老主顾优先', '二食堂二楼', '北区宿舍5栋', 12, 'takeaway food'),
-    ('OTHER', '长期单：周末两天帮忙照看楼下流浪猫（喂食换水），猫很乖', '东区宿舍楼下猫窝', '东区宿舍楼下猫窝', 15, 'orange cat'),
-    ('BUY', '长期单：每天早上帮带东食堂包子豆浆，7点20到楼下', '东食堂', '研究生公寓2栋', 10, 'breakfast buns'),
-    ('DELIVER', '长期单：每周帮取实验室耗材一次，从南门送到实验楼402', '南门收发室', '实验楼402', 18, 'laboratory supplies'),
-    ('BUY', '长期单：工作日每天下午帮带一杯瑞幸，固定单可谈', '西区瑞幸', '教学楼B座', 10, 'coffee cup'),
-    ('EXPRESS_PICKUP', '长期单：常年代取京东件，东区京东点自营单据齐全', '东区京东快递点', '南区宿舍3栋', 10, 'package delivery'),
-    ('OTHER', '长期单：帮忙预约并代取图书馆研讨间每天首场，可长期', '图书馆三楼', '图书馆三楼', 10, 'library interior'),
-    ('BUY', '长期单：每周日帮买一次水果拼盘送宿舍，分量足', '南门水果店', '大草原宿舍楼A栋', 15, 'fruit platter'),
-    ('DELIVER', '长期单：社团每周活动物资从活动中心搬至北区活动室', '大学生活动中心306', '北区活动室201', 12, 'club supplies'),
-    ('EXPRESS_PICKUP', '长期单：代取中通/圆通件，本学期有效，多件可议', '南区菜鸟驿站', '研究生公寓2栋', 10, 'courier packages'),
-    ('OTHER', '长期单：每天帮忙占逸夫楼201早八座位（7:50前），按次', '逸夫楼201', '逸夫楼201', 10, 'classroom'),
-]
-
-ERRAND_SHORT = [
-    ('EXPRESS_PICKUP', '代取菜鸟驿站大件一个，纸箱有点重，有电梯', '南区菜鸟驿站', '东区宿舍12栋', 12, 'parcel boxes'),
-    ('EXPRESS_PICKUP', '京东快递明天到，帮忙代取，取件码到时发你', '东区京东快递点', '南区宿舍3栋', 10, 'package delivery'),
-    ('EXPRESS_PICKUP', '顺丰件在代收点，帮取一下，重物有电梯不用爬楼', '南区菜鸟驿站', '研究生公寓2栋', 11, 'courier packages'),
-    ('EXPRESS_PICKUP', '两个小件一起取，都在南区驿站，一趟搞定', '南区菜鸟驿站', '西区宿舍7栋', 10, 'parcel lockers'),
-    ('BUY', '帮忙带一杯古茗，三分糖去冰，钱到付', '校门口古茗', '大草原宿舍楼A栋', 15, 'milk tea'),
-    ('BUY', '帮带一杯瑞幸生椰拿铁，下午3点东门取', '西区瑞幸', '教学楼B座', 12, 'latte'),
-    ('BUY', '午饭帮带一份黄焖鸡米饭，微辣，打包', '二食堂', '图书馆三楼研讨间', 12, 'chinese takeaway'),
-    ('BUY', '帮买一支签字笔和一个笔记本，回来报销', '校内教育超市', '研究生公寓2栋', 10, 'stationery shop'),
-    ('BUY', '帮带一份水果捞，多要芒果，谢谢', '南门水果店', '东区宿舍12栋', 12, 'fruit salad'),
-    ('BUY', '帮买一盒感冒灵和一板维C，急用', '校医院旁药店', '北区宿舍5栋', 15, 'pharmacy'),
-    ('BUY', '早饭帮带两个包子一杯豆浆，7点20送到', '东食堂', '研究生公寓2栋', 10, 'breakfast buns'),
-    ('BUY', '帮带一杯蜜雪冰城柠檬水，冰的少糖', '南区蜜雪冰城', '南区宿舍3栋', 10, 'lemonade'),
-    ('BUY', '帮买一张50元话费充值卡', '校内营业厅', '西区宿舍7栋', 10, 'phone shop'),
-    ('BUY', '帮带一份螺蛳粉加蛋加腐竹', '二食堂螺蛳粉窗口', '大草原宿舍楼B栋', 12, 'noodles bowl'),
-    ('DELIVER', '把一袋活动文件从三教送到南区宿管站，不重', '三教201', '南区宿管站', 10, 'documents folder'),
-    ('DELIVER', '一箱明信片从社团联办公室送到北区活动室', '大学生活动中心306', '北区活动室201', 12, 'cardboard boxes'),
-    ('DELIVER', '把快递从驿站转运到东区代收点，小车拉过去就行', '南区菜鸟驿站', '东区代收点', 12, 'delivery scooter'),
-    ('DELIVER', '帮我把一本书送到图书馆还书箱，今天5点前', '西区宿舍7栋', '图书馆南门', 10, 'library book'),
-    ('DELIVER', '代送一个小蛋糕到研究生公寓，注意别压', '南门蛋糕店', '研究生公寓2栋', 14, 'cake box'),
-    ('DELIVER', '把充电宝送到体育馆，朋友急着用', '北区宿舍5栋', '体育馆东门', 10, 'power bank'),
-    ('OTHER', '明晚7点讲座帮忙前排占两个座', '逸夫楼报告厅', '逸夫楼报告厅', 10, 'lecture hall'),
-    ('OTHER', '周六上午帮忙排一下理发店的队，轮到叫我', '南门理发店', '南门理发店', 10, 'barber shop queue'),
-    ('OTHER', '帮忙看一晚上宿舍的绿植，浇下水就行', '东区宿舍12栋', '东区宿舍12栋', 10, 'potted plant'),
-    ('OTHER', '运动会在即，帮忙捡两个小时的 tennis 球', '网球场', '网球场', 15, 'tennis balls'),
-    ('OTHER', '帮忙去教务处取一份盖章材料，我课冲突了', '教务处', '三教201', 12, 'office counter'),
-]
-
-ERRAND_LIMITS_SHORT = ['HOURS_2', 'HOURS_4', 'HOURS_12', 'HOURS_24']
-ERRAND_LIMITS_MID = ['DAYS_7', 'DAYS_30']
-
 GENERIC_COMMENTS = [
     '帮顶，希望早点找到/找到主人！', '这波分享太实用了，收藏了。', '同感！我也是这么想的。',
     '感谢楼主，正好需要这个信息。', '蹲一个后续。', '评论区都是人才，笑死。',
@@ -593,11 +547,10 @@ REPLY_POOL = [
 
 
 def build_content():
-    """生成全部待发布内容（帖子/商品/跑腿），返回 (posts, products, errands)"""
+    """生成全部待发布内容（帖子/商品），返回 (posts, products)"""
     rng = random.Random(20261007)
     posts = []   # (kw, cat, title, content, img_variant)
     products = []  # (cat, title, desc, price, loc, kw)
-    errands = []   # (etype, desc, pickup, dest, reward, limit, kw)
 
     # --- 帖子 ---
     for kw, cat, title, content in HAND_POSTS:
@@ -676,27 +629,7 @@ def build_content():
                          '%s\n%s\n面交优先，见货付款，可小刀。' % (cond, desc), p,
                          rng.choice(PRODUCT_LOCATIONS), kw))
 
-    # --- 跑腿 ---
-    for etype, desc, pickup, dest, reward, kw in ERRAND_LONG:
-        errands.append((etype, desc, pickup, dest, reward, 'DAYS_365', kw))
-    # 长期单按"班次"再扩一轮（一年期，演示期间永不超时）
-    shifts = ['周一班次', '周二班次', '周三班次', '周四班次', '周五班次', '双日班']
-    for i, (etype, desc, pickup, dest, reward, kw) in enumerate(ERRAND_LONG):
-        errands.append((etype, '%s（%s）' % (desc, shifts[i % len(shifts)]),
-                        pickup, dest, max(10, reward - 2), 'DAYS_365', kw))
-    for etype, desc, pickup, dest, reward, kw in ERRAND_SHORT:
-        limit = rng.choice(ERRAND_LIMITS_SHORT if rng.random() < 0.6 else ERRAND_LIMITS_MID)
-        errands.append((etype, desc, pickup, dest, reward, limit, kw))
-    # 数量补充：批量变体（描述带日期/编号，看起来自然且不重复）
-    extras = []
-    for i in range(max(0, 100 - len(errands))):
-        etype, desc, pickup, dest, reward, kw = ERRAND_SHORT[i % len(ERRAND_SHORT)]
-        extra_desc = desc + '（%s）' % rng.choice(['周三', '周四', '周五', '周六', '周日', '本周', '下周'])
-        limit = rng.choice(ERRAND_LIMITS_SHORT)
-        extras.append((etype, extra_desc, pickup, dest, max(10, reward - 1), limit, kw))
-    errands.extend(extras)
-    rng.shuffle(errands)
-    return posts, products, errands
+    return posts, products
 
 
 def main():
@@ -713,15 +646,14 @@ def main():
     nicks = list(tokens.keys())
     toks = [tokens[k] for k in nicks]
 
-    print('== 2/4 充值钱包（跑腿支付/押金用）')
+    print('== 2/4 充值钱包（商品交易托管用）')
     for nick, tok in tokens.items():
         r = api('POST', '/api/wallet/recharge', tok, {'amount': 5000})
         print('  %s recharge -> %s' % (nick, r.get('info')))
 
-    posts_data, products_data, errands_data = build_content()
-    print('== 3/4 发内容（帖子 %d / 商品 %d / 跑腿 %d）'
-          % (len(posts_data), len(products_data), len(errands_data)))
-    posts, products, errands = [], [], []
+    posts_data, products_data = build_content()
+    print('== 3/4 发内容（帖子 %d / 商品 %d）' % (len(posts_data), len(products_data)))
+    posts, products = [], []
 
     def pub_post(tok, nick, item):
         kw, cat, title, content = item
@@ -744,18 +676,6 @@ def main():
         else:
             print('  [fail] 商品「%s」-> %s' % (title, r.get('info')))
 
-    def pub_errand(tok, nick, item):
-        etype, desc, pickup, dest, reward, limit, kw = item
-        images = [upload_real(tok, kw, rng.randrange(2))] if kw and rng.random() < 0.5 else None
-        r = api('POST', '/api/errand/orders', tok,
-                {'type': etype, 'description': desc, 'pickupLocation': pickup,
-                 'deliveryLocation': dest, 'reward': reward, 'timeLimit': limit,
-                 'images': images})
-        if r.get('code') == '200':
-            errands.append((r['data'], tok))
-        else:
-            print('  [fail] 跑腿「%s」-> %s' % (desc, r.get('info')))
-
     for i, item in enumerate(posts_data):
         pub_post(toks[i % len(toks)], nicks[i % len(nicks)], item)
         if i % 40 == 39:
@@ -764,12 +684,6 @@ def main():
         pub_product(toks[i % len(toks)], nicks[i % len(nicks)], item)
         if i % 40 == 39:
             print('  ...商品进度 %d/%d' % (i + 1, len(products_data)))
-    for i, item in enumerate(errands_data):
-        pub_errand(toks[i % len(toks)], nicks[i % len(nicks)], item)
-        if i % 40 == 39:
-            print('  ...跑腿进度 %d/%d' % (i + 1, len(errands_data)))
-    print('  发布完成：帖子 %d / 商品 %d / 跑腿 %d' % (len(posts), len(products), len(errands)))
-
     print('== 4/4 互动')
     # 帖子点赞：每帖 3~6 个
     for pid in posts:
@@ -815,43 +729,6 @@ def main():
         for tok in rng.sample(toks, rng.randint(1, 3)):
             api('POST', '/api/trade/products/%d/favorite' % pid, tok)
 
-    # 跑腿状态机：i%6==5 不支付留 PENDING_PAYMENT；
-    # 0=全链完成 1=取货中 2=已接单 3=等抢单 4=全链完成
-    def step(order_id, action, tok):
-        r = api('POST', '/api/errand/orders/%d/%s' % (order_id, action), tok)
-        if r.get('code') != '200':
-            print('  [fail] 跑腿#%d %s -> %s' % (order_id, action, r.get('info')))
-
-    def taker_of(i, salt):
-        """接单人必须不是发布人：与发布人撞了就顺延一位"""
-        pub_idx = i % len(toks)
-        j = (i * 5 + salt) % len(toks)
-        return toks[j + 1 if j == pub_idx else j]
-
-    print('  跑腿支付/推进...')
-    for i, (order_id, pub_tok) in enumerate(errands):
-        if i % 6 != 5:
-            step(order_id, 'pay', pub_tok)
-    done = picked = taken = 0
-    for i, (order_id, pub_tok) in enumerate(errands):
-        mode = i % 6
-        if mode in (0, 4):
-            taker = taker_of(i, 3)
-            for act in ('grab', 'pickup', 'deliver'):
-                step(order_id, act, taker)
-            step(order_id, 'confirm', pub_tok)
-            done += 1
-        elif mode == 1:
-            taker = taker_of(i, 1)
-            step(order_id, 'grab', taker)
-            step(order_id, 'pickup', taker)
-            picked += 1
-        elif mode == 2:
-            step(order_id, 'grab', taker_of(i, 2))
-            taken += 1
-    print('  跑腿状态推进完成：完成 %d / 配送中 %d / 已接单 %d / 其余待抢或待付'
-          % (done, picked, taken))
-
     # 评论点赞
     liked = 0
     for pid, root_ids in comments:
@@ -865,8 +742,7 @@ def main():
 
     print('== 结果核对')
     for path, label in [('/api/community/posts?page=1&pageSize=1', '帖子'),
-                        ('/api/trade/products?page=1&pageSize=1', '商品'),
-                        ('/api/errand/orders?page=1&pageSize=1', '跑腿(我的)')]:
+                        ('/api/trade/products?page=1&pageSize=1', '商品')]:
         r = api('GET', path)
         d = r.get('data') or {}
         print('  %s 总数 %s（%s）' % (label, d.get('total'), r.get('info')))

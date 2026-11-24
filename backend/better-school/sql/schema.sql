@@ -4,11 +4,11 @@
 -- 全应用收敛为单库（better_school / better_school_test），营销域独立 init/schema 文件退役。
 -- 表结构与根目录 sql.md 第 1 节逐表一致（唯一事实源）：主键恒为无业务含义的物理自增 id，
 -- 业务标识单独成列并配 uk；业务 ID 是应用层发号的 UUID 字符串（VARCHAR(36)），与物理 id 永不同值、
--- 永不对外暴露物理 id（uuid-biz-id 改造；存量数据不迁移，删库重建）。（**主键口径例外**：各域 feed 索引表 post/product/errand_feed_index 与
+-- 永不对外暴露物理 id（uuid-biz-id 改造；存量数据不迁移，删库重建）。（**主键口径例外**：各域 feed 索引表 post/product_feed_index 与
 -- 评论热评索引 post_comment_feed_index 都是投影表、不设独立业务列，主键直接取业务键）；每表
 -- create_time/update_time 收尾（不带默认值，由应用写入），全库无 created_at/updated_at
 -- （例外共两处：timeout_task_00..15 的 created_at/updated_at——按原样自原独立超时库迁入，见该节注释；
---   各域 feed 索引表（post/product/errand_feed_index）只留 update_time（feed_time 承担行诞生时刻）、
+--   各域 feed 索引表（post/product_feed_index）只留 update_time（feed_time 承担行诞生时刻）、
 --   各域浏览明细表只留 viewed_at——时间列按各自需要收窄，见对应表注释）。
 -- 容器 entrypoint 内 mysql CLI 默认 latin1，中文种子数据会乱码入库，先固定连接字符集
 SET NAMES utf8mb4;
@@ -265,12 +265,12 @@ CREATE TABLE IF NOT EXISTS post_view_count (
     PRIMARY KEY (post_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '帖子浏览计数表（UV 加速列，事实源在 user_view_history）';
 
--- ── 市集（闲置 + 跑腿）feed 异构索引 + 浏览 UV 六表（market-feed-uv 票 01：照上面帖子三表先例分域落两份）──
--- 主键口径同上文例外：六表均为投影/明细/加速列、不设独立业务列，主键直接用业务键。
--- 时间列收窄同口径：两张索引表只留 update_time（feed_time 承担行诞生时刻），两张明细表只留 viewed_at。
--- 两域不泛化成一张 target_type 表：明细表二级索引叶子天然携带业务 ID 免回表，post 侧三表一行不动。
+-- ── 市集（闲置）feed 异构索引 + 浏览 UV 三表（market-feed-uv 票 01：照上面帖子三表先例）──
+-- 主键口径同上文例外：三表均为投影/明细/加速列、不设独立业务列，主键直接用业务键。
+-- 时间列收窄同口径：索引表只留 update_time（feed_time 承担行诞生时刻），明细表只留 viewed_at。
+-- 不泛化成一张 target_type 表：明细表二级索引叶子天然携带业务 ID 免回表，post 侧三表一行不动。
 
--- 市集 feed 只取：商品 state = ON_SALE、跑腿 state = PUBLISHED（大厅前端恒传 status=PUBLISHED）。
+-- 市集 feed 只取：商品 state = ON_SALE。
 -- 索引尾列业务 ID 做游标分页，弃 offset；时间升序用 idx_state_feed 反向扫描，不单设索引。
 -- 价格进索引表是帖子没有的新排序键：商品在售改价立即生效，改价事务必须同事务旁路同步（票 03）。
 CREATE TABLE IF NOT EXISTS product_feed_index (
@@ -287,20 +287,6 @@ CREATE TABLE IF NOT EXISTS product_feed_index (
     KEY idx_state_price (state, price, product_id) COMMENT '「价格升降」：state 过滤 + price 游标分页'
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商品 feed 异构索引（product 的 1:1 排序投影，同事务直写）';
 
-CREATE TABLE IF NOT EXISTS errand_feed_index (
-    errand_order_id VARCHAR(36) NOT NULL COMMENT '跑腿订单业务 ID（errand_order.errand_order_id，1:1 投影）',
-    state           VARCHAR(20) NOT NULL DEFAULT 'PUBLISHED' COMMENT '跑腿状态快照（与 errand_order.state 同域，13 态流转点同步；feed 只查 PUBLISHED，行常驻其余状态不可见）',
-    feed_time       DATETIME    NOT NULL COMMENT '进入大厅的时刻（支付事务写入：行诞生落第一次；跑腿无重提再上架，其余写路径不碰；「最新」排序键）',
-    create_time     DATETIME    NOT NULL COMMENT '订单创建时刻快照（errand_order.create_time，支付事务随行写入；「热度」同值收敛键：view_count 同值时按 create_time DESC 收敛成确定序——UUID 无序，不能再拿 errand_order_id 当时间代理）',
-    price           DECIMAL(10,2) NOT NULL COMMENT '悬赏快照（errand_order.reward；行只在支付完成时诞生、彼时悬赏必已支付冻结，故非空；「价格升降」排序键）',
-    view_count      INT         NOT NULL DEFAULT 0 COMMENT '浏览 UV 数快照（浏览合并事务旁路 ±N；真源 errand_view_count，UPDATE 落 0 行落日志交重建 job；「热度」排序键）',
-    update_time     DATETIME    NOT NULL COMMENT '更新时间（技术时间戳，禁止当排序键）',
-    PRIMARY KEY (errand_order_id),
-    KEY idx_state_feed (state, feed_time, errand_order_id) COMMENT '「最新」：state 过滤 + feed_time 游标分页（时间升序反向扫描）',
-    KEY idx_state_view (state, view_count, create_time, errand_order_id) COMMENT '「热度」：state 过滤 + view_count DESC, create_time DESC, errand_order_id DESC 游标分页',
-    KEY idx_state_price (state, price, errand_order_id) COMMENT '「价格升降」：state 过滤 + price 游标分页'
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '跑腿 feed 异构索引（errand_order 的 1:1 排序投影，同事务直写）';
-
 -- 市集 UV 明细即事实源（一人一对象一行）：INSERT IGNORE 成功（affected = 1）才算一次新浏览，
 -- 重复进详情只刷 viewed_at 不加数；同时是市集页已读灰显的数据源。匿名不计入（商品语义变更：现状匿名也计）。
 CREATE TABLE IF NOT EXISTS product_view_history (
@@ -311,14 +297,6 @@ CREATE TABLE IF NOT EXISTS product_view_history (
     KEY idx_user_viewed (user_id, viewed_at) COMMENT '按人浏览明细倒序（市集页浏览痕迹/灰显）'
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商品浏览历史（UV 明细即事实源，product_view_count 是它的加速列）';
 
-CREATE TABLE IF NOT EXISTS errand_view_history (
-    user_id        VARCHAR(36)   NOT NULL COMMENT '浏览者用户 ID',
-    errand_order_id VARCHAR(36) NOT NULL COMMENT '跑腿订单业务 ID',
-    viewed_at      DATETIME NOT NULL COMMENT '最近浏览时刻（合并事务内 INSERT IGNORE 后对全组键 UPDATE 刷新）',
-    PRIMARY KEY (user_id, errand_order_id),
-    KEY idx_user_viewed (user_id, viewed_at) COMMENT '按人浏览明细倒序（市集页浏览痕迹/灰显）'
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '跑腿浏览历史（UV 明细即事实源，errand_view_count 是它的加速列）';
-
 -- 市集浏览 UV 加速列：精确值 = 各域明细表行数，本表不是真相源。浏览没有取消语义，计数只增不减，
 -- 合并事务按 INSERT IGNORE 受影响行数累加，不用 upsert 计数（affected rows 会被同秒重复刷 viewed_at 打乱）。
 CREATE TABLE IF NOT EXISTS product_view_count (
@@ -328,14 +306,6 @@ CREATE TABLE IF NOT EXISTS product_view_count (
     update_time DATETIME NOT NULL COMMENT '更新时间',
     PRIMARY KEY (product_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商品浏览计数表（UV 加速列，事实源在 product_view_history）';
-
-CREATE TABLE IF NOT EXISTS errand_view_count (
-    errand_order_id VARCHAR(36) NOT NULL COMMENT '跑腿订单业务 ID（唯一）',
-    view_count      INT      NOT NULL DEFAULT 0 COMMENT '浏览 UV 数（= errand_view_history 行数；跑腿详情读路径 view 段接线到本表）',
-    create_time     DATETIME NOT NULL COMMENT '创建时间',
-    update_time     DATETIME NOT NULL COMMENT '更新时间',
-    PRIMARY KEY (errand_order_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '跑腿浏览计数表（UV 加速列，事实源在 errand_view_history）';
 
 CREATE TABLE IF NOT EXISTS outbox_message (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
@@ -612,7 +582,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_15 (
 CREATE TABLE IF NOT EXISTS room (
     id               BIGINT       NOT NULL AUTO_INCREMENT,
     room_id          VARCHAR(36)  NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串，应用层 insert 前由 IdGenerator 生成一次写入）',
-    source           VARCHAR(20)  NULL COMMENT '会话来源（首次由市集「私信联系」入口建会话时写入、首来源钉死不覆盖；首页/主页入口建的为 NULL）：ERRAND/PRODUCT',
+    source           VARCHAR(20)  NULL COMMENT '会话来源（首次由市集「私信联系」入口建会话时写入、首来源钉死不覆盖；首页/主页入口建的为 NULL）：PRODUCT',
     creator_id     VARCHAR(36)       NULL COMMENT '会话创建人 user_id，首建落定不覆盖（对家角色标签的相对视角锚点；来源为 NULL 时也为 NULL）',
     last_seq         BIGINT       NOT NULL DEFAULT 0 COMMENT '消息序号水位（取号器）：发消息事务内 UPDATE last_seq=last_seq+1 原子取号，回滚无空洞',
     state            VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE' COMMENT '与取号器同行：一把行锁完成取号+终态判定；ACTIVE/SEALED（封盘即宿主业务终态，禁发言禁成员变更，历史只读；当前恒 1v1，SEALED 不再产生，列随口径保留）',
@@ -681,8 +651,8 @@ CREATE TABLE IF NOT EXISTS message (
     msg_type      VARCHAR(20)   NOT NULL DEFAULT 'TEXT' COMMENT 'TEXT/IMAGE/CARD 三类',
     content       VARCHAR(1024) NULL COMMENT 'TEXT=裸文本（上限 500 由代码常量收敛） / IMAGE=JSON{url,width,height} / CARD=恒空',
     client_msg_id VARCHAR(36)   NULL COMMENT '客户端幂等键（UUID）：重发复用同键',
-    ref_type      VARCHAR(20)   NULL COMMENT 'CARD 引用类型 PRODUCT/POST/ERRAND（仅 CARD 非空）',
-    ref_id        VARCHAR(36)   NULL COMMENT 'CARD 引用对象业务 ID（POST/PRODUCT/ERRAND 均为 UUID 字符串，票 03/05；渲染时实时查，失效显示「内容已失效」）',
+    ref_type      VARCHAR(20)   NULL COMMENT 'CARD 引用类型 PRODUCT/POST（仅 CARD 非空）',
+    ref_id        VARCHAR(36)   NULL COMMENT 'CARD 引用对象业务 ID（POST/PRODUCT 均为 UUID 字符串，票 03/05；渲染时实时查，失效显示「内容已失效」）',
     state         VARCHAR(20)   NOT NULL DEFAULT 'NORMAL' COMMENT 'NORMAL/RECALLED：撤回占 seq 不回退、计入未读',
     recalled_at   DATETIME      NULL COMMENT '撤回时间',
     recalled_by   VARCHAR(20)   NULL COMMENT 'USER=发送者限时窗口内自撤',
@@ -721,14 +691,14 @@ CREATE TABLE IF NOT EXISTS notification (
     id               BIGINT       NOT NULL AUTO_INCREMENT,
     notification_id  VARCHAR(36)  NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入，物理自增 id 保留纯内部键）',
     user_id          VARCHAR(36)       NOT NULL COMMENT '接收用户',
-    scope            VARCHAR(20)  NOT NULL COMMENT '收件范围（写入时由生产点显式标注，禁止从 (type,refType) 推导——同一 ORDER_EVENT×ERRAND 发用户=MARKET_ERRAND、发全站系统位=BOTTOM_SYSTEM）：MARKET_ERRAND/MARKET_PRODUCT(预留,当前无生产方)/BOTTOM_SYSTEM/INTERACTION_LIKE/INTERACTION_COMMENT',
+    scope            VARCHAR(20)  NOT NULL COMMENT '收件范围（写入时由生产点显式标注，禁止从 (type,refType) 推导——发用户与发全站系统位只能靠生产意图区分）：MARKET_PRODUCT(预留,当前无生产方)/BOTTOM_SYSTEM/INTERACTION_LIKE/INTERACTION_COMMENT',
     seq              BIGINT       NOT NULL COMMENT 'per-(user,scope) 收件序号（notification_seq 计数器写入事务内取号，从 1 起递增）：已读态 = seq ≤ 该范围水位；水位只用本列，禁用 id——分配序≠提交序',
     sender_id        VARCHAR(36)       NULL COMMENT '触发者用户 ID（互动通知：谁评/回/赞了你；广播类为空）',
-    type             VARCHAR(20)  NOT NULL COMMENT '类型 ANNOUNCEMENT/ORDER_EVENT/CREDIT_CHANGE/POST_COMMENTED/COMMENT_REPLIED/POST_LIKED/COMMENT_LIKED',
+    type             VARCHAR(20)  NOT NULL COMMENT '类型 ANNOUNCEMENT/CREDIT_CHANGE/POST_COMMENTED/COMMENT_REPLIED/POST_LIKED/COMMENT_LIKED',
     title            VARCHAR(100) NOT NULL COMMENT '标题',
     content          VARCHAR(500) NOT NULL COMMENT '内容',
     ref_type         VARCHAR(20)  NULL COMMENT '关联类型',
-    ref_id           VARCHAR(36)  NULL COMMENT '关联业务 ID（POST/COMMENT/PRODUCT/ERRAND 订单均为 UUID 字符串，票 03/05；REPORT=report_id UUID，票 06）',
+    ref_id           VARCHAR(36)  NULL COMMENT '关联业务 ID（POST/COMMENT/PRODUCT 订单均为 UUID 字符串，票 03/05；REPORT=report_id UUID，票 06）',
     broadcast_msg_id VARCHAR(64)  NULL COMMENT '广播消息 msg_id（公告落库幂等键）',
     dedup_key        VARCHAR(100) NULL COMMENT '互动通知幂等键（type+目标+sender）；同一触发者对同一目标只发一条，取消动作不撤回',
     create_time      DATETIME     NOT NULL COMMENT '创建时间',
@@ -761,52 +731,6 @@ CREATE TABLE IF NOT EXISTS notification_read (
     PRIMARY KEY (id),
     UNIQUE KEY uk_user_scope (user_id, scope)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '通知已读水位表（每用户每范围一行）';
-
-CREATE TABLE IF NOT EXISTS errand_order (
-    id                BIGINT         NOT NULL AUTO_INCREMENT,
-    errand_order_id   VARCHAR(36)    NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串）',
-    publisher_id      VARCHAR(36)         NOT NULL COMMENT '下单方用户 ID',
-    taker_id          VARCHAR(36)         NULL COMMENT '接单方用户 ID（抢单后填充，接单方取消后清空）',
-    lock_seq          INT            NOT NULL DEFAULT 0 COMMENT '锁单轮次（每次抢单 +1；超时中心复合 bizId={orderId}:{lock_seq} 的轮次与回调守卫比对值）',
-    event_seq         INT            NOT NULL DEFAULT 0 COMMENT '事件序号计数器：事件表取号用——事件写入事务内 UPDATE event_seq=event_seq+1 后读回（先动订单行持行锁，同订单串行发号）；同订单内递增即事件先后顺序（业务含义只认 event_seq，自增 id 无业务含义）',
-    title             VARCHAR(50)    NULL COMMENT '订单标题（草稿允许为空，提交时必填）',
-    type              VARCHAR(20)    NULL COMMENT '类型 EXPRESS_PICKUP/BUY/DELIVER/OTHER（草稿允许为空，提交时必填）',
-    description       VARCHAR(200)   NULL COMMENT '任务描述（同步初筛覆盖；草稿允许为空，提交时必填）',
-    pickup_location   VARCHAR(100)   NULL COMMENT '取件地点（草稿允许为空，提交时必填）',
-    delivery_location VARCHAR(100)   NULL COMMENT '送达地点（草稿允许为空，提交时必填）',
-    reward            DECIMAL(10,2)  NULL COMMENT '悬赏（校园币，支付时冻结；草稿允许为空，提交时必填）',
-    images            VARCHAR(1000)  NULL COMMENT '配图 URL 列表（JSON 数组，最多 6 张，MinIO）',
-    deadline          DATETIME       NULL COMMENT '截止时间（用户指定的绝对时刻，合法区间为数据库时钟 now+15min~now+7d，SQL 侧校验；到期自动下架与接单方完工时限共用）',
-    state             VARCHAR(20)    NOT NULL DEFAULT 'PENDING_PAYMENT' COMMENT '状态 DRAFT(草稿)/PENDING_PAYMENT/PUBLISHED/LOCKED(锁单中)/CONFIRMED(已确认)/PICKED_UP/DELIVERED/COMPLETED/CANCELLED/DISPUTED/DELETED(软删，仅草稿可达)（先付后发：支付完成即发布进大厅）',
-    create_time       DATETIME       NOT NULL COMMENT '创建时间',
-    update_time       DATETIME       NOT NULL COMMENT '更新时间',
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_errand_order_id (errand_order_id),
-    KEY idx_state_deadline (state, deadline),
-    KEY idx_publisher (publisher_id),
-    KEY idx_taker (taker_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '跑腿订单表';
-
-CREATE TABLE IF NOT EXISTS errand_order_event (
-    id          BIGINT       NOT NULL AUTO_INCREMENT,
-    order_id    VARCHAR(36)  NOT NULL COMMENT '跑腿订单业务 ID',
-    event_seq   INT          NOT NULL COMMENT '事件序号（业务顺序）：写入时从 errand_order.event_seq 计数器同事务取号，同订单内递增即状态变更顺序；id 仅内部键，无业务含义',
-    event_type  VARCHAR(30)  NOT NULL COMMENT '事件类型',
-    from_state  VARCHAR(20)  NULL     COMMENT '变更前状态（NULL 仅限创建事件）',
-    to_state    VARCHAR(20)  NOT NULL COMMENT '变更后状态',
-    actor_id    VARCHAR(36)       NULL     COMMENT '操作人用户 ID（仅 SYSTEM 允许 NULL）',
-    actor_role  VARCHAR(20)  NOT NULL COMMENT '操作方 PUBLISHER/TAKER/SYSTEM/ADMIN',
-    reason_type VARCHAR(50)  NULL     COMMENT '原因类型（仅取消/退出/争议/仲裁类事件写入）',
-    reason      VARCHAR(200) NULL     COMMENT '原因补充说明（用户输入，提交时先过同步初筛；SYSTEM 事件恒 NULL）',
-    images      VARCHAR(1000) NULL    COMMENT '随附凭证图 URL 列表（JSON 数组，MinIO，INSERT 时定型不可改）',
-    request_id  VARCHAR(64)  NULL     COMMENT '触发本事件的请求编号（客户端每次点击生成、重试沿用；请求级幂等判定用，SYSTEM 事件为 NULL）',
-    create_time DATETIME     NOT NULL COMMENT '创建时间',
-    update_time DATETIME     NOT NULL COMMENT '更新时间',
-    PRIMARY KEY (id),
-    KEY idx_order_seq (order_id, event_seq),
-    -- 防占单（票 05）：Redis 降级时按 actor_id + event_type + 近 24h 计主动放弃，是事实源侧唯一查询路径
-    KEY idx_actor_type_time (actor_id, event_type, create_time)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '跑腿订单状态流转记录（只插入不修改；同订单内 event_seq 递增即状态变更顺序，纠纷溯源事实源）';
 
 CREATE TABLE IF NOT EXISTS product_order (
     id                     BIGINT        NOT NULL AUTO_INCREMENT,
@@ -868,7 +792,7 @@ CREATE TABLE IF NOT EXISTS wallet_detail (
     user_id     VARCHAR(36)        NOT NULL COMMENT '用户 ID（钱包所有者；INCOME 为收款方）',
     type        VARCHAR(20)   NOT NULL COMMENT '类型 RECHARGE/FROZEN/UNFROZEN/INCOME/PRODUCT_FROZEN/PRODUCT_UNFROZEN/PRODUCT_INCOME',
     amount      DECIMAL(10,2) NOT NULL COMMENT '变动金额',
-    order_id    VARCHAR(36)   NULL COMMENT '关联订单业务 ID（RECHARGE 为空；uk_order_type 按 type 区分跑腿/商品订单）',
+    order_id    VARCHAR(36)   NULL COMMENT '关联订单业务 ID（RECHARGE 为空；uk_order_type 按 type 区分商品订单）',
     biz_round   INT           NOT NULL DEFAULT 0 COMMENT '业务轮次：同一订单同类型多轮资金操作的去重维度（预留，当前恒 0）',
     create_time DATETIME      NOT NULL COMMENT '创建时间',
     update_time DATETIME      NOT NULL COMMENT '更新时间',
@@ -896,8 +820,8 @@ CREATE TABLE IF NOT EXISTS user_credit_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
     user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID',
     `change`    INT         NOT NULL COMMENT '信用分变化（可为负）',
-    reason_type VARCHAR(30) NOT NULL COMMENT '原因类型 ERRAND_TAKER_CANCEL/ERRAND_TIMEOUT/TRADE_COMPLAINT/ADMIN_ADJUST/ADMIN_BAN/ADMIN_UNBAN（取值见 CreditReasonTypeVO）',
-    ref_id      VARCHAR(36) NULL COMMENT '关联业务 ID（跑腿=订单；内容类=被罚内容；ADMIN 类为空，不依赖幂等键）',
+    reason_type VARCHAR(30) NOT NULL COMMENT '原因类型 TRADE_COMPLAINT/ADMIN_ADJUST/ADMIN_BAN/ADMIN_UNBAN（取值见 CreditReasonTypeVO）',
+    ref_id      VARCHAR(36) NULL COMMENT '关联业务 ID（内容类=被罚内容；ADMIN 类为空，不依赖幂等键）',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),

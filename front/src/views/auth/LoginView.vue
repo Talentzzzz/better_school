@@ -89,7 +89,7 @@ async function onSubmit() {
         </svg>
       </div>
       <h1 class="login-title">校园生活</h1>
-      <p class="login-sub">{{ mode === 'login' ? '登录后发布内容、接单跑腿' : '注册新账号，开启校园生活' }}</p>
+      <p class="login-sub">{{ mode === 'login' ? '登录后发布内容、逛校园集市' : '注册新账号，开启校园生活' }}</p>
     </div>
 
     <div class="login-form">

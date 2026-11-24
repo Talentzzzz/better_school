@@ -1,6 +1,6 @@
 package com.betterschool.trigger.http;
 
-import com.betterschool.api.ITradeService;
+import com.betterschool.api.IIdleService;
 import com.betterschool.api.dto.ProductDraftSaveRequestDTO;
 import com.betterschool.api.dto.ProductEditRequestDTO;
 import com.betterschool.api.dto.ProductOrderResponseDTO;
@@ -8,12 +8,11 @@ import com.betterschool.api.dto.ProductPublishRequestDTO;
 import com.betterschool.api.dto.ProductResponseDTO;
 import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
-import com.betterschool.usecase.trade.TradePublishCase;
-import com.betterschool.domain.trade.model.entity.ProductEntity;
-import com.betterschool.domain.trade.model.entity.ProductOrderEntity;
-import com.betterschool.domain.trade.model.valobj.ProductFeedPageVO;
-import com.betterschool.domain.trade.model.valobj.ProductStatusVO;
-import com.betterschool.domain.trade.service.product.IProductService;
+import com.betterschool.usecase.idle.IdleCase;
+import com.betterschool.domain.idle.model.entity.ProductEntity;
+import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
+import com.betterschool.domain.idle.model.valobj.ProductFeedPageVO;
+import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -36,15 +35,16 @@ import java.util.Set;
  * 二手交易 HTTP 入口：浏览免登录，发布/收藏需登录
  */
 @RestController
-@RequestMapping("/api/trade")
+// /api/trade 是更名前缀，保留为兼容别名（已发出的分享链接 / 客户端缓存不因改名 404）；下个大版本移除
+@RequestMapping({"/api/idle", "/api/trade"})
 @RequiredArgsConstructor
-public class ProductController implements ITradeService {
+public class ProductController implements IIdleService {
 
     private static final int MAX_PAGE_SIZE = 50;
 
-    private final IProductService productService;
-    private final TradePublishCase tradePublishCase;
-    private final com.betterschool.usecase.trade.ProductOrderCase productOrderCase;
+    /** 域名服务与 api 契约同名，字段用全限定名区分（照 SearchController 先例） */
+    private final com.betterschool.domain.idle.service.IIdleService idleService;
+    private final IdleCase idleCase;
 
     @Override
     @GetMapping("/products")
@@ -60,9 +60,9 @@ public class ProductController implements ITradeService {
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         // 索引 + 游标分页（票 04）：无筛选走索引序扫描，total 降口径 -1 不再精确 COUNT、续页靠 cursor；
         // 带筛选或索引查询降级时 indexPath=false，total 仍精确、按 page 续页
-        ProductFeedPageVO feedPage = productService.listProducts(category, minPrice, maxPrice, sort, cursor,
+        ProductFeedPageVO feedPage = idleService.listProducts(category, minPrice, maxPrice, sort, cursor,
                 page, pageSize);
-        long total = feedPage.isIndexPath() ? -1 : productService.countProducts(category, minPrice, maxPrice);
+        long total = feedPage.isIndexPath() ? -1 : idleService.countProducts(category, minPrice, maxPrice);
         List<ProductResponseDTO> dtoList = feedPage.getProducts().stream()
                 .map(product -> toProductResponseDTO(product, false)).toList();
         // 已读灰显（market-feed-uv 票 05，照帖子 listPosts）：页内 product_id 批量回查浏览明细，
@@ -75,7 +75,7 @@ public class ProductController implements ITradeService {
     @Override
     @PostMapping("/products")
     public Response<String> publishProduct(@Valid @RequestBody ProductPublishRequestDTO request) {
-        String productId = tradePublishCase.publishProduct(SecurityUtils.currentUserId(), request.getTitle(),
+        String productId = idleCase.publishProduct(SecurityUtils.currentUserId(), request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
                 request.getTradeLocation(), request.getCategory(), request.getQuantity());
         return Response.ok(productId);
@@ -84,7 +84,7 @@ public class ProductController implements ITradeService {
     @Override
     @PostMapping("/products/draft")
     public Response<String> saveProductDraft(@Valid @RequestBody ProductDraftSaveRequestDTO request) {
-        String productId = tradePublishCase.saveProductDraft(SecurityUtils.currentUserId(), request.getTitle(),
+        String productId = idleCase.saveProductDraft(SecurityUtils.currentUserId(), request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
                 request.getTradeLocation(), request.getCategory(), request.getQuantity());
         return Response.ok(productId);
@@ -94,7 +94,7 @@ public class ProductController implements ITradeService {
     @PutMapping("/products/{productId}/draft")
     public Response<Void> updateProductDraft(@PathVariable String productId,
                                              @Valid @RequestBody ProductDraftSaveRequestDTO request) {
-        tradePublishCase.updateProductDraft(SecurityUtils.currentUserId(), productId, request.getTitle(),
+        idleCase.updateProductDraft(SecurityUtils.currentUserId(), productId, request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice(),
                 request.getTradeLocation(), request.getCategory(), request.getQuantity());
         return Response.ok(null);
@@ -103,14 +103,14 @@ public class ProductController implements ITradeService {
     @Override
     @PostMapping("/products/{productId}/submit")
     public Response<Void> submitProductDraft(@PathVariable String productId) {
-        tradePublishCase.submitProductDraft(SecurityUtils.currentUserId(), productId);
+        idleCase.submitProductDraft(SecurityUtils.currentUserId(), productId);
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/takedown")
     public Response<Void> takeDownProduct(@PathVariable String productId) {
-        tradePublishCase.takeDownProduct(SecurityUtils.currentUserId(), productId);
+        idleCase.takeDownProduct(SecurityUtils.currentUserId(), productId);
         return Response.ok(null);
     }
 
@@ -118,7 +118,7 @@ public class ProductController implements ITradeService {
     @PutMapping("/products/{productId}")
     public Response<Void> editProduct(@PathVariable String productId,
                                       @Valid @RequestBody ProductEditRequestDTO request) {
-        tradePublishCase.editOnSaleProduct(SecurityUtils.currentUserId(), productId, request.getTitle(),
+        idleCase.editOnSaleProduct(SecurityUtils.currentUserId(), productId, request.getTitle(),
                 request.getDescription(), request.getImages(), request.getPrice());
         return Response.ok(null);
     }
@@ -127,49 +127,49 @@ public class ProductController implements ITradeService {
     @GetMapping("/products/{productId}")
     public Response<ProductResponseDTO> productDetail(@PathVariable String productId) {
         String currentUserId = SecurityUtils.currentUserId();
-        ProductEntity productEntity = productService.productDetail(productId, currentUserId);
+        ProductEntity productEntity = idleService.productDetail(productId, currentUserId);
         return Response.ok(toProductResponseDTO(productEntity, productEntity.isFavorited()));
     }
 
     @Override
     @DeleteMapping("/products/{productId}")
     public Response<Void> deleteProduct(@PathVariable String productId) {
-        productService.deleteProduct(productId, SecurityUtils.currentUserId());
+        idleService.deleteProduct(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/sold")
     public Response<Void> markSold(@PathVariable String productId) {
-        productService.markSold(productId, SecurityUtils.currentUserId());
+        idleService.markSold(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/relist")
     public Response<Void> relistProduct(@PathVariable String productId) {
-        productService.relistProduct(productId, SecurityUtils.currentUserId());
+        idleService.relistProduct(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/stock")
     public Response<Void> restockProduct(@PathVariable String productId, @RequestParam Integer quantity) {
-        tradePublishCase.restockProduct(SecurityUtils.currentUserId(), productId, quantity);
+        idleCase.restockProduct(SecurityUtils.currentUserId(), productId, quantity);
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/products/{productId}/favorite")
     public Response<Void> favoriteProduct(@PathVariable String productId) {
-        productService.favoriteProduct(productId, SecurityUtils.currentUserId());
+        idleService.favoriteProduct(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @DeleteMapping("/products/{productId}/favorite")
     public Response<Void> unfavoriteProduct(@PathVariable String productId) {
-        productService.unfavoriteProduct(productId, SecurityUtils.currentUserId());
+        idleService.unfavoriteProduct(productId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
@@ -181,8 +181,8 @@ public class ProductController implements ITradeService {
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         String userId = SecurityUtils.currentUserId();
-        long total = productService.countMyProducts(userId);
-        List<ProductEntity> productList = productService.listMyProducts(userId, page, pageSize);
+        long total = idleService.countMyProducts(userId);
+        List<ProductEntity> productList = idleService.listMyProducts(userId, page, pageSize);
         List<ProductResponseDTO> dtoList = productList.stream()
                 .map(product -> toProductResponseDTO(product, false))
                 .toList();
@@ -197,8 +197,8 @@ public class ProductController implements ITradeService {
             @RequestParam(defaultValue = "10") int pageSize) {
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
-        long total = productService.countUserOnSaleProducts(userId);
-        List<ProductEntity> productList = productService.listUserOnSaleProducts(userId, page, pageSize);
+        long total = idleService.countUserOnSaleProducts(userId);
+        List<ProductEntity> productList = idleService.listUserOnSaleProducts(userId, page, pageSize);
         List<ProductResponseDTO> dtoList = productList.stream()
                 .map(product -> toProductResponseDTO(product, false)).toList();
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
@@ -211,7 +211,7 @@ public class ProductController implements ITradeService {
             @RequestParam(defaultValue = "10") int pageSize) {
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
-        List<ProductEntity> productList = productService.listFavorites(SecurityUtils.currentUserId(), page, pageSize);
+        List<ProductEntity> productList = idleService.listFavorites(SecurityUtils.currentUserId(), page, pageSize);
         List<ProductResponseDTO> dtoList = productList.stream().map(product -> toProductResponseDTO(product, true)).toList();
         return Response.ok(new PageResult<>(page, pageSize, 0, dtoList));
     }
@@ -220,41 +220,41 @@ public class ProductController implements ITradeService {
     @PostMapping("/orders")
     public Response<String> createProductOrder(@RequestParam String productId,
                                                @RequestParam(defaultValue = "1") Integer quantity) {
-        return Response.ok(productOrderCase.createOrder(SecurityUtils.currentUserId(), productId, quantity));
+        return Response.ok(idleCase.createOrder(SecurityUtils.currentUserId(), productId, quantity));
     }
 
     @Override
     @PostMapping("/orders/{orderId}/pay")
     public Response<Void> payProductOrder(@PathVariable String orderId) {
-        productOrderCase.payOrder(orderId, SecurityUtils.currentUserId());
+        idleCase.payOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/mark-delivered")
     public Response<Void> markDeliveredProduct(@PathVariable String orderId) {
-        productOrderCase.markDelivered(orderId, SecurityUtils.currentUserId());
+        idleCase.markDelivered(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/confirm")
     public Response<Void> confirmProductOrder(@PathVariable String orderId) {
-        productOrderCase.confirmReceived(orderId, SecurityUtils.currentUserId());
+        idleCase.confirmReceived(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/orders/{orderId}/cancel")
     public Response<Void> cancelProductOrder(@PathVariable String orderId) {
-        productOrderCase.cancelOrder(orderId, SecurityUtils.currentUserId());
+        idleCase.cancelOrder(orderId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @Override
     @GetMapping("/orders/{orderId}")
     public Response<ProductOrderResponseDTO> productOrderDetail(@PathVariable String orderId) {
-        ProductOrderEntity orderEntity = productOrderCase.orderDetail(orderId, SecurityUtils.currentUserId());
+        ProductOrderEntity orderEntity = idleCase.orderDetail(orderId, SecurityUtils.currentUserId());
         return Response.ok(toProductOrderResponseDTO(orderEntity));
     }
 
@@ -267,8 +267,8 @@ public class ProductController implements ITradeService {
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         String userId = SecurityUtils.currentUserId();
-        long total = productOrderCase.countMineOrders(role, userId);
-        List<ProductOrderEntity> orderList = productOrderCase.listMineOrders(role, userId, page, pageSize);
+        long total = idleCase.countMineOrders(role, userId);
+        List<ProductOrderEntity> orderList = idleCase.listMineOrders(role, userId, page, pageSize);
         List<ProductOrderResponseDTO> dtoList = orderList.stream().map(this::toProductOrderResponseDTO).toList();
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
@@ -276,7 +276,7 @@ public class ProductController implements ITradeService {
     /** 当前用户浏览过的商品 id 集合（未登录为空集；一页一次批量查询，不做 N+1） */
     private Set<String> viewedProductIdsOf(List<ProductEntity> productList, String currentUserId) {
         List<String> productIds = productList.stream().map(ProductEntity::getProductId).toList();
-        return new HashSet<>(productService.listViewedProductIds(currentUserId, productIds));
+        return new HashSet<>(idleService.listViewedProductIds(currentUserId, productIds));
     }
 
     private ProductResponseDTO toProductResponseDTO(ProductEntity productEntity, boolean favorited) {

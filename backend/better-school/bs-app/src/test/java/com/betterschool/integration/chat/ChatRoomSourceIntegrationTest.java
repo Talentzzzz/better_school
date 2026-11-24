@@ -48,26 +48,13 @@ public class ChatRoomSourceIntegrationTest extends CommunityApiTestBase {
     }
 
     @Test
-    @DisplayName("跑腿入口：两侧同角色标签（跑手）")
-    void errandEntryServesFixedPeerRoleOnBothSides() {
-        Session userA = registerAndLogin("13800007011", "来源跑腿A");
-        Session userB = registerAndLogin("13800007012", "来源跑腿B");
-
-        String errandRoom = createRoom(userA, userB.userId(), "ERRAND");
-        sendText(errandRoom, userA, "e1", "到楼下了");
-
-        assertThat(peerRoleInRoom(userA, errandRoom)).isEqualTo("TAKER");
-        assertThat(peerRoleInRoom(userB, errandRoom)).as("跑腿来源列定不了方向，对家恒为跑手").isEqualTo("TAKER");
-    }
-
-    @Test
-    @DisplayName("首来源钉死：先建闲置会话，再从跑腿入口进同一对人——同一条会话、来源不变")
+    @DisplayName("首来源钉死：先建闲置会话，再从市集入口进同一对人——同一条会话、来源不变")
     void firstSourceIsPinned() {
         Session userA = registerAndLogin("13800007021", "钉死A");
         Session userB = registerAndLogin("13800007022", "钉死B");
 
         String roomId = createRoom(userA, userB.userId(), "PRODUCT");
-        String again = createRoom(userB, userA.userId(), "ERRAND");
+        String again = createRoom(userB, userA.userId(), "PRODUCT");
 
         assertThat(again).as("user_pair_room.uk_pair 只认人对，来源不拆会话").isEqualTo(roomId);
         assertThat(jdbcTemplate.queryForObject("SELECT source FROM room WHERE room_id = ?", String.class, roomId))
@@ -91,7 +78,7 @@ public class ChatRoomSourceIntegrationTest extends CommunityApiTestBase {
         assertThat(jdbcTemplate.queryForObject("SELECT source FROM room WHERE room_id = ?", String.class, roomId)).isNull();
 
         // 之后即使从市集入口再进，也不补写（来源只在首次建会话时落）
-        createRoom(userA, userB.userId(), "ERRAND");
+        createRoom(userA, userB.userId(), "PRODUCT");
         assertThat(jdbcTemplate.queryForObject("SELECT source FROM room WHERE room_id = ?", String.class, roomId)).isNull();
     }
 

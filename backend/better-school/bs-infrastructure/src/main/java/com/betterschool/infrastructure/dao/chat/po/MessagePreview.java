@@ -13,7 +13,7 @@ public class MessagePreview {
 
     private String content;
 
-    /** CARD 引用类型（PRODUCT/POST/ERRAND；非 CARD 为 null） */
+    /** CARD 引用类型（PRODUCT/POST；非 CARD 为 null） */
     private String refType;
 
     /** NORMAL/RECALLED：撤回即空壳，撤回后 content/refType 不出服务端 */

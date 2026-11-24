@@ -20,7 +20,7 @@ const TYPE_TEXT: Record<string, string> = {
   RECHARGE: '充值',
   FROZEN: '支付冻结',
   UNFROZEN: '解冻退回',
-  INCOME: '跑腿收入',
+  INCOME: '收入',
   PRODUCT_FROZEN: '商品支付冻结',
   PRODUCT_UNFROZEN: '商品解冻退回',
   PRODUCT_INCOME: '商品售卖收入'
@@ -68,7 +68,7 @@ onMounted(load)
       <div class="balance-label">可用余额（校园币）</div>
       <div class="balance-num">{{ balance.toFixed(2) }}</div>
       <div class="balance-frozen">托管冻结中：{{ frozen.toFixed(2) }}</div>
-      <div class="balance-tip">演示环境：金额为虚拟币，跑腿交易全程模拟</div>
+      <div class="balance-tip">演示环境：金额为虚拟币，交易全程模拟</div>
     </div>
 
     <div class="recharge-card">

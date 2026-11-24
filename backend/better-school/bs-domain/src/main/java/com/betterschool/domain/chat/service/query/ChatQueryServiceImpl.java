@@ -69,8 +69,7 @@ public class ChatQueryServiceImpl implements IChatQueryService {
     /**
      * 对家角色（市集消息页的角色小标签；来源为空 = 非市集入口建的会话，不出标签）。
      * 闲置的入口方向单一，谁点「私信联系」谁是哪一方是定的（商品详情「联系卖家」= 买家发起），
-     * 故按「本人是不是会话创建人」推——同一会话两侧各自看到自己的对家；
-     * 跑腿单两侧都能发起（发布方联系跑手 / 跑手联系发布方），来源列定不了方向，按票面口径对家恒为跑手
+     * 故按「本人是不是会话创建人」推——同一会话两侧各自看到自己的对家
      */
     private RoomPeerRoleVO peerRoleOf(RoomListItemVO room, String userId) {
         if (room.getSource() == null) {
@@ -78,7 +77,6 @@ public class ChatQueryServiceImpl implements IChatQueryService {
         }
         boolean amCreator = userId.equals(room.getCreatorId());
         return switch (room.getSource()) {
-            case ERRAND -> RoomPeerRoleVO.TAKER;
             case PRODUCT -> amCreator ? RoomPeerRoleVO.SELLER : RoomPeerRoleVO.BUYER;
         };
     }

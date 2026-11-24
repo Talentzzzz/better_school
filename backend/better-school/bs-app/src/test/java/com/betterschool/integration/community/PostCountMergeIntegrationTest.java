@@ -1,10 +1,9 @@
 package com.betterschool.integration.community;
 
-import com.betterschool.infrastructure.merge.count.CountAction;
-import com.betterschool.infrastructure.merge.count.CountEvent;
-import com.betterschool.infrastructure.merge.count.CountMerger;
-import com.betterschool.infrastructure.merge.count.ICountFlushHandler;
-import com.betterschool.infrastructure.merge.count.LikeState;
+import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountEvent;
+import com.betterschool.infrastructure.adapter.repository.community.CommunityRepository;
+import com.betterschool.infrastructure.adapter.repository.LikeState;
 import com.betterschool.integration.support.CommunityApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
@@ -24,9 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 而不是「聚合」，断言里也不再有任何「等轮询」。
  *
  * <ul>
- *   <li><b>点赞 / 取消赞 / 评论赞</b>：提交给合并器 → 等窗口 → 一组一事务落库 → 返回。接口返回成功时
- *       计数<b>已经精确</b>，所以断言一律是「立刻相等」（C1）。</li>
- *   <li><b>浏览</b>：commit 等终态（统一等待语义），窗口过后一组一个事务三步落库——
+ *   <li><b>点赞 / 取消赞 / 评论赞</b>：提交给合并器 → 队列非空即发车（无收集窗口）→ 一组一事务落库
+ *       → 返回。接口返回成功时计数<b>已经精确</b>，所以断言一律是「立刻相等」（C1）。</li>
+ *   <li><b>浏览</b>：commit 等终态（统一等待语义），一组一个事务三步落库——
  *       {@code INSERT IGNORE INTO user_view_history}（affected = 新增 UV 数）→ 刷新本组 {@code viewed_at}
  *       → {@code post_view_count += 新增数}（feed-index-uv 票 02）。UV 口径：INSERT 成功才算浏览，
  *       重复进详情只刷 viewed_at 不加数，匿名访问不计数。浏览量与点赞量一样是「要么落了要么没落」
@@ -39,14 +38,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("帖子计数：点赞/取消赞同步合并写（返回即精确），浏览 commit 等终态（必须全落）")
 class PostCountMergeIntegrationTest extends CommunityApiTestBase {
 
-    /** 窗口之后才会有写：等排空用它，等不到即断言失败 */
+    /** 等合并器排空用它，等不到即断言失败（无收集窗口，正常路径本已落库，这里只兜在途件） */
     private static final long DRAIN_MILLIS = 5_000;
 
-    @Autowired
-    private CountMerger countMerger;
 
     @Autowired
-    private ICountFlushHandler flushHandler;
+    private CommunityRepository flushHandler;
 
     @Test
     @DisplayName("点赞返回成功时 关系行数 == 窄表计数，无需等待；重复赞报错且不重复计")
@@ -60,7 +57,7 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
 
         // ★ C1 的核心断言：接口刚返回、什么都没等，关系行与窄表计数就已经相等
         assertThat(likeRowCountOf(postId)).as("关系行").isEqualTo(1);
-        assertThat(postLikeCountOf(postId)).as("窄表计数（返回即精确，不等窗口）").isEqualTo(1);
+        assertThat(postLikeCountOf(postId)).as("窄表计数（返回即精确，不等任何窗口）").isEqualTo(1);
 
         assertSuccess(postJson("/api/community/posts/" + postId + "/like", null, otherLiker), "第二人点赞");
         assertThat(likeRowCountOf(postId)).as("两人赞").isEqualTo(2);
@@ -92,7 +89,7 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
         publishCommentAndGetId(postId, commenter, "缓存不存计数");
 
         // 排空在途浏览件，让 view_count 的库值在「取库值 → 读详情」之间保持静止（浏览已等终态，此处兜底对齐）
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
         long likeInDb = postLikeCountOf(postId);
         long commentInDb = postCommentCountOf(postId);
         int viewInDb = postViewCountOf(postId);
@@ -162,7 +159,7 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
 
         // 首次浏览：排空后明细 1 行、加速列 1
         assertSuccess(getJson("/api/community/posts/" + postId, reader), "首次浏览详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
         assertThat(viewHistoryRowCount(postId, reader.userId())).as("明细行已落").isEqualTo(1);
         assertThat(postViewCountOf(postId)).as("首次浏览 UV = 1").isEqualTo(1);
 
@@ -170,7 +167,7 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
         jdbcTemplate.update("UPDATE user_view_history SET viewed_at = '2000-01-01' WHERE post_id = ? AND user_id = ?",
                 postId, reader.userId());
         assertSuccess(getJson("/api/community/posts/" + postId, reader), "重复浏览详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
         assertThat(postViewCountOf(postId)).as("重复浏览不计数").isEqualTo(1);
         assertThat(viewedAtOf(postId, reader.userId()))
                 .as("重复浏览刷新 viewed_at（远古值被拨回当下）")
@@ -178,13 +175,13 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
 
         // 第二个浏览者：+1；浏览没有取消语义，计数只增不减
         assertSuccess(getJson("/api/community/posts/" + postId, otherReader), "第二人浏览详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
         assertThat(postViewCountOf(postId)).as("两个 UV").isEqualTo(2);
         assertThat(viewHistoryRowCount(postId, otherReader.userId())).isEqualTo(1);
 
         // 匿名访问：落不了明细行（user_view_history 主键的一半是 user_id），按「INSERT 成功才算浏览」不计入
         assertSuccess(getJson("/api/community/posts/" + postId, null), "匿名浏览详情");
-        assertThat(countMerger.awaitIdle(DRAIN_MILLIS)).as("窗口过后必须排空").isTrue();
+        assertThat(flushHandler.awaitIdle(DRAIN_MILLIS)).as("合并器必须已排空").isTrue();
         assertThat(postViewCountOf(postId)).as("匿名浏览不计数").isEqualTo(2);
 
         // MQ 骨架已清零：浏览不再落任何计数消息（两个 topic 常量也已删除，这里用字面量兜住回归）
@@ -192,7 +189,7 @@ class PostCountMergeIntegrationTest extends CommunityApiTestBase {
     }
 
     @Test
-    @DisplayName("同一窗口的 N 件浏览合并成一组一个事务：明细按主键去重，加速列 += 新增数")
+    @DisplayName("同一组的 N 件浏览合并成一个事务：明细按主键去重，加速列 += 新增数")
     void 一组浏览件合并成一组一个事务按主键去重() {
         Session author = registerAndLogin("13800007011", "计数作者4");
         String postId = publishPost(author, "一组浏览件合并成一组一个事务");

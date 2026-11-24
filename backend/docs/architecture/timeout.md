@@ -37,7 +37,7 @@
 
 1. `TimeoutTaskCallbackDispatcher` 实现 domain 端口却落在 `usecase.timeout`——分发要调其它域的 case，
    infrastructure 看不到 case 层。这是「端口由 infrastructure 实现」的显式例外（同款说明见 CLAUDE.md §4）。
-2. 两个业务仓储（trade / errand 侧）在自己的事务里
+2. 业务仓储（idle 侧）在自己的事务里
    注入 `ITimeoutRepository` 注册超时行——「域不注入他域仓储」的显式例外。同事务注册是内嵌化的全部前提，
    注册必须落在**已经开着事务的那个仓储方法**里；域服务本身仍不注入超时仓储，也不自持事务边界（见 CLAUDE.md §1/§3）。
 
@@ -91,13 +91,11 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 
 ## 3. 注册：业务事务内直插（票 03）
 
-三个接入点在**各域仓储自己的事务方法**里调 `ITimeoutRepository.register`：
+接入点在**仓储自己的事务方法**里调 `ITimeoutRepository.register`：
 
 | taskType | 注册点 | 计时起点 | bizId |
 | --- | --- | --- | --- |
-| `PRODUCT_ORDER_PAY_TIMEOUT` | `TradeRepository.createOrderWithLock` | 下单时刻 + 15min | 裸 `productOrderId` |
-| `ERRAND_PAY_TIMEOUT` | `ErrandRepository.createWithPayTimeout` / `submitDraftWithPayTimeout` | 创建时刻 + 15min | 裸 `errandOrderId` |
-| `ERRAND_LOCK_TIMEOUT` | `ErrandRepository.grabWithLockTimeout`（`PUBLISHED→LOCKED` 同事务） | 锁单时刻 + 5min | `{orderId}:{lockSeq}` |
+| `PRODUCT_ORDER_PAY_TIMEOUT` | `IdleRepository.createOrderWithLock` | 下单时刻 + 15min | 裸 `productOrderId` |
 
 **三分支幂等**（裁决权全在库上，与「读-判-写」时序无关）：
 
@@ -163,13 +161,11 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 ## 6. 回调：进程内分发（票 05）
 
 `TimeoutTaskScanCase` 到点后逐项调用 `ITimeoutTaskCallbackPort`，生产实现是
-`usecase.timeout.TimeoutTaskCallbackDispatcher`——按 `taskType` switch 到三个既有域动作：
+`usecase.timeout.TimeoutTaskCallbackDispatcher`——按 `taskType` switch 到既有域动作：
 
 | taskType | 动作 | 说明 |
 | --- | --- | --- |
-| `PRODUCT_ORDER_PAY_TIMEOUT` | `ProductOrderCase.handlePayTimeout` | 条件 UPDATE 取消 + 商品回在售 + 搜索同步消息 |
-| `ERRAND_PAY_TIMEOUT` | `ErrandOrderCase.handlePayTimeout` | 条件 UPDATE 取消 |
-| `ERRAND_LOCK_TIMEOUT` | `ErrandOrderCase.handleLockTimeout` | `LOCKED→PUBLISHED`（`lock_seq` 轮次守卫）+ 落订单事件 + 通知被释放方 |
+| `PRODUCT_ORDER_PAY_TIMEOUT` | `IdleCase.handlePayTimeout` | 条件 UPDATE 取消 + 商品回在售 + 搜索同步消息 |
 
 - **幂等责任仍在业务状态机**：未命中（已支付 / 已取消 / 不存在）= 幂等成功、零副作用。
   **不要**在回调层加去重表或「已处理 key」。
@@ -207,12 +203,12 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
 - 已验证：`TimeoutTaskScanIntegrationTest` 用 1/3 与 0/2、1/2 两组分片跑完整 16 槽，断言行不落在别人槽位、
   两个分片合计回调 16 次且**同一 key 不重复回调**。
 
-## 9. 新接入方怎么接（四个既有接入方之外）
+## 9. 新接入方怎么接（既有接入方之外）
 
 判据（防「内嵌中心 + 域内扫描」长期并存）：
 
-- **deadline 已是业务列、动作在同域** → 域内扫描（现状：`errandTimeoutScan` / `tradeExpireScan` /
-  `productTimeoutScan` 都不收编；`errandTimeoutScan` 还是 MQ 延迟消息的兜底）。
+- **deadline 已是业务列、动作在同域** → 域内扫描（现状：`idleExpireScan` / `productTimeoutScan`
+  都不收编）。
 - **deadline 无处存放 / 动作跨域 / 需要重试-退避-死信-管理面** → 超时中心。
 
 接入四步：
@@ -236,10 +232,8 @@ db   = g / TABLES_PER_DB, table = g % TABLES_PER_DB
   `timeoutTaskScan` 会每 10s 真扫测试库，与用例自己调的 `scan()` 抢同一批行（症状：批次账莫名多出回调）。
 - `CommunityApiTestBase` 每用例清 16 张物理分表：业务表 TRUNCATE 会重置自增 id，而超时行不清会污染下一用例
   （同 bizId 被三分支吸收）。
-- 相关集成测试：`TimeoutShardingRouteIntegrationTest`、`TimeoutInTransactionRegistrationIntegrationTest`、
-  `TimeoutTaskScanIntegrationTest`（含多实例/退避/死信/竞态）、`TimeoutTaskScanParallelismIntegrationTest`、
-  `TimeoutTaskCallbackIntegrationTest`、`ErrandLockTimeoutIntegrationTest`、
-  `TimeoutDeadLetterSurfaceIntegrationTest`、`TimeoutTaskEndToEndIntegrationTest`。
+- 相关集成测试：`TimeoutShardingRouteIntegrationTest`、`TimeoutTaskScanIntegrationTest`（含多实例/退避/死信/竞态）、
+  `TimeoutTaskScanParallelismIntegrationTest`、`TimeoutDeadLetterSurfaceIntegrationTest`。
 
 ## 11. 切换与存量（票 07，已完成）
 

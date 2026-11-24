@@ -10,8 +10,8 @@ chat 域接口（room / user_room + room_member 名册 / message / timeline 模�
 - 排除 hidden_at 非空（自己隐藏）；按 last_msg_time 倒序
 - 服务端拼装展示字段：`peerUserId/peerNickname/peerAvatar`（对方）
 - `unread` = room.last_seq − 本人 read_seq（回查真源现算，无 COUNT）；`lastMsgType/lastMsgPreview/lastMsgAt` 为读时现算的展示字段（按 message 真相渲染，非库内副本）
-- `source`（ERRAND/PRODUCT，市集入口首建才有）供市集消息页按域分 tab
-- `peerRole`（TAKER/SELLER/BUYER）**按请求者现算**：闲置按「本人是不是会话创建人」分两侧（闲置创建人=买家、对家=卖家），跑腿来源列定不了方向、对家恒为跑手
+- `source`（PRODUCT，市集「联系卖家」入口首建才有）供市集消息页按域分栏
+- `peerRole`（SELLER/BUYER）**按请求者现算**：闲置按「本人是不是会话创建人」分两侧（闲置创建人=买家、对家=卖家）
 - 返回 `{page, pageSize, total, list}`
 
 ### POST /rooms/{roomId}/read
@@ -28,7 +28,7 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
 **已迁出 chat**：WS 连接层是全站共享基础设施（一用户一连接，多业务按帧类型复用），票据端点独立为 `WsTicketController`（`/api/ws-ticket`），不再归属 `/api/chat`。
 
 ### POST /rooms/direct
-建/取 1v1 会话（「联系 TA」入口）。Body: `targetUserId`（必填，不能是自己，用户须存在）、`source?`（市集两入口分别传 ERRAND/PRODUCT，首页与用户主页私信入口不传；非法值 400）。
+建/取 1v1 会话（「联系 TA」入口）。Body: `targetUserId`（必填，不能是自己，用户须存在）、`source?`（市集「联系卖家」入口传 PRODUCT，首页与用户主页私信入口不传；非法值 400）。
 `user_pair_room.uk_pair` 幂等：同两人重复建（任意方向）返回同一 room。**`source` 只在首次建会话时写入**（首来源钉死），既有会话原样返回、来源不被覆盖。返回 `{roomId}`。
 
 ## 消息
@@ -49,7 +49,7 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
 - 类型语义（载荷按类型分）：
   - TEXT：裸文本 ≤500 字，超长报参数错误
   - IMAGE：`content` = JSON `{"url","width","height"}`；url 须本站上传域前缀（minio public-url），宽高可缺省；复用 `/api/files/upload`
-  - CARD：`content` 恒空；`refType`（PRODUCT/POST/ERRAND）+ `refId` 必填；目标须存在且未删（post/product 非 DELETED/DRAFT、errand 非 DELETED/CANCELLED），失效报「内容已失效」
+  - CARD：`content` 恒空；`refType`（PRODUCT/POST）+ `refId` 必填；目标须存在且未删（post 非 DELETED/DRAFT、product 非 DELETED），失效报「内容已失效」
 - 非成员 403
 - **发送幂等**：同 `clientMsgId` 重复提交（双击/超时重发）撞 `uk_client_msg` 回查返回原消息，收敛同一条（已落库快路径 + 并发未落库回滚后回查两个时序）；幂等收敛优先于载荷校验，重发不受卡片目标失效影响
 - 事务内：room 取 seq（UPDATE+1 读回，失败回滚无空洞）→ message INSERT → user_seq 取号 → timeline 扇出（恒两行，同时清空 hidden_at 弹回列表）→ user_room×2 只刷 `last_msg_time` 排序键（预览不落副本，读时按 message 真相现算）→ outbox MSG 推送事件（WS 推送归票 04）
@@ -90,7 +90,7 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
 
 ## 站内通知（scope + 水位线已读模型，营销票 02）
 
-已读 = 按 scope 推水位（O(1)），未读数 = 计数器 − 水位；逐行 is_read 与 read-all 已下线。scope 取值：`MARKET_ERRAND / MARKET_PRODUCT / BOTTOM_SYSTEM / INTERACTION_LIKE / INTERACTION_COMMENT`。
+已读 = 按 scope 推水位（O(1)），未读数 = 计数器 − 水位；逐行 is_read 与 read-all 已下线。scope 取值：`MARKET_PRODUCT / BOTTOM_SYSTEM / INTERACTION_LIKE / INTERACTION_COMMENT`。
 
 | 接口 | 方法 | 鉴权 | 要点 |
 |---|---|---|---|

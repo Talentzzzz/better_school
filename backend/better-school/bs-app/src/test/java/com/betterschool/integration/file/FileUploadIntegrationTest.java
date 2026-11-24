@@ -11,17 +11,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
-import java.util.ArrayList;
 import java.util.Base64;
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 图片上传通道集成测试：MinIO 容器由基类统一拉起（见 CommunityApiTestBase#MINIO），
- * 断言外部可观察状态：HTTP 响应、MinIO 可直接 GET、errand_order.images 落库与详情返回
+ * 断言外部可观察状态：HTTP 响应与 MinIO 可直接 GET
  */
 class FileUploadIntegrationTest extends CommunityApiTestBase {
 
@@ -78,77 +74,7 @@ class FileUploadIntegrationTest extends CommunityApiTestBase {
         assertThat(readTree(response.getBody()).path("code").asText()).isEqualTo("400");
     }
 
-    // ---------- 跑腿订单配图 ----------
-
-    @Test
-    void 订单带6张配图创建成功并落库返回() {
-        Session user = registerAndLogin("13800001006", "发单用户");
-        List<String> images = new ArrayList<>();
-        for (int i = 0; i < 6; i++) {
-            images.add(assertUploadOk(upload(PNG_BYTES, "p" + i + ".png", MediaType.IMAGE_PNG_VALUE, user)));
-        }
-        String orderId = createErrand(user, images);
-
-        String imagesJson = jdbcTemplate.queryForObject(
-                "SELECT images FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
-        assertThat(imagesJson).isNotNull();
-        assertThat(readTree(imagesJson).size()).isEqualTo(6);
-
-        JsonNode detail = getJson("/api/errand/orders/" + orderId, user);
-        assertSuccess(detail, "订单详情");
-        assertThat(detail.path("data").path("images").size()).isEqualTo(6);
-        assertThat(detail.path("data").path("images").get(0).asText()).isEqualTo(images.get(0));
-    }
-
-    @Test
-    void 订单7张配图被拒() {
-        Session user = registerAndLogin("13800001007", "发单用户7");
-        List<String> images = new ArrayList<>();
-        for (int i = 0; i < 7; i++) {
-            images.add("http://localhost:9000/bs-files/uploads/x" + i + ".png");
-        }
-        JsonNode response = postJson("/api/errand/orders", errandBody(images), user);
-        assertThat(response.path("code").asText()).isEqualTo("400");
-    }
-
-    @Test
-    void 订单无配图images为空列表() {
-        Session user = registerAndLogin("13800001008", "无图用户");
-        String orderId = createErrand(user, null);
-        String imagesJson = jdbcTemplate.queryForObject(
-                "SELECT images FROM errand_order WHERE errand_order_id = ?", String.class, orderId);
-        assertThat(imagesJson).isNull();
-
-        JsonNode detail = getJson("/api/errand/orders/" + orderId, user);
-        assertSuccess(detail, "订单详情");
-        assertThat(detail.path("data").path("images").isEmpty()).isTrue();
-    }
-
     // ---------- 工具 ----------
-
-    private String createErrand(Session user, List<String> images) {
-        JsonNode response = postJson("/api/errand/orders", errandBody(images), user);
-        assertSuccess(response, "发布跑腿");
-        // uuid-biz-id 票 05 起订单 ID 是 UUID 字符串（此文件漏翻，票 08 全量回归抓出）
-        return response.path("data").asText();
-    }
-
-    private Map<String, Object> errandBody(List<String> images) {
-        Map<String, Object> body = Map.ofEntries(
-                Map.entry("title", "帮忙取个快递"),
-                Map.entry("type", "EXPRESS_PICKUP"),
-                Map.entry("description", "帮忙取个快递"),
-                Map.entry("pickupLocation", "菜鸟驿站"),
-                Map.entry("deliveryLocation", "6号楼楼下"),
-                Map.entry("reward", 10),
-                Map.entry("deadline", LocalDateTime.now().plusHours(2).toString()));
-        if (images == null) {
-            return body;
-        }
-        Map<String, Object> withImages = new java.util.HashMap<>(body);
-        withImages.put("images", images);
-        return withImages;
-    }
 
     private ResponseEntity<String> upload(byte[] bytes, String filename, String contentType, Session session) {
         HttpHeaders partHeaders = new HttpHeaders();

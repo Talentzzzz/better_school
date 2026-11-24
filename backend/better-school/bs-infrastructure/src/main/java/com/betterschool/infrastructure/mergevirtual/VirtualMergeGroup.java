@@ -37,13 +37,21 @@ import java.util.concurrent.locks.ReentrantLock;
  * {@code synchronized}（虚拟线程撞 monitor 会钉住载体线程——JDK 21 下 JDBC pinning 同理，
  * 是性能风险不是正确性缺陷，见引擎类注释）。本类不认识业务、也不认识回填——摘出的批交给
  * 引擎的 flush 路径。
+ *
+ * <h2>为什么没有收集窗口（与 merge 包 {@code MergeGroup} 同口径）</h2>
+ * <p>收集段只看队列：<b>队列非空就摘批发车</b>，没有窗口、也没有「攒满才发」——收集窗就是落库
+ * 耗时本身（对照 PolarDB-X Inventory Hint 的组提交：内核的收集窗 = leader 持行锁处理的时间）。
+ * 两条结构安全性：① 事务速率 = 1/flush 耗时 ≈ DB 单行事务周期 ⇒ <b>天然 ≤ DB 天花板</b>，不需要
+ * 窗口「保护 DB」；② 合并比 = 到达速率 × flush 耗时，低速率每批 1 件、高速率自动变大而事务速率
+ * 恒为 1/flush。{@code maxBatch} 只是单批上界，不是发车条件。决策与论证见
+ * {@code backend/docs/architecture/merge-window-removal-spec.md}。
  */
 final class VirtualMergeGroup<T, R> {
 
     /**
-     * 窗口已过又无件可发时的重查间隔。防御性兜底：正常路径 leader 只在队列非空时进入收集
-     * （spawn 时队列已有件、上一批收尾队列非空才继续），窗口到点即发车；只有停机兜底
-     * （{@link #failRemaining}）的 signal 或攒满 signal 需要它提前醒来——等待超时重查谓词。
+     * 队列空时 leader 的重查间隔（<b>不是收集窗口</b>）。防御性兜底：正常路径 leader 只在队列
+     * 非空时进入收集（spawn 时队列已有件、上一批收尾队列非空才继续），空等只发生在
+     * {@link #failRemaining()} 已经置死这类收尾窗口里——等待超时重查谓词即可退出。
      */
     private static final long WAKEUP_PROBE_MS = 5;
 
@@ -58,10 +66,9 @@ final class VirtualMergeGroup<T, R> {
     private final String key;
     private final int maxBatch;
     private final int capacity;
-    private final long windowNanos;
 
     private final ReentrantLock lock = new ReentrantLock();
-    /** leader 专用条件：<b>只剩 leader 在等</b>（等窗口 / 攒满 / 停机），signalAll 最多叫醒一根线程 */
+    /** leader 专用条件：<b>只剩 leader 在等</b>（等新件 / 等停机），signalAll 最多叫醒一根线程 */
     private final Condition ready = lock.newCondition();
 
     /** 待合并队列（锁内访问，FIFO——同一 invId 的落库顺序 = 入队顺序） */
@@ -75,7 +82,7 @@ final class VirtualMergeGroup<T, R> {
      */
     private final AtomicBoolean leaderClaimed = new AtomicBoolean(false);
 
-    /** 停机位：置位后收集窗口作废，leader 立即发车排空（close 的第一步） */
+    /** 停机位：置位后入口停收、leader 立即排空（close 的第一步） */
     private volatile boolean closed;
     /** 在途 flush（锁内守卫）：摘批置位、{@link #settleAfterFlush()} 清位——isIdle 的判据 */
     private boolean flushing;
@@ -86,7 +93,6 @@ final class VirtualMergeGroup<T, R> {
         this.key = key;
         this.maxBatch = config.maxBatch();
         this.capacity = config.shardCapacity();
-        this.windowNanos = TimeUnit.MILLISECONDS.toNanos(config.maxFlushDelayMillis());
     }
 
     String key() {
@@ -111,11 +117,9 @@ final class VirtualMergeGroup<T, R> {
                 return EnqueueOutcome.BUFFER_FULL;
             }
             queue.addLast(item);
-            if (queue.size() >= maxBatch) {
-                // 攒满提前唤醒：leader 若在窗口等待中则立即发车（正在落库时 signal 落空无害，
-                // 它回到收集段时会重查谓词，届时队列已满，直接发车）
-                ready.signalAll();
-            }
+            // 队列非空即发：每进一件都要叫醒可能正空等的 leader（落库进行中时 signal 落空无害，
+            // leader 回到收集段会重查队列；没有等待者时 signal 只是一次空队列判断）
+            ready.signalAll();
             return EnqueueOutcome.ENQUEUED;
         } finally {
             lock.unlock();
@@ -147,11 +151,12 @@ final class VirtualMergeGroup<T, R> {
     }
 
     /**
-     * 收集段：等到「有件可发 + 触发条件」（窗口到点 / 攒满 / 停机）就摘批发车。
+     * 收集段：<b>队列非空就摘批发车</b>——没有窗口、没有「攒满才发」，收集窗就是落库耗时本身
+     * （论证见类注释末节）。
      *
      * <p><b>前置：队列非空</b>——leader 只在两种时刻进来：spawn 时（触发 spawn 的那件已在队列里）、
-     * 上一批收尾队列非空继续下一批。队列只有 leader 一个消费者，进来的非空不会中途变空。
-     * 窗口从进入本方法起算；攒满 / 停机提前发车；窗口到点仍有件就直接发车。
+     * 上一批收尾队列非空继续下一批。队列只有 leader 一个消费者，进来的非空不会中途变空；空等只出现
+     * 在 {@link #failRemaining()} 已置死的收尾窗口里，探测超时后重查谓词退出。
      *
      * <p><b>没有总预算、不因等待而退出</b>：退出谓词不允许本方法让 leader 终结——唯一让 leader
      * 看到终点的是 {@code null}：组已被置死（停机 {@link #failRemaining()} 的兜底路径）。
@@ -161,23 +166,15 @@ final class VirtualMergeGroup<T, R> {
     List<VirtualMergeItem<T, R>> takeForFlush() {
         lock.lock();
         try {
-            long windowDeadline = 0L;
             while (true) {
                 if (removed) {
                     return null;
                 }
-                long now = System.nanoTime();
-                if (windowDeadline == 0) {
-                    windowDeadline = now + windowNanos;
-                }
-                if (!queue.isEmpty() && (closed || queue.size() >= maxBatch || now >= windowDeadline)) {
+                if (!queue.isEmpty()) {
                     return takeBatch();
                 }
-                long remainNanos = now < windowDeadline
-                        ? windowDeadline - now
-                        : TimeUnit.MILLISECONDS.toNanos(WAKEUP_PROBE_MS);
                 try {
-                    ready.awaitNanos(remainNanos);
+                    ready.awaitNanos(TimeUnit.MILLISECONDS.toNanos(WAKEUP_PROBE_MS));
                 } catch (InterruptedException e) {
                     // 中断不是本引擎的停机协议（close 走 closed 标志）：清掉标志继续等。
                     // 不清的话 awaitNanos 会立即再抛，变成纯自旋；退出谓词不允许在这里 return
@@ -215,7 +212,7 @@ final class VirtualMergeGroup<T, R> {
         }
     }
 
-    /** 停机第一步：置停机位并叫醒 leader——窗口作废，立即发车排空。 */
+    /** 停机第一步：置停机位并叫醒 leader——入口停收，队列里剩下的件由 leader 立即排空。 */
     void markClosed() {
         lock.lock();
         try {

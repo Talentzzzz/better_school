@@ -164,8 +164,8 @@ export interface CommentReply {
   createdAt: string
 }
 
-// ---------- trade ----------
-export type TradeCategory =
+// ---------- idle ----------
+export type IdleCategory =
   | 'DIGITAL'
   | 'BOOKS'
   | 'DAILY'
@@ -183,7 +183,7 @@ export interface Product {
   images: string[]
   price: number
   tradeLocation: string
-  category: TradeCategory
+  category: IdleCategory
   status: string
   viewCount: number
   favoriteCount: number
@@ -191,49 +191,6 @@ export interface Product {
   /** 当前用户是否浏览过（仅推荐列表接口填充，其余列表与详情为 null；未登录 false） */
   viewed?: boolean | null
   createdAt: string
-}
-
-// ---------- errand ----------
-export type ErrandType = 'EXPRESS_PICKUP' | 'BUY' | 'DELIVER' | 'OTHER'
-export type ErrandStatus =
-  | 'DRAFT'
-  | 'PENDING_PAYMENT'
-  | 'PUBLISHED'
-  | 'LOCKED'
-  | 'CONFIRMED'
-  | 'PICKED_UP'
-  | 'DELIVERED'
-  | 'COMPLETED'
-  | 'CANCELLED'
-  | 'DISPUTED'
-  | 'DELETED'
-
-export interface ErrandOrder {
-  orderId: number
-  publisherId: number
-  publisherNickname: string
-  publisherAvatar: string | null
-  takerId: number | null
-  takerNickname: string | null
-  takerAvatar: string | null
-  type: ErrandType
-  /** 订单标题（草稿允许为空，提交时必填） */
-  title: string
-  description: string
-  pickupLocation: string
-  deliveryLocation: string
-  /** 悬赏（支付时冻结托管，完成后划转给接单者） */
-  reward: number
-  /** 当前接单人数：0/1 */
-  currentTakers: number
-  /** 浏览 UV 数（按用户去重，一人一单只计一次，匿名不计入） */
-  viewCount: number
-  deadline: string
-  status: ErrandStatus
-  createdAt: string
-  images?: string[] | null
-  /** 当前用户是否浏览过（仅大厅推荐列表接口填充，其余列表与详情为 null；未登录 false） */
-  viewed?: boolean | null
 }
 
 // ---------- wallet ----------
@@ -276,11 +233,11 @@ export interface CreditLog {
 
 // ---------- chat ----------
 
-/** 会话来源（市集「私信联系」两入口首建时写入，首来源钉死） */
-export type RoomSource = 'ERRAND' | 'PRODUCT'
+/** 会话来源（市集「联系卖家」入口首建时写入，首来源钉死） */
+export type RoomSource = 'PRODUCT'
 
 /** 对家角色标签（服务端按来源 + 本人是否首建发起人现算） */
-export type RoomPeerRole = 'TAKER' | 'SELLER' | 'BUYER'
+export type RoomPeerRole = 'SELLER' | 'BUYER'
 
 export interface ChatRoomSummary {
   roomId: number

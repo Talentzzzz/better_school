@@ -16,12 +16,6 @@ const entries = [
     title: '卖闲置',
     desc: '发布二手商品，快速出手',
     icon: '🛍️'
-  },
-  {
-    path: '/publish/errand',
-    title: '发跑腿',
-    desc: '悬赏找人帮取快递、代买、代送',
-    icon: '🚀'
   }
 ]
 </script>

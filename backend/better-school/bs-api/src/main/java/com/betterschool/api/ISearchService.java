@@ -1,6 +1,5 @@
 package com.betterschool.api;
 
-import com.betterschool.api.dto.ErrandOrderResponseDTO;
 import com.betterschool.api.dto.PostSummaryResponseDTO;
 import com.betterschool.api.dto.ProductResponseDTO;
 import com.betterschool.api.dto.UserSearchResponseDTO;
@@ -17,9 +16,6 @@ public interface ISearchService {
 
     /** 商品搜索（title/description/tradeLocation） */
     Response<PageResult<ProductResponseDTO>> searchProducts(String keyword, int page, int pageSize);
-
-    /** 跑腿搜索（description/pickupLocation/deliveryLocation） */
-    Response<PageResult<ErrandOrderResponseDTO>> searchErrands(String keyword, int page, int pageSize);
 
     /** 用户搜索（nickname，仅 NORMAL 用户） */
     Response<PageResult<UserSearchResponseDTO>> searchUsers(String keyword, int page, int pageSize);
