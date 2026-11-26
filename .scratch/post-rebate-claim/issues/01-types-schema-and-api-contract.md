@@ -104,4 +104,3 @@ private int drawCountRebate;
 注：`PostRebateTaskKeys` 头注释里的 msgId 长度按实际字符数写为「领取 18+36=54、入账 19+36=55」（票面示例写 17+36=53，少算了冒号），均小于 `VARCHAR(64)`。
 
 **未编译**：本机无 JDK21/Maven，验收以静态检查为准。
-

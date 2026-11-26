@@ -7,7 +7,7 @@
 |action_rebate_config|行为返利规则（行为 × 返利类型 → 发多少积分 / 多少次，单行规则）|
 |action_rebate_claim|行为返利领取记录（限次名额 + 领取时的金额快照；本期发帖返利接入）|
 
-**主键口径（uuid-biz-id 起）**：`id` 是纯内部物理自增，不对外。`action_rebate_claim` 的业务 ID 为 `claim_id`（`uk_claim_id`），应用层 `UUID.randomUUID()` 在 insert 前生成、随行一次写入；`action_rebate_config` 无自有业务 ID 列，按 `uk_action_rebate (action_type, rebate_type)` 寻址。
+**主键口径（uuid-biz-id 起）**：`id` 是纯内部物理自增，不对外。`action_rebate_claim` 的业务 ID 为 `claim_id`（`uk_claim_id`），由统一 `IIdGenerator`（默认 `UuidIdGenerator`）在 insert 前发号一次写入；`action_rebate_config` 无自有业务 ID 列，按 `uk_action_rebate (action_type, rebate_type)` 寻址。
 
 # action_rebate_config
 
@@ -73,7 +73,7 @@
 ## period_key 与日限口径
 - 日限 = `Asia/Shanghai` 自然日 0 点，格式 `yyyyMMdd`
 - 周期键在发帖 / 提交草稿事务里按**数据库时钟的发布时间**（`post.update_time`）定死，随领取任务消息落库；重放使用任务里的原值，不按重放当天重算，避免跨零点串天
-- 时区显式指定（`RebatePeriodKeys.ZONE`），不依赖 JVM 默认时区
+- 口径固定 `Asia/Shanghai`；发布时间取数据库时钟（部署 `TZ=Asia/Shanghai`），`RebatePeriodKeys.of` 显式按 `ZONE` 取日期、不读 JVM 默认时区；`today()` 仅在旧载荷兜底时用应用时钟按 `Asia/Shanghai` 取当天
 - 旧载荷缺 `periodKey` 时按消费当天兜底（`RebatePeriodKeys.today()`），避免旧消息被丢弃
 
 ## 快照与金额 0 语义

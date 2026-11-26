@@ -7,6 +7,7 @@ import com.betterschool.domain.rebate.model.valobj.RebateClaimResultVO;
 import com.betterschool.domain.rebate.model.valobj.RebateTypeVO;
 import com.betterschool.types.common.AppException;
 import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.id.IIdGenerator;
 import com.betterschool.types.rebate.RebateActionType;
 import com.betterschool.types.rebate.RebateClaimState;
 import lombok.RequiredArgsConstructor;
@@ -14,7 +15,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 
 /**
  * 返利域服务：返利规则读写 + 行为返利同步领取（先按 ref 幂等查已有领取，未命中才读 open 规则构快照并调
@@ -33,6 +33,7 @@ public class RebateServiceImpl implements IRebateService {
     private static final Set<String> STATES = Set.of("open", "close");
 
     private final IRebateRepository rebateRepository;
+    private final IIdGenerator idGenerator;
 
     @Override
     public List<RebateConfigEntity> listRebates() {
@@ -82,7 +83,7 @@ public class RebateServiceImpl implements IRebateService {
             return RebateClaimResultVO.noRebate(refId);
         }
         RebateClaimEntity claimEntity = new RebateClaimEntity();
-        claimEntity.setClaimId(UUID.randomUUID().toString());
+        claimEntity.setClaimId(idGenerator.nextId());
         claimEntity.setUserId(userId);
         claimEntity.setActionType(actionType);
         claimEntity.setPeriodKey(periodKey);
