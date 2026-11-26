@@ -16,14 +16,6 @@ public class Constants {
     public final static String SEARCH_SYNC_TOPIC = "bs-search-sync";
 
     /**
-     * 发帖返利任务 topic。
-     * 发帖事务内落 PENDING 任务行，提交后同步发送到本 topic（broker 确认即标记 SENT）；
-     * 发送失败（或标记前宕机）由 {@code outboxScan} 兜底重发。
-     * 消费组：{@code bs-monolith-post-rebate-group}
-     */
-    public final static String POST_REBATE_TOPIC = "bs-post-rebate";
-
-    /**
      * 发帖返利领取任务 topic（两段式第一段）。
      * 发帖事务内落 PENDING outbox（不发送），提交后由 case 同步领取；领取异常时任务留 PENDING，
      * 由 {@code outboxScan} 重发到本 topic 重放领取（按 ref 幂等）。

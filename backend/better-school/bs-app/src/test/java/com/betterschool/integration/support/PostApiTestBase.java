@@ -311,7 +311,7 @@ public abstract class PostApiTestBase {
         JsonNode response = postJson("/api/community/posts",
                 Map.of("title", "测试帖子", "content", content), author);
         assertSuccess(response, "发帖");
-        String postId = response.path("data").asText();
+        String postId = response.path("data").path("postId").asText();
         // uuid-biz-id 票 03：发帖响应 id 必须是可解析的 UUID 字符串（ID 形态断言）
         org.assertj.core.api.Assertions.assertThat(java.util.UUID.fromString(postId)).isNotNull();
         return postId;

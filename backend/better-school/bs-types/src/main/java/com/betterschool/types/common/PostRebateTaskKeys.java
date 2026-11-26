@@ -7,22 +7,15 @@ package com.betterschool.types.common;
  * 不会产生第二条任务行、重复投递消息。
  * <p>
  * 长度受 {@code mq_outbox.msg_id VARCHAR(64)} 约束：
- * 旧任务前缀 12 + UUID 36 = 48；领取任务前缀 18 + UUID 36 = 54；入账任务前缀 19 + UUID 36 = 55。
+ * 领取任务前缀 18 + UUID 36 = 54；入账任务前缀 19 + UUID 36 = 55。
  */
 public final class PostRebateTaskKeys {
-
-    private static final String PREFIX = "post-rebate:";
 
     private static final String CLAIM_PREFIX = "post-rebate-claim:";
 
     private static final String CREDIT_PREFIX = "post-rebate-credit:";
 
     private PostRebateTaskKeys() {
-    }
-
-    /** 旧发帖返利任务 msgId（票 06 退役，保留给存量 outbox 行） */
-    public static String of(String postId) {
-        return PREFIX + postId;
     }
 
     /** 领取任务 msgId：{@code post-rebate-claim:{postId}} */
