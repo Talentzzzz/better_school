@@ -133,6 +133,17 @@ export interface PostDetail {
   createdAt: string
 }
 
+/** 发帖返利状态：CLAIMED 已发放 / DENIED 今日已领 / NO_REBATE 无返利活动 / PENDING 发放中 */
+export type RebateState = 'CLAIMED' | 'DENIED' | 'NO_REBATE' | 'PENDING'
+
+/** 发帖（直接发布 / 草稿提交）返回的结构化返利结果 */
+export interface PostPublishResult {
+  postId: string
+  rebateState: RebateState
+  pointsRebate: number
+  drawCountRebate: number
+}
+
 export interface PostComment {
   commentId: number
   postId: number

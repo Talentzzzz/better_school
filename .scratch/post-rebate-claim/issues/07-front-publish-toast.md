@@ -4,7 +4,7 @@
 
 **Blocked by:** 01（契约）, 06（HTTP 形态落地）
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## 契约
 
@@ -57,10 +57,22 @@ toast 用 `toast(rebateText(result))` 替换两处 `toast('发布成功')`，其
 
 ## 验收
 
-- [ ] CLAIMED 展示「获得 X 积分 + Y 次抽奖」（只展示 >0 的项）
-- [ ] DENIED 展示「今日发帖返利已领过」
-- [ ] PENDING 展示「返利发放中」
-- [ ] NO_REBATE 展示「发布成功」
-- [ ] 直接发布与草稿提交两条路径都走同一套文案
-- [ ] TypeScript 类型自洽（`rebateState` 联合类型，无 `any`）
-- [ ] 未触碰未涉及的接口（save/update/delete 等）返回类型
+- [x] CLAIMED 展示「获得 X 积分 + Y 次抽奖」（只展示 >0 的项）
+- [x] DENIED 展示「今日发帖返利已领过」
+- [x] PENDING 展示「返利发放中」
+- [x] NO_REBATE 展示「发布成功」
+- [x] 直接发布与草稿提交两条路径都走同一套文案
+- [x] TypeScript 类型自洽（`rebateState` 联合类型，无 `any`）
+- [x] 未触碰未涉及的接口（save/update/delete 等）返回类型
+
+## Comments
+
+**2026-11-26** — 已实现并静态自检（按要求未跑 npm install/build）—
+
+改动：
+
+- `front/src/types/api.ts`：新增 `RebateState` 联合类型与 `PostPublishResult`（`postId` 为 `string`，对齐 `PostPublishResponseDTO`），放在 community 区 `PostDetail` 之后。
+- `front/src/api/community.ts`：`createPost` 由 `httpPost<number>` 改为 `httpPost<PostPublishResult>`；`submitPostDraft` 由 `httpPost<null>` 改为 `httpPost<PostPublishResult>`；`savePostDraft` 仍返回 `number`，`updatePostDraft` / `deletePost` 未动。
+- `front/src/views/post/PostPublishView.vue`：新增本地 `rebateText(result)`，两段 `onSubmit` 路径各自 `const result = await ...` 后 `toast(rebateText(result))`；`updatePostDraft` 仍在 `submitPostDraft` 之前；`leaveQuietly` / `router.replace` 跳转不变。
+
+静态自检：全 `front/src` grep `createPost` / `submitPostDraft`，调用方仅 `PostPublishView.vue`（且本票已同步），无旧返回类型残留；`PostPublishResult` 在 `community.ts` 与视图中均已 `import type`；无 `any`；diff 仅上述三个文件。未触碰后端与其他视图。
