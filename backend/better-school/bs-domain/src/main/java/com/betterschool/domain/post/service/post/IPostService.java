@@ -3,6 +3,7 @@ package com.betterschool.domain.post.service.post;
 import com.betterschool.domain.post.model.entity.PostCommentEntity;
 import com.betterschool.domain.post.model.entity.PostEntity;
 import com.betterschool.domain.post.model.valobj.FeedPageVO;
+import com.betterschool.domain.post.model.valobj.PostPublishResultVO;
 import com.betterschool.types.common.SearchPageVO;
 
 import java.util.List;
@@ -13,7 +14,7 @@ import java.util.List;
 public interface IPostService {
 
     /** 发布（落库即可见；信用分门槛由 case 层前置校验） */
-    String publishPost(String userId, String title, String content, List<String> images, String cover);
+    PostPublishResultVO publishPost(String userId, String title, String content, List<String> images, String cover);
 
     /** 保存草稿（私有停靠：字段可缺省，不做信用分门槛，由 case 层声明） */
     String savePostDraft(String userId, String title, String content, List<String> images, String cover);
@@ -25,8 +26,8 @@ public interface IPostService {
     /** 取本人草稿（归属 + DRAFT 状态守卫；提交前校验用） */
     PostEntity getOwnedPostDraft(String userId, String postId);
 
-    /** 提交草稿（完整性由 case 层前置；通过即发布可见） */
-    void submitPostDraft(String userId, String postId);
+    /** 提交草稿（完整性由 case 层前置；通过即发布可见），返回业务 ID 与提交时刻的数据库发布时间 */
+    PostPublishResultVO submitPostDraft(String userId, String postId);
 
     /**
      * 主页 feed（feed-index-uv 票 04）：post_feed_index 索引序 + 游标分页（cursor 非空时

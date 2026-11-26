@@ -9,6 +9,7 @@ import com.betterschool.domain.post.model.valobj.FeedCursorVO;
 import com.betterschool.domain.post.model.valobj.FeedIndexItemVO;
 import com.betterschool.domain.post.model.valobj.FeedPageVO;
 import com.betterschool.domain.post.model.valobj.LikeStateVO;
+import com.betterschool.domain.post.model.valobj.PostPublishResultVO;
 import com.betterschool.domain.post.model.valobj.PostStatusVO;
 import com.betterschool.types.common.SearchPageVO;
 import com.betterschool.types.enums.ResponseCode;
@@ -35,12 +36,12 @@ public class PostServiceImpl implements IPostService {
     private final IUserQueryPort userQueryPort;
 
     @Override
-    public String publishPost(String userId, String title, String content, List<String> images,
-                              String cover) {
-        // 信用分门槛由 case 层前置校验；落库即可见，搜索同步/返利消息在事务外同步发送
+    public PostPublishResultVO publishPost(String userId, String title, String content, List<String> images,
+                                           String cover) {
+        // 信用分门槛由 case 层前置校验；落库即可见。事务内落领取任务 outbox（不发送），
+        // 提交后只同步发送搜索同步消息；返回的发布时间是数据库时钟的落库时刻，供返利领取定周期
         PostEntity postEntity = PostEntity.create(userId, title, content, images, cover);
-        postRepository.savePublished(postEntity);
-        return postEntity.getPostId();
+        return postRepository.savePublished(postEntity);
     }
 
     @Override
@@ -76,12 +77,14 @@ public class PostServiceImpl implements IPostService {
     }
 
     @Override
-    public void submitPostDraft(String userId, String postId) {
-        // 完整性校验由 case 层前置
+    public PostPublishResultVO submitPostDraft(String userId, String postId) {
+        // 完整性校验由 case 层前置；仓储返回 null = 条件 UPDATE 未命中（状态已变化）
         getOwnedPostDraft(userId, postId);
-        if (!postRepository.submitDraftAsPublished(userId, postId)) {
+        PostPublishResultVO resultVO = postRepository.submitDraftAsPublished(userId, postId);
+        if (resultVO == null) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "草稿状态已变化，请刷新后重试");
         }
+        return resultVO;
     }
 
     @Override
