@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## 契约（其他票直接依赖）
 
@@ -82,3 +82,45 @@ RebateClaimResultVO claimActionRebate(String actionType, String userId, String r
 - [ ] 同周期不同 ref 返回 DENIED，且不落 claim 行、不占名额
 - [ ] 金额全 0/未开放返回 NO_REBATE，不落任何行
 - [ ] `markGranted` 是条件 UPDATE（`WHERE claim_id = ? AND state = 'CLAIMED'`），重复调用无副作用
+
+## Comments
+
+**2026-11-26 — resolved（ticket 02）**
+
+实现文件：
+
+- `bs-domain/.../domain/rebate/model/entity/RebateClaimEntity.java`（新增）
+- `bs-domain/.../domain/rebate/model/valobj/RebateClaimResultVO.java`（新增；`claimed` / `granted` / `denied` / `noRebate` / `pending` 静态工厂）
+- `bs-domain/.../domain/rebate/adapter/repository/IRebateRepository.java`（`claim` / `findClaimByRef` / `findClaimByClaimId` / `markGranted`）
+- `bs-domain/.../domain/rebate/service/IRebateService.java`、`RebateServiceImpl.java`（`claimActionRebate`）
+- `bs-infrastructure/.../dao/rebate/po/ActionRebateClaim.java`（新增）
+- `bs-infrastructure/.../dao/rebate/IActionRebateClaimDao.java`（新增）
+- `bs-app/src/main/resources/mybatis/mapper/rebate/ActionRebateClaimMapper.xml`（新增）
+- `bs-infrastructure/.../adapter/repository/rebate/RebateRepository.java`（领取事务 + credit outbox + 提交后同步发送）
+
+设计要点：
+
+- **加锁读**：领取事务内的 `selectByRef` / `selectByUserActionPeriod`（含撞唯一键后的重查）都是
+  `SELECT ... FOR UPDATE`。REPEATABLE READ 的普通快照读看不到并发事务提交的新行，撞 `uk_user_action_ref`
+  后若用普通读重查会把幂等重放误判成 DENIED 或再次插入；加锁读才能拿到最新已提交状态。
+  事务外排障读（`findClaimByRef` / `findClaimByClaimId`）保持普通 SELECT。
+- 事务形态：`TransactionTemplate.execute`（REQUIRED）内「查重 → 插 claim → 插 credit outbox」，提交后
+  才 `syncSend`；发送逻辑与 `PostRepository.sendOutbox` 一致（SEND_OK → `markSentByMsgId`，否则累计
+  `retry_count` / 达 `MqOutbox.MAX_RETRY_COUNT` 置死信），未抽公共组件。
+- 重放语义：同 `(userId, actionType, refId)` 命中直接返回已有快照，**不插 outbox、不发送**；已 GRANTED 的行
+  API 状态仍 CLAIMED，`persistedState` 返回 GRANTED（`RebateClaimResultVO.granted`）。
+- 同周期不同 ref → DENIED；金额快照两者为 0 / 未开放 → 服务层直接 NO_REBATE，不调仓储、不落行。
+- `markGranted` 为条件 UPDATE：`WHERE claim_id = #{claimId} AND state = 'CLAIMED'`；DAO 返回影响行数，
+  重复调用 0 行无声副作用。
+- DAO 比票面多一个 `selectByRefNoLock`：`selectByRef` 按票面要求是加锁读，而 `findClaimByRef` 必须是普通读，
+  因此拆出同条件的不加锁查询；未新增其他方法。
+- 按用户要求**未写测试**；本机无 Maven/JDK21，未能编译，已逐文件通读 + grep 全部新符号 + XML 结构校验。
+
+**2026-11-26 — replay ordering fix**
+
+`RebateServiceImpl.claimActionRebate` 改为**先按 `(userId, actionType, refId)` 查已有领取**：命中直接返回已有
+快照（不读当前规则、不插行）；未命中才读两条 open 规则构快照，两者为 0 返回 NO_REBATE，否则构建实体调
+`claim`。原因：规则可能在领取成功后由运营关闭，若先读规则会把同一 ref 的重放误判成 NO_REBATE，违背
+「同一 ref 冲突视为幂等 / 无论重放多少次结果一致」。仓储内 `FOR UPDATE` 查重与撞唯一键后的加锁重查保持不变。
+`IRebateService` 与实现类 javadoc 同步改为该顺序。
+
