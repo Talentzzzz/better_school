@@ -23,6 +23,22 @@ public class Constants {
      */
     public final static String POST_REBATE_TOPIC = "bs-post-rebate";
 
+    /**
+     * 发帖返利领取任务 topic（两段式第一段）。
+     * 发帖事务内落 PENDING outbox（不发送），提交后由 case 同步领取；领取异常时任务留 PENDING，
+     * 由 {@code outboxScan} 重发到本 topic 重放领取（按 ref 幂等）。
+     * 消费组：{@code bs-monolith-post-rebate-claim-group}
+     */
+    public final static String POST_REBATE_CLAIM_TOPIC = "bs-post-rebate-claim";
+
+    /**
+     * 发帖返利入账任务 topic（两段式第二段）。
+     * 领取事务内落 credit outbox（含金额快照），提交后同步发送；消费方按快照金额给积分桶/抽奖次数桶入账，
+     * 桶唯一键吸收重复投递。
+     * 消费组：{@code bs-monolith-post-rebate-credit-group}
+     */
+    public final static String POST_REBATE_CREDIT_TOPIC = "bs-post-rebate-credit";
+
     /** chat 消息推送 topic：发送事务内 outbox 写入，WS 推送消费（票 04 ChatPushConsumer） */
     public final static String CHAT_PUSH_TOPIC = "bs-chat-push";
 

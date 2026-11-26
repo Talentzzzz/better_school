@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## 交付物（严格按此签名，其他票按此引用）
 
@@ -78,7 +78,30 @@ private int drawCountRebate;
 
 ## 验收（本环境无 JDK21/Maven，做静态自检）
 
-- [ ] 新增文件包名/类名与上文完全一致，其他票可直接 import
-- [ ] `action_rebate_claim` DDL 与 spec 逐列一致
-- [ ] 没有删除 `PostRebateTaskMessage` / `POST_REBATE_TOPIC` / `PostRebateTaskKeys.of`（票 06 统一退役）
-- [ ] 全仓不出现对尚未创建类的引用（本票只加不删，旧引用保持原样）
+- [x] 新增文件包名/类名与上文完全一致，其他票可直接 import
+- [x] `action_rebate_claim` DDL 与 spec 逐列一致
+- [x] 没有删除 `PostRebateTaskMessage` / `POST_REBATE_TOPIC` / `PostRebateTaskKeys.of`（票 06 统一退役）
+- [x] 全仓不出现对尚未创建类的引用（本票只加不删，旧引用保持原样）
+
+## Comments
+
+**2026-11-26** — 已实现并静态自检（无 JDK21/Maven，未编译）。
+
+改动：
+
+- `bs-types/.../common/Constants.java`：新增 `POST_REBATE_CLAIM_TOPIC`、`POST_REBATE_CREDIT_TOPIC`（旧 `POST_REBATE_TOPIC` 保留）。
+- `bs-types/.../rebate/RebateClaimState.java`（新）：持久化状态 `CLAIMED` / `GRANTED`。
+- `bs-types/.../rebate/RebateClaimApiState.java`（新）：API 状态 `CLAIMED` / `DENIED` / `NO_REBATE` / `PENDING`（调用方用 `name()`）。
+- `bs-types/.../rebate/RebatePeriodKeys.java`（新）：`ZONE` + `of(LocalDateTime)` + `today()`；`of(null)` 经 `Objects.requireNonNull` 抛 NPE。
+- `bs-types/.../common/PostRebateClaimTaskMessage.java`（新）：`postId/userId/periodKey`。
+- `bs-types/.../common/PostRebateCreditMessage.java`（新）：`claimId/userId/postId/pointsValue/drawCountValue`。
+- `bs-types/.../common/PostRebateTaskKeys.java`：新增 `claimOf` / `creditOf`，保留 `of`。
+- `bs-api/.../dto/PostPublishResponseDTO.java`（新）：`postId/rebateState/pointsRebate/drawCountRebate`。
+- `sql/schema.sql`：`action_rebate_config` 之后追加 `action_rebate_claim`（spec DDL 原样）；`action_rebate_config.action_type` 注释补 `post(发帖)`。
+
+静态自检：全仓 grep 新类名仅有本次新增文件自身命中（无悬空引用）；逐文件核对 package/import/括号；Lombok 在 `bs-types` / `bs-api` 的 pom 中已声明；git diff 仅含上述增量。
+
+注：`PostRebateTaskKeys` 头注释里的 msgId 长度按实际字符数写为「领取 18+36=54、入账 19+36=55」（票面示例写 17+36=53，少算了冒号），均小于 `VARCHAR(64)`。
+
+**未编译**：本机无 JDK21/Maven，验收以静态检查为准。
+
