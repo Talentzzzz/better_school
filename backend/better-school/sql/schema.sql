@@ -953,7 +953,7 @@ CREATE TABLE IF NOT EXISTS draw_count_config (
 
 CREATE TABLE IF NOT EXISTS action_rebate_config (
     id           BIGINT       NOT NULL AUTO_INCREMENT,
-    action_type  VARCHAR(16)  NOT NULL COMMENT '行为类型 sign(签到) / pay(支付)',
+    action_type  VARCHAR(16)  NOT NULL COMMENT '行为类型 sign(签到) / pay(支付) / post(发帖)',
     rebate_type  VARCHAR(16)  NOT NULL COMMENT '返利类型 DRAW_COUNT(抽奖次数) / POINTS(用户活动积分)',
     rebate_name  VARCHAR(64)  NOT NULL COMMENT '返利名称',
     rebate_desc  VARCHAR(128) NULL COMMENT '返利描述',
@@ -966,6 +966,25 @@ CREATE TABLE IF NOT EXISTS action_rebate_config (
     UNIQUE KEY uk_action_rebate (action_type, rebate_type) COMMENT '同一行为同一返利类型一条规则；要多档返利时去掉此键',
     KEY idx_config (config_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '行为返利配置表（签到/支付等行为发放抽奖次数/积分，入账落对应桶表）';
+
+CREATE TABLE IF NOT EXISTS action_rebate_claim (
+    id               BIGINT      NOT NULL AUTO_INCREMENT,
+    claim_id         VARCHAR(36) NOT NULL COMMENT '业务 ID（UUID）',
+    user_id          VARCHAR(36) NOT NULL COMMENT '用户 ID',
+    action_type      VARCHAR(16) NOT NULL COMMENT '行为类型 sign / pay / post',
+    period_key       VARCHAR(16) NOT NULL COMMENT '限次周期键，日限=yyyyMMdd，发帖事务里定死',
+    ref_id           VARCHAR(36) NOT NULL COMMENT '本次行为 ID（postId）',
+    points_value     INT         NOT NULL DEFAULT 0 COMMENT '领取时快照的积分值',
+    draw_count_value INT         NOT NULL DEFAULT 0 COMMENT '领取时快照的抽奖次数',
+    state            VARCHAR(16) NOT NULL COMMENT 'CLAIMED / GRANTED',
+    create_time      DATETIME    NOT NULL,
+    update_time      DATETIME    NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_claim_id (claim_id),
+    UNIQUE KEY uk_user_action_period (user_id, action_type, period_key) COMMENT '日限：同人同行为同周期一次',
+    UNIQUE KEY uk_user_action_ref (user_id, action_type, ref_id) COMMENT '同一次行为只领取一次，重放幂等',
+    KEY idx_state_time (state, update_time)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '行为返利领取记录（限次 + 快照）';
 
 CREATE TABLE IF NOT EXISTS draw_activity (
     id              BIGINT      NOT NULL AUTO_INCREMENT,
