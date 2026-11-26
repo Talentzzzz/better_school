@@ -5,6 +5,7 @@ import com.betterschool.infrastructure.dao.post.po.Post;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -27,6 +28,12 @@ public interface IPostDao {
 
     /** 提交草稿：DRAFT → NORMAL，返回影响行数（1=本次刚提交） */
     int submitDraft(@Param("postId") String postId);
+
+    /**
+     * 读回数据库时钟的 {@code update_time}（发帖返利周期键的发布时刻）：插入/提交后在同一事务内调用。
+     * 不复用 {@link #selectById}——它的列片段不含 {@code update_time}
+     */
+    LocalDateTime selectUpdateTime(@Param("postId") String postId);
 
     /** 全量帖子 id（详情缓存布隆过滤器初始化用；一次性预热，刻意不设限） */
     List<String> selectAllIds();

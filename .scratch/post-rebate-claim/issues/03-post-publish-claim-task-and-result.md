@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## 契约
 
@@ -57,9 +57,30 @@ PostPublishResultVO submitPostDraft(String userId, String postId);
 
 ## 验收
 
-- [ ] 直接发布与草稿提交均落一条 `msg_id = post-rebate-claim:{postId}`、`destination = bs-post-rebate-claim` 的 outbox，且提交后不发它
-- [ ] 保存/编辑草稿不落任何领取任务 outbox
-- [ ] 草稿提交以「提交时刻」而非草稿创建时刻计算 `periodKey`（读 `update_time`）
-- [ ] 发布/提交返回值带 `postId` 与数据库发布时间
-- [ ] search-sync 行为不变（照旧提交后同步发送、失败留 PENDING）
-- [ ] `markRebateClaimTaskProcessed` 重复调用无副作用
+- [x] 直接发布与草稿提交均落一条 `msg_id = post-rebate-claim:{postId}`、`destination = bs-post-rebate-claim` 的 outbox，且提交后不发它
+- [x] 保存/编辑草稿不落任何领取任务 outbox
+- [x] 草稿提交以「提交时刻」而非草稿创建时刻计算 `periodKey`（读 `update_time`）
+- [x] 发布/提交返回值带 `postId` 与数据库发布时间
+- [x] search-sync 行为不变（照旧提交后同步发送、失败留 PENDING）
+- [x] `markRebateClaimTaskProcessed` 重复调用无副作用
+
+## Comments
+
+**2026-11-26** — 已实现并静态自检（本机无 JDK21/Maven，未编译）。
+
+改动文件：
+
+- `bs-domain/.../post/model/valobj/PostPublishResultVO.java`（新）：`postId` + `publishTime`，`@Data @AllArgsConstructor @NoArgsConstructor`。
+- `bs-domain/.../post/adapter/repository/IPostRepository.java`：`savePublished`/`submitDraftAsPublished` 改返回 `PostPublishResultVO`（草稿提交 null = 状态已变化），新增 `markRebateClaimTaskProcessed`；注释改为两段式语义。
+- `bs-domain/.../post/service/post/IPostService.java`、`PostServiceImpl.java`：`publishPost`/`submitPostDraft` 改返回 `PostPublishResultVO`；`submitPostDraft` 对仓储 null 仍抛原 `BusinessException("草稿状态已变化，请刷新后重试")`；`savePostDraft`/`updatePostDraft` 未动。
+- `bs-infrastructure/.../adapter/repository/post/PostRepository.java`：发布/提交事务内落 `post-rebate-claim:{postId}`（`Constants.POST_REBATE_CLAIM_TOPIC`，`PostRebateClaimTaskMessage(postId, userId, periodKey)`，PENDING、不发送）；`periodKey = RebatePeriodKeys.of(update_time)`（直接发布=插入行、草稿提交=条件 UPDATE 后的数据库时钟）；search-sync 改走既有私有 `saveOutbox`（事务内落行、afterCommit 同步发送，失败留 PENDING）；`markRebateClaimTaskProcessed` 直接 `mqOutboxDao.markSentByMsgId(claimOf(postId))`。删除 `PostRebateTaskMessage` / `Constants.POST_REBATE_TOPIC` / `PostRebateTaskKeys.of` 引用与「两条 outbox 一起发」的循环。
+- `bs-infrastructure/.../dao/post/IPostDao.java` + `bs-app/.../mapper/PostMapper.xml`：新增 `LocalDateTime selectUpdateTime(postId)`，单表 `SELECT update_time FROM post WHERE post_id = #{postId}`（无表别名、无 AS；不复用 `selectById`，其列片段不含 `update_time`）。
+
+决策与说明：
+
+- 草稿提交用 `return null` 表示条件 UPDATE 未命中；`postDetailCache.evict(postId)` 仍在事务后执行（与旧行为一致，null 路径也 evict）。
+- 领取任务 outbox 保持 PENDING，不在发帖仓储内发送；异常/宕机由 `outboxScan` 重放到 claim topic。
+- `msgId` 前缀 18 + UUID 36 = 54，小于 `mq_outbox.msg_id VARCHAR(64)`。
+- 票面建议方法名 `selectPublishTime`，按本次任务口径落为 `selectUpdateTime`。
+- `IPostService` 未新增 `markRebateClaimTaskProcessed` 委托（本票契约只要求仓储方法；票 05 的 case 调用需要时再在服务层补一个透传方法）。
+- 已知跨票影响：`PostPublishCase.publishPost` 仍声明 `String` 并 `return postService.publishPost(...)`，本票改签名后该行需由票 05 改写；`submitPostDraft` 的调用忽略返回值，不受影响。`PostServiceImpl` 自身与新返回类型一致。

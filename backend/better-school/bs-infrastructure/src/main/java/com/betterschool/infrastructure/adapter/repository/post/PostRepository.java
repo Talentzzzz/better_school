@@ -6,6 +6,7 @@ import com.betterschool.domain.post.model.entity.PostEntity;
 import com.betterschool.domain.post.model.valobj.FeedCursorVO;
 import com.betterschool.domain.post.model.valobj.FeedIndexItemVO;
 import com.betterschool.domain.post.model.valobj.LikeStateVO;
+import com.betterschool.domain.post.model.valobj.PostPublishResultVO;
 import com.betterschool.domain.post.model.valobj.PostStatusVO;
 import com.betterschool.infrastructure.cache.post.PostDetailCache;
 import com.betterschool.infrastructure.adapter.repository.CountAction;
@@ -40,13 +41,14 @@ import com.betterschool.infrastructure.search.ISearchIndex;
 import com.betterschool.infrastructure.search.PostSearchDoc;
 import com.betterschool.infrastructure.search.SearchIndexName;
 import com.betterschool.types.common.Constants;
+import com.betterschool.types.common.PostRebateClaimTaskMessage;
 import com.betterschool.types.common.PostRebateTaskKeys;
-import com.betterschool.types.common.PostRebateTaskMessage;
 import com.betterschool.types.common.SearchEntityType;
 import com.betterschool.types.common.SearchPageVO;
 import com.betterschool.types.common.SearchSyncMessage;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.exception.BusinessException;
+import com.betterschool.types.rebate.RebatePeriodKeys;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
@@ -168,69 +170,69 @@ public class PostRepository implements IPostRepository {
     // ---------- 帖子 ----------
 
     @Override
-    public void savePublished(PostEntity postEntity) {
+    public PostPublishResultVO savePublished(PostEntity postEntity) {
         // 业务 ID 应用层发号、insert 前一次写入（物理自增 id 只作内部键，不再同值回写）
         postEntity.setPostId(UUID.randomUUID().toString());
         String postId = postEntity.getPostId();
         Post post = toPO(postEntity);
-        // 事务内只做 DAO 写：帖子行 + feed 索引行 + 两条 outbox 行，提交前不产生任何外部副作用
-        List<MqOutbox> outboxList = transactionTemplate.execute(status -> {
+        // 事务内只做 DAO 写：帖子行 + feed 索引行 + 领取任务/搜索同步 outbox 行；领取任务只落不发，
+        // 提交前不产生任何外部副作用。发布时间取数据库时钟的 update_time，据此定死返利周期键
+        LocalDateTime publishTime = transactionTemplate.execute(status -> {
             postDao.insert(post);
             postFeedIndexDao.upsertFeedIndexOnApprove(postId);
-            MqOutbox searchSyncOutbox = MqOutbox.pending(
-                    Constants.SEARCH_SYNC_TOPIC, postSearchSyncMessage(postId), objectMapper);
-            MqOutbox rebateOutbox = MqOutbox.pending(
-                    PostRebateTaskKeys.of(postId),
-                    Constants.POST_REBATE_TOPIC,
-                    new PostRebateTaskMessage(postId, postEntity.getUserId()),
+            LocalDateTime insertedAt = postDao.selectUpdateTime(postId);
+            MqOutbox claimTaskOutbox = MqOutbox.pending(
+                    PostRebateTaskKeys.claimOf(postId),
+                    Constants.POST_REBATE_CLAIM_TOPIC,
+                    new PostRebateClaimTaskMessage(postId, postEntity.getUserId(),
+                            RebatePeriodKeys.of(insertedAt)),
                     objectMapper);
-            mqOutboxDao.insert(searchSyncOutbox);
-            mqOutboxDao.insert(rebateOutbox);
-            return List.of(searchSyncOutbox, rebateOutbox);
+            mqOutboxDao.insert(claimTaskOutbox);
+            // 搜索同步照旧：事务内落 outbox，提交后同步发送（失败留 PENDING 交 outboxScan 兜底）
+            saveOutbox(Constants.SEARCH_SYNC_TOPIC, postSearchSyncMessage(postId));
+            return insertedAt;
         });
-        // 事务外同步发送，broker 确认后逐条标记 SENT；失败留 PENDING 交 outboxScan 兜底
-        for (MqOutbox mqOutbox : outboxList) {
-            sendOutbox(mqOutbox);
-        }
         postDetailCache.add(postId);
+        return new PostPublishResultVO(postId, publishTime);
     }
 
     @Override
     public void saveDraft(PostEntity postEntity) {
-        // 草稿是私有停靠内容：只有帖子行，没有 feed 索引、没有搜索同步、没有返利任务
+        // 草稿是私有停靠内容：只有帖子行，没有 feed 索引、没有搜索同步、没有领取任务
         postEntity.setPostId(UUID.randomUUID().toString());
         postDao.insert(toPO(postEntity));
     }
 
     @Override
-    public boolean submitDraftAsPublished(String userId, String postId) {
-        List<MqOutbox> outboxList = transactionTemplate.execute(status -> {
+    public PostPublishResultVO submitDraftAsPublished(String userId, String postId) {
+        PostPublishResultVO publishResultVO = transactionTemplate.execute(status -> {
             if (postDao.submitDraft(postId) == 0) {
                 // 状态已变化：不写索引、不落 outbox
-                return List.of();
+                return null;
             }
-            // 提交即发布可见：feed 索引行 + 两条 outbox 行，与状态迁移同一事务
+            // 提交即发布可见：feed 索引行 + 领取任务/搜索同步 outbox 行，与状态迁移同一事务。
+            // 发布时间取提交语句后的 update_time（提交时刻，不是草稿创建时刻）
             postFeedIndexDao.upsertFeedIndexOnApprove(postId);
-            MqOutbox searchSyncOutbox = MqOutbox.pending(
-                    Constants.SEARCH_SYNC_TOPIC, postSearchSyncMessage(postId), objectMapper);
-            MqOutbox rebateOutbox = MqOutbox.pending(
-                    PostRebateTaskKeys.of(postId),
-                    Constants.POST_REBATE_TOPIC,
-                    new PostRebateTaskMessage(postId, userId),
+            LocalDateTime publishTime = postDao.selectUpdateTime(postId);
+            MqOutbox claimTaskOutbox = MqOutbox.pending(
+                    PostRebateTaskKeys.claimOf(postId),
+                    Constants.POST_REBATE_CLAIM_TOPIC,
+                    new PostRebateClaimTaskMessage(postId, userId, RebatePeriodKeys.of(publishTime)),
                     objectMapper);
-            mqOutboxDao.insert(searchSyncOutbox);
-            mqOutboxDao.insert(rebateOutbox);
-            return List.of(searchSyncOutbox, rebateOutbox);
+            mqOutboxDao.insert(claimTaskOutbox);
+            // 搜索同步照旧：事务内落 outbox，提交后同步发送（失败留 PENDING 交 outboxScan 兜底）
+            saveOutbox(Constants.SEARCH_SYNC_TOPIC, postSearchSyncMessage(postId));
+            return new PostPublishResultVO(postId, publishTime);
         });
         // 草稿从未进过缓存（仅 NORMAL 进缓存）；提交转 NORMAL 后走缓存装配
         postDetailCache.evict(postId);
-        if (outboxList == null || outboxList.isEmpty()) {
-            return false;
-        }
-        for (MqOutbox mqOutbox : outboxList) {
-            sendOutbox(mqOutbox);
-        }
-        return true;
+        return publishResultVO;
+    }
+
+    @Override
+    public void markRebateClaimTaskProcessed(String postId) {
+        // 单条条件 UPDATE（state=0 -> 1），幂等；无需显式事务，由 DAO 语句自身原子完成
+        mqOutboxDao.markSentByMsgId(PostRebateTaskKeys.claimOf(postId));
     }
 
     /** 事务内落一行 outbox，提交后同步发送并标记 SENT；失败留 PENDING 交 outboxScan 兜底 */
@@ -500,7 +502,7 @@ public class PostRepository implements IPostRepository {
         saveOutbox(Constants.SEARCH_SYNC_TOPIC, postSearchSyncMessage(postId));
     }
 
-    /** 搜索同步消息载荷（发布走同步发送、删除走 afterCommit 异步发送，载荷构造只此一处） */
+    /** 搜索同步消息载荷（发布与删除都在事务内落 outbox、提交后发送，载荷构造只此一处） */
     private static SearchSyncMessage postSearchSyncMessage(String postId) {
         return new SearchSyncMessage(SearchEntityType.POST.name().toLowerCase(), postId);
     }
