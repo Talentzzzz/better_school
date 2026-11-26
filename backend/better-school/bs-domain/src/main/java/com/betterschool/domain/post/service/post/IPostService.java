@@ -13,7 +13,11 @@ import java.util.List;
  */
 public interface IPostService {
 
-    /** 发布（落库即可见；信用分门槛由 case 层前置校验） */
+    /**
+     * 发布（落库即可见；信用分门槛由 case 层前置校验）：事务内写帖子行 + feed 索引 + 领取任务 outbox
+     * （PENDING，不在事务内发送）+ 搜索同步 outbox，提交后只同步发送搜索同步消息；返回业务 ID
+     * （postId）与数据库时钟的发布时间（返利周期键由它定死）
+     */
     PostPublishResultVO publishPost(String userId, String title, String content, List<String> images, String cover);
 
     /** 保存草稿（私有停靠：字段可缺省，不做信用分门槛，由 case 层声明） */
@@ -26,7 +30,11 @@ public interface IPostService {
     /** 取本人草稿（归属 + DRAFT 状态守卫；提交前校验用） */
     PostEntity getOwnedPostDraft(String userId, String postId);
 
-    /** 提交草稿（完整性由 case 层前置；通过即发布可见），返回业务 ID 与提交时刻的数据库发布时间 */
+    /**
+     * 提交草稿（完整性由 case 层前置；通过即发布可见）：事务内条件 UPDATE + feed 索引 + 领取任务 outbox
+     * （PENDING，不在事务内发送）+ 搜索同步 outbox，提交后只同步发送搜索同步消息；返回业务 ID
+     * （postId）与提交时刻的数据库发布时间
+     */
     PostPublishResultVO submitPostDraft(String userId, String postId);
 
     /**

@@ -1,8 +1,8 @@
 # 库表总览
 
-营销域四域（points / raffle / rebate / inventory）已随 monolith-restructure 票 05/07 并入本工程，其 22 张表在本库（`better_school` / `better_school_test`，票 07 合库，`bs_marketing` 库名退役）；营销表总览见根 `backend/docs/db/README.md` 与 `backend/docs/marketing/db/*`。
+营销域四域（points / raffle / rebate / inventory）已随 monolith-restructure 票 05/07 并入本工程，其 23 张表在本库（`better_school` / `better_school_test`，票 07 合库，`bs_marketing` 库名退役）；营销表总览见根 `backend/docs/db/README.md` 与 `backend/docs/marketing/db/*`。
 
-**DDL 唯一来源**：`sql/schema.sql`（业务表见下方清单，另含 16 张 `timeout_task_00..15` 超时分表——票 05 按根 `sql.md` 重建、超时中心内嵌化票 02 增分表）。`sql/init-dev.sql` / `sql/init-test.sql` 只建库与 `USE`，**必须与 `schema.sql` 按序拼接喂给同一个连接**才建得出表；票 05 起不再有增量迁移脚本（`sql/migrations/` 与迁移测试已整体删除），改表 = 直接改 `schema.sql` + 重建库。**物理表数 = 41 张单体业务表 + 16 张超时分表 + 22 张营销并入表 = 79**（票 07 合库；marketing 22 表并入 schema.sql 尾段，全库唯一一份 mq_outbox 取 marketing 超集形状）（原第 30 张注册意图表随内嵌化票 03 删除；此前漏登 11 张——两轮 feed 索引/浏览族 9 张（feed-index-uv / market-feed-uv 票 01）、评论计数与热评索引 2 张（comment-count-narrow-table 票 01/02）——已随 `sql.md` 一并补齐；这些表尚无独立小节，语义以 `sql.md` 对应表节为准）。
+**DDL 唯一来源**：`sql/schema.sql`（业务表见下方清单，另含 16 张 `timeout_task_00..15` 超时分表——票 05 按根 `sql.md` 重建、超时中心内嵌化票 02 增分表）。`sql/init-dev.sql` / `sql/init-test.sql` 只建库与 `USE`，**必须与 `schema.sql` 按序拼接喂给同一个连接**才建得出表；票 05 起不再有增量迁移脚本（`sql/migrations/` 与迁移测试已整体删除），改表 = 直接改 `schema.sql` + 重建库。**物理表数 = 41 张单体业务表 + 16 张超时分表 + 23 张营销并入表 = 80**（票 07 合库；marketing 23 表并入 schema.sql 尾段，全库唯一一份 mq_outbox 取 marketing 超集形状）（原第 30 张注册意图表随内嵌化票 03 删除；此前漏登 11 张——两轮 feed 索引/浏览族 9 张（feed-index-uv / market-feed-uv 票 01）、评论计数与热评索引 2 张（comment-count-narrow-table 票 01/02）——已随 `sql.md` 一并补齐；这些表尚无独立小节，语义以 `sql.md` 对应表节为准）。
 
 | 库 | 归属 | DDL 来源 | 表文档 |
 | --- | --- | --- | --- |
@@ -45,6 +45,7 @@
 |notification_read|[chat](chat.md)|通知已读水位表（每用户每范围一行）|
 |notification_seq|[chat](chat.md)|通知收件序号计数器表（每用户每范围一行）|
 |mq_outbox|[outbox](outbox.md)|本地消息表（outbox）|
+|action_rebate_claim|[rebate](rebate.md)|行为返利领取记录（日限 + 快照）|
 |timeout_task_00..15 ×16|[timeout](timeout.md)|超时任务分表（内嵌化票 02；逻辑表 `timeout_task`，ShardingSphere hint 路由）|
 
 ## 全库口径（票 05 起）

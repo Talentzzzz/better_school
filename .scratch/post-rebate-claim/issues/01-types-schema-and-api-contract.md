@@ -57,7 +57,7 @@ public static String claimOf(String postId);  // "post-rebate-claim:" + postId
 public static String creditOf(String postId); // "post-rebate-credit:" + postId
 ```
 
-注释说明长度：前缀 17 + UUID 36 = 53，小于 `mq_outbox.msg_id VARCHAR(64)`。
+注释说明长度：领取任务前缀 18 + UUID 36 = 54，入账任务前缀 19 + UUID 36 = 55，均小于 `mq_outbox.msg_id VARCHAR(64)`。
 
 ### 8. `bs-api` 新增 `PostPublishResponseDTO`
 
