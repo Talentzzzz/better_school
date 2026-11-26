@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { onBeforeRouteLeave } from 'vue-router'
 import { createPost, getPost, savePostDraft, submitPostDraft, updatePostDraft } from '@/api/community'
+import type { PostPublishResult } from '@/types/api'
 import { uploadImage } from '@/api/files'
 import { toast } from '@/components/Toast'
 import { confirmDialog } from '@/components/ConfirmDialog'
@@ -173,6 +174,23 @@ async function onCoverChange(e: Event) {
   }
 }
 
+function rebateText(result: PostPublishResult): string {
+  switch (result.rebateState) {
+    case 'CLAIMED': {
+      const parts: string[] = []
+      if (result.pointsRebate > 0) parts.push(`${result.pointsRebate} 积分`)
+      if (result.drawCountRebate > 0) parts.push(`${result.drawCountRebate} 次抽奖`)
+      return parts.length > 0 ? `获得 ${parts.join(' + ')}` : '发布成功'
+    }
+    case 'DENIED':
+      return '今日发帖返利已领过'
+    case 'PENDING':
+      return '返利发放中'
+    default:
+      return '发布成功'
+  }
+}
+
 async function onSubmit() {
   if (loadingDraft.value) return
   if (!content.value.trim()) {
@@ -182,15 +200,15 @@ async function onSubmit() {
   submitting.value = true
   try {
     if (draftId.value === null) {
-      await createPost(formBody())
-      toast('发布成功')
+      const result = await createPost(formBody())
+      toast(rebateText(result))
       leaveQuietly.value = true
       router.replace('/home')
     } else {
       // 先落草稿再发布：缺项等报错停留，修改后可重试
       await updatePostDraft(draftId.value, formBody())
-      await submitPostDraft(draftId.value)
-      toast('发布成功')
+      const result = await submitPostDraft(draftId.value)
+      toast(rebateText(result))
       leaveQuietly.value = true
       router.replace('/me/post-drafts')
     }
