@@ -27,7 +27,7 @@ class AnonymousRemovalIntegrationTest extends PostApiTestBase {
         JsonNode response = postJson("/api/community/posts",
                 Map.of("title", "旧客户端发的帖", "content", "内容不含敏感词", "category", "DAILY", "anonymous", true), author);
         assertSuccess(response, "旧客户端带 anonymous/category 字段发帖");
-        String postId = response.path("data").asText();
+        String postId = response.path("data").path("postId").asText();
 
         JsonNode detail = getJson("/api/community/posts/" + postId, null);
         assertSuccess(detail, "帖子详情");

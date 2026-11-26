@@ -5,6 +5,7 @@ import com.betterschool.api.dto.PostCommentRequestDTO;
 import com.betterschool.api.dto.PostCommentResponseDTO;
 import com.betterschool.api.dto.PostDraftSaveRequestDTO;
 import com.betterschool.api.dto.PostPublishRequestDTO;
+import com.betterschool.api.dto.PostPublishResponseDTO;
 import com.betterschool.api.dto.PostResponseDTO;
 import com.betterschool.api.dto.PostSummaryResponseDTO;
 import com.betterschool.api.dto.UserCommentResponseDTO;
@@ -19,7 +20,7 @@ import com.betterschool.domain.post.service.post.IPostService;
 import com.betterschool.domain.post.model.entity.PostEntity;
 import com.betterschool.domain.post.model.valobj.FeedPageVO;
 import com.betterschool.domain.post.model.valobj.PostStatusVO;
-import com.betterschool.domain.post.service.post.IPostService;
+import com.betterschool.domain.rebate.model.valobj.RebateClaimResultVO;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -187,10 +188,10 @@ public class PostController {
     }
 
     @PostMapping("/posts")
-    public Response<String> publishPost(@Valid @RequestBody PostPublishRequestDTO request) {
-        String postId = postPublishCase.publishPost(SecurityUtils.currentUserId(),
+    public Response<PostPublishResponseDTO> publishPost(@Valid @RequestBody PostPublishRequestDTO request) {
+        RebateClaimResultVO result = postPublishCase.publishPost(SecurityUtils.currentUserId(),
                 request.getTitle(), request.getContent(), request.getImages(), request.getCover());
-        return Response.ok(postId);
+        return Response.ok(toPostPublishResponse(result));
     }
 
     @PostMapping("/posts/draft")
@@ -209,9 +210,9 @@ public class PostController {
     }
 
     @PostMapping("/posts/{postId}/submit")
-    public Response<Void> submitPostDraft(@PathVariable String postId) {
-        postPublishCase.submitPostDraft(SecurityUtils.currentUserId(), postId);
-        return Response.ok(null);
+    public Response<PostPublishResponseDTO> submitPostDraft(@PathVariable String postId) {
+        RebateClaimResultVO result = postPublishCase.submitPostDraft(SecurityUtils.currentUserId(), postId);
+        return Response.ok(toPostPublishResponse(result));
     }
 
     @GetMapping("/posts/{postId}")
@@ -304,6 +305,12 @@ public class PostController {
     public Response<Void> deleteComment(@PathVariable String commentId) {
         postService.deleteComment(commentId, SecurityUtils.currentUserId());
         return Response.ok(null);
+    }
+
+    /** 发帖 / 草稿提交响应：postId + 本次返利领取结果（DENIED / NO_REBATE / PENDING 金额恒 0） */
+    private PostPublishResponseDTO toPostPublishResponse(RebateClaimResultVO result) {
+        return new PostPublishResponseDTO(result.getRefId(), result.getApiState().name(),
+                result.getPointsValue(), result.getDrawCountValue());
     }
 
     private PostResponseDTO toPostResponseDTO(PostEntity postEntity, String currentUserId) {
