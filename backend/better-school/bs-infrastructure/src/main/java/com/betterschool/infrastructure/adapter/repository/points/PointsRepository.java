@@ -9,7 +9,8 @@ import com.betterschool.domain.points.model.valobj.PointsDeductPlanVO;
 import com.betterschool.domain.points.model.valobj.PointsDeductResultVO;
 import com.betterschool.domain.points.model.valobj.PointsTransactionDirectionVO;
 import com.betterschool.domain.points.model.valobj.PointsTransactionVO;
-import com.betterschool.infrastructure.outbox.OutboxMessageStore;
+import com.betterschool.infrastructure.dao.IMqOutboxDao;
+import com.betterschool.infrastructure.dao.po.MqOutbox;
 import com.betterschool.infrastructure.dao.points.IPointsDao;
 import com.betterschool.infrastructure.dao.points.IPointsDetailDao;
 import com.betterschool.infrastructure.dao.points.IPointsValidityConfigDao;
@@ -21,9 +22,15 @@ import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCode;
 import com.betterschool.types.id.IIdGenerator;
 import com.betterschool.types.points.PointsReasonType;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.rocketmq.client.producer.SendResult;
+import org.apache.rocketmq.client.producer.SendStatus;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
@@ -51,7 +58,9 @@ public class PointsRepository implements IPointsRepository {
     private final IPointsDao pointsDao;
     private final IPointsDetailDao pointsDetailDao;
     private final IPointsValidityConfigDao pointsValidityConfigDao;
-    private final OutboxMessageStore outboxMessageStore;
+    private final IMqOutboxDao mqOutboxDao;
+    private final RocketMQTemplate rocketMQTemplate;
+    private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
     private final IIdGenerator idGenerator;
 
@@ -186,8 +195,42 @@ public class PointsRepository implements IPointsRepository {
 
     /** 发一条积分变动事件（走本服务 outbox，与业务同事务）：入账与消费两个用例的最后一步 */
     private void savePointsChanged(String userId, int delta, int balanceAfter, PointsReasonType reasonType, String refId) {
-        outboxMessageStore.save(Constants.POINTS_CHANGED_TOPIC,
+        saveOutbox(Constants.POINTS_CHANGED_TOPIC,
                 new PointsChangedMessage(userId, delta, balanceAfter, reasonType.name(), refId));
+    }
+
+    /** 事务内落一行 outbox，提交后同步发送并标记 SENT；失败留 PENDING 交 outboxScan 兜底 */
+    private void saveOutbox(String destination, Object payload) {
+        MqOutbox mqOutbox = MqOutbox.pending(destination, payload, objectMapper);
+        mqOutboxDao.insert(mqOutbox);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                sendOutbox(mqOutbox);
+            }
+        });
+    }
+
+    private void sendOutbox(MqOutbox mqOutbox) {
+        boolean sent;
+        try {
+            SendResult sendResult = rocketMQTemplate.syncSend(mqOutbox.getDestination(), mqOutbox.getPayload());
+            sent = sendResult != null && sendResult.getSendStatus() == SendStatus.SEND_OK;
+            if (!sent) {
+                log.warn("outbox 同步发送未确认 msgId={}, status={}", mqOutbox.getMsgId(),
+                        sendResult == null ? null : sendResult.getSendStatus());
+            }
+        } catch (Exception e) {
+            log.warn("outbox 同步发送失败 msgId={}", mqOutbox.getMsgId(), e);
+            sent = false;
+        }
+        if (sent) {
+            mqOutboxDao.markSentByMsgId(mqOutbox.getMsgId());
+        } else if (mqOutbox.getRetryCount() + 1 >= MqOutbox.MAX_RETRY_COUNT) {
+            mqOutboxDao.markDeadBatch(List.of(mqOutbox.getId()));
+        } else {
+            mqOutboxDao.incrementRetryBatch(List.of(mqOutbox.getId()));
+        }
     }
 
     /**

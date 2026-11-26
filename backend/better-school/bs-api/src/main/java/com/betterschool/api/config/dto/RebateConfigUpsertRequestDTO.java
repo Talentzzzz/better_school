@@ -6,7 +6,7 @@ import lombok.Data;
 @Data
 public class RebateConfigUpsertRequestDTO {
 
-    /** 行为类型 sign(签到) / pay(支付) */
+    /** 行为类型 sign(签到) / pay(支付) / post(发帖) */
     private String actionType;
     /** 返利类型 POINTS(积分) / DRAW_COUNT(抽奖次数) */
     private String rebateType;

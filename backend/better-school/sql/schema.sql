@@ -307,7 +307,7 @@ CREATE TABLE IF NOT EXISTS product_view_count (
     PRIMARY KEY (product_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商品浏览计数表（UV 加速列，事实源在 product_view_history）';
 
-CREATE TABLE IF NOT EXISTS outbox_message (
+CREATE TABLE IF NOT EXISTS mq_outbox (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
     msg_id      VARCHAR(64) NOT NULL COMMENT '消息ID（幂等/去重）',
     destination VARCHAR(64) NOT NULL COMMENT '消息目的地（destination 语法：topic 或 topic:tag，由业务端自行解析）',
@@ -835,7 +835,7 @@ CREATE TABLE IF NOT EXISTS user_credit_detail (
 -- hot-row-merge-l2w256 票 09 起为最终形态（无两张库存桶表、明细表无 bucket_id / state）；
 -- uuid-biz-id 票 07：营销自有业务键全改 VARCHAR(36) 应用层发号，物理自增 id 保留纯内部键；
 -- draw_strategy_award.inv_id 的「不限量」哨兵为字符串 '0'。
--- 唯一同名表 outbox_message 不在本段：已按 04 票拍板取 marketing 超集形状归并进上文单体段。
+-- 唯一同名表 mq_outbox 不在本段：已按 04 票拍板取 marketing 超集形状归并进上文单体段。
 -- ─────────────────────────────────────────────────────────────────────────────
 SET NAMES utf8mb4;
 

@@ -48,7 +48,7 @@ class DrawCountBucketIntegrationTest extends TestingEnvironment {
     /** 表隔离：清次数桶业务表 + 返利规则（draw_count_config 是种子单行，不动） */
     @BeforeEach
     void truncateTables() {
-        List.of("draw_count_bucket", "draw_count_detail", "action_rebate_config", "outbox_message")
+        List.of("draw_count_bucket", "draw_count_detail", "action_rebate_config", "mq_outbox")
                 .forEach(table -> jdbcTemplate.execute("TRUNCATE TABLE " + table));
     }
 

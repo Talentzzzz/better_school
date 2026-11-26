@@ -37,9 +37,9 @@ public class PostServiceImpl implements IPostService {
     @Override
     public String publishPost(String userId, String title, String content, List<String> images,
                               String cover) {
-        // 信用分门槛由 case 层前置校验；落库即可见，搜索同步消息同事务落 outbox
+        // 信用分门槛由 case 层前置校验；落库即可见，搜索同步/返利消息在事务外同步发送
         PostEntity postEntity = PostEntity.create(userId, title, content, images, cover);
-        postRepository.save(postEntity);
+        postRepository.savePublished(postEntity);
         return postEntity.getPostId();
     }
 
@@ -48,7 +48,7 @@ public class PostServiceImpl implements IPostService {
                                 String cover) {
         // 草稿为私有停靠内容：不做信用分门槛（提交时才校验），字段可缺省
         PostEntity postEntity = PostEntity.createDraft(userId, title, content, images, cover);
-        postRepository.save(postEntity);
+        postRepository.saveDraft(postEntity);
         return postEntity.getPostId();
     }
 
@@ -79,7 +79,7 @@ public class PostServiceImpl implements IPostService {
     public void submitPostDraft(String userId, String postId) {
         // 完整性校验由 case 层前置
         getOwnedPostDraft(userId, postId);
-        if (!postRepository.submitDraftWithSearchSync(postId)) {
+        if (!postRepository.submitDraftAsPublished(userId, postId)) {
             throw new BusinessException(ResponseCode.BUSINESS_ERROR, "草稿状态已变化，请刷新后重试");
         }
     }

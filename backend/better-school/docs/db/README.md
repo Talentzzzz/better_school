@@ -2,7 +2,7 @@
 
 营销域四域（points / raffle / rebate / inventory）已随 monolith-restructure 票 05/07 并入本工程，其 22 张表在本库（`better_school` / `better_school_test`，票 07 合库，`bs_marketing` 库名退役）；营销表总览见根 `backend/docs/db/README.md` 与 `backend/docs/marketing/db/*`。
 
-**DDL 唯一来源**：`sql/schema.sql`（业务表见下方清单，另含 16 张 `timeout_task_00..15` 超时分表——票 05 按根 `sql.md` 重建、超时中心内嵌化票 02 增分表）。`sql/init-dev.sql` / `sql/init-test.sql` 只建库与 `USE`，**必须与 `schema.sql` 按序拼接喂给同一个连接**才建得出表；票 05 起不再有增量迁移脚本（`sql/migrations/` 与迁移测试已整体删除），改表 = 直接改 `schema.sql` + 重建库。**物理表数 = 41 张单体业务表 + 16 张超时分表 + 22 张营销并入表 = 79**（票 07 合库；marketing 22 表并入 schema.sql 尾段，全库唯一一份 outbox_message 取 marketing 超集形状）（原第 30 张注册意图表随内嵌化票 03 删除；此前漏登 11 张——两轮 feed 索引/浏览族 9 张（feed-index-uv / market-feed-uv 票 01）、评论计数与热评索引 2 张（comment-count-narrow-table 票 01/02）——已随 `sql.md` 一并补齐；这些表尚无独立小节，语义以 `sql.md` 对应表节为准）。
+**DDL 唯一来源**：`sql/schema.sql`（业务表见下方清单，另含 16 张 `timeout_task_00..15` 超时分表——票 05 按根 `sql.md` 重建、超时中心内嵌化票 02 增分表）。`sql/init-dev.sql` / `sql/init-test.sql` 只建库与 `USE`，**必须与 `schema.sql` 按序拼接喂给同一个连接**才建得出表；票 05 起不再有增量迁移脚本（`sql/migrations/` 与迁移测试已整体删除），改表 = 直接改 `schema.sql` + 重建库。**物理表数 = 41 张单体业务表 + 16 张超时分表 + 22 张营销并入表 = 79**（票 07 合库；marketing 22 表并入 schema.sql 尾段，全库唯一一份 mq_outbox 取 marketing 超集形状）（原第 30 张注册意图表随内嵌化票 03 删除；此前漏登 11 张——两轮 feed 索引/浏览族 9 张（feed-index-uv / market-feed-uv 票 01）、评论计数与热评索引 2 张（comment-count-narrow-table 票 01/02）——已随 `sql.md` 一并补齐；这些表尚无独立小节，语义以 `sql.md` 对应表节为准）。
 
 | 库 | 归属 | DDL 来源 | 表文档 |
 | --- | --- | --- | --- |
@@ -44,13 +44,13 @@
 |notification|[chat](chat.md)|站内通知表（scope + 水位线已读模型）|
 |notification_read|[chat](chat.md)|通知已读水位表（每用户每范围一行）|
 |notification_seq|[chat](chat.md)|通知收件序号计数器表（每用户每范围一行）|
-|outbox_message|[outbox](outbox.md)|本地消息表（outbox）|
+|mq_outbox|[outbox](outbox.md)|本地消息表（outbox）|
 |timeout_task_00..15 ×16|[timeout](timeout.md)|超时任务分表（内嵌化票 02；逻辑表 `timeout_task`，ShardingSphere hint 路由）|
 
 ## 全库口径（票 05 起）
 
 - **时间戳**：每表以 `create_time` / `update_time` 收尾，**不带 DB 默认值，由 SQL 显式 `NOW()` 写入**（时刻一律数据库时钟：Java 只产生业务时长，绝对时刻由 SQL 侧 `NOW()` / `TIMESTAMPADD` 落库，见 `CONTEXT.md`「时间口径」词条），全库无 `created_at` / `updated_at`。**唯一例外**：`timeout_task_00..15` 的 `created_at` / `updated_at`（按原样自原独立超时库迁入，改名要动 16 份 DDL + mapper XML + 存量迁移，收益只有命名整齐）。
-- **状态列**：统一叫 `state`（`bs_user` / `post` / `post_comment` / `product` / `product_order` / `message` / `outbox_message`）。同名不同型注意：业务表 `state` 是 varchar 枚举名，`outbox_message.state` 是 tinyint 数字码（0/1/2）。
+- **状态列**：统一叫 `state`（`bs_user` / `post` / `post_comment` / `product` / `product_order` / `message` / `mq_outbox`）。同名不同型注意：业务表 `state` 是 varchar 枚举名，`mq_outbox.state` 是 tinyint 数字码（0/1/2）。
 - **主键（uuid-biz-id 起）**：`id` 恒为无业务含义的物理自增（纯内部键，永不对外、永不再与业务键同值）；对外与跨表引用一律用业务 ID 列并配 `uk_*` 唯一键（`user_id` / `post_id` / `comment_id` / `product_id` / `product_order_id` / `room_id` / `msg_id` / `notification_id` / `wallet_id` / `task_id`）。写入口径：业务 ID 是应用层发号的 **UUID 字符串（`VARCHAR(36)`）**，由应用层 `UUID.randomUUID()` 在 insert 前生成、随行一次写入；全库禁止 Long/bigint 承载业务 ID，禁止「业务列插 0 同事务回写物理 id」的旧形态（历史割接脚本已随 uuid-biz-id 票 08 退役）。**例外**：各域 feed 索引 / 浏览明细 / 浏览计数 / 评论热评索引投影表不设 `id`，主键直接用业务键（清单见 `sql.md` 的主键口径例外段）。
 - **开发/测试库名隔离**：单体 `better_school` / `better_school_test`（测试栈 host 端口 +10000）。
 - 建库/重建命令见 [`../../../docker-compose.yml`](../../../docker-compose.yml) 头注释 1，或直接 `backend/scripts/test-env.sh up`；改了 `schema.sql` 必须 `scripts/test-env.sh reset-test-db`，否则测试跑在过期 schema 上出假绿。

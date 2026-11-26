@@ -74,7 +74,7 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
     void resetFixtures() {
         List.of("virtual_inventory_quota", "physical_marketing_quota",
                 "draw_strategy_award_inventory", "draw_strategy_award_inventory_detail",
-                "inventory_allocation_flow", "outbox_message")
+                "inventory_allocation_flow", "mq_outbox")
                 .forEach(table -> jdbcTemplate.execute("TRUNCATE TABLE " + table));
         jdbcTemplate.update("""
                         INSERT INTO physical_marketing_quota (inv_id, name, decr, surplus_qty, waiting_qty, issued_qty,
@@ -141,7 +141,7 @@ class PhysicalQuotaIntegrationTest extends TestingEnvironment {
     /** 预扣 / 确认都不该写 outbox（合并消息已随票 08 退休）：全表应为 0 行 */
     private int outboxRowCount() {
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM outbox_message", Integer.class);
+                "SELECT COUNT(*) FROM mq_outbox", Integer.class);
         return count == null ? 0 : count;
     }
 

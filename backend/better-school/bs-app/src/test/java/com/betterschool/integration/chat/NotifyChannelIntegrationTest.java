@@ -193,6 +193,6 @@ class NotifyChannelIntegrationTest extends PostApiTestBase {
 
     private List<String> outboxPayloads(String destination) {
         return jdbcTemplate.queryForList(
-                "SELECT payload FROM outbox_message WHERE destination = ? ORDER BY id", String.class, destination);
+                "SELECT payload FROM mq_outbox WHERE destination = ? ORDER BY id", String.class, destination);
     }
 }

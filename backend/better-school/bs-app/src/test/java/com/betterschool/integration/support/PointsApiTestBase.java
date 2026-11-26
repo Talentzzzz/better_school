@@ -28,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <ul>
  *   <li>单一 seam：HTTP 走 trigger 入口、MQ 走消费者 Bean（测试栈无 broker，消费侧当普通 Bean 直接调用）、
  *       Dubbo 走 Provider Bean（积分域没有自己的 consumer，真跨进程调用归联调票）</li>
- *   <li>断言只看外部可观察状态：HTTP 响应 + MySQL 落库（points_bucket / points_detail / outbox_message）</li>
+ *   <li>断言只看外部可观察状态：HTTP 响应 + MySQL 落库（points_bucket / points_detail / mq_outbox）</li>
  *   <li>不 mock 任何 Bean；broker 不可达的副作用只有日志与 outbox 保持 PENDING</li>
  *   <li>隔离靠库名（better_school_test）与每用例 TRUNCATE</li>
  *   <li>登录态：直接按共享密钥签发 JWT（积分域只验签不签发，没有自己的登录链路）</li>
@@ -61,7 +61,7 @@ public abstract class PointsApiTestBase extends TestingEnvironment {
     /** 表隔离：清积分域业务表 + 返利规则（points_validity_config / draw_count_config 是种子单行，不动） */
     @BeforeEach
     void truncateTables() {
-        List.of("points_bucket", "points_detail", "action_rebate_config", "outbox_message")
+        List.of("points_bucket", "points_detail", "action_rebate_config", "mq_outbox")
                 .forEach(table -> jdbcTemplate.execute("TRUNCATE TABLE " + table));
     }
 
@@ -139,7 +139,7 @@ public abstract class PointsApiTestBase extends TestingEnvironment {
 
     /** 某 destination 的 outbox 载荷（PENDING + 已发送都算「已发出」，这里没有 broker，落库即可观察） */
     protected List<String> outboxPayloads(String destination) {
-        return jdbcTemplate.queryForList("SELECT payload FROM outbox_message WHERE destination = ? ORDER BY id",
+        return jdbcTemplate.queryForList("SELECT payload FROM mq_outbox WHERE destination = ? ORDER BY id",
                 String.class, destination);
     }
 

@@ -14,7 +14,8 @@ import com.betterschool.infrastructure.dao.post.po.Post;
 import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.infrastructure.dao.user.po.User;
 import com.betterschool.infrastructure.dao.user.po.UserBrief;
-import com.betterschool.infrastructure.outbox.OutboxMessageStore;
+import com.betterschool.infrastructure.dao.IMqOutboxDao;
+import com.betterschool.infrastructure.dao.po.MqOutbox;
 import com.betterschool.infrastructure.search.ISearchIndex;
 import com.betterschool.infrastructure.search.SearchIndexName;
 import com.betterschool.infrastructure.search.UserSearchDoc;
@@ -23,10 +24,17 @@ import com.betterschool.types.common.Constants;
 import com.betterschool.types.common.SearchEntityType;
 import com.betterschool.types.common.SearchPageVO;
 import com.betterschool.types.common.SearchSyncMessage;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.rocketmq.client.producer.SendResult;
+import org.apache.rocketmq.client.producer.SendStatus;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.redisson.api.RBucket;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
@@ -36,6 +44,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Repository
 @RequiredArgsConstructor
 public class UserRepository implements IUserRepository {
@@ -53,7 +62,11 @@ public class UserRepository implements IUserRepository {
 
     private final RedissonClient redissonClient;
 
-    private final OutboxMessageStore outboxMessageStore;
+    private final IMqOutboxDao mqOutboxDao;
+
+    private final RocketMQTemplate rocketMQTemplate;
+
+    private final ObjectMapper objectMapper;
 
     private final JwtService jwtService;
 
@@ -82,12 +95,46 @@ public class UserRepository implements IUserRepository {
         User user = toPO(userEntity);
         return transactionTemplate.execute(status -> {
             userDao.insert(user);
-            outboxMessageStore.save(Constants.USER_REGISTER_TOPIC, userEntity);
+            saveOutbox(Constants.USER_REGISTER_TOPIC, userEntity);
             // 注册后昵称参与用户搜索，落搜索同步消息（与入库同事务）
-            outboxMessageStore.save(Constants.SEARCH_SYNC_TOPIC,
+            saveOutbox(Constants.SEARCH_SYNC_TOPIC,
                     new SearchSyncMessage(SearchEntityType.USER.name().toLowerCase(), userEntity.getUserId()));
             return userEntity;
         });
+    }
+
+    /** 事务内落一行 outbox，提交后同步发送并标记 SENT；失败留 PENDING 交 outboxScan 兜底 */
+    private void saveOutbox(String destination, Object payload) {
+        MqOutbox mqOutbox = MqOutbox.pending(destination, payload, objectMapper);
+        mqOutboxDao.insert(mqOutbox);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                sendOutbox(mqOutbox);
+            }
+        });
+    }
+
+    private void sendOutbox(MqOutbox mqOutbox) {
+        boolean sent;
+        try {
+            SendResult sendResult = rocketMQTemplate.syncSend(mqOutbox.getDestination(), mqOutbox.getPayload());
+            sent = sendResult != null && sendResult.getSendStatus() == SendStatus.SEND_OK;
+            if (!sent) {
+                log.warn("outbox 同步发送未确认 msgId={}, status={}", mqOutbox.getMsgId(),
+                        sendResult == null ? null : sendResult.getSendStatus());
+            }
+        } catch (Exception e) {
+            log.warn("outbox 同步发送失败 msgId={}", mqOutbox.getMsgId(), e);
+            sent = false;
+        }
+        if (sent) {
+            mqOutboxDao.markSentByMsgId(mqOutbox.getMsgId());
+        } else if (mqOutbox.getRetryCount() + 1 >= MqOutbox.MAX_RETRY_COUNT) {
+            mqOutboxDao.markDeadBatch(List.of(mqOutbox.getId()));
+        } else {
+            mqOutboxDao.incrementRetryBatch(List.of(mqOutbox.getId()));
+        }
     }
 
     @Override

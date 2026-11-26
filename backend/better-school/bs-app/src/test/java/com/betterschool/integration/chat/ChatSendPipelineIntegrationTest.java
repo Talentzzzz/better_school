@@ -100,8 +100,8 @@ public class ChatSendPipelineIntegrationTest extends PostApiTestBase {
         assertThat(queryLong("SELECT delivery_seq FROM timeline WHERE room_id = '" + roomId + "' AND user_id = '" + sessionB.userId() + "'" )).isEqualTo(1);
 
         // outbox：MSG 事件与业务同事务落库，载荷含判重键与发送者信息
-        assertThat(queryLong("SELECT COUNT(1) FROM outbox_message WHERE destination = '" + Constants.CHAT_PUSH_TOPIC + "'")).isEqualTo(1);
-        String payload = queryString("SELECT payload FROM outbox_message WHERE destination = '" + Constants.CHAT_PUSH_TOPIC + "'");
+        assertThat(queryLong("SELECT COUNT(1) FROM mq_outbox WHERE destination = '" + Constants.CHAT_PUSH_TOPIC + "'")).isEqualTo(1);
+        String payload = queryString("SELECT payload FROM mq_outbox WHERE destination = '" + Constants.CHAT_PUSH_TOPIC + "'");
         assertThat(payload).contains("\"roomId\":\"" + roomId + "\"").contains("\"seq\":1").contains("会话用户A");
     }
 
@@ -124,7 +124,7 @@ public class ChatSendPipelineIntegrationTest extends PostApiTestBase {
         assertThat(queryLong("SELECT COUNT(1) FROM message WHERE room_id = '" + roomId + "'")).isEqualTo(1);
         assertThat(queryLong("SELECT COUNT(1) FROM timeline WHERE room_id = '" + roomId + "'")).as("不重复扇出").isEqualTo(2);
         assertThat(queryLong("SELECT last_seq FROM room WHERE room_id = '" + roomId + "'")).as("seq 无空洞").isEqualTo(1);
-        assertThat(queryLong("SELECT COUNT(1) FROM outbox_message WHERE destination = '" + Constants.CHAT_PUSH_TOPIC + "'")).as("不重复写推送事件").isEqualTo(1);
+        assertThat(queryLong("SELECT COUNT(1) FROM mq_outbox WHERE destination = '" + Constants.CHAT_PUSH_TOPIC + "'")).as("不重复写推送事件").isEqualTo(1);
     }
 
     @Test

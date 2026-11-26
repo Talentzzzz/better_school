@@ -21,7 +21,14 @@ public interface IPostRepository {
 
     // ---------- 帖子 ----------
 
-    void save(PostEntity postEntity);
+    /**
+     * 新建并发布帖子（NORMAL）：事务内只写帖子行 + feed 索引行 + 搜索同步/发帖返利两条 outbox 行；
+     * 事务提交后同步发送两条消息，broker 确认后逐条标记 outbox 已发送（失败留 PENDING 交扫描兜底）
+     */
+    void savePublished(PostEntity postEntity);
+
+    /** 新建草稿（DRAFT）：只写帖子行，不产生 feed 索引、搜索同步与返利任务 */
+    void saveDraft(PostEntity postEntity);
 
     /** 单个帖子（帖子/评论同表域，故两读入口显式区分命名） */
     PostEntity findPostById(String postId);
@@ -29,8 +36,11 @@ public interface IPostRepository {
     /** 覆盖草稿内容（仅 DRAFT 行生效） */
     void updateDraft(PostEntity postEntity);
 
-    /** 提交草稿：DRAFT -> NORMAL（返回 false = 状态已变化） */
-    boolean submitDraftWithSearchSync(String postId);
+    /**
+     * 提交草稿：DRAFT -> NORMAL（返回 false = 状态已变化）。事务内条件 UPDATE + feed 索引 +
+     * 搜索同步/返利两条 outbox；提交后同步发送并标记已发送，与 {@link #savePublished} 同一套发布语义
+     */
+    boolean submitDraftAsPublished(String userId, String postId);
 
     /** 软删：status -> DELETED */
     void deletePostById(String postId);

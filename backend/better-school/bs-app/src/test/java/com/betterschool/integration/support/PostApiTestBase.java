@@ -141,7 +141,7 @@ public abstract class PostApiTestBase {
      */
     protected void consumeNotifyEvents() {
         List<String> payloads = jdbcTemplate.queryForList(
-                "SELECT payload FROM outbox_message WHERE destination = ? AND state = 0 ORDER BY id",
+                "SELECT payload FROM mq_outbox WHERE destination = ? AND state = 0 ORDER BY id",
                 String.class, Constants.NOTIFY_EVENT_TOPIC);
         payloads.forEach(notifyEventConsumer::onMessage);
     }
@@ -196,7 +196,7 @@ public abstract class PostApiTestBase {
     @BeforeEach
     void truncateTables() {
         List.of("bs_user", "post", "post_comment", "post_like", "post_like_count", "post_comment_count",
-                        "post_comment_like", "post_comment_like_count", "post_comment_feed_index", "outbox_message",
+                        "post_comment_like", "post_comment_like_count", "post_comment_feed_index", "mq_outbox",
                         "post_feed_index", "user_view_history", "post_view_count",
                         "product_feed_index",
                         "product_view_history",

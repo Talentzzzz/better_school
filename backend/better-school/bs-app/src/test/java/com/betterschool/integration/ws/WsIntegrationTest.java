@@ -488,6 +488,6 @@ public class WsIntegrationTest extends PostApiTestBase {
     /** 按 destination 取 outbox 事件载荷（id 升序 = 落库顺序）；推送触发直调消费者，不经 MQ */
     private List<String> outboxPayloads(String destination) {
         return jdbcTemplate.queryForList(
-                "SELECT payload FROM outbox_message WHERE destination = ? ORDER BY id", String.class, destination);
+                "SELECT payload FROM mq_outbox WHERE destination = ? ORDER BY id", String.class, destination);
     }
 }

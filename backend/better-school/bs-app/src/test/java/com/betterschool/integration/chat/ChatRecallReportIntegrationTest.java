@@ -36,7 +36,7 @@ public class ChatRecallReportIntegrationTest extends PostApiTestBase {
 
         // 幂等：重复撤回静默成功，不重复写 RECALL 事件
         assertSuccess(postJson("/api/chat/rooms/" + roomId + "/messages/1/recall", Map.of(), sessionA), "重复撤回");
-        assertThat(queryLong("SELECT COUNT(1) FROM outbox_message WHERE destination = '" + Constants.CHAT_RECALL_TOPIC + "'")).isEqualTo(1);
+        assertThat(queryLong("SELECT COUNT(1) FROM mq_outbox WHERE destination = '" + Constants.CHAT_RECALL_TOPIC + "'")).isEqualTo(1);
 
         // 撤回最后一条：预览读时直接呈现 [已撤回]（不经过任何预览写路径），占 seq 不回退、不动水位线（计入未读）
         assertSuccess(postJson("/api/chat/rooms/" + roomId + "/messages/2/recall", Map.of(), sessionA), "撤回最新消息");
@@ -61,7 +61,7 @@ public class ChatRecallReportIntegrationTest extends PostApiTestBase {
 
         // RECALL 轻事件载荷只带定位（msg1 + msg2 两次撤回各一条）
         List<String> payloads = jdbcTemplate.queryForList(
-                "SELECT payload FROM outbox_message WHERE destination = '" + Constants.CHAT_RECALL_TOPIC + "'", String.class);
+                "SELECT payload FROM mq_outbox WHERE destination = '" + Constants.CHAT_RECALL_TOPIC + "'", String.class);
         assertThat(payloads).hasSize(2)
                 .anySatisfy(payload -> assertThat(payload).contains("\"roomId\":\"" + roomId + "\"").contains("\"seq\":2"));
     }

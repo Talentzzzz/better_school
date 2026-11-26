@@ -2,7 +2,7 @@ package com.betterschool.integration.support;
 
 import com.betterschool.domain.raffle.service.IRaffleShippingService;
 import com.betterschool.domain.raffle.service.warmup.IRaffleWarmupService;
-import com.betterschool.infrastructure.outbox.OutboxMessageSender;
+import com.betterschool.trigger.job.OutboxScanJob;
 import com.betterschool.trigger.raffle.listener.LotteryShippingConsumer;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -76,7 +76,7 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
     protected IRaffleShippingService raffleShippingService;
     @Autowired
     protected LotteryShippingConsumer lotteryShippingConsumer;    @Autowired
-    protected OutboxMessageSender outboxMessageSender;
+    protected OutboxScanJob outboxScanJob;
     @Autowired
     protected OutboxTransactionProbe outboxTransactionProbe;
 
@@ -89,7 +89,7 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
                         "points_bucket", "points_detail",
                         "virtual_inventory_quota", "virtual_inventory_quota_detail",
                         "physical_marketing_quota", "physical_marketing_quota_detail",
-                        "outbox_message")
+                        "mq_outbox")
                 .forEach(table -> jdbcTemplate.execute("TRUNCATE TABLE " + table));
         redissonClient.getKeys().deleteByPattern("bs:raffle:*");
     }
@@ -308,19 +308,19 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
     /** 某 destination 的 outbox 载荷（落库即可观察：测试栈无 broker，发送必然失败） */
     protected List<String> outboxPayloads(String destination) {
         return jdbcTemplate.queryForList(
-                "SELECT payload FROM outbox_message WHERE destination = ? ORDER BY id", String.class, destination);
+                "SELECT payload FROM mq_outbox WHERE destination = ? ORDER BY id", String.class, destination);
     }
 
     protected int outboxCount(String destination) {
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM outbox_message WHERE destination = ?", Integer.class, destination);
+                "SELECT COUNT(*) FROM mq_outbox WHERE destination = ?", Integer.class, destination);
         return count == null ? 0 : count;
     }
 
     /** 中奖事件之外不应再有别的 outbox 行（库存合并消息已随票 08 退休，确认不再产生第二步） */
     protected int outboxCountOtherThanLotteryDrawn() {
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM outbox_message WHERE destination <> ?",
+                "SELECT COUNT(*) FROM mq_outbox WHERE destination <> ?",
                 Integer.class, Constants.LOTTERY_DRAWN_TOPIC);
         return count == null ? 0 : count;
     }
@@ -339,13 +339,13 @@ public abstract class RaffleApiTestBase extends TestingEnvironment {
 
     protected Map<String, Object> outboxRow(String destination) {
         return jdbcTemplate.queryForMap(
-                "SELECT msg_id, destination, state, retry_count, update_time FROM outbox_message"
+                "SELECT msg_id, destination, state, retry_count, update_time FROM mq_outbox"
                         + " WHERE destination = ? ORDER BY id DESC LIMIT 1", destination);
     }
 
     protected int outboxState(long id) {
         Integer state = jdbcTemplate.queryForObject(
-                "SELECT state FROM outbox_message WHERE id = ?", Integer.class, id);
+                "SELECT state FROM mq_outbox WHERE id = ?", Integer.class, id);
         return state == null ? -1 : state;
     }
 

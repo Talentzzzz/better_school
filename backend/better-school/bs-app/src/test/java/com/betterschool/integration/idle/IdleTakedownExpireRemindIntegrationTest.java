@@ -98,7 +98,7 @@ class IdleTakedownExpireRemindIntegrationTest extends PostApiTestBase {
 
     private int searchSyncMessageCount(String productId) {
         return (int) jdbcTemplate.queryForList(
-                "SELECT payload FROM outbox_message WHERE destination = ?", String.class, Constants.SEARCH_SYNC_TOPIC)
+                "SELECT payload FROM mq_outbox WHERE destination = ?", String.class, Constants.SEARCH_SYNC_TOPIC)
                 .stream().map(this::readTree)
                 .filter(node -> "product".equals(node.path("type").asText())
                         && node.path("id").asText().equals(productId))

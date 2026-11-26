@@ -69,7 +69,7 @@ class OrphanPrereserveReconcileIntegrationTest extends TestingEnvironment {
                         "draw_record", "draw_record_detail",
                         "draw_count_bucket", "draw_count_detail",
                         "draw_strategy_award_inventory", "draw_strategy_award_inventory_detail",
-                        "outbox_message")
+                        "mq_outbox")
                 .forEach(table -> jdbcTemplate.execute("TRUNCATE TABLE " + table));
     }
 

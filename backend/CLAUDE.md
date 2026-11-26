@@ -78,8 +78,10 @@ cn.xxx.infrastructure/
 │   └── port/
 │       └── <域>/                实现 domain 端口：   XxxPort implements IxxxPort
 ├── cache/                       缓存（域子包，如 post/）
-├── dao/                         MyBatis Mapper 接口：IxxxDao（@Mapper），按域分包
-│   └── <域>/po/                 持久化对象 PO（与表对应），base/Page 分页对象
+├── dao/                         MyBatis Mapper 接口：IxxxDao（@Mapper），按域分包；
+│                                无业务域的表（mq_outbox）Mapper 直接放 dao 根包
+│   ├── <域>/po/                 持久化对象 PO（与表对应），base/Page 分页对象
+│   └── po/                      无业务域表的 PO（如 MqOutbox）
 ├── merge/                       通用攒批引擎（键对齐 application.yml merge.batch.*）：
 │                                只有 MergeConfig / MergeEngine / MergeGroup / MergeItem /
 │                                MergeResult / MergeStrategy 六件，不认识任何业务表。谁用谁
@@ -94,7 +96,6 @@ cn.xxx.infrastructure/
 ├── file/                        对象存储（MinIO）技术组件 FileStorage：白名单校验 + 上传，
 │                                返回公开读 URL；trigger 直接注入（技术能力不开 domain port，
 │                                同 ws 待遇），仓储要存文件也从本包取用
-├── outbox/                      本地消息表发送器与扫描
 ├── search/                      倒排索引技术组件 ISearchIndex（Elasticsearch）：只认索引名 / 检索字段 /
 │                                文档对象，不认识业务实体与状态枚举；各域仓储直接注入，自传索引名与
 │                                状态白名单（判据留域），索引只存可搜字段、展示字段回库反查
@@ -113,14 +114,14 @@ cn.xxx.infrastructure/
 规则：
 
 - **技术包按需建，不建空包**；`adapter/{port, repository}` 与技术包平级。
-- **依赖方向单向：adapter → 技术包**。repository / port 实现想用什么就从 dao / merge / cache / outbox /
+- **依赖方向单向：adapter → 技术包**。repository / port 实现想用什么就从 dao / merge / cache /
   ws 等平级技术包取用；**技术包禁止 import `adapter.{port, repository}`**。横跨多域、无归属域的
   写入契约落 `adapter/repository` 根包（先例 `CountAction` / `CountEvent` / `LikeState`：
   三个仓储共用，供各自 `MergeEngine` 的件与结果使用）。
 - gateway 只定义调用外部的接口，由 adapter 层调用，通常用不到。
 - repository / port 的类名与 domain 接口一一对应（去掉 `I`）；实现按域分包。
 - **一域一仓储**：每个业务域恰一个 `XxxRepository implements I<域>Repository`；实现类内可注入**多个 DAO**
-  （以及共享 outbox / Redisson 等），PO、mapper XML、DAO 不因合并仓储而变。
+  （以及 RocketMQTemplate / Redisson 等），PO、mapper XML、DAO 不因合并仓储而变。
 - **事务在仓储实现内**：多 DAO 的读改写用编程式事务（`TransactionTemplate`，传播恒 `REQUIRED`）收成一个原子用例；域服务不注入 `TransactionTemplate`。事务 Bean 每工程一个（`bs-app/.../config/TransactionConfig.java`），仅为仓储提供模板。
 
 ## 4. trigger 层包结构

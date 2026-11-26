@@ -17,7 +17,8 @@ import com.betterschool.domain.raffle.model.valobj.DrawRecordActionVO;
 import com.betterschool.domain.raffle.model.valobj.DrawRecordVO;
 import com.betterschool.domain.raffle.model.valobj.PrizeCatalogVO;
 import com.betterschool.domain.raffle.model.valobj.UserPrizeVO;
-import com.betterschool.infrastructure.outbox.OutboxMessageStore;
+import com.betterschool.infrastructure.dao.IMqOutboxDao;
+import com.betterschool.infrastructure.dao.po.MqOutbox;
 import com.betterschool.infrastructure.dao.inventory.IAwardInventoryDao;
 import com.betterschool.infrastructure.dao.inventory.IVirtualInventoryQuotaDao;
 import com.betterschool.infrastructure.dao.inventory.po.AwardInventoryPO;
@@ -57,13 +58,19 @@ import com.betterschool.types.raffle.DrawCountReasonType;
 import com.betterschool.types.raffle.DrawOrphanPrereserveState;
 import com.betterschool.types.raffle.DrawReconCheckType;
 import com.betterschool.types.raffle.DrawReconVarianceState;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.rocketmq.client.producer.SendResult;
+import org.apache.rocketmq.client.producer.SendStatus;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.redisson.api.RBucket;
 import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.StringCodec;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
@@ -105,7 +112,9 @@ public class RaffleRepository implements IRaffleRepository {
     private final IAwardInventoryDao awardInventoryDao;
     private final RedissonClient redissonClient;
     private final TransactionTemplate transactionTemplate;
-    private final OutboxMessageStore outboxMessageStore;
+    private final IMqOutboxDao mqOutboxDao;
+    private final RocketMQTemplate rocketMQTemplate;
+    private final ObjectMapper objectMapper;
     private final IIdGenerator idGenerator;
 
     // ---------------------------------------------------------------- 配置读（决策侧）
@@ -379,11 +388,45 @@ public class RaffleRepository implements IRaffleRepository {
 
             // 中奖事件：THANKS 档不带事件（谢谢参与不发），其余与业务写同事务落 outbox
             if (aggregate.getDrawnEvent() != null) {
-                outboxMessageStore.save(Constants.LOTTERY_DRAWN_TOPIC, aggregate.getDrawnEvent());
+                saveOutbox(Constants.LOTTERY_DRAWN_TOPIC, aggregate.getDrawnEvent());
             }
             return true;
         });
         return Boolean.TRUE.equals(inserted);
+    }
+
+    /** 事务内落一行 outbox，提交后同步发送并标记 SENT；失败留 PENDING 交 outboxScan 兜底 */
+    private void saveOutbox(String destination, Object payload) {
+        MqOutbox mqOutbox = MqOutbox.pending(destination, payload, objectMapper);
+        mqOutboxDao.insert(mqOutbox);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                sendOutbox(mqOutbox);
+            }
+        });
+    }
+
+    private void sendOutbox(MqOutbox mqOutbox) {
+        boolean sent;
+        try {
+            SendResult sendResult = rocketMQTemplate.syncSend(mqOutbox.getDestination(), mqOutbox.getPayload());
+            sent = sendResult != null && sendResult.getSendStatus() == SendStatus.SEND_OK;
+            if (!sent) {
+                log.warn("outbox 同步发送未确认 msgId={}, status={}", mqOutbox.getMsgId(),
+                        sendResult == null ? null : sendResult.getSendStatus());
+            }
+        } catch (Exception e) {
+            log.warn("outbox 同步发送失败 msgId={}", mqOutbox.getMsgId(), e);
+            sent = false;
+        }
+        if (sent) {
+            mqOutboxDao.markSentByMsgId(mqOutbox.getMsgId());
+        } else if (mqOutbox.getRetryCount() + 1 >= MqOutbox.MAX_RETRY_COUNT) {
+            mqOutboxDao.markDeadBatch(List.of(mqOutbox.getId()));
+        } else {
+            mqOutboxDao.incrementRetryBatch(List.of(mqOutbox.getId()));
+        }
     }
 
     // ---------------------------------------------------------------- 发货状态机写面

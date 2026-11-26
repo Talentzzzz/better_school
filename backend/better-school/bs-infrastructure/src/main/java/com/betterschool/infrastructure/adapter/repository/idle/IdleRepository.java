@@ -40,7 +40,8 @@ import com.betterschool.infrastructure.dao.productinventory.po.ProductStockEvent
 import com.betterschool.infrastructure.dao.productorder.IProductOrderEventDao;
 import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.infrastructure.dao.user.po.User;
-import com.betterschool.infrastructure.outbox.OutboxMessageStore;
+import com.betterschool.infrastructure.dao.IMqOutboxDao;
+import com.betterschool.infrastructure.dao.po.MqOutbox;
 import com.betterschool.infrastructure.search.ISearchIndex;
 import com.betterschool.infrastructure.search.ProductSearchDoc;
 import com.betterschool.infrastructure.search.SearchIndexName;
@@ -56,8 +57,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.rocketmq.client.producer.SendResult;
+import org.apache.rocketmq.client.producer.SendStatus;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
@@ -75,7 +81,7 @@ import java.util.stream.Collectors;
 /**
  * 交易仓储（闲置商品 + 商品托管订单合一，一域一仓储）：持有 IProductDao / IProductOrderDao
  * 及其拆分出的按表 DAO（IProductFavoriteDao / IProductFeedIndexDao / IProductViewCountDao /
- * IProductViewHistoryDao / IProductOrderEventDao）+ 共享 outbox（OutboxMessageStore）与
+ * IProductViewHistoryDao / IProductOrderEventDao）+ outbox 表 DAO（{@link IMqOutboxDao}）与
  * 超时组件（{@link TimeoutTaskStore}，注册边直插 timeout_task）。
  * 跨两表的多写原子用例收成仓储方法，事务在实现内用编程式事务（默认 REQUIRED，与既有域服务事务同传播语义）。
  * PO / Mapper XML / DAO 位置不变。
@@ -105,7 +111,8 @@ public class IdleRepository implements IIdleRepository {
     private final IProductInventoryDao productInventoryDao;
     private final IProductStockEventDao productStockEventDao;
     private final ObjectMapper objectMapper;
-    private final OutboxMessageStore outboxMessageStore;
+    private final IMqOutboxDao mqOutboxDao;
+    private final RocketMQTemplate rocketMQTemplate;
     /** 超时组件（技术能力：同层技术组件直用，不开 domain port） */
     private final TimeoutTaskStore timeoutTaskStore;
     /** 倒排索引技术组件（技术能力：本域仓储直接用，不为它开 domain port） */
@@ -521,8 +528,42 @@ public class IdleRepository implements IIdleRepository {
 
     @Override
     public void saveSearchSyncMessage(String productId) {
-        outboxMessageStore.save(Constants.SEARCH_SYNC_TOPIC,
+        saveOutbox(Constants.SEARCH_SYNC_TOPIC,
                 new SearchSyncMessage(SearchEntityType.PRODUCT.name().toLowerCase(), productId));
+    }
+
+    /** 事务内落一行 outbox，提交后同步发送并标记 SENT；失败留 PENDING 交 outboxScan 兜底 */
+    private void saveOutbox(String destination, Object payload) {
+        MqOutbox mqOutbox = MqOutbox.pending(destination, payload, objectMapper);
+        mqOutboxDao.insert(mqOutbox);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                sendOutbox(mqOutbox);
+            }
+        });
+    }
+
+    private void sendOutbox(MqOutbox mqOutbox) {
+        boolean sent;
+        try {
+            SendResult sendResult = rocketMQTemplate.syncSend(mqOutbox.getDestination(), mqOutbox.getPayload());
+            sent = sendResult != null && sendResult.getSendStatus() == SendStatus.SEND_OK;
+            if (!sent) {
+                log.warn("outbox 同步发送未确认 msgId={}, status={}", mqOutbox.getMsgId(),
+                        sendResult == null ? null : sendResult.getSendStatus());
+            }
+        } catch (Exception e) {
+            log.warn("outbox 同步发送失败 msgId={}", mqOutbox.getMsgId(), e);
+            sent = false;
+        }
+        if (sent) {
+            mqOutboxDao.markSentByMsgId(mqOutbox.getMsgId());
+        } else if (mqOutbox.getRetryCount() + 1 >= MqOutbox.MAX_RETRY_COUNT) {
+            mqOutboxDao.markDeadBatch(List.of(mqOutbox.getId()));
+        } else {
+            mqOutboxDao.incrementRetryBatch(List.of(mqOutbox.getId()));
+        }
     }
 
     @Override

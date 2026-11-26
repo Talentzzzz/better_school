@@ -38,10 +38,18 @@ import com.betterschool.infrastructure.dao.chat.po.RoomPeerRow;
 import com.betterschool.infrastructure.dao.chat.po.TimelineDeliveryRow;
 import com.betterschool.infrastructure.dao.chat.po.Timeline;
 import com.betterschool.infrastructure.dao.chat.po.UserRoom;
-import com.betterschool.infrastructure.outbox.OutboxMessageStore;
+import com.betterschool.infrastructure.dao.IMqOutboxDao;
+import com.betterschool.infrastructure.dao.po.MqOutbox;
 import com.betterschool.types.common.Constants;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.rocketmq.client.producer.SendResult;
+import org.apache.rocketmq.client.producer.SendStatus;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
@@ -56,6 +64,7 @@ import java.util.stream.Collectors;
  * chat 仓储实现。双维度拆分口径：「这个会话有谁」一律走 room_member 名册（成员扇出/对家回查/
  * 逐用户写路径的成员集来源），user_room 只装 per-user 状态、只做 user_id 前缀查询
  */
+@Slf4j
 @Repository
 @RequiredArgsConstructor
 public class ChatRepository implements IChatRepository {
@@ -67,7 +76,9 @@ public class ChatRepository implements IChatRepository {
     private final IMessageDao chatMessageDao;
     private final ITimelineDao chatTimelineDao;
     private final IUserSeqDao chatUserSeqDao;
-    private final OutboxMessageStore outboxMessageStore;
+    private final IMqOutboxDao mqOutboxDao;
+    private final RocketMQTemplate rocketMQTemplate;
+    private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
     private final IWsService wsService;
 
@@ -465,17 +476,51 @@ public class ChatRepository implements IChatRepository {
 
     @Override
     public void savePushMessage(ChatMessagePushEvent chatMessagePushEvent) {
-        outboxMessageStore.save(Constants.CHAT_PUSH_TOPIC, chatMessagePushEvent);
+        saveOutbox(Constants.CHAT_PUSH_TOPIC, chatMessagePushEvent);
     }
 
     @Override
     public void saveReadMessage(ChatReadPushEvent chatReadPushEvent) {
-        outboxMessageStore.save(Constants.CHAT_READ_TOPIC, chatReadPushEvent);
+        saveOutbox(Constants.CHAT_READ_TOPIC, chatReadPushEvent);
     }
 
     @Override
     public void saveRecallMessage(ChatRecallPushEvent chatRecallPushEvent) {
-        outboxMessageStore.save(Constants.CHAT_RECALL_TOPIC, chatRecallPushEvent);
+        saveOutbox(Constants.CHAT_RECALL_TOPIC, chatRecallPushEvent);
+    }
+
+    /** 事务内落一行 outbox，提交后同步发送并标记 SENT；失败留 PENDING 交 outboxScan 兜底 */
+    private void saveOutbox(String destination, Object payload) {
+        MqOutbox mqOutbox = MqOutbox.pending(destination, payload, objectMapper);
+        mqOutboxDao.insert(mqOutbox);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                sendOutbox(mqOutbox);
+            }
+        });
+    }
+
+    private void sendOutbox(MqOutbox mqOutbox) {
+        boolean sent;
+        try {
+            SendResult sendResult = rocketMQTemplate.syncSend(mqOutbox.getDestination(), mqOutbox.getPayload());
+            sent = sendResult != null && sendResult.getSendStatus() == SendStatus.SEND_OK;
+            if (!sent) {
+                log.warn("outbox 同步发送未确认 msgId={}, status={}", mqOutbox.getMsgId(),
+                        sendResult == null ? null : sendResult.getSendStatus());
+            }
+        } catch (Exception e) {
+            log.warn("outbox 同步发送失败 msgId={}", mqOutbox.getMsgId(), e);
+            sent = false;
+        }
+        if (sent) {
+            mqOutboxDao.markSentByMsgId(mqOutbox.getMsgId());
+        } else if (mqOutbox.getRetryCount() + 1 >= MqOutbox.MAX_RETRY_COUNT) {
+            mqOutboxDao.markDeadBatch(List.of(mqOutbox.getId()));
+        } else {
+            mqOutboxDao.incrementRetryBatch(List.of(mqOutbox.getId()));
+        }
     }
 
     // ===== PO ↔ Entity =====

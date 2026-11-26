@@ -4,6 +4,7 @@ import com.betterschool.domain.rebate.adapter.repository.IRebateRepository;
 import com.betterschool.domain.rebate.model.entity.RebateConfigEntity;
 import com.betterschool.types.common.AppException;
 import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.rebate.RebateActionType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -19,8 +20,11 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class RebateServiceImpl implements IRebateService {
 
-    /** sql.md 表注释里的行为类型；运营新增行为时此处同步放开 */
-    private static final Set<String> ACTION_TYPES = Set.of("sign", "pay");
+    /** 行为类型取值与 {@link RebateActionType} 对齐；运营新增行为时枚举与此处同步放开 */
+    private static final Set<String> ACTION_TYPES = Set.of(
+            RebateActionType.SIGN.getCode(),
+            RebateActionType.PAY.getCode(),
+            RebateActionType.POST.getCode());
     private static final Set<String> STATES = Set.of("open", "close");
 
     private final IRebateRepository rebateRepository;

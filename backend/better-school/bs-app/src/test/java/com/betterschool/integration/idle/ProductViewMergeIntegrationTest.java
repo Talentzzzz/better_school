@@ -140,7 +140,7 @@ class ProductViewMergeIntegrationTest extends PostApiTestBase {
 
     private int outboxCountOf(String destination) {
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM outbox_message WHERE destination = ?", Integer.class, destination);
+                "SELECT COUNT(*) FROM mq_outbox WHERE destination = ?", Integer.class, destination);
         return count == null ? 0 : count;
     }
 }

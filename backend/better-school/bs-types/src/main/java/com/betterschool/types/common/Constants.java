@@ -15,6 +15,14 @@ public class Constants {
 
     public final static String SEARCH_SYNC_TOPIC = "bs-search-sync";
 
+    /**
+     * 发帖返利任务 topic。
+     * 发帖事务内落 PENDING 任务行，提交后同步发送到本 topic（broker 确认即标记 SENT）；
+     * 发送失败（或标记前宕机）由 {@code outboxScan} 兜底重发。
+     * 消费组：{@code bs-monolith-post-rebate-group}
+     */
+    public final static String POST_REBATE_TOPIC = "bs-post-rebate";
+
     /** chat 消息推送 topic：发送事务内 outbox 写入，WS 推送消费（票 04 ChatPushConsumer） */
     public final static String CHAT_PUSH_TOPIC = "bs-chat-push";
 

@@ -2,7 +2,7 @@ package com.betterschool.integration.raffle;
 
 import com.betterschool.integration.support.RaffleApiTestBase;
 import com.betterschool.integration.support.TestingEnvironment;
-import com.betterschool.infrastructure.dao.outbox.IOutboxDao;
+import com.betterschool.infrastructure.dao.IMqOutboxDao;
 import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.OutboxStatus;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -35,7 +35,7 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
     private static final String TOKEN = "b6d4f0a0-2222-4bbb-8ccc-000000000002";
 
     @Autowired
-    private IOutboxDao outboxDao;
+    private IMqOutboxDao mqOutboxDao;
 
     /** 把概率变成确定性：全部 normal 档归零后只留目标档 1.0 */
     private void onlyAwardRate(String awardId) {
@@ -133,9 +133,9 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
         TestingEnvironment.assertSuccess(draw(USER, TOKEN + "-2"), "第二抽");
 
         Long timedOutId = jdbcTemplate.queryForObject(
-                "SELECT MIN(id) FROM outbox_message WHERE destination = ?", Long.class, Constants.LOTTERY_DRAWN_TOPIC);
+                "SELECT MIN(id) FROM mq_outbox WHERE destination = ?", Long.class, Constants.LOTTERY_DRAWN_TOPIC);
         Long freshId = jdbcTemplate.queryForObject(
-                "SELECT MAX(id) FROM outbox_message WHERE destination = ?", Long.class, Constants.LOTTERY_DRAWN_TOPIC);
+                "SELECT MAX(id) FROM mq_outbox WHERE destination = ?", Long.class, Constants.LOTTERY_DRAWN_TOPIC);
         // 等首次异步发送的失败回调落定（无 broker 必然失败）：失败标记走另一个线程，
         // 落定后 retry_count 各 +1（标记线程也会刷 update_time，不能用「时间变新」判断）
         awaitTrue("两条消息的首次发送失败标记落定", Duration.ofSeconds(20),
@@ -144,11 +144,11 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
         int freshRetryBefore = retryCountOf(freshId);
 
         // 同一时刻起跑：一条推回 10 分钟前（远超 test profile 的 2s 超时窗），一条保持「刚提交」
-        jdbcTemplate.update("UPDATE outbox_message SET state = 0, update_time = DATE_SUB(NOW(), INTERVAL 10 MINUTE)"
+        jdbcTemplate.update("UPDATE mq_outbox SET state = 0, update_time = DATE_SUB(NOW(), INTERVAL 10 MINUTE)"
                 + " WHERE id = ?", timedOutId);
-        jdbcTemplate.update("UPDATE outbox_message SET state = 0, update_time = NOW() WHERE id = ?", freshId);
+        jdbcTemplate.update("UPDATE mq_outbox SET state = 0, update_time = NOW() WHERE id = ?", freshId);
 
-        outboxMessageSender.scanPending("");
+        outboxScanJob.scanPending("");
 
         awaitTrue("超时行被重发（retry_count 增加）", Duration.ofSeconds(10),
                 () -> retryCountOf(timedOutId) == timedOutRetryBefore + 1);
@@ -174,19 +174,19 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
         TestingEnvironment.assertSuccess(draw(USER, TOKEN), "单抽");
 
         Long id = jdbcTemplate.queryForObject(
-                "SELECT MAX(id) FROM outbox_message WHERE destination = ?", Long.class, Constants.LOTTERY_DRAWN_TOPIC);
+                "SELECT MAX(id) FROM mq_outbox WHERE destination = ?", Long.class, Constants.LOTTERY_DRAWN_TOPIC);
         // 预置「已重试 4 次」（阈值 5）：下一次失败即耗尽
         jdbcTemplate.update(
-                "UPDATE outbox_message SET retry_count = 4, update_time = DATE_SUB(NOW(), INTERVAL 10 MINUTE)"
+                "UPDATE mq_outbox SET retry_count = 4, update_time = DATE_SUB(NOW(), INTERVAL 10 MINUTE)"
                         + " WHERE id = ?", id);
 
-        outboxMessageSender.scanPending("");
+        outboxScanJob.scanPending("");
 
         awaitTrue("重试耗尽后置 state=2", Duration.ofSeconds(10),
                 () -> outboxState(id) == OutboxStatus.DEAD.getCode());
         assertThat(outboxState(id)).as("死信态不参与后续扫描").isEqualTo(OutboxStatus.DEAD.getCode());
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM outbox_message WHERE destination = ? AND state = 0",
+                "SELECT COUNT(*) FROM mq_outbox WHERE destination = ? AND state = 0",
                 Integer.class, Constants.LOTTERY_DRAWN_TOPIC)).as("不再有待发送行").isZero();
     }
 
@@ -203,7 +203,7 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
 
     private int retryCountOf(Long id) {
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT retry_count FROM outbox_message WHERE id = ?", Integer.class, id);
+                "SELECT retry_count FROM mq_outbox WHERE id = ?", Integer.class, id);
         return count == null ? -1 : count;
     }
 
@@ -218,18 +218,18 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
                 .isInstanceOf(DataIntegrityViolationException.class);
 
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM outbox_message WHERE msg_id = ?", Integer.class, msgId))
+                "SELECT COUNT(*) FROM mq_outbox WHERE msg_id = ?", Integer.class, msgId))
                 .as("撞键不产生第二行").isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT delay_ms FROM outbox_message WHERE msg_id = ?", Integer.class, msgId))
+                "SELECT delay_ms FROM mq_outbox WHERE msg_id = ?", Integer.class, msgId))
                 .as("毫秒级延迟随行持久化").isEqualTo(2000);
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT delay_level FROM outbox_message WHERE msg_id = ?", Integer.class, msgId))
+                "SELECT delay_level FROM mq_outbox WHERE msg_id = ?", Integer.class, msgId))
                 .as("与 delay_ms 互斥：级别落 0").isZero();
 
         // 扫描重发读的就是这一列：delay_ms → delayMs 的映射没有别的可观察面
         // （无 broker 时定时与直发都表现为发送失败），只能落到 DAO 上看回读值
-        assertThat(outboxDao.selectPendingList(0, 100))
+        assertThat(mqOutboxDao.selectPendingList(0, 100))
                 .anySatisfy(row -> {
                     assertThat(row.getMsgId()).isEqualTo(msgId);
                     assertThat(row.getDelayMs()).as("回读的毫秒延迟不能丢，否则重发会变成定时重发")
@@ -238,7 +238,7 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
     }
 
     private void insertPendingRow(String msgId) {
-        jdbcTemplate.update("INSERT INTO outbox_message"
+        jdbcTemplate.update("INSERT INTO mq_outbox"
                         + " (msg_id, destination, payload, delay_level, delay_ms, state, retry_count,"
                         + " create_time, update_time)"
                         + " VALUES (?, ?, ?, 0, 2000, ?, 0, NOW(), NOW())",
@@ -249,7 +249,7 @@ public class RaffleShippingOutboxIntegrationTest extends RaffleApiTestBase {
 
     private int delayLevelOf(String destination) {
         Integer level = jdbcTemplate.queryForObject(
-                "SELECT delay_level FROM outbox_message WHERE destination = ? ORDER BY id DESC LIMIT 1",
+                "SELECT delay_level FROM mq_outbox WHERE destination = ? ORDER BY id DESC LIMIT 1",
                 Integer.class, destination);
         return level == null ? -1 : level;
     }

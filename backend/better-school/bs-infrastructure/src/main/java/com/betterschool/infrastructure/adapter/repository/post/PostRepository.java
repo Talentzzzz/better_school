@@ -34,11 +34,14 @@ import com.betterschool.infrastructure.dao.post.po.Post;
 import com.betterschool.infrastructure.dao.post.po.PostRelationRow;
 import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.infrastructure.dao.user.po.User;
-import com.betterschool.infrastructure.outbox.OutboxMessageStore;
+import com.betterschool.infrastructure.dao.IMqOutboxDao;
+import com.betterschool.infrastructure.dao.po.MqOutbox;
 import com.betterschool.infrastructure.search.ISearchIndex;
 import com.betterschool.infrastructure.search.PostSearchDoc;
 import com.betterschool.infrastructure.search.SearchIndexName;
 import com.betterschool.types.common.Constants;
+import com.betterschool.types.common.PostRebateTaskKeys;
+import com.betterschool.types.common.PostRebateTaskMessage;
 import com.betterschool.types.common.SearchEntityType;
 import com.betterschool.types.common.SearchPageVO;
 import com.betterschool.types.common.SearchSyncMessage;
@@ -49,8 +52,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.rocketmq.client.producer.SendResult;
+import org.apache.rocketmq.client.producer.SendStatus;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
@@ -114,7 +122,8 @@ public class PostRepository implements IPostRepository {
     private final IUserDao userDao;
     /** 业务 ID 统一发号入口（uuid-biz-id 票 01）：帖 / 评在 insert 前发号一次写入 */
     private final ObjectMapper objectMapper;
-    private final OutboxMessageStore outboxMessageStore;
+    private final IMqOutboxDao mqOutboxDao;
+    private final RocketMQTemplate rocketMQTemplate;
     private final PostDetailCache postDetailCache;
     /** 倒排索引技术组件（技术能力：本域仓储直接用，不为它开 domain port） */
     private final ISearchIndex searchIndex;
@@ -159,20 +168,104 @@ public class PostRepository implements IPostRepository {
     // ---------- 帖子 ----------
 
     @Override
-    public void save(PostEntity postEntity) {
+    public void savePublished(PostEntity postEntity) {
         // 业务 ID 应用层发号、insert 前一次写入（物理自增 id 只作内部键，不再同值回写）
         postEntity.setPostId(UUID.randomUUID().toString());
+        String postId = postEntity.getPostId();
         Post post = toPO(postEntity);
-        transactionTemplate.execute(status -> {
+        // 事务内只做 DAO 写：帖子行 + feed 索引行 + 两条 outbox 行，提交前不产生任何外部副作用
+        List<MqOutbox> outboxList = transactionTemplate.execute(status -> {
             postDao.insert(post);
-            if (postEntity.getStatus() == PostStatusVO.NORMAL) {
-                // 发布即可见：feed 索引行诞生 + 搜索同步消息，与落库同一事务
-                postFeedIndexDao.upsertFeedIndexOnApprove(postEntity.getPostId());
-                saveSearchSyncMessage(postEntity.getPostId());
-            }
-            return null;
+            postFeedIndexDao.upsertFeedIndexOnApprove(postId);
+            MqOutbox searchSyncOutbox = MqOutbox.pending(
+                    Constants.SEARCH_SYNC_TOPIC, postSearchSyncMessage(postId), objectMapper);
+            MqOutbox rebateOutbox = MqOutbox.pending(
+                    PostRebateTaskKeys.of(postId),
+                    Constants.POST_REBATE_TOPIC,
+                    new PostRebateTaskMessage(postId, postEntity.getUserId()),
+                    objectMapper);
+            mqOutboxDao.insert(searchSyncOutbox);
+            mqOutboxDao.insert(rebateOutbox);
+            return List.of(searchSyncOutbox, rebateOutbox);
         });
-        postDetailCache.add(postEntity.getPostId());
+        // 事务外同步发送，broker 确认后逐条标记 SENT；失败留 PENDING 交 outboxScan 兜底
+        for (MqOutbox mqOutbox : outboxList) {
+            sendOutbox(mqOutbox);
+        }
+        postDetailCache.add(postId);
+    }
+
+    @Override
+    public void saveDraft(PostEntity postEntity) {
+        // 草稿是私有停靠内容：只有帖子行，没有 feed 索引、没有搜索同步、没有返利任务
+        postEntity.setPostId(UUID.randomUUID().toString());
+        postDao.insert(toPO(postEntity));
+    }
+
+    @Override
+    public boolean submitDraftAsPublished(String userId, String postId) {
+        List<MqOutbox> outboxList = transactionTemplate.execute(status -> {
+            if (postDao.submitDraft(postId) == 0) {
+                // 状态已变化：不写索引、不落 outbox
+                return List.of();
+            }
+            // 提交即发布可见：feed 索引行 + 两条 outbox 行，与状态迁移同一事务
+            postFeedIndexDao.upsertFeedIndexOnApprove(postId);
+            MqOutbox searchSyncOutbox = MqOutbox.pending(
+                    Constants.SEARCH_SYNC_TOPIC, postSearchSyncMessage(postId), objectMapper);
+            MqOutbox rebateOutbox = MqOutbox.pending(
+                    PostRebateTaskKeys.of(postId),
+                    Constants.POST_REBATE_TOPIC,
+                    new PostRebateTaskMessage(postId, userId),
+                    objectMapper);
+            mqOutboxDao.insert(searchSyncOutbox);
+            mqOutboxDao.insert(rebateOutbox);
+            return List.of(searchSyncOutbox, rebateOutbox);
+        });
+        // 草稿从未进过缓存（仅 NORMAL 进缓存）；提交转 NORMAL 后走缓存装配
+        postDetailCache.evict(postId);
+        if (outboxList == null || outboxList.isEmpty()) {
+            return false;
+        }
+        for (MqOutbox mqOutbox : outboxList) {
+            sendOutbox(mqOutbox);
+        }
+        return true;
+    }
+
+    /** 事务内落一行 outbox，提交后同步发送并标记 SENT；失败留 PENDING 交 outboxScan 兜底 */
+    private void saveOutbox(String destination, Object payload) {
+        MqOutbox mqOutbox = MqOutbox.pending(destination, payload, objectMapper);
+        mqOutboxDao.insert(mqOutbox);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                sendOutbox(mqOutbox);
+            }
+        });
+    }
+
+    /** 同步发送一行 outbox：成功标记 SENT，失败累计重试次数（到上限置死信），留给 outboxScan 兜底 */
+    private void sendOutbox(MqOutbox mqOutbox) {
+        boolean sent;
+        try {
+            SendResult sendResult = rocketMQTemplate.syncSend(mqOutbox.getDestination(), mqOutbox.getPayload());
+            sent = sendResult != null && sendResult.getSendStatus() == SendStatus.SEND_OK;
+            if (!sent) {
+                log.warn("outbox 同步发送未确认 msgId={}, status={}", mqOutbox.getMsgId(),
+                        sendResult == null ? null : sendResult.getSendStatus());
+            }
+        } catch (Exception e) {
+            log.warn("outbox 同步发送失败 msgId={}", mqOutbox.getMsgId(), e);
+            sent = false;
+        }
+        if (sent) {
+            mqOutboxDao.markSentByMsgId(mqOutbox.getMsgId());
+        } else if (mqOutbox.getRetryCount() + 1 >= MqOutbox.MAX_RETRY_COUNT) {
+            mqOutboxDao.markDeadBatch(List.of(mqOutbox.getId()));
+        } else {
+            mqOutboxDao.incrementRetryBatch(List.of(mqOutbox.getId()));
+        }
     }
 
     @Override
@@ -227,22 +320,6 @@ public class PostRepository implements IPostRepository {
     @Override
     public void updateDraft(PostEntity postEntity) {
         postDao.updateDraft(toPO(postEntity));
-    }
-
-    @Override
-    public boolean submitDraftWithSearchSync(String postId) {
-        Boolean submitted = transactionTemplate.execute(status -> {
-            boolean updated = postDao.submitDraft(postId) > 0;
-            if (updated) {
-                // 提交即发布可见：feed 索引行诞生 + 搜索同步消息，与状态迁移同一事务
-                postFeedIndexDao.upsertFeedIndexOnApprove(postId);
-                saveSearchSyncMessage(postId);
-            }
-            return updated;
-        });
-        // 草稿从未进过缓存（仅 NORMAL 进缓存）；提交转 NORMAL 后走缓存装配，条件 UPDATE 0 行时上层终态判定
-        postDetailCache.evict(postId);
-        return Boolean.TRUE.equals(submitted);
     }
 
     @Override
@@ -420,8 +497,12 @@ public class PostRepository implements IPostRepository {
 
     @Override
     public void saveSearchSyncMessage(String postId) {
-        outboxMessageStore.save(Constants.SEARCH_SYNC_TOPIC,
-                new SearchSyncMessage(SearchEntityType.POST.name().toLowerCase(), String.valueOf(postId)));
+        saveOutbox(Constants.SEARCH_SYNC_TOPIC, postSearchSyncMessage(postId));
+    }
+
+    /** 搜索同步消息载荷（发布走同步发送、删除走 afterCommit 异步发送，载荷构造只此一处） */
+    private static SearchSyncMessage postSearchSyncMessage(String postId) {
+        return new SearchSyncMessage(SearchEntityType.POST.name().toLowerCase(), postId);
     }
 
     @Override

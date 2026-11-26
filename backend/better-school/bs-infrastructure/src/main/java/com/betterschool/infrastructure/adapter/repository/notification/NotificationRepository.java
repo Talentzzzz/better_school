@@ -13,12 +13,20 @@ import com.betterschool.infrastructure.dao.notification.INotificationDao;
 import com.betterschool.infrastructure.dao.notification.INotificationReadDao;
 import com.betterschool.infrastructure.dao.notification.INotificationSeqDao;
 import com.betterschool.infrastructure.dao.notification.po.Notification;
-import com.betterschool.infrastructure.outbox.OutboxMessageStore;
+import com.betterschool.infrastructure.dao.IMqOutboxDao;
+import com.betterschool.infrastructure.dao.po.MqOutbox;
 import com.betterschool.domain.notification.model.valobj.NotifyChatMessage;
 import com.betterschool.domain.notification.model.valobj.NotifyPushMessage;
 import com.betterschool.types.common.Constants;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.rocketmq.client.producer.SendResult;
+import org.apache.rocketmq.client.producer.SendStatus;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
@@ -27,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+@Slf4j
 @Repository
 @RequiredArgsConstructor
 public class NotificationRepository implements INotificationRepository {
@@ -35,7 +44,9 @@ public class NotificationRepository implements INotificationRepository {
     /** 取号计数器（notification_seq）与已读水位（notification_read）按表拆分的 DAO */
     private final INotificationSeqDao notificationSeqDao;
     private final INotificationReadDao notificationReadDao;
-    private final OutboxMessageStore outboxMessageStore;
+    private final IMqOutboxDao mqOutboxDao;
+    private final RocketMQTemplate rocketMQTemplate;
+    private final ObjectMapper objectMapper;
     private final IBroadcastRecipientPort broadcastRecipientPort;
     private final TransactionTemplate transactionTemplate;
     private final IWsService wsService;
@@ -84,32 +95,64 @@ public class NotificationRepository implements INotificationRepository {
 
     @Override
     public void saveBroadcastMessage(NotificationBroadcastMessage message) {
-        // OutboxMessageStore 用 TransactionSynchronization 在提交后投递，必须有活事务；
-        // 这里只写 outbox 一行，事务传播恒 REQUIRED（调用方已有事务则并入，无则本行自成一个事务）
+        // afterCommit 同步投递，必须有活事务；这里只写 outbox 一行，传播恒 REQUIRED（调用方已有事务则并入）
         transactionTemplate.executeWithoutResult(status ->
-                outboxMessageStore.save(Constants.NOTIFICATION_BROADCAST_TOPIC, message));
+                saveOutbox(Constants.NOTIFICATION_BROADCAST_TOPIC, message));
     }
 
     @Override
     public boolean saveEvent(NotificationEventMessage event) {
-        // OutboxMessageStore 用 TransactionSynchronization 在提交后投递，必须有活事务；
-        // 这里只写 outbox 一行，事务传播恒 REQUIRED（调用方已有事务则并入，无则本行自成一个事务）。
+        // afterCommit 同步投递，必须有活事务；这里只写 outbox 一行，传播恒 REQUIRED（调用方已有事务则并入）。
         // 返回值语义：outbox 写恒成功即 true（落库幂等由消费端按 notificationId + dedupKey 收敛）
         transactionTemplate.executeWithoutResult(status ->
-                outboxMessageStore.save(Constants.NOTIFY_EVENT_TOPIC, event));
+                saveOutbox(Constants.NOTIFY_EVENT_TOPIC, event));
         return true;
     }
 
     @Override
     public void saveChatDelivery(NotifyChatMessage message) {
         transactionTemplate.executeWithoutResult(status ->
-                outboxMessageStore.save(Constants.NOTIFY_CHAT_TOPIC, message));
+                saveOutbox(Constants.NOTIFY_CHAT_TOPIC, message));
     }
 
     @Override
     public void savePushDelivery(NotifyPushMessage message) {
         transactionTemplate.executeWithoutResult(status ->
-                outboxMessageStore.save(Constants.NOTIFY_PUSH_TOPIC, message));
+                saveOutbox(Constants.NOTIFY_PUSH_TOPIC, message));
+    }
+
+    /** 事务内落一行 outbox，提交后同步发送并标记 SENT；失败留 PENDING 交 outboxScan 兜底 */
+    private void saveOutbox(String destination, Object payload) {
+        MqOutbox mqOutbox = MqOutbox.pending(destination, payload, objectMapper);
+        mqOutboxDao.insert(mqOutbox);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                sendOutbox(mqOutbox);
+            }
+        });
+    }
+
+    private void sendOutbox(MqOutbox mqOutbox) {
+        boolean sent;
+        try {
+            SendResult sendResult = rocketMQTemplate.syncSend(mqOutbox.getDestination(), mqOutbox.getPayload());
+            sent = sendResult != null && sendResult.getSendStatus() == SendStatus.SEND_OK;
+            if (!sent) {
+                log.warn("outbox 同步发送未确认 msgId={}, status={}", mqOutbox.getMsgId(),
+                        sendResult == null ? null : sendResult.getSendStatus());
+            }
+        } catch (Exception e) {
+            log.warn("outbox 同步发送失败 msgId={}", mqOutbox.getMsgId(), e);
+            sent = false;
+        }
+        if (sent) {
+            mqOutboxDao.markSentByMsgId(mqOutbox.getMsgId());
+        } else if (mqOutbox.getRetryCount() + 1 >= MqOutbox.MAX_RETRY_COUNT) {
+            mqOutboxDao.markDeadBatch(List.of(mqOutbox.getId()));
+        } else {
+            mqOutboxDao.incrementRetryBatch(List.of(mqOutbox.getId()));
+        }
     }
 
     @Override

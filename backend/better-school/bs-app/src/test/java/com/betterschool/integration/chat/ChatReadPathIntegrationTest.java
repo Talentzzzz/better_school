@@ -228,7 +228,7 @@ public class ChatReadPathIntegrationTest extends PostApiTestBase {
                 + " AND user_id = '" + userB.userId() + "'" )).isEqualTo(2);
 
         assertThat(readEventCount()).as("首次打开恰好一个 READ 事件").isEqualTo(1);
-        String payload = queryString("SELECT payload FROM outbox_message WHERE destination = '"
+        String payload = queryString("SELECT payload FROM mq_outbox WHERE destination = '"
                 + Constants.CHAT_READ_TOPIC + "'");
         assertThat(payload).contains("\"roomId\":\"" + roomId + "\"")
                 .contains("\"userId\":\"" + userB.userId() + "\"")
@@ -324,7 +324,7 @@ public class ChatReadPathIntegrationTest extends PostApiTestBase {
     }
 
     private long readEventCount() {
-        return queryLong("SELECT COUNT(1) FROM outbox_message WHERE destination = '" + Constants.CHAT_READ_TOPIC + "'");
+        return queryLong("SELECT COUNT(1) FROM mq_outbox WHERE destination = '" + Constants.CHAT_READ_TOPIC + "'");
     }
 
     private long queryLong(String sql) {

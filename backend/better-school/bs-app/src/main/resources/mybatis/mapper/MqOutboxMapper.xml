@@ -1,27 +1,34 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.betterschool.infrastructure.dao.outbox.IOutboxDao">
+<mapper namespace="com.betterschool.infrastructure.dao.IMqOutboxDao">
 
     <sql id="baseColumns">
         id, msg_id, destination, payload, delay_level, delay_ms, state, retry_count, create_time, update_time
     </sql>
 
-    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.outbox.po.OutboxPO"
+    <insert id="insert" parameterType="com.betterschool.infrastructure.dao.po.MqOutbox"
             useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO outbox_message (msg_id, destination, payload, delay_level, delay_ms, state, retry_count, create_time, update_time)
+        INSERT INTO mq_outbox (msg_id, destination, payload, delay_level, delay_ms, state, retry_count, create_time, update_time)
         VALUES (#{msgId}, #{destination}, #{payload}, #{delayLevel}, #{delayMs}, #{state}, #{retryCount}, #{createTime}, #{updateTime})
     </insert>
 
-    <select id="selectPendingList" resultType="com.betterschool.infrastructure.dao.outbox.po.OutboxPO">
+    <select id="selectPendingList" resultType="com.betterschool.infrastructure.dao.po.MqOutbox">
         SELECT <include refid="baseColumns"/>
-        FROM outbox_message
+        FROM mq_outbox
         WHERE state = 0 AND update_time &lt;= DATE_SUB(NOW(), INTERVAL #{timeoutSeconds} SECOND)
         ORDER BY id
         LIMIT #{limit}
     </select>
 
+    <update id="markSentByMsgId">
+        UPDATE mq_outbox
+        SET state = 1, update_time = NOW()
+        WHERE msg_id = #{msgId}
+          AND state = 0
+    </update>
+
     <update id="markSentBatch">
-        UPDATE outbox_message
+        UPDATE mq_outbox
         SET state = 1, update_time = NOW()
         WHERE id IN
         <foreach collection="ids" item="id" open="(" separator="," close=")">
@@ -31,7 +38,7 @@
     </update>
 
     <update id="markDeadBatch">
-        UPDATE outbox_message
+        UPDATE mq_outbox
         SET state = 2, update_time = NOW()
         WHERE id IN
         <foreach collection="ids" item="id" open="(" separator="," close=")">
@@ -41,7 +48,7 @@
     </update>
 
     <update id="incrementRetryBatch">
-        UPDATE outbox_message
+        UPDATE mq_outbox
         SET retry_count = retry_count + 1, update_time = NOW()
         WHERE id IN
         <foreach collection="ids" item="id" open="(" separator="," close=")">

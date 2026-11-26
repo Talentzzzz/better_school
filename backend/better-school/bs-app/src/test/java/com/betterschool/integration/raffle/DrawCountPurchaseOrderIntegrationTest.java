@@ -54,7 +54,7 @@ class DrawCountPurchaseOrderIntegrationTest extends TestingEnvironment {
     @BeforeEach
     void truncateTables() {
         List.of("draw_count_purchase_order", "draw_count_bucket", "draw_count_detail",
-                        "points_bucket", "points_detail", "outbox_message")
+                        "points_bucket", "points_detail", "mq_outbox")
                 .forEach(table -> jdbcTemplate.execute("TRUNCATE TABLE " + table));
     }
 

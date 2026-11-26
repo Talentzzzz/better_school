@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
 public class RebateConfigEntity {
 
     private Long id;
-    /** 行为类型：sign(签到) / pay(支付) */
+    /** 行为类型：sign(签到) / pay(支付) / post(发帖) */
     private String actionType;
     private RebateTypeVO rebateType;
     private String rebateName;
