@@ -67,6 +67,14 @@
           AND state = 'DRAFT'
     </update>
 
+    <!-- 发布时刻回读（发帖返利周期键用，数据库时钟）：直接发布取插入行的 update_time，
+         草稿提交取提交语句后的 update_time；单表只投影该列 -->
+    <select id="selectUpdateTime" resultType="java.time.LocalDateTime">
+        SELECT update_time
+        FROM post
+        WHERE post_id = #{postId}
+    </select>
+
     <!-- 按 id 列表查询：不分状态（搜索同步按 state 判定 upsert/删除，搜索命中组装按 NORMAL 过滤）。
          纯 post 单表：计数/作者由仓储批量回查拼装 -->
     <select id="selectByIds" resultType="com.betterschool.infrastructure.dao.post.po.Post">

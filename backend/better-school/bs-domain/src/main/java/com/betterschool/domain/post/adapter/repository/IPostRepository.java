@@ -5,6 +5,7 @@ import com.betterschool.domain.post.model.entity.PostEntity;
 import com.betterschool.domain.post.model.valobj.FeedCursorVO;
 import com.betterschool.domain.post.model.valobj.FeedIndexItemVO;
 import com.betterschool.domain.post.model.valobj.LikeStateVO;
+import com.betterschool.domain.post.model.valobj.PostPublishResultVO;
 import com.betterschool.domain.post.model.valobj.PostStatusVO;
 import com.betterschool.types.common.SearchPageVO;
 
@@ -22,12 +23,14 @@ public interface IPostRepository {
     // ---------- 帖子 ----------
 
     /**
-     * 新建并发布帖子（NORMAL）：事务内只写帖子行 + feed 索引行 + 搜索同步/发帖返利两条 outbox 行；
-     * 事务提交后同步发送两条消息，broker 确认后逐条标记 outbox 已发送（失败留 PENDING 交扫描兜底）
+     * 新建并发布帖子（NORMAL）：事务内写帖子行 + feed 索引行 + 领取任务 outbox 行（PENDING，不发送）+
+     * 搜索同步 outbox 行；按数据库时钟读回发布时间定死返利周期键。提交后只同步发送搜索同步消息
+     * （broker 确认后标记已发送，失败留 PENDING 交扫描兜底）；领取任务等 case 同步领取后标记已处理，
+     * 领取异常才由 outbox 扫描重放到 claim topic
      */
-    void savePublished(PostEntity postEntity);
+    PostPublishResultVO savePublished(PostEntity postEntity);
 
-    /** 新建草稿（DRAFT）：只写帖子行，不产生 feed 索引、搜索同步与返利任务 */
+    /** 新建草稿（DRAFT）：只写帖子行，不产生 feed 索引、搜索同步与领取任务 */
     void saveDraft(PostEntity postEntity);
 
     /** 单个帖子（帖子/评论同表域，故两读入口显式区分命名） */
@@ -37,10 +40,17 @@ public interface IPostRepository {
     void updateDraft(PostEntity postEntity);
 
     /**
-     * 提交草稿：DRAFT -> NORMAL（返回 false = 状态已变化）。事务内条件 UPDATE + feed 索引 +
-     * 搜索同步/返利两条 outbox；提交后同步发送并标记已发送，与 {@link #savePublished} 同一套发布语义
+     * 提交草稿：DRAFT -> NORMAL（返回 null = 状态已变化）。事务内条件 UPDATE + feed 索引 +
+     * 领取任务 outbox（PENDING，不发送）+ 搜索同步 outbox，按提交时刻读回发布时间定死返利周期键；
+     * 提交后只同步发送搜索同步消息，与 {@link #savePublished} 同一套发布语义
      */
-    boolean submitDraftAsPublished(String userId, String postId);
+    PostPublishResultVO submitDraftAsPublished(String userId, String postId);
+
+    /**
+     * 把该帖子的领取任务 outbox 按确定性 msgId 标记已发送（state=1）。单条条件 UPDATE、无需显式事务，
+     * 重复调用无副作用（已发送时影响 0 行）
+     */
+    void markRebateClaimTaskProcessed(String postId);
 
     /** 软删：status -> DELETED */
     void deletePostById(String postId);
