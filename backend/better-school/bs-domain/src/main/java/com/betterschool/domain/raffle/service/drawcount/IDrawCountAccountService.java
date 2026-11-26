@@ -24,6 +24,12 @@ public interface IDrawCountAccountService {
      */
     boolean creditForRebate(String actionType, String userId, String refId);
 
+    /**
+     * 按显式金额入账行为返利（credit 消费者用）：金额 &le; 0 直接返回 false 不落桶；
+     * 幂等键 = {@code (userId, REBATE, refId)}（撞 {@code uk_user_reason_ref} 不重复加次数）。
+     */
+    boolean creditRebate(String userId, int amount, String refId);
+
     /** 剩余可用次数 = 未过期且未扣完的桶 remain 之和 */
     int getBalance(String userId);
 

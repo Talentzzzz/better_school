@@ -49,6 +49,17 @@ public class DrawCountAccountServiceImpl implements IDrawCountAccountService {
     }
 
     @Override
+    public boolean creditRebate(String userId, int amount, String refId) {
+        if (userId == null || refId == null) {
+            throw new AppException(ResponseCode.LOTTERY_PARAM_ERROR);
+        }
+        if (amount <= 0) {
+            return false;
+        }
+        return credit(userId, amount, DrawCountReasonType.REBATE, refId);
+    }
+
+    @Override
     public int getBalance(String userId) {
         // 剩余次数 = 未过期且未扣完的桶 remain 之和（读路径懒过期：过期桶被 expire_at > NOW() 滤掉）
         return raffleRepository.sumAvailableDrawCount(userId);
