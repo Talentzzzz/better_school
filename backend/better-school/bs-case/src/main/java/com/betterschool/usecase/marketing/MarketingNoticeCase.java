@@ -70,6 +70,7 @@ public class MarketingNoticeCase {
     public void notifyPointsChanged(PointsChangedMessage message) {
         String reasonText = switch (message.getReasonType()) {
             case "LOTTERY_WIN" -> "抽奖中奖";
+            case "REBATE" -> "发帖返利";
             case "REDEEM_DRAW_COUNT" -> "兑换抽奖次数";
             case "REDEEM_PRIZE" -> "兑换奖品";
             default -> "积分变动";

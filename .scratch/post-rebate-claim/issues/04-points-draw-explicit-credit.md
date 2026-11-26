@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## 契约
 
@@ -38,3 +38,10 @@ switch 增加 `case "REBATE" -> "发帖返利";`（放在 `LOTTERY_WIN` 之后�
 - [ ] 金额 0/负数不落桶、不发通知
 - [ ] 重复调用同一 `(userId, refId)` 只有一条桶行、一条变动通知（既有唯一键吸收）
 - [ ] 通知文案含「发帖返利」
+
+## Comments
+
+- 2026-11-26：`IPointsAccountService` 新增 `creditRebate(userId, amount, refId)` 并实现（显式金额、`REBATE` 原因、桶唯一键幂等、`amount <= 0` 返回 false 不落桶）；`IDrawCountAccountService` 同构新增，复用私有 `credit(...)` 走 `DrawCountReasonType.REBATE`。
+- `MarketingNoticeCase.notifyPointsChanged` 增加 `case "REBATE" -> "发帖返利";`（置于 `LOTTERY_WIN` 之后）。
+- 既有 `creditForRebate(actionType, userId, refId)` 两处保持原样。
+- 静态检查：全仓无其他 `creditRebate` 同名方法；两个接口各仅一个实现类；`creditForRebate(String,String,String)` 与 `creditRebate(String,int,String)` 方法名不同，无重载歧义。环境无 Maven/JDK21 未编译，已逐文件复读核对 import / 括号 / 签名。
