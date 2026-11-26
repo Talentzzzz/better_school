@@ -28,6 +28,12 @@ public interface IPointsAccountService {
     boolean creditForRebate(String actionType, String userId, String refId);
 
     /**
+     * 按显式金额入账行为返利（credit 消费者用）：金额 &le; 0 直接返回 false 不落桶；
+     * 幂等键 = {@code (userId, REBATE, refId)}；撞键只记日志，不重复入账、不重复发变动事件。
+     */
+    boolean creditRebate(String userId, int amount, String refId);
+
+    /**
      * 兑换扣分（Dubbo 同步边，幂等键 = 兑换单 id）：FIFO 跨桶扣减，凑不够返回「积分不足」而不扣任何一行。
      * 业务失败以结果对象返回，不抛异常——异常跨 Dubbo 会把「积分不足」这个语义抹平。
      */

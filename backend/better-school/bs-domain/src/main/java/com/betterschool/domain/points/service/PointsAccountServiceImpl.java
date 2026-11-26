@@ -62,6 +62,21 @@ public class PointsAccountServiceImpl implements IPointsAccountService {
     }
 
     @Override
+    public boolean creditRebate(String userId, int amount, String refId) {
+        if (userId == null || refId == null) {
+            throw new AppException(ResponseCode.POINTS_PARAM_ERROR);
+        }
+        if (amount <= 0) {
+            return false;
+        }
+        if (!pointsRepository.insertBucketWithChanged(userId, amount, PointsReasonType.REBATE, refId)) {
+            // 撞 uk = 这笔发放已记过（重试 / 重投）：不重复加分，也不重复发变动事件
+            log.info("[PointsAccount] 返利入账已存在，幂等跳过 userId={}, refId={}", userId, refId);
+        }
+        return true;
+    }
+
+    @Override
     public PointsDeductResultVO deduct(String userId, int amount, PointsReasonType reasonType, String refId) {
         if (amount <= 0 || refId == null) {
             throw new AppException(ResponseCode.POINTS_PARAM_ERROR);
