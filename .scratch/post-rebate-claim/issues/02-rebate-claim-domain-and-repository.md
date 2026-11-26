@@ -116,3 +116,11 @@ RebateClaimResultVO claimActionRebate(String actionType, String userId, String r
   因此拆出同条件的不加锁查询；未新增其他方法。
 - 按用户要求**未写测试**；本机无 Maven/JDK21，未能编译，已逐文件通读 + grep 全部新符号 + XML 结构校验。
 
+**2026-11-26 — replay ordering fix**
+
+`RebateServiceImpl.claimActionRebate` 改为**先按 `(userId, actionType, refId)` 查已有领取**：命中直接返回已有
+快照（不读当前规则、不插行）；未命中才读两条 open 规则构快照，两者为 0 返回 NO_REBATE，否则构建实体调
+`claim`。原因：规则可能在领取成功后由运营关闭，若先读规则会把同一 ref 的重放误判成 NO_REBATE，违背
+「同一 ref 冲突视为幂等 / 无论重放多少次结果一致」。仓储内 `FOR UPDATE` 查重与撞唯一键后的加锁重查保持不变。
+`IRebateService` 与实现类 javadoc 同步改为该顺序。
+

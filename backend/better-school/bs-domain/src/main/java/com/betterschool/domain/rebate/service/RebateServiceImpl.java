@@ -17,9 +17,9 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * 返利域服务：返利规则读写 + 行为返利同步领取（读 open 规则构快照后只调仓储一次，事务边界在仓储内）。
- * 业务校验在这里（repository 只管数据访问）——返利值非负、actionType / rebateType / state 只收约定值；
- * 入参不合法抛 {@code CONFIG_PARAM_ERROR}，前端按码出 toast。
+ * 返利域服务：返利规则读写 + 行为返利同步领取（先按 ref 幂等查已有领取，未命中才读 open 规则构快照并调
+ * 仓储 claim 一次，事务边界在仓储内）。业务校验在这里（repository 只管数据访问）——返利值非负、
+ * actionType / rebateType / state 只收约定值；入参不合法抛 {@code CONFIG_PARAM_ERROR}，前端按码出 toast。
  */
 @Service
 @RequiredArgsConstructor
@@ -69,7 +69,13 @@ public class RebateServiceImpl implements IRebateService {
                 || periodKey == null || periodKey.isBlank()) {
             throw new AppException(ResponseCode.CONFIG_PARAM_ERROR);
         }
-        // 两条 open 规则构快照：未配置 / 已关闭为 null，按 0 处理；两者都为 0 不占名额、不落库
+        // 幂等优先：同一 ref 已有领取记录时直接返回已有快照，不读当前规则、不插任何行。
+        // 规则可能在领取后被运营关闭；若先读规则会把重放误判成 NO_REBATE，违背「同一 ref 重放结果一致」。
+        RebateClaimResultVO existingClaim = rebateRepository.findClaimByRef(userId, actionType, refId);
+        if (existingClaim != null) {
+            return existingClaim;
+        }
+        // 首次领取才读两条 open 规则构快照：未配置 / 已关闭为 null，按 0 处理；两者都为 0 不占名额、不落库
         int pointsValue = valueOrZero(rebateRepository.findOpenRebateValue(actionType, RebateTypeVO.POINTS));
         int drawCountValue = valueOrZero(rebateRepository.findOpenRebateValue(actionType, RebateTypeVO.DRAW_COUNT));
         if (pointsValue == 0 && drawCountValue == 0) {
