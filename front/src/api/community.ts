@@ -3,6 +3,7 @@ import type {
   PageResult,
   PostSummary,
   PostDetail,
+  PostPublishResult,
   PostComment,
   CommentReply,
   AuthorProfileComment
@@ -63,7 +64,7 @@ export interface PostCreateBody {
 }
 
 export function createPost(body: PostCreateBody) {
-  return httpPost<number>('/community/posts', body)
+  return httpPost<PostPublishResult>('/community/posts', body)
 }
 
 export interface PostDraftBody {
@@ -86,7 +87,7 @@ export function updatePostDraft(postId: number, body: PostDraftBody) {
 
 /** 发布草稿：正文必填，缺项停留草稿 */
 export function submitPostDraft(postId: number) {
-  return httpPost<null>(`/community/posts/${postId}/submit`)
+  return httpPost<PostPublishResult>(`/community/posts/${postId}/submit`)
 }
 
 export function getPost(postId: number) {
