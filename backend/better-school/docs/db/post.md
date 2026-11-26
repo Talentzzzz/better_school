@@ -45,7 +45,7 @@
 - 匿名字段已移除：所有内容实名展示
 - 删除是软删（`state='DELETED'`，条件 UPDATE），列表/详情查询均排除
 - 写状态一律条件 UPDATE（`WHERE post_id = ? AND state = ?`），不要无条件 UPDATE
-- 发布即对外可见：发布落库即 NORMAL 并同事务落搜索同步消息
+- 发布即对外可见：发布落库即 NORMAL 并同事务落搜索同步消息，同时落一条 `PENDING` 领取任务 outbox（msgId `post-rebate-claim:{postId}`，仓储不发送）；同步领取成功后由 case 把该任务标记为已处理（`SENT`）
 - 草稿箱：DRAFT 仅作者可见（「我的发帖」含草稿态）；提交条件 UPDATE（DRAFT→NORMAL）并刷新 `expire_at`
 - 封面 `cover` 独立列：发布/草稿可指定（不传存 NULL）；列表与详情展示走「独立封面 ?? 相册第一张」，编辑清空 cover 后自动跟随相册
 

@@ -123,4 +123,3 @@ RebateClaimResultVO claimActionRebate(String actionType, String userId, String r
 `claim`。原因：规则可能在领取成功后由运营关闭，若先读规则会把同一 ref 的重放误判成 NO_REBATE，违背
 「同一 ref 冲突视为幂等 / 无论重放多少次结果一致」。仓储内 `FOR UPDATE` 查重与撞唯一键后的加锁重查保持不变。
 `IRebateService` 与实现类 javadoc 同步改为该顺序。
-
