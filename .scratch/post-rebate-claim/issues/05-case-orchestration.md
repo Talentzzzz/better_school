@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 03, 04
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## 契约
 
@@ -55,3 +55,13 @@ RebateClaimResultVO submitPostDraft(String userId, String postId);
 - [ ] CLAIMED / DENIED / NO_REBATE 均把领取任务标记已处理
 - [ ] 入账重复投递：两个桶各只有一条 REBATE 记录，`markGranted` 幂等
 - [ ] 旧 `grantPostRebate` 与相关 import 已删除
+
+## Comments
+
+2026-11-26（ticket/05-case）
+
+- 文件：`bs-case/.../usecase/post/PostRebateCase.java`（新增）；`bs-case/.../usecase/post/PostPublishCase.java`（改为「发布 → 同步领取 → 返回」，删除 `grantPostRebate` 与 `IPointsAccountService` / `IDrawCountAccountService` / `RebateActionType` 直接依赖，补 `@Slf4j`）。
+- 决策：领取正常返回后的任务标记失败只 `log.warn`，任务留 PENDING 由 outboxScan 重放（领取按 ref 幂等）；发布 / 提交放在 try 外，只包领取阶段，发布自身业务异常照旧上抛，领取异常返回 `RebateClaimResultVO.pending(postId)`；入账按快照金额 `> 0` 才调对应桶（为 0 跳过该桶），两个域都完成后 `markGranted`；入账消息缺 claimId/userId/postId 抛 `BusinessException(BUSINESS_ERROR)`，不吞异常。
+- 契约差异：合并后的 `IRebateService` / `IPostService` 未暴露 `markGranted` / `markRebateClaimTaskProcessed`（这两个方法在 `IRebateRepository` / `IPostRepository`）。按「case 层 only、不改 domain」约束，`PostRebateCase` 直接注入两个仓储调这两个方法（case 层已有直接注入仓储的先例）。
+- 未编译（环境无 Maven/JDK21）：已通读两个新/改文件并 grep 全部符号，`IRebateService.claimActionRebate`、`IRebateRepository.markGranted`、`IPostRepository.markRebateClaimTaskProcessed`、points / drawCount 的 `creditRebate` 均存在，import 均可解析。
+- 已知临时编译断点（预期，ticket 06 修）：`PostController` 仍按 `String` / `void` 接收 `publishPost` / `submitPostDraft`；旧 `PostRebateConsumer` 仍调用已删除的 `grantPostRebate`。
