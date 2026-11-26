@@ -6,8 +6,9 @@ import com.betterschool.domain.rebate.model.valobj.RebateClaimResultVO;
 import java.util.List;
 
 /**
- * 行为返利服务（返利域）：只读规则给两个桶域入账用，写只来自后台管理面
- * （HTTP ADMIN，见 trigger 的 MarketingConfigController）。
+ * 行为返利服务（返利域）：规则读给领取快照与两个桶域旧行为入账用；规则写只来自后台管理面
+ * （HTTP ADMIN，见 trigger 的 MarketingConfigController），领取记录只由本域 {@link #claimActionRebate}
+ * 写入（仓储内一个本地事务）。
  * <p>
  * 有效期配置不在本域——积分 / 次数有效期分别归 points 与 raffle 域（抽奖次数与抽奖同域）。
  */

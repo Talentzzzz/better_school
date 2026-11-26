@@ -26,7 +26,7 @@ public interface IPostRepository {
      * 新建并发布帖子（NORMAL）：事务内写帖子行 + feed 索引行 + 领取任务 outbox 行（PENDING，不发送）+
      * 搜索同步 outbox 行；按数据库时钟读回发布时间定死返利周期键。提交后只同步发送搜索同步消息
      * （broker 确认后标记已发送，失败留 PENDING 交扫描兜底）；领取任务等 case 同步领取后标记已处理，
-     * 领取异常才由 outbox 扫描重放到 claim topic
+     * 领取异常才由 outbox 扫描重放到 claim topic。返回 postId + 数据库发布时间
      */
     PostPublishResultVO savePublished(PostEntity postEntity);
 
@@ -42,7 +42,7 @@ public interface IPostRepository {
     /**
      * 提交草稿：DRAFT -> NORMAL（返回 null = 状态已变化）。事务内条件 UPDATE + feed 索引 +
      * 领取任务 outbox（PENDING，不发送）+ 搜索同步 outbox，按提交时刻读回发布时间定死返利周期键；
-     * 提交后只同步发送搜索同步消息，与 {@link #savePublished} 同一套发布语义
+     * 提交后只同步发送搜索同步消息，与 {@link #savePublished} 同一套发布语义。返回 postId + 数据库发布时间
      */
     PostPublishResultVO submitDraftAsPublished(String userId, String postId);
 

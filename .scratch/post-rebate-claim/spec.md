@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 
 # 发帖返利：同步领取 + 异步入账（每日限一次）
 
