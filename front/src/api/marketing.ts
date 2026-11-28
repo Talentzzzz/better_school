@@ -131,5 +131,12 @@ export const EXCHANGE_FAIL_TEXT: Record<string, { title: string; sub: string }> 
  *  票 13 起目录/我的奖品都不再有 image 载体，故页面按 `{{ tier }} 等奖` 现拼，本常量留给后续需要整词的地方。 */
 export const tierText = (tier: number): string => `${tier} 等奖`
 
-/** 奖品色块底色（照原型的 tint 调色板，按奖品顺序循环取色） */
+/** 奖品色块底色（照原型的 tint 调色板；具体取哪一格由 prizeTint 按奖品 ID 决定） */
 export const PRIZE_TINTS = ['#ffe7ec', '#e8f1ff', '#fff4e0', '#eaf7ee', '#f1ecff']
+
+/** 按奖品 ID 取色：同一奖品在目录、我的奖品、抽奖结果里恒定同色（ID 是 UUID，不能用取模） */
+export function prizeTint(prizeId: string): string {
+  let h = 0
+  for (let i = 0; i < prizeId.length; i++) h = (h * 31 + prizeId.charCodeAt(i)) | 0
+  return PRIZE_TINTS[Math.abs(h) % PRIZE_TINTS.length]
+}

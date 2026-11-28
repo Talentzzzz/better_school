@@ -14,7 +14,7 @@ import {
   listPrizes,
   EXCHANGE_FAIL_TEXT,
   LOTTERY_CODE,
-  PRIZE_TINTS
+  prizeTint
 } from '@/api/marketing'
 import type { DrawResult, LotteryActivity, LotteryPrize } from '@/api/marketing'
 import { useAuthStore } from '@/stores/auth'
@@ -148,7 +148,8 @@ async function onDraw() {
 
 const winTint = computed(() => {
   const i = prizes.value?.findIndex((p) => p.prizeId === drawResult.value?.prizeId) ?? -1
-  return i >= 0 ? PRIZE_TINTS[i % PRIZE_TINTS.length] : '#fff0f3'
+  const hit = i >= 0 ? prizes.value?.[i] : undefined
+  return hit ? prizeTint(hit.prizeId) : '#fff0f3'
 })
 
 // ---------- 购买次数（唯一一条积分→次数的边：抽奖本身只扣次数） ----------
@@ -191,7 +192,8 @@ async function onExchangeChances() {
 
 // ---------- 去向 ----------
 // 色块按 prizeId 取（同一奖品在目录与我的奖品里同色；按 id 取而非目录序号，页面顺序变了颜色也不跳）
-const tintAt = (p: LotteryPrize) => PRIZE_TINTS[p.prizeId % PRIZE_TINTS.length]
+// prizeId 是 UUID，取色走 prizeTint 的字符串哈希，不能对 id 取模
+const tintAt = (p: LotteryPrize) => prizeTint(p.prizeId)
 </script>
 
 <template>
