@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately；口径已由 spec 定死，方法名与类型名照 spec 写)
 
-**Status:** ready-for-agent
+**Status:** resolved（文档 / ADR / SQL 注释已全部改成「平台代收」口径并新增 0019；只动文档与 `sql/` 注释，未碰任何 Java，未运行 mvn / 测试 / SQL）
 
 ### 1. 新增 ADR `docs/adr/0019-platform-escrow-account.md`
 
@@ -63,4 +63,16 @@
 - [ ] 全仓 grep `PRODUCT_FROZEN` / `PRODUCT_UNFROZEN`：只剩「历史 / 已映射 / 枚举兼容」语义的表述
 - [ ] 不碰任何 Java 代码（票 01–04 负责）；**不运行 mvn / 任何测试**
 
-**落地注记（实现取舍）：** 待实现者补。
+**落地注记（实现取舍）：**
+
+- **ADR 编号定为 0019**：`docs/adr/0019-platform-escrow-account.md`，照 0016 / 0018 的体裁（标题 / 一句话决定 / 为什么改 / Decision / Considered Options / Consequences / Migration / References）。含三笔资金归属表、双边流水语义、幂等锚、两条余额守卫、`frozen_amount` 退役、对账不变量、孤儿扫描新判据、5 个被否方案（新建账户表 / 只改支付一笔 / 给支付单加 REFUNDED / 保留冻结双记 / 平台出账不校验余额）与历史映射 SQL。
+- **ADR-0018 取代注记**：标题下加引用块（按票的原文），另在开头段、支付事务条、`wallet_pay_task` 条、关闭支付单条各补一句「（口径见 0019：…）」——都是就地补注，原文保留为当时的历史记录。`Considered Options` 表里关于 `PRODUCT_UNFROZEN` 的句子是「当时为何否 REFUNDED」的推理，未改。
+- **`CONTEXT.md`**：支付段改「支付单」不承载余额的表述（改成平台代收 + 平台出账）；「关闭支付单」词条正文与 `_Avoid_` 都换成平台出账口径；新增「平台代收账户」「平台出账」两个词条，放在「关闭支付单」之后（支付段的词条读完再展开账务词）。`平台出账` 的 `_Avoid_` 收「解冻、退款流水」。
+- **DB 文档**：`db/user.md` 改 `virtual_wallet`（平台行 = 保留 `user_id` / 0 余额 / 懒创建、`frozen_amount` 商品链路退役、买家出账守卫 `balance − frozen_amount >= amount`、平台出账守卫 `balance >= amount`、对账不变量）、`wallet_detail`（新 type 串 + 双边流水 + 幂等锚 = 业务侧那一行 + 结算退款共用 `PLATFORM_OUT` 互斥 + 历史映射 + 「只插不改」加 DBA 脚本例外）、`payment_order`（支付事务 / 关闭）、`wallet_pay_task`（「行在 ⇒ 钱已由平台代收」）；`db/idle.md`、`db/outbox.md` 同步。
+- **API 文档**：`api/idle.md` 确认收货 / 取消两条 + 订单详情「下单不做资金动作」；`api/payment.md` 开头、隐藏钱包注、支付资金动作三条、状态机图、回调与退款两条。
+- **`schema.sql` 只改注释**：`virtual_wallet.frozen_amount` 列注释、`wallet_detail.type` / `user_id` 列注释、四张表的表注释、`payment_order` / `wallet_pay_task` 上方注释块。`git diff` 逐行确认没有动任何列、索引、约束。
+- **迁移文件路径最终定为** `backend/better-school/sql/migrations/2026-11-29-wallet-detail-type-mapping.sql`（`sql/migrations/` 目录本次新建），文件头写明「只处理改造前的历史行、可重复执行、开发/测试库可直接 reset-test-db 重建」，并注明 `uk_order_type` 不受影响（同一 (订单, 轮次, 人) 上两种旧 type 各至多一行，映射后仍一一对应）。
+- **票外新增一处（抵制不了的自相矛盾）**：`backend/better-school/docs/db/README.md` 原文写「票 05 起**不再有增量迁移脚本**（`sql/migrations/` 与迁移测试已整体删除）」——与本票要求新增 `sql/migrations/` 直接冲突。改为「不再有增量 **DDL** 迁移脚本」，并补一句 `sql/migrations/` 只用于一次性历史数据映射（先例即本票的映射脚本）。这是唯一一处票文件清单之外的改动。
+- **故意没改**：ADR-0015 / 0016 / 0017 里冻结 / 解冻的叙述（它们是历史记录：0016 记的是冻结时代的两段式落地，0017 已被 0018 注记调整过），取代关系只写在 0019 与 0018 顶部注记里；`docs/db/README.md` 表清单里「虚拟钱包表（一人一行）」等描述性短语保持原样。
+- **口径来源**：全部按 spec 写，未按改造前代码写。常量名 / 枚举名 / 仓储方法名照 spec（`PLATFORM_USER_ID`、`PRODUCT_PAY` / `PRODUCT_REFUND` / `PLATFORM_IN` / `PLATFORM_OUT`、`settleProductOrder` / `refundProductOrder`）；若票 01–04 最终定名与此不同，需回改本票文档（收工前已 `git merge feat/platform-escrow` 并核对）。
+- **未验证事项**：按要求不跑 mvn / 测试 / SQL；文档验收靠 `grep PRODUCT_FROZEN|PRODUCT_UNFROZEN|冻结|解冻` 自查——`db/`、`api/` 下已无「作为现行口径」的冻结/解冻表述，剩余命中全部是历史注记、`Avoid` 词、`已映射` 标注或 `frozen_amount` 列本身。

@@ -5,10 +5,10 @@
 |表名|说明|
 |----|----|
 |bs_user|用户主表（`user` 是 MySQL 保留字，故加 `bs_` 前缀）|
-|virtual_wallet|虚拟钱包（一人一行：余额 + 托管冻结）|
+|virtual_wallet|虚拟钱包（一人一行：余额 + 冻结额；平台代收账户也是本表一行）|
 |wallet_detail|钱包流水（资金事实源，uk_order_type 幂等）|
 |payment_order|支付单（模拟微信支付的统一下单产物：一单一支付单，`pay_no` 对外支付凭据）|
-|wallet_pay_task|支付回调任务（域内最终一致 outbox，不走 MQ；与支付单 PAID / 冻结同事务落行）|
+|wallet_pay_task|支付回调任务（域内最终一致 outbox，不走 MQ；与支付单 PAID / 平台代收入账同事务落行）|
 |user_credit|信用账户（分数 + 封禁状态，credit 域独占写；行懒播种，无行 = 默认 100/NORMAL）|
 |user_credit_detail|信用分流水（信用分事实源，uk_user_reason_ref 幂等）|
 
@@ -52,22 +52,25 @@
 
 # virtual_wallet
 
-> 业务：校园币钱包（商品交易托管）；归属模块：wallet
+> 业务：校园币钱包（余额账户；商品货款由平台代收账户过账）；归属模块：wallet
 
 |字段|类型|约束|说明|
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
 |wallet_id|varchar(36)|UNIQUE(uk_wallet_id), NOT NULL|业务 ID（UUID 字符串，对外唯一标识）|
-|user_id|varchar(36)|UNIQUE(uk_user), NOT NULL|钱包所有者；一人一钱包|
+|user_id|varchar(36)|UNIQUE(uk_user), NOT NULL|钱包所有者；一人一钱包。平台代收账户用保留 `user_id`（`Constants.PLATFORM_USER_ID`）|
 |balance|decimal(10,2)|NOT NULL, DEFAULT 0.00|余额|
-|frozen_amount|decimal(10,2)|NOT NULL, DEFAULT 0.00|冻结金额（托管中，不参与可用余额）|
+|frozen_amount|decimal(10,2)|NOT NULL, DEFAULT 0.00|冻结金额（**商品链路已退役**：不再写入、不再解冻；仅历史残留，作买家出账守卫的减项）|
 |create_time|datetime|NOT NULL|创建时间|
 |update_time|datetime|NOT NULL|更新时间|
 
 ## 注意
 - 建钱包走 `INSERT IGNORE`（撞 `uk_user` = 已存在，幂等）；`wallet_id` 由应用层 `UUID.randomUUID()` 在 insert 前生成随行写入（uuid-biz-id 票 06 起，不再回写）
-- 可用余额 = `balance − frozen_amount`；冻结是条件 UPDATE（`balance − frozen_amount >= amount`，不满足=余额不足），解冻是 `GREATEST(0, frozen_amount − amount)`
-- **资金一律「流水先行」**：先 `INSERT IGNORE` wallet_detail（撞 `uk_order_type` = 已处理过，幂等跳过），影响 0 行就直接返回，不再动余额/冻结
+- **平台代收账户就是本表一行**：`user_id = Constants.PLATFORM_USER_ID`（保留常量，与系统通知助手 `SYSTEM_USER_ID` 分开），`balance` 初始 0、`frozen_amount` 恒 0；懒创建（`ensureWallet(userId, initialBalance)` 带初始余额，注册路径用注册赠送额、平台路径用 0，`INSERT IGNORE` 撞 `uk_user` 幂等）。它不出现在任何用户可见接口里
+- 可用余额 = `balance − frozen_amount`；对商品链路**只在买家出账守卫里生效**（条件 UPDATE：`balance − frozen_amount >= amount`，不满足 = 余额不足）。商品链路不再冻结、不再解冻
+- 平台出账守卫是 `balance >= amount`（不减 `frozen_amount`）；不足视为不变量破坏 → 整笔回滚 + ERROR 日志，不允许把平台余额扣成负数
+- **对账不变量**：平台账户 `balance` = Σ（有 `PLATFORM_IN` 且无 `PLATFORM_OUT` 的订单金额之和）。本期只定口径，没有定时对账 job（见 ADR-0019）
+- **资金一律「流水先行」**：先 `INSERT IGNORE` wallet_detail（撞 `uk_order_type` = 已处理过，幂等跳过），影响 0 行就直接返回，不再动余额
 
 # wallet_detail
 
@@ -77,8 +80,8 @@
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
 |wallet_id|varchar(36)|NOT NULL|钱包业务 ID（引用 `virtual_wallet.wallet_id`）|
-|user_id|varchar(36)|NOT NULL, INDEX(idx_user)|流水归属用户（INCOME 为收款方）|
-|type|varchar(20)|NOT NULL|RECHARGE/PRODUCT_FROZEN/PRODUCT_UNFROZEN/PRODUCT_INCOME|
+|user_id|varchar(36)|NOT NULL, INDEX(idx_user)|流水归属用户（INCOME 为收款方；平台行 = 平台代收账户）|
+|type|varchar(20)|NOT NULL|RECHARGE/FROZEN/UNFROZEN/INCOME/PRODUCT_PAY/PRODUCT_REFUND/PRODUCT_INCOME/PLATFORM_IN/PLATFORM_OUT（`PRODUCT_FROZEN`/`PRODUCT_UNFROZEN` 为历史值，已映射）|
 |amount|decimal(10,2)|NOT NULL|变动金额（正数，方向由 `type` 表达）|
 |order_id|varchar(36)|NULL, INDEX(uk_order_type 首列)|关联订单业务 ID（商品=`product_order_id`，UUID 字符串；RECHARGE 为 NULL）|
 |biz_round|int|NOT NULL, DEFAULT 0|业务轮次：同一订单同类型多轮资金操作的去重维度（预留，当前恒 0）|
@@ -87,8 +90,12 @@
 
 ## 索引 / 注意
 - `uk_order_type (order_id, type, biz_round, user_id)`：幂等键（历史形态保留：在 (订单, type, 轮次) 之上再加「人」维度，人恒为末列）。**RECHARGE 的 `order_id` 为 NULL，MySQL 唯一键不约束含 NULL 行**，本就是多次充值多行
+- **每笔商品资金动作落双边流水**（ADR-0019）：支付 = 买家 `PRODUCT_PAY` + 平台 `PLATFORM_IN`；完成 = 平台 `PLATFORM_OUT` + 卖家 `PRODUCT_INCOME`；取消 / 支付超时 = 平台 `PLATFORM_OUT` + 买家 `PRODUCT_REFUND`。平台行的 `user_id` 是平台代收账户
+- **结算与退款共用 `PLATFORM_OUT`**，方向由订单终态判定（`COMPLETED` = 结算、`CANCELLED` = 退款）；同一订单二者互斥，`uk_order_type` 天然防双出账
+- **幂等锚 = 业务侧那一行**（买家支付行 / 卖家结算行 / 买家退款行）：`INSERT IGNORE` 影响 0 行即整笔视为已处理、直接返回，平台侧那行同事务写入
+- **历史行一次性映射**：改造前（冻结口径）的 `PRODUCT_FROZEN → PRODUCT_PAY`、`PRODUCT_UNFROZEN → PRODUCT_REFUND`，见 `sql/migrations/2026-11-29-wallet-detail-type-mapping.sql`（可重复执行，无匹配行即无操作）。旧枚举值仅为兼容存量行保留，商品链路不再产生
 - 幂等语义：同一 (订单, type, 轮次, 人) 只允许一条流水；并发/重试撞键 → 影响 0 行 → 该次资金动作整体跳过
-- 只插不改（无 UPDATE / DELETE 语句）；分页读按 `user_id` + `id DESC`
+- 只插不改（mapper 无 UPDATE / DELETE 语句；唯一例外是一次性历史类型映射的 DBA 脚本 `sql/migrations/2026-11-29-wallet-detail-type-mapping.sql`）；分页读按 `user_id` + `id DESC`
 
 # payment_order
 
@@ -110,9 +117,9 @@
 ## 索引 / 注意
 - `uk_pay_no (pay_no)`：收银台按支付单号寻址；`uk_biz_order_id (biz_order_id)`：预下单幂等锚点（同一商户订单只允许一张支付单）
 - **预下单（统一下单）**：`INSERT IGNORE` 发号落行；撞 `uk_biz_order_id` 说明已下过单，回读既有行返回同一 `pay_no`，不重复发号。预下单失败不拖垮商户下单——订单详情 / 支付前按 `biz_order_id` 幂等懒创建
-- **支付事务**（`WalletRepository.pay`）：支付单 WAIT_PAY→PAID（条件 UPDATE 先行，并发双支付只有一个抢到）→ PRODUCT_FROZEN 流水（`uk_order_type` 幂等）→ 余额条件冻结 → `wallet_pay_task` 回调任务行；任一步失败整体回滚，支付单留 WAIT_PAY
+- **支付事务**（`WalletRepository.pay`）：支付单 WAIT_PAY→PAID（条件 UPDATE 先行，并发双支付只有一个抢到）→ 买家 `PRODUCT_PAY` + 平台 `PLATFORM_IN` 双边流水（`uk_order_type` 幂等）→ 买家余额条件扣减（`balance − frozen_amount >= amount`）+ 平台余额入账 → `wallet_pay_task` 回调任务行；任一步失败整体回滚，支付单留 WAIT_PAY
 - 已 PAID 的重复支付幂等返回（不再动资金）；CLOSED 支付直接拒绝
-- **关闭**：`closePaymentOrder` 只把 WAIT_PAY→CLOSED（订单取消 / 超时），已支付是空操作——已支付订单的退款继续走原 PRODUCT_UNFROZEN 解冻链路，本表没有 REFUNDED 状态
+- **关闭**：`closePaymentOrder` 只把 WAIT_PAY→CLOSED（订单取消 / 超时），已支付是空操作——已支付订单的退款由平台出账退回买家（`PLATFORM_OUT` + `PRODUCT_REFUND`），本表没有 REFUNDED 状态
 
 # wallet_pay_task
 
@@ -130,10 +137,10 @@
 |update_time|datetime|NOT NULL|更新时间|
 
 ## 注意
-- **任务行与支付同事务写入**：`WalletRepository.pay` 在一个钱包事务里落支付单 WAIT_PAY→PAID + PRODUCT_FROZEN 流水 + 余额条件扣减 + 本行 PENDING，因此「行在 ⇒ 支付单已 PAID 且钱已冻，行不在 ⇒ 支付与冻结都回滚了」；表归钱包域，支付只写自己的表，不跨仓储（ADR-0016 边界不破）
+- **任务行与支付同事务写入**：`WalletRepository.pay` 在一个钱包事务里落支付单 WAIT_PAY→PAID + 买家 `PRODUCT_PAY` + 平台 `PLATFORM_IN` 双边流水 + 买家余额条件扣减 + 平台余额入账 + 本行 PENDING，因此「行在 ⇒ 支付单已 PAID 且钱已由平台代收（买家已出账），行不在 ⇒ 支付与过账都回滚了」；表归钱包域，支付只写自己的表，不跨仓储（ADR-0016 边界不破）
 - 事务提交后由 `WalletPaymentServiceImpl` 调进程内回调端口 `IPaymentNotifyPort`（商户侧实现 = idle 域 `PaymentNotifyHandler`）翻转订单：回调成功 / 永久拒绝（订单已取消、不存在、付款人不符）→ 任务置 DONE；回调抛异常 → 留 PENDING，由 `productPayTaskScan`（cron 0/30）退避重放，1/2/4/8/16 分钟退避、5 次耗尽置死信
 - 重放前校验任务对应支付单必为 PAID，缺失 / 状态漂移属于数据不一致，直接置死信人工核查
-- 支付与取消竞态：回调返回 false，任务置 DONE，已冻结的悬置款仍由 `productFundOrphanScan` 退买家
+- 支付与取消竞态：回调返回 false，任务置 DONE，平台已代收的悬置款仍由 `productFundOrphanScan` 出账退买家（判据：有 `PLATFORM_IN` 无 `PLATFORM_OUT`）
 
 # user_credit
 

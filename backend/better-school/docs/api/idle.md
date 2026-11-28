@@ -101,16 +101,16 @@
 下单（需登录，信用可操作账号）：商品锁定进订单（PENDING_PAYMENT，落库存扣减 + 超时关单任务），并 best-effort 向钱包预下单拿 `payNo`（失败不拖垮下单），返回 `data = orderId`。
 
 ### GET /api/idle/orders/{orderId}
-订单详情（参与者可见），返回 `ProductOrderResponseDTO`。买家 + 待支付时带 `payNo`（收银台支付凭据；预下单失败时按 `biz_order_id` 幂等懒创建），其余情况 `payNo` 为 null。支付走独立收银台 `/api/pay/orders/{payNo}/pay`（见 [payment.md](payment.md)）——**原 `POST /api/idle/orders/{orderId}/pay` 已删除**，下单接口不再直接冻结钱包。
+订单详情（参与者可见），返回 `ProductOrderResponseDTO`。买家 + 待支付时带 `payNo`（收银台支付凭据；预下单失败时按 `biz_order_id` 幂等懒创建），其余情况 `payNo` 为 null。支付走独立收银台 `/api/pay/orders/{payNo}/pay`（见 [payment.md](payment.md)）——**原 `POST /api/idle/orders/{orderId}/pay` 已删除**，下单接口不做任何资金动作（钱只在收银台支付时由买家出账、进平台代收账户）。
 
 ### POST /api/idle/orders/{orderId}/mark-delivered
 卖家标记已发货。
 
 ### POST /api/idle/orders/{orderId}/confirm
-买家确认收货：托管款解冻（`PRODUCT_UNFROZEN`）并入卖家余额（`PRODUCT_INCOME`），订单完成。
+买家确认收货：平台把代收货款结算给卖家（平台出账 `PLATFORM_OUT` + 卖家入账 `PRODUCT_INCOME`），买家余额不变，订单完成。
 
 ### POST /api/idle/orders/{orderId}/cancel
-买家取消订单：已支付的解冻托管款退回（未支付的不动钱包），订单关闭，并 best-effort 关闭支付单（WAIT_PAY→CLOSED，已支付是空操作）——**已支付态为两段式（ADR-0016）**：取消翻转（含台账回补 + 搜索同步，单仓储事务）先行，翻转未命中抛业务异常、资金段尚未执行零残留；解冻退款（`uk_order_type` 幂等）由 case 层随后执行；翻转与解冻之间的宕机孤儿（订单已取消但货款悬置冻结）由 `productFundOrphanScan` 收敛（fund-consistency 票 07）；待支付取消无冻结、保持原单事务翻转。
+买家取消订单：已支付的货款由平台出账退回买家（`PLATFORM_OUT` + `PRODUCT_REFUND`；未支付的不动钱包），订单关闭，并 best-effort 关闭支付单（WAIT_PAY→CLOSED，已支付是空操作）——**已支付态为两段式（ADR-0016）**：取消翻转（含台账回补 + 搜索同步，单仓储事务）先行，翻转未命中抛业务异常、资金段尚未执行零残留；退款（平台出账 + 买家入账，`uk_order_type` 幂等）由 case 层随后执行；翻转与退款之间的宕机孤儿（订单已取消但平台已代收未出账）由 `productFundOrphanScan` 按「有 `PLATFORM_IN` 无 `PLATFORM_OUT`」判据收敛（fund-consistency 票 07）；待支付取消无资金动作、保持原单事务翻转。
 
 ### GET /api/idle/orders/mine?role=buy
 我的订单分页：`role=buy` 买到的 / `role=sell` 卖出的，返回 `ProductOrderResponseDTO` 分页。
