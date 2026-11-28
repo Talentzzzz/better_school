@@ -42,7 +42,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const chatRooms = useChatRoomsStore()
 
-const userId = computed(() => Number(route.params.userId))
+const userId = computed(() => String(route.params.userId ?? ''))
 const isSelf = computed(() => auth.userId === userId.value)
 
 const profile = ref<PublicUserProfile | null>(null)
