@@ -25,4 +25,14 @@ public interface IWalletDetailDao {
     List<WalletDetail> selectOrphanFrozen(@Param("frozenType") String frozenType,
                                           @Param("unfrozenType") String unfrozenType,
                                           @Param("thresholdMinutes") int thresholdMinutes, @Param("limit") int limit);
+
+    /**
+     * 平台侧孤儿扫描输入：平台有入账、同订单同轮次无平台出账、且入账已超阈值的流水，按 id 升序。
+     * <p>
+     * 判据从「冻结 / 解冻」换成「平台入账 / 平台出账」后，扫描线不再看业务方那一行——
+     * 平台有进无出即「钱还在平台手上」，是宕机窗口的唯一线索。
+     */
+    List<WalletDetail> selectOrphanPlatformIn(@Param("platformInType") String platformInType,
+                                              @Param("platformOutType") String platformOutType,
+                                              @Param("thresholdMinutes") int thresholdMinutes, @Param("limit") int limit);
 }

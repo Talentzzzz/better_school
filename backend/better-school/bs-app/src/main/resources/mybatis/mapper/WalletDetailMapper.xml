@@ -46,4 +46,26 @@
         LIMIT #{limit}
     </select>
 
+    <!-- 平台侧孤儿扫描输入（ADR-0016 两段式）：平台有入账、同订单同轮次无平台出账、入账已超阈值。
+         判据从「冻结 / 解冻」翻成「平台入 / 平台出」后，两条腿的 user_id 都是平台账户，
+         所以 u.user_id = d.user_id 也一并写上：既保持与 selectOrphanFrozen 同形，
+         也让自联结走 uk_order_type(order_id, type, biz_round, user_id) 的完整列。
+         两处引用同表，按仓库 SQL 规范引入别名：d = 入账行，u = 候选出账行 -->
+    <select id="selectOrphanPlatformIn" resultType="com.betterschool.infrastructure.dao.wallet.po.WalletDetail">
+        SELECT d.id, d.wallet_id, d.user_id, d.type, d.amount, d.order_id, d.biz_round, d.create_time
+        FROM wallet_detail d
+        WHERE d.type = #{platformInType}
+          AND d.create_time &lt;= NOW() - INTERVAL #{thresholdMinutes} MINUTE
+          AND NOT EXISTS (
+              SELECT 1
+              FROM wallet_detail u
+              WHERE u.order_id = d.order_id
+                AND u.biz_round = d.biz_round
+                AND u.user_id = d.user_id
+                AND u.type = #{platformOutType}
+          )
+        ORDER BY d.id
+        LIMIT #{limit}
+    </select>
+
 </mapper>

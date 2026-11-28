@@ -28,6 +28,11 @@ public class WalletAccountServiceImpl implements IWalletAccountService {
     }
 
     @Override
+    public void ensureWallet(String userId, BigDecimal initialBalance) {
+        walletRepository.ensureWallet(userId, initialBalance);
+    }
+
+    @Override
     public void recharge(String userId, BigDecimal amount) {
         walletRepository.recharge(userId, amount);
     }
@@ -51,6 +56,11 @@ public class WalletAccountServiceImpl implements IWalletAccountService {
     public List<WalletDetailEntity> listOrphanFrozen(WalletDetailTypeEnum frozenType, WalletDetailTypeEnum unfrozenType,
                                                      int thresholdMinutes, int limit) {
         return walletRepository.listOrphanFrozen(frozenType, unfrozenType, thresholdMinutes, limit);
+    }
+
+    @Override
+    public List<WalletDetailEntity> listOrphanPlatformIn(int thresholdMinutes, int limit) {
+        return walletRepository.listOrphanPlatformIn(thresholdMinutes, limit);
     }
 
     @Override
@@ -91,6 +101,16 @@ public class WalletAccountServiceImpl implements IWalletAccountService {
     @Override
     public void income(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO) {
         walletRepository.income(userId, amount, orderId, walletDetailTypeVO);
+    }
+
+    @Override
+    public void settleProductOrder(String orderId, String sellerId, BigDecimal amount) {
+        walletRepository.settleProductOrder(orderId, sellerId, amount);
+    }
+
+    @Override
+    public void refundProductOrder(String orderId, String buyerId, BigDecimal amount) {
+        walletRepository.refundProductOrder(orderId, buyerId, amount);
     }
 
     @Override
