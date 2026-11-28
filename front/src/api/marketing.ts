@@ -32,7 +32,7 @@ export interface LotteryActivity {
 }
 
 export interface LotteryPrize {
-  prizeId: number
+  prizeId: string
   tier: number
   name: string
   type: PrizeType
@@ -50,9 +50,9 @@ export interface DrawChances {
 }
 
 export interface DrawResult {
-  recordId: number
+  recordId: string
   prizeType: PrizeType
-  prizeId: number | null
+  prizeId: string | null
   tier: number
   name: string
   /** 积分档发放的积分数，其余为 null */
@@ -60,8 +60,8 @@ export interface DrawResult {
 }
 
 export interface UserPrize {
-  id: number
-  prizeId: number
+  id: string
+  prizeId: string
   tier: number
   name: string
   prizeType: PrizeType
@@ -84,13 +84,13 @@ export const listMyPrizes = (status: UserPrizeStatus, page = 1, pageSize = 20) =
   httpGet<PageResult<UserPrize>>('/lottery/my-prizes', { status, page, pageSize })
 
 /** 确认收货（票 14 发货闭环）：已发货 → 已完成；幂等，重复调用仍返回 COMPLETED */
-export const confirmReceived = (id: number) =>
-  httpPost<{ id: number; status: UserPrizeStatus }>(`/lottery/my-prizes/${id}/receive`)
+export const confirmReceived = (id: string) =>
+  httpPost<{ id: string; status: UserPrizeStatus }>(`/lottery/my-prizes/${id}/receive`)
 
 /** 用积分购买抽奖次数：token 是「这一次购买意图」的 uuid，网络重试必须带同一个（否则重复扣积分）.
  * 后端同一实现也挂在 /lottery/purchase/draw-count；抽奖本身只扣次数、不扣积分。 */
 export const exchangeDrawCount = (token: string) =>
-  httpPost<{ redeemOrderId: number; drawCount: number }>(
+  httpPost<{ redeemOrderId: string; drawCount: number }>(
     '/lottery/exchange/draw-count',
     { token },
     { silent: true }
