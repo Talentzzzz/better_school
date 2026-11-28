@@ -15,7 +15,7 @@ const router = useRouter()
 
 const list = ref<PostSummary[]>([])
 const loading = ref(true)
-const actingId = ref<number | null>(null)
+const actingId = ref<string | null>(null)
 
 async function load() {
   loading.value = true
@@ -38,7 +38,7 @@ function openRow(p: PostSummary) {
   else router.push(`/post/${p.postId}`)
 }
 
-async function withLock(postId: number, action: () => Promise<void>) {
+async function withLock(postId: string, action: () => Promise<void>) {
   if (actingId.value !== null) return
   actingId.value = postId
   try {
