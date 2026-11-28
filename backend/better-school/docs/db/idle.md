@@ -133,7 +133,7 @@
 - `idx_product (product_id)`
 
 ## 注意
-- 托管资金走 wallet_detail 的 PRODUCT_FROZEN / PRODUCT_UNFROZEN / PRODUCT_INCOME 三类流水，唯一键 `uk_order_type` 保证「不重复结算/不重复入账」（见 [user](user.md)）
+- 托管资金走 wallet_detail 的**双边流水**（ADR-0019）：支付 = 买家 `PRODUCT_PAY` + 平台 `PLATFORM_IN`；确认收货 = 平台 `PLATFORM_OUT` + 卖家 `PRODUCT_INCOME`（平台把代收货款结算给卖家）；取消 / 支付超时 = 平台 `PLATFORM_OUT` + 买家 `PRODUCT_REFUND`。唯一键 `uk_order_type` 保证「不重复结算/不重复入账/不双出账」（见 [user](user.md)）；买家余额只在支付与退款两处变动，确认收货不动买家余额
 - 状态流转全部条件 UPDATE（ProductOrderMapper.xml），每次成功流转同事务插一行 product_order_event
 - 支付超时：下单同事务直插 `timeout_task` 分表（内嵌超时中心票 03，`task_type=PRODUCT_ORDER_PAY_TIMEOUT`，原注册 outbox 已删），超时由系统条件 UPDATE 置 CANCELLED（`reason_type=PAY_TIMEOUT`）
 - 快照列下单后不可变：商品改价/下架/删除都不影响已成立的订单

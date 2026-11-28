@@ -1,16 +1,11 @@
 package com.betterschool.usecase.payment;
 
-import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
-import com.betterschool.domain.idle.model.valobj.ProductOrderStatusEnum;
-import com.betterschool.domain.idle.service.IIdleService;
 import com.betterschool.domain.wallet.adapter.port.IPaymentNotifyPort;
 import com.betterschool.domain.wallet.model.entity.PaymentOrderEntity;
 import com.betterschool.domain.wallet.model.entity.WalletPayTaskEntity;
 import com.betterschool.domain.wallet.model.valobj.PaymentOrderStateEnum;
 import com.betterschool.domain.wallet.service.IWalletAccountService;
 import com.betterschool.domain.wallet.service.IWalletPaymentService;
-import com.betterschool.types.enums.ResponseCodeEnum;
-import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -20,14 +15,17 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 支付用例编排（模拟微信支付）：
+ * 支付渠道用例（模拟微信支付）：收银台按支付单号支付、支付单查询、支付回调重放。
  * <ul>
- *   <li>预下单：下单时 / 订单详情按 bizOrderId 幂等确保支付单，返回支付单号；</li>
- *   <li>收银台支付：按支付单号扣冻 + 回调商户（钱包支付服务内完成）；</li>
+ *   <li>收银台支付：按支付单号出账（买家余额 → 平台代收账户）+ 回调商户（钱包支付服务内完成）；</li>
  *   <li>回调收敛：支付成功但商户未确认（进程崩溃 / 回调失败）由 {@code productPayTaskScan} 重放。</li>
  * </ul>
  *
- * <p>资金动作在钱包域单仓储事务内（支付单 PAID + 冻结流水 + 余额条件扣减 + 任务行）；
+ * <p>本类只做渠道侧编排，不注入任何其他 case：预下单 / 关支付单由商户订单用例（{@code IdleCase}）
+ * 直接编排钱包域完成；钱包回调商户仍走 {@link IPaymentNotifyPort}（实现方
+ * {@code PaymentNotifyHandler} 只依赖 idle 域服务）。
+ *
+ * <p>资金动作在钱包域单仓储事务内（支付单 PAID + 买家出账 / 平台入账双边流水 + 买家余额条件扣减 + 任务行）；
  * 本层不做事务，只编排跨域顺序（ADR-0016）。回调端口实现方保证幂等。
  */
 @Slf4j
@@ -43,57 +41,13 @@ public class PaymentCase {
             Duration.ofMinutes(1), Duration.ofMinutes(2), Duration.ofMinutes(4),
             Duration.ofMinutes(8), Duration.ofMinutes(16));
 
-    /** 收银台标题长度上限（payment_order.subject） */
-    private static final int SUBJECT_MAX_LENGTH = 100;
-
-    private final IIdleService idleService;
     private final IWalletPaymentService walletPaymentService;
     private final IWalletAccountService walletAccountService;
     private final IPaymentNotifyPort paymentNotifyPort;
 
-    /**
-     * 确保商户订单的支付单存在并返回支付单号（统一下单，按 bizOrderId 幂等）。
-     * 仅买家、仅待支付订单可预下单；其余状态返回 null。
-     */
-    public String ensurePayNo(ProductOrderEntity productOrderEntity, String userId) {
-        if (productOrderEntity == null) {
-            throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "订单不存在");
-        }
-        if (!productOrderEntity.isBuyer(userId)) {
-            throw new BusinessException(ResponseCodeEnum.FORBIDDEN, "只能支付自己的订单");
-        }
-        if (productOrderEntity.getStatus() != ProductOrderStatusEnum.PENDING_PAYMENT) {
-            return null;
-        }
-        PaymentOrderEntity paymentOrderEntity = walletPaymentService.createPaymentOrder(userId,
-                productOrderEntity.getOrderId(), productOrderEntity.totalAmount(), subjectOf(productOrderEntity));
-        return paymentOrderEntity == null ? null : paymentOrderEntity.getPayNo();
-    }
-
-    /** 收银台支付：按支付单号支付（钱包扣冻 + 进程内回调商户） */
+    /** 收银台支付：按支付单号支付（钱包出账 + 进程内回调商户） */
     public void pay(String payNo, String userId) {
         walletPaymentService.pay(payNo, userId);
-    }
-
-    /**
-     * 内部便捷入口：按商户订单号支付（测试 / 内部调用）。先做买家与状态守卫，
-     * 再按支付单号走同一支付链路；已支付及之后的订单幂等返回。
-     */
-    public void payOrder(String orderId, String buyerId) {
-        ProductOrderEntity productOrderEntity = idleService.preparePayOrder(orderId, buyerId);
-        if (productOrderEntity.getStatus() != ProductOrderStatusEnum.PENDING_PAYMENT) {
-            return; // 幂等：上次支付已提交 / 订单已流转
-        }
-        String payNo = ensurePayNo(productOrderEntity, buyerId);
-        if (payNo == null) {
-            throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "支付单未生成，请稍后重试");
-        }
-        pay(payNo, buyerId);
-    }
-
-    /** 关闭支付单（订单取消 / 超时）：仅 WAIT_PAY 生效，已支付是空操作 */
-    public void closePaymentOrder(String bizOrderId) {
-        walletPaymentService.closePaymentOrder(bizOrderId);
     }
 
     /** 收银台查询（服务层校验支付单归属） */
@@ -149,7 +103,7 @@ public class PaymentCase {
         boolean accepted = paymentNotifyPort.notifyPaid(paymentOrderEntity.getPayNo(),
                 paymentOrderEntity.getBizOrderId(), paymentOrderEntity.getUserId());
         if (!accepted) {
-            // 订单已取消 / 不存在：永久无需再通知；冻结款由 productFundOrphanScan 退买家
+            // 订单已取消 / 不存在：永久无需再通知；已收进平台的货款由 productFundOrphanScan 退买家
             log.warn("[支付回调] 商户拒绝或订单已关闭，停止重试 orderId={}", task.getOrderId());
         }
         walletAccountService.markPayTaskDone(task.getOrderId());
@@ -160,13 +114,5 @@ public class PaymentCase {
     private LocalDateTime nextPayTaskBackoffAt(Integer retryCount) {
         int index = Math.min(retryCount == null ? 0 : retryCount, PAY_TASK_BACKOFF.size() - 1);
         return LocalDateTime.now().plus(PAY_TASK_BACKOFF.get(Math.max(index, 0)));
-    }
-
-    /** 收银台展示标题：商品标题 + 件数，超长截断 */
-    private String subjectOf(ProductOrderEntity productOrderEntity) {
-        String title = productOrderEntity.getProductTitle() == null ? "商品订单" : productOrderEntity.getProductTitle();
-        int quantity = productOrderEntity.getQuantity() == null ? 1 : productOrderEntity.getQuantity();
-        String subject = quantity > 1 ? title + " × " + quantity : title;
-        return subject.length() > SUBJECT_MAX_LENGTH ? subject.substring(0, SUBJECT_MAX_LENGTH) : subject;
     }
 }

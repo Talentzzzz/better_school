@@ -9,7 +9,6 @@ import com.betterschool.api.dto.ProductResponseDTO;
 import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
 import com.betterschool.usecase.idle.IdleCase;
-import com.betterschool.usecase.payment.PaymentCase;
 import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
 import com.betterschool.domain.idle.model.valobj.ProductFeedPageVO;
@@ -48,7 +47,6 @@ public class ProductController implements IIdleService {
     /** 域名服务与 api 契约同名，字段用全限定名区分（照 SearchController 先例） */
     private final com.betterschool.domain.idle.service.IIdleService idleService;
     private final IdleCase idleCase;
-    private final PaymentCase paymentCase;
 
     @Override
     @GetMapping("/products")
@@ -258,7 +256,7 @@ public class ProductController implements IIdleService {
         if (productOrderEntity.isBuyer(currentUserId)
                 && productOrderEntity.getStatus() == ProductOrderStatusEnum.PENDING_PAYMENT) {
             try {
-                productOrderResponseDTO.setPayNo(paymentCase.ensurePayNo(productOrderEntity, currentUserId));
+                productOrderResponseDTO.setPayNo(idleCase.ensurePayNo(productOrderEntity, currentUserId));
             } catch (Exception e) {
                 log.warn("[支付单] 订单详情预下单失败，本次不返回 payNo orderId={}", orderId, e);
             }

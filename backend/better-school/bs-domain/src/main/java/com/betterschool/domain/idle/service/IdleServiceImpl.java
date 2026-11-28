@@ -39,8 +39,9 @@ import java.util.stream.Collectors;
  * （订单 + 台账扣减 + 流水 + 搜索同步 + 超时注册）收成 IIdleRepository 的原子用例，事务在仓储实现内。
  *
  * <p>支付/取消的资金链路为两段式（ADR-0016）：本服务只做判据与状态翻转（翻转段，单仓储事务），
- * 资金段（冻结/解冻）由 case 层按结果对象顺序执行——支付资金段先行（余额不足订单留待支付），
- * 取消翻转段先行（翻转未命中零残留），宕机窗口的长款中间态由 {@code productFundOrphanScan} 收敛。
+ * 资金段（买家出账 + 平台入账 / 平台结算 / 平台退款）由 case 层按结果对象顺序执行——支付在钱包支付
+ * 事务内先过账（余额不足订单留待支付），取消翻转段先行（翻转未命中零残留），宕机窗口的长款中间态
+ * 由 {@code productFundOrphanScan} 收敛。
  */
 @Slf4j
 @Service
@@ -486,10 +487,10 @@ public class IdleServiceImpl implements IIdleService {
 
     @Override
     public void confirmPayOrder(String orderId, String buyerId) {
-        // 两段式 ADR-0016 翻转段（资金段冻结已由钱包支付事务先行完成，PRODUCT_FROZEN 流水 uk 幂等）：
+        // 两段式 ADR-0016 翻转段（资金段已由钱包支付事务先行完成：买家出账 + 平台入账，PRODUCT_PAY 流水 uk 幂等）：
         // 「待支付 → 已支付」条件翻转（守卫买家 + 前态，PAID 事件随行落表，单仓储事务）。
         // 未命中多为重试已翻转成功 → 回读按已支付及其后态幂等返回；其余状态说明发生并发变化，
-        // 此刻货款可能已冻结（订单留待支付的长款中间态），孤儿由 productFundOrphanScan 扫描解冻收敛
+        // 此刻货款可能已进平台（订单留待支付的长款中间态），孤儿由 productFundOrphanScan 平台侧扫描收敛
         if (idleRepository.payOrderById(orderId, buyerId)) {
             return;
         }
@@ -557,11 +558,11 @@ public class IdleServiceImpl implements IIdleService {
         if (productOrderEntity.getStatus() == ProductOrderStatusEnum.DELIVERED) {
             throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "已交付后不可取消，请确认收货");
         }
-        // 待支付未冻结无需退款；已支付需解冻退回
+        // 待支付平台尚未收款，无需退款；已支付需平台退款
         boolean needRefund = productOrderEntity.getStatus() == ProductOrderStatusEnum.PAID;
         // 翻转段先行（两段式 ADR-0016）：取消翻转（含台账回补 + 搜索同步）
-        // 单仓储事务，未命中抛异常——资金段尚未执行，零残留；翻转与 case 层解冻之间的宕机孤儿
-        // （订单已取消但货款悬置冻结，长款中间态）由 productFundOrphanScan 扫描收敛
+        // 单仓储事务，未命中抛异常——资金段尚未执行，零残留；翻转与 case 层平台退款之间的宕机孤儿
+        // （订单已取消、平台已入账却未出账，长款中间态）由 productFundOrphanScan 扫描收敛
         if (!idleRepository.cancelOrderWithSearchSync(orderId, buyerId)) {
             throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "订单状态已变化，请刷新重试");
         }

@@ -12,7 +12,7 @@ public interface IPaymentNotifyPort {
      * 通知商户支付成功。
      *
      * @return true  = 已受理（含订单已支付的幂等重放），回调完成、任务行可置 DONE
-     *         false = 订单已关闭/不存在，永久无需再通知（冻结款由资金孤儿扫描收敛退款）
+     *         false = 订单已关闭/不存在，永久无需再通知（已收进平台的货款由资金孤儿扫描收敛退款）
      * @throws RuntimeException 瞬时故障，调用方保留任务行，由 {@code productPayTaskScan} 退避重放
      */
     boolean notifyPaid(String payNo, String bizOrderId, String payerId);

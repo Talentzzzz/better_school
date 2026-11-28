@@ -14,26 +14,31 @@
         WHERE user_id = #{userId}
     </select>
 
-    <update id="updateFreeze">
-        UPDATE virtual_wallet
-        SET frozen_amount = frozen_amount + #{amount},
-            update_time   = NOW()
-        WHERE user_id = #{userId}
-          AND balance - frozen_amount &gt;= #{amount}
-    </update>
-
-    <update id="updateUnfreeze">
-        UPDATE virtual_wallet
-        SET frozen_amount = GREATEST(0, frozen_amount - #{amount}),
-            update_time   = NOW()
-        WHERE user_id = #{userId}
-    </update>
-
     <update id="updateIncreaseBalance">
         UPDATE virtual_wallet
         SET balance    = balance + #{amount},
             update_time = NOW()
         WHERE user_id = #{userId}
+    </update>
+
+    <!-- 平台出账（结算 / 退款）：平台账户没有冻结额语义，守卫只看 balance，不足即 0 行 → 调用方抛异常回滚。
+         不加 balance >= 0 之类的兜底：余额绝不允许被扣成负数，这里靠条件 UPDATE 而不是事后断言 -->
+    <update id="updateDecreaseBalance">
+        UPDATE virtual_wallet
+        SET balance    = balance - #{amount},
+            update_time = NOW()
+        WHERE user_id = #{userId}
+          AND balance &gt;= #{amount}
+    </update>
+
+    <!-- 买家出账（支付）：守卫 balance - frozen_amount >= amount，把历史冻结额作为减项尊重
+         （那部分钱在旧口径下已算「付过」，不能在新口径下再扣一次）；余额不足返回 0 行由调用方抛 400 -->
+    <update id="updateDecreaseAvailableBalance">
+        UPDATE virtual_wallet
+        SET balance    = balance - #{amount},
+            update_time = NOW()
+        WHERE user_id = #{userId}
+          AND balance - frozen_amount &gt;= #{amount}
     </update>
 
 </mapper>

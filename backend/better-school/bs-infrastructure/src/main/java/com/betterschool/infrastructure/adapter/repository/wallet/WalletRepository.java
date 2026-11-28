@@ -20,6 +20,7 @@ import com.betterschool.infrastructure.dao.wallet.po.WalletPayTaskPO;
 import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import com.betterschool.types.id.IIdGenerator;
+import com.betterschool.types.wallet.Constants;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
@@ -32,14 +33,16 @@ import java.util.UUID;
 
 /**
  * 虚拟钱包仓储：资金动作"流水先行（uk_order_type 幂等）+ 余额条件 UPDATE"，每个动作由方法自身
- * 用事务（REQUIRED）收成一个原子用例——余额不足抛 PARAM_ERROR 时流水随之回滚
+ * 用事务（REQUIRED）收成一个原子用例——余额不足抛 PARAM_ERROR 时流水随之回滚；平台出账余额不足
+ * 记 ERROR 后抛 BUSINESS_ERROR，同样整笔回滚（平台余额绝不允许为负）
  */
 @Slf4j
 @Repository
 @RequiredArgsConstructor
 public class WalletRepository implements IWalletRepository {
 
-    private static final BigDecimal INITIAL_BALANCE = new BigDecimal("1000");
+    /** 注册赠送额：只用于注册路径的建钱包口径（平台代收账户从 0 起账，不读本常量） */
+    private static final BigDecimal REGISTER_GIFT_BALANCE = new BigDecimal("1000");
 
     /** 支付回调任务首次可扫延迟：给请求线程的同步回调留窗口，避免扫描与刚提交的请求并发重放（幂等但白跑） */
     private static final long PAY_TASK_GRACE_SECONDS = 60;
@@ -59,13 +62,30 @@ public class WalletRepository implements IWalletRepository {
 
     @Override
     public void ensureWallet(String userId) {
+        // 注册路径口径不变：初始余额 = 注册赠送额；其它账户（平台代收）走带余额的重载传自己的起始值
+        ensureWallet(userId, REGISTER_GIFT_BALANCE);
+    }
+
+    @Override
+    public void ensureWallet(String userId, BigDecimal initialBalance) {
         VirtualWallet virtualWallet = new VirtualWallet();
         // 业务 ID 随 insert 一次写入（uuid-biz-id 票 06）；INSERT IGNORE 撞 uk_user 时本行未落库，发号作废无害
         virtualWallet.setWalletId(UUID.randomUUID().toString());
         virtualWallet.setUserId(userId);
-        virtualWallet.setBalance(INITIAL_BALANCE);
+        virtualWallet.setBalance(initialBalance);
         virtualWallet.setFrozenAmount(BigDecimal.ZERO);
         walletDao.insertIgnore(virtualWallet);
+    }
+
+    /**
+     * 平台代收账户懒创建（余额 0，撞 uk_user 幂等）。
+     * <p>
+     * 为什么必须在本类每个资金事务的开头调用：{@code insertIgnoreDetail} 是
+     * {@code INSERT ... SELECT ... FROM virtual_wallet WHERE user_id = ?}，平台钱包行不存在时
+     * 平台那一腿流水会静默插入 0 行（不是报错），幂等锚与配对行就都失效了。
+     */
+    private void ensurePlatformWallet() {
+        ensureWallet(Constants.PLATFORM_USER_ID, BigDecimal.ZERO);
     }
 
     @Override
@@ -91,37 +111,6 @@ public class WalletRepository implements IWalletRepository {
         });
     }
 
-    @Override
-    public void freeze(String userId, BigDecimal amount, String orderId) {
-        freeze(userId, amount, orderId, WalletDetailTypeEnum.FROZEN);
-    }
-
-    /**
-     * 流水先行 + 余额条件 UPDATE 一个原子用例（余额不足时流水随之回滚）。
-     * <p>
-     * 商品支付的冻结不走本方法：它由 {@link #pay(String, String)} 在支付事务内与支付单状态、
-     * 回调任务行一起完成（钱已冻 ⇒ 支付单已 PAID、任务行在）。
-     */
-    @Override
-    public void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO) {
-        WalletDetail walletDetail = new WalletDetail();
-        walletDetail.setUserId(userId);
-        walletDetail.setType(walletDetailTypeVO.name());
-        walletDetail.setAmount(amount);
-        walletDetail.setOrderId(orderId);
-        walletDetail.setBizRound(0);
-        transactionTemplate.execute(status -> {
-            // 流水先行：uk_order_type 冲突（已冻结过）→ 幂等跳过，不动余额
-            if (walletDetailDao.insertIgnoreDetail(walletDetail) > 0) {
-                // 可用余额（balance - frozen）不足则冻结失败，事务整体回滚（含流水）
-                if (walletDao.updateFreeze(userId, amount) == 0) {
-                    throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "余额不足，无法完成操作");
-                }
-            }
-            return null;
-        });
-    }
-
     /** 支付回调任务行：首次可扫延后 {@link #PAY_TASK_GRACE_SECONDS} 秒，给请求线程的同步回调留窗口 */
     private WalletPayTaskPO newPayTask(String orderId) {
         LocalDateTime now = LocalDateTime.now();
@@ -135,55 +124,102 @@ public class WalletRepository implements IWalletRepository {
         return walletPayTaskPO;
     }
 
+    /**
+     * 确认收货结算：平台出账 + 卖家入账，一个钱包事务。
+     * <p>
+     * 事务内四步固定顺序：平台钱包行就位 → 幂等锚（卖家 {@code PRODUCT_INCOME}）→ 锚返回 0 就整笔返回
+     * → 平台出账 + 卖家加余额（{@link #platformOutAndCredit}）。流水表是事实源，锚没进去说明这笔早结算过，
+     * 此时动任何余额都会重复记账，所以幂等锚刻意留在 public 方法里、不参数化进私有方法
+     * （锚类型是结算与退款唯一的真差异）。
+     * <p>
+     * 平台腿 {@code PLATFORM_OUT} 与退款共用同一类型：同一订单只有一个终态，唯一键
+     * {@code uk_order_type(order_id, type, biz_round, user_id)} 因此保证平台对同一订单只出账一次。
+     */
     @Override
-    public void unfreeze(String userId, BigDecimal amount, String orderId) {
-        unfreeze(userId, amount, orderId, WalletDetailTypeEnum.UNFROZEN);
-    }
-
-    @Override
-    public void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO) {
-        unfreeze(userId, amount, orderId, walletDetailTypeVO, 0);
-    }
-
-    /** 流水先行 + 解冻回退一个原子用例 */
-    @Override
-    public void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO, int bizRound) {
-        WalletDetail walletDetail = new WalletDetail();
-        walletDetail.setUserId(userId);
-        walletDetail.setType(walletDetailTypeVO.name());
-        walletDetail.setAmount(amount);
-        walletDetail.setOrderId(orderId);
-        walletDetail.setBizRound(bizRound);
+    public void settleProductOrder(String orderId, String sellerId, BigDecimal amount) {
         transactionTemplate.execute(status -> {
+            // 平台钱包行必须先存在，否则下面 PLATFORM_OUT 的 INSERT ... SELECT 会插 0 行
+            ensurePlatformWallet();
+            // 幂等锚 = 业务侧那一行（卖家结算行）：0 行即整笔已结算过，余额一律不碰
+            WalletDetail walletDetail = new WalletDetail();
+            walletDetail.setUserId(sellerId);
+            walletDetail.setType(WalletDetailTypeEnum.PRODUCT_INCOME.name());
+            walletDetail.setAmount(amount);
+            walletDetail.setOrderId(orderId);
+            walletDetail.setBizRound(0);
             if (walletDetailDao.insertIgnoreDetail(walletDetail) == 0) {
                 return null;
             }
-            walletDao.updateUnfreeze(userId, amount);
+            platformOutAndCredit(walletDetail, "结算");
             return null;
         });
     }
 
+    /**
+     * 取消 / 支付超时退款：平台出账 + 买家入账，形状与 {@link #settleProductOrder} 一致，
+     * 只换幂等锚（买家 {@code PRODUCT_REFUND}）与收款方；平台腿同样是 {@code PLATFORM_OUT}
+     * （订单只有一个终态，两个方向共用一个平台出账类型，不为退款另开类型）。
+     */
     @Override
-    public void income(String userId, BigDecimal amount, String orderId) {
-        income(userId, amount, orderId, WalletDetailTypeEnum.INCOME);
+    public void refundProductOrder(String orderId, String buyerId, BigDecimal amount) {
+        transactionTemplate.execute(status -> {
+            ensurePlatformWallet();
+            // 幂等锚 = 业务侧那一行（买家退款行）：0 行即整笔已退过款，余额一律不碰
+            WalletDetail walletDetail = new WalletDetail();
+            walletDetail.setUserId(buyerId);
+            walletDetail.setType(WalletDetailTypeEnum.PRODUCT_REFUND.name());
+            walletDetail.setAmount(amount);
+            walletDetail.setOrderId(orderId);
+            walletDetail.setBizRound(0);
+            if (walletDetailDao.insertIgnoreDetail(walletDetail) == 0) {
+                return null;
+            }
+            platformOutAndCredit(walletDetail, "退款");
+            return null;
+        });
     }
 
-    /** 流水先行 + 余额入账一个原子用例 */
-    @Override
-    public void income(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO) {
+    /**
+     * 平台出账 + 收款方入账：平台配对流水 → 平台余额守卫扣减 → 收款方加余额（结算与退款共用）。
+     * <p>
+     * 参数是调用方先落好的业务侧那一行（幂等锚，已带 orderId / amount / userId / bizRound）：本方法只从它
+     * 读订单、金额与收款方，不重复插锚——锚归调用方，锚类型才是结算与退款的唯一真差异。
+     * {@code scene} 只进日志与异常文案（「结算」/「退款」）。
+     * <p>
+     * 平台余额守卫：不足视为不变量破坏（平台付了没收过的钱）→ ERROR + 抛异常，整笔回滚，
+     * 绝不让平台余额扣成负数。
+     */
+    private void platformOutAndCredit(WalletDetail walletDetail, String scene) {
+        insertPlatformDetail(WalletDetailTypeEnum.PLATFORM_OUT, walletDetail.getOrderId(), walletDetail.getAmount());
+        if (walletDao.updateDecreaseBalance(Constants.PLATFORM_USER_ID, walletDetail.getAmount()) == 0) {
+            VirtualWallet virtualWallet = walletDao.selectByUserId(Constants.PLATFORM_USER_ID);
+            log.error("平台代收余额不足，{}整笔回滚：orderId={} receiverId={} amount={} platformBalance={}",
+                    scene, walletDetail.getOrderId(), walletDetail.getUserId(), walletDetail.getAmount(),
+                    virtualWallet == null ? null : virtualWallet.getBalance());
+            throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "平台代收余额不足，" + scene + "失败");
+        }
+        walletDao.updateIncreaseBalance(walletDetail.getUserId(), walletDetail.getAmount());
+    }
+
+    /**
+     * 平台侧配对流水：必须紧跟在业务侧幂等锚之后、与它同事务写入。
+     * <p>
+     * 写不进来说明该订单平台早已记过账（唯一键冲突）——此时两边账已经不一致，不能装作「已处理」
+     * 继续动余额，否则同一订单会被平台收 / 付第二次。这里把唯一键当成硬守卫：记 ERROR 并整笔回滚，
+     * 让「平台对同一订单只收一次、只付一次」真正由数据库约束守住，而不是靠调用顺序的善意。
+     */
+    private void insertPlatformDetail(WalletDetailTypeEnum walletDetailTypeEnum, String orderId, BigDecimal amount) {
         WalletDetail walletDetail = new WalletDetail();
-        walletDetail.setUserId(userId);
-        walletDetail.setType(walletDetailTypeVO.name());
+        walletDetail.setUserId(Constants.PLATFORM_USER_ID);
+        walletDetail.setType(walletDetailTypeEnum.name());
         walletDetail.setAmount(amount);
         walletDetail.setOrderId(orderId);
         walletDetail.setBizRound(0);
-        transactionTemplate.execute(status -> {
-            if (walletDetailDao.insertIgnoreDetail(walletDetail) == 0) {
-                return null;
-            }
-            walletDao.updateIncreaseBalance(userId, amount);
-            return null;
-        });
+        if (walletDetailDao.insertIgnoreDetail(walletDetail) == 0) {
+            log.error("平台流水已存在，资金状态不一致，整笔回滚：type={} orderId={} amount={}",
+                    walletDetailTypeEnum, orderId, amount);
+            throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "平台流水已存在，资金状态不一致");
+        }
     }
 
     @Override
@@ -222,11 +258,11 @@ public class WalletRepository implements IWalletRepository {
         return walletDetailEntity;
     }
 
-    /** 孤儿扫描输入（ADR-0016 两段式）：流水类型成对传入（按域各一条扫描线），只读，无事务 */
+    /** 平台侧孤儿扫描输入（平台有入账无出账 = 平台已收但未结算 / 退款），只读，无事务 */
     @Override
-    public List<WalletDetailEntity> listOrphanFrozen(WalletDetailTypeEnum frozenType, WalletDetailTypeEnum unfrozenType,
-                                                     int thresholdMinutes, int limit) {
-        return walletDetailDao.selectOrphanFrozen(frozenType.name(), unfrozenType.name(), thresholdMinutes, limit)
+    public List<WalletDetailEntity> listOrphanPlatformIn(int thresholdMinutes, int limit) {
+        return walletDetailDao.selectOrphanPlatformIn(WalletDetailTypeEnum.PLATFORM_IN.name(),
+                        WalletDetailTypeEnum.PLATFORM_OUT.name(), thresholdMinutes, limit)
                 .stream().map(this::toDetailEntity).toList();
     }
 
@@ -294,12 +330,18 @@ public class WalletRepository implements IWalletRepository {
     }
 
     /**
-     * 支付单支付：支付单置 PAID + 冻结流水 + 余额条件扣减 + 回调任务行，一个钱包事务。
-     * 支付单已是 PAID 时幂等返回（不动资金），供重复支付 / 回调丢失后的重试。
+     * 支付单支付：支付单置 PAID + 买家出账流水 + 平台入账流水 + 买家余额条件扣减 + 平台余额累加
+     * + 回调任务行，一个钱包事务。
+     * <p>
+     * 幂等锚是买家那一行 {@code PRODUCT_PAY}：它 0 行（uk 冲突）说明这笔支付早处理过，
+     * 直接按「已支付」返回、不动任何余额。支付单已 PAID 的重复支付同样幂等返回（不动资金），
+     * 供重复支付 / 回调丢失后的重试。
      */
     @Override
     public PaymentPayResult pay(String payNo, String userId) {
         return transactionTemplate.execute(status -> {
+            // 平台钱包行先就位：下面 PLATFORM_IN 流水是 INSERT ... SELECT FROM virtual_wallet
+            ensurePlatformWallet();
             PaymentOrderPO paymentOrderPO = paymentOrderDao.selectByPayNo(payNo);
             if (paymentOrderPO == null) {
                 throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "支付单不存在");
@@ -322,17 +364,25 @@ public class WalletRepository implements IWalletRepository {
                 }
                 throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "支付单状态已变化，请刷新重试");
             }
-            // 冻结资金：流水先行（uk 幂等）+ 可用余额条件扣减；余额不足整体回滚（支付单留 WAIT_PAY）
+            // 双边流水先行：买家出账行是幂等锚（uk 冲突 = 这笔支付已处理过，整笔返回、不动任何余额）
             WalletDetail walletDetail = new WalletDetail();
             walletDetail.setUserId(userId);
-            walletDetail.setType(WalletDetailTypeEnum.PRODUCT_FROZEN.name());
+            walletDetail.setType(WalletDetailTypeEnum.PRODUCT_PAY.name());
             walletDetail.setAmount(paymentOrderPO.getAmount());
             walletDetail.setOrderId(paymentOrderPO.getBizOrderId());
             walletDetail.setBizRound(0);
-            if (walletDetailDao.insertIgnoreDetail(walletDetail) > 0 && walletDao.updateFreeze(userId, paymentOrderPO.getAmount()) == 0) {
+            if (walletDetailDao.insertIgnoreDetail(walletDetail) == 0) {
+                return toPayResult(paymentOrderPO, true);
+            }
+            // 平台代收入账行：与买家出账行同事务成对
+            insertPlatformDetail(WalletDetailTypeEnum.PLATFORM_IN, paymentOrderPO.getBizOrderId(), paymentOrderPO.getAmount());
+            // 再动双边余额：买家可用余额（balance - frozen）不足 → 抛 400，整笔回滚（支付单留 WAIT_PAY）。
+            // 商品链路不写 frozen_amount：钱在支付时就真的离开买家账户，历史冻结额只在守卫里作减项
+            if (walletDao.updateDecreaseAvailableBalance(userId, paymentOrderPO.getAmount()) == 0) {
                 throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "零钱余额不足，无法完成支付");
             }
-            // 回调任务行与支付同事务：任务在 ⇒ 钱已冻、支付单已 PAID；回调失败由 productPayTaskScan 重放
+            walletDao.updateIncreaseBalance(Constants.PLATFORM_USER_ID, paymentOrderPO.getAmount());
+            // 回调任务行与支付同事务：任务在 ⇒ 钱已过账、支付单已 PAID；回调失败由 productPayTaskScan 重放
             walletPayTaskDao.insertIgnore(newPayTask(paymentOrderPO.getBizOrderId()));
             return toPayResult(paymentOrderPO, false);
         });
