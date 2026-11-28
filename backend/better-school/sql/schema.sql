@@ -809,7 +809,7 @@ CREATE TABLE IF NOT EXISTS virtual_wallet (
     PRIMARY KEY (id),
     UNIQUE KEY uk_wallet_id (wallet_id),
     UNIQUE KEY uk_user (user_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '虚拟钱包表（一人一行：余额账户；平台代收账户也是本表一行，user_id = Constants.PLATFORM_USER_ID）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '虚拟钱包表（一人一行：余额账户；平台代收账户也是本表一行，user_id = types.wallet.Constants.PLATFORM_USER_ID）';
 
 CREATE TABLE IF NOT EXISTS wallet_detail (
     id          BIGINT        NOT NULL AUTO_INCREMENT,

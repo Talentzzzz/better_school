@@ -636,16 +636,18 @@ CREATE TABLE IF NOT EXISTS product_order_event (
 CREATE TABLE IF NOT EXISTS virtual_wallet (
     id            BIGINT        NOT NULL AUTO_INCREMENT,
     wallet_id     VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入）',
-    user_id       VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '用户 ID',
+    user_id       VARCHAR(36) COLLATE utf8mb4_bin        NOT NULL COMMENT '用户 ID',
     balance       DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '余额',
-    frozen_amount DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '冻结金额（托管中）',
+    frozen_amount DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '冻结金额（商品链路已退役：不再写入/解冻，仅历史残留，作买家出账守卫的减项）',
     create_time   DATETIME      NOT NULL COMMENT '创建时间',
     update_time   DATETIME      NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
     UNIQUE KEY uk_wallet_id (wallet_id),
     UNIQUE KEY uk_user (user_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '虚拟钱包表';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '虚拟钱包表（一人一行：余额账户；平台代收账户也是本表一行，user_id = types.wallet.Constants.PLATFORM_USER_ID）';
 ```
+
+> **平台代收账户就是本表一行**：`user_id = types.wallet.Constants.PLATFORM_USER_ID`，`balance` 从 0 起、`frozen_amount` 恒 0，懒创建（`INSERT IGNORE` 撞 `uk_user` 幂等），不出现在任何用户可见接口里。**对账不变量**：平台账户 `balance` = Σ（有 `PLATFORM_IN` 且无 `PLATFORM_OUT` 的订单金额之和）——本期只定口径，没有定时对账 job（ADR-0019）。
 
 ### wallet_detail
 
@@ -653,8 +655,8 @@ CREATE TABLE IF NOT EXISTS virtual_wallet (
 CREATE TABLE IF NOT EXISTS wallet_detail (
     id          BIGINT        NOT NULL AUTO_INCREMENT,
     wallet_id   VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '钱包业务 ID（引用 virtual_wallet.wallet_id，UUID 字符串）',
-    user_id     VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '用户 ID（钱包所有者；INCOME 为收款方）',
-    type        VARCHAR(20)   NOT NULL COMMENT '类型 RECHARGE/FROZEN/UNFROZEN/INCOME/PRODUCT_FROZEN/PRODUCT_UNFROZEN/PRODUCT_INCOME',
+    user_id     VARCHAR(36) COLLATE utf8mb4_bin        NOT NULL COMMENT '用户 ID（钱包所有者；INCOME 为收款方；平台行 = 平台代收账户）',
+    type        VARCHAR(20)   NOT NULL COMMENT '类型 RECHARGE/FROZEN/UNFROZEN/INCOME/PRODUCT_PAY/PRODUCT_REFUND/PRODUCT_INCOME/PLATFORM_IN/PLATFORM_OUT（PRODUCT_FROZEN/PRODUCT_UNFROZEN 为历史值，已映射）',
     amount      DECIMAL(10,2) NOT NULL COMMENT '变动金额',
     order_id    VARCHAR(36) COLLATE utf8mb4_bin   NULL COMMENT '关联订单业务 ID（RECHARGE 为空；uk_order_type 按 type 区分商品订单）',
     biz_round   INT           NOT NULL DEFAULT 0 COMMENT '业务轮次：同一订单同类型多轮资金操作的去重维度（预留，当前恒 0）',
@@ -663,12 +665,12 @@ CREATE TABLE IF NOT EXISTS wallet_detail (
     PRIMARY KEY (id),
     UNIQUE KEY uk_order_type (order_id, type, biz_round, user_id),
     KEY idx_user (user_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '钱包流水表';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '钱包流水表（商品资金动作为双边流水：买家 PRODUCT_PAY/PRODUCT_REFUND、卖家 PRODUCT_INCOME、平台 PLATFORM_IN/PLATFORM_OUT）';
 ```
 
 ### payment_order（钱包域，支付单：模拟微信支付的统一下单）
 
-商户下单时向钱包预下单，返回支付单号 `pay_no`；用户拿支付单号进收银台支付。一单一支付单（`uk_biz_order_id`），金额与标题为下单快照。支付成功由钱包在**同一事务**内置 `state = PAID`、落 `PRODUCT_FROZEN` 流水并扣冻余额；取消/超时把 `WAIT_PAY → CLOSED`。
+支付单是钱包域「统一下单」的产物：商户下单时向钱包预下单拿支付单号 `pay_no`，用户拿支付单号进收银台支付。一单一支付单（`uk_biz_order_id`），金额与标题为下单快照。支付成功由钱包在**同一事务**内置 `state = PAID`、落买家出账 `PRODUCT_PAY` + 平台入账 `PLATFORM_IN` 双边流水、买家余额条件扣减 + 平台余额入账，并回调商户；取消 / 超时把 `WAIT_PAY → CLOSED`。
 
 ```sql
 CREATE TABLE IF NOT EXISTS payment_order (
@@ -691,7 +693,7 @@ CREATE TABLE IF NOT EXISTS payment_order (
 
 ### wallet_pay_task（钱包域，域内最终一致任务表，ADR-0017）
 
-支付事务内与支付单 `PAID`、`PRODUCT_FROZEN` 流水、余额条件扣减一起 `INSERT`，本行就是支付回调的 outbox——一起提交则「钱已冻 + 支付单已 PAID + 回调待确认」，回滚则一起消失（不会出现「任务在、钱没冻」）。商户回调失败 / 进程崩溃留下的 PENDING 行由 `productPayTaskScan` 进程内重放，失败 1/2/4/8/16 分钟退避、耗尽置死信。
+支付事务内与支付单 `PAID`、买家出账 `PRODUCT_PAY` + 平台入账 `PLATFORM_IN` 双边流水、买家余额条件扣减 + 平台余额入账一起 `INSERT`，本行就是支付回调的 outbox——一起提交则「钱已由平台代收 + 支付单已 PAID + 回调待确认」，回滚则一起消失（不会出现「任务在、钱没到平台」）。商户回调失败 / 进程崩溃留下的 PENDING 行由 `productPayTaskScan` 进程内重放，失败 1/2/4/8/16 分钟退避、耗尽置死信。
 
 ```sql
 CREATE TABLE IF NOT EXISTS wallet_pay_task (
@@ -704,9 +706,9 @@ CREATE TABLE IF NOT EXISTS wallet_pay_task (
     create_time   DATETIME    NOT NULL COMMENT '创建时间',
     update_time   DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_order_id (order_id) COMMENT '同一订单只落一条支付任务（重放幂等的插行锚点）',
+    UNIQUE KEY uk_order_id (order_id) COMMENT '同一订单只落一条回调任务（重放幂等的插行锚点）',
     KEY idx_state_next_retry (state, next_retry_at) COMMENT '扫描：WHERE state=0 AND (next_retry_at IS NULL OR next_retry_at <= NOW())'
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '钱包支付收敛任务（域内最终一致任务表：冻结事务内落行，与冻结同生同死；未收敛由 productPayTaskScan 重放）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '支付回调任务（域内最终一致任务表：支付事务内落行，与支付单 PAID/平台代收入账同生同死；未收敛由 productPayTaskScan 重放）';
 ```
 
 ### user_credit
