@@ -26,10 +26,10 @@ export const useChatRoomsStore = defineStore('chatRooms', {
     // delivery_seq 补拉游标：内存持有不持久化，刷新后 0=全量永远正确（spec §2）
     cursor: 0,
     pulling: false,
-    // 每会话已应用的最大 seq：MSG 按 (roomId, seq) 判重，推送与补拉竞争合流
-    appliedSeq: {} as Record<number, number>,
+    // 每会话已应用的最大 seq：MSG 按 (roomId, seq) 判重，推送与补拉竞争合流；会话 ID 是不透明字符串
+    appliedSeq: {} as Record<string, number>,
     // 成员水位 map[roomId][userId]=readSeq：READ 推送就地更新（详情页已读回执推导用，spec §7.5）
-    readSeqs: {} as Record<number, Record<number, number>>,
+    readSeqs: {} as Record<string, Record<string, number>>,
     // 判重后的消息出口（推送+补拉统一），详情页订阅渲染气泡
     msgListeners: [] as Array<(msg: ChatMessage) => void>,
     unbindFns: [] as Array<() => void>,
@@ -38,7 +38,7 @@ export const useChatRoomsStore = defineStore('chatRooms', {
   }),
   getters: {
     unreadTotal: (s) => s.rooms.reduce((sum, r) => sum + r.unread, 0),
-    roomById: (s) => (roomId: number) => s.rooms.find((r) => r.roomId === roomId)
+    roomById: (s) => (roomId: string) => s.rooms.find((r) => r.roomId === roomId)
   },
   actions: {
     /** 登录后初始化：绑定 WS 事件 → 拉列表（首屏数据）→ 后台补拉对齐（不阻塞渲染） */
@@ -76,12 +76,12 @@ export const useChatRoomsStore = defineStore('chatRooms', {
         }),
         wsClient.on('READ', (env) => {
           // payload={roomId, userId(readerId), readSeq}，就地更新成员水位 map
-          const payload = env.payload as { roomId: number; userId: number; readSeq: number } | undefined
+          const payload = env.payload as { roomId: string; userId: string; readSeq: number } | undefined
           if (payload?.roomId) this.mergeReadSeq(payload.roomId, payload.userId, payload.readSeq)
         }),
         wsClient.on('RECALL', (env) => {
           // payload={roomId, seq}：轻事件只带定位，内容终态以拉取为准
-          const payload = env.payload as { roomId: number; seq: number } | undefined
+          const payload = env.payload as { roomId: string; seq: number } | undefined
           if (payload?.roomId && payload.seq) this.applyRecall(payload.roomId, payload.seq)
         }),
         // 断线重连对齐：连接成功即补拉（推是加速，拉是真相，spec §2）
@@ -145,7 +145,7 @@ export const useChatRoomsStore = defineStore('chatRooms', {
       for (const listener of this.msgListeners) listener(msg)
     },
 
-    applyRecall(roomId: number, seq: number) {
+    applyRecall(roomId: string, seq: number) {
       const room = this.roomById(roomId)
       // 只有撤的是会话最后一条才需要就地改预览；更早的消息预览不展示
       if (room && seq === (this.appliedSeq[roomId] ?? 0)) {
@@ -164,7 +164,7 @@ export const useChatRoomsStore = defineStore('chatRooms', {
     },
 
     /** 进详情页清未读：本地立即归零 + 推水位线（幂等，仅前进才 UPDATE） */
-    async markRead(roomId: number) {
+    async markRead(roomId: string) {
       const room = this.roomById(roomId)
       if (room) room.unread = 0
       try {
@@ -175,7 +175,7 @@ export const useChatRoomsStore = defineStore('chatRooms', {
     },
 
     /** 长按删除会话：本地立即消失 + POST hide；新消息推送清 hidden_at 弹回（store 侧经 scheduleRefresh 自然恢复） */
-    async hideRoom(roomId: number) {
+    async hideRoom(roomId: string) {
       this.rooms = this.rooms.filter((r) => r.roomId !== roomId)
       try {
         await apiHideRoom(roomId)
@@ -185,7 +185,7 @@ export const useChatRoomsStore = defineStore('chatRooms', {
     },
 
     /** 成员水位 map 就地合并（仅前进）：READ 推送与详情页 members 初值共用 */
-    mergeReadSeq(roomId: number, userId: number, readSeq: number) {
+    mergeReadSeq(roomId: string, userId: string, readSeq: number) {
       const map = (this.readSeqs[roomId] ??= {})
       map[userId] = Math.max(map[userId] ?? 0, readSeq)
     },
