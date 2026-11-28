@@ -30,12 +30,12 @@ const router = createRouter({
     { path: '/publish/product', component: () => import('@/views/idle/ProductPublishView.vue'), meta: { requiresAuth: true } },
     { path: '/login', component: () => import('@/views/auth/LoginView.vue') },
     { path: '/search', component: () => import('@/views/SearchView.vue') },
-    { path: '/post/:id(\\d+)', component: () => import('@/views/post/PostDetailView.vue') },
-    { path: '/product/:id(\\d+)', component: () => import('@/views/idle/ProductDetailView.vue') },
-    { path: '/user/:userId(\\d+)', component: () => import('@/views/AuthorProfileView.vue'), meta: { tabbar: true } },
+    { path: '/post/:id', component: () => import('@/views/post/PostDetailView.vue') },
+    { path: '/product/:id', component: () => import('@/views/idle/ProductDetailView.vue') },
+    { path: '/user/:userId', component: () => import('@/views/AuthorProfileView.vue'), meta: { tabbar: true } },
     { path: '/settings/profile', component: () => import('@/views/settings/ProfileEditView.vue'), meta: { requiresAuth: true } },
     { path: '/settings/privacy', component: () => import('@/views/settings/PrivacySettingsView.vue'), meta: { requiresAuth: true } },
-    { path: '/chat/:roomId(\\d+)', component: () => import('@/views/chat/ChatDetailView.vue'), meta: { requiresAuth: true } },
+    { path: '/chat/:roomId', component: () => import('@/views/chat/ChatDetailView.vue'), meta: { requiresAuth: true } },
     { path: '/messages/contacts', component: () => import('@/views/chat/ContactSearchView.vue'), meta: { requiresAuth: true } },
     { path: '/notifications', component: () => import('@/views/msg/NotificationsView.vue'), meta: { requiresAuth: true } },
     // 市集消息页：入口行「消息」格的去向（入口行由票 04 接）
@@ -51,9 +51,9 @@ const router = createRouter({
     { path: '/me/favorites', component: () => import('@/views/me/MyFavoritesView.vue'), meta: { requiresAuth: true } },
     { path: '/me/post-drafts', component: () => import('@/views/post/PostDraftBoxView.vue'), meta: { requiresAuth: true } },
     { path: '/me/history', component: () => import('@/views/me/ViewHistoryView.vue'), meta: { requiresAuth: true } },
-    { path: '/idle/order/:id(\\d+)', component: () => import('@/views/idle/ProductOrderView.vue'), meta: { requiresAuth: true } },
+    { path: '/idle/order/:id', component: () => import('@/views/idle/ProductOrderView.vue'), meta: { requiresAuth: true } },
     // 更名前路由的兼容跳转：老分享链接落到 /trade/order/:id 时转到新路径，下个大版本移除
-    { path: '/trade/order/:id(\\d+)', redirect: to => `/idle/order/${to.params.id}` },
+    { path: '/trade/order/:id', redirect: to => `/idle/order/${to.params.id}` },
     { path: '/:pathMatch(.*)*', redirect: '/home' }
   ]
 })

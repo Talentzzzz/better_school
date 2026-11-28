@@ -161,7 +161,7 @@ export interface NoticeBanner {
   title: string
   content: string
   refType: string | null
-  refId: number | null
+  refId: string | null
 }
 
 interface NoticeNotifPayload {
@@ -171,7 +171,7 @@ interface NoticeNotifPayload {
   title: string
   content: string
   refType?: string
-  refId?: number
+  refId?: string
 }
 
 const BANNER_SCOPES = ['INTERACTION_LIKE', 'INTERACTION_COMMENT']
