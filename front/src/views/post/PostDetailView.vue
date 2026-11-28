@@ -293,7 +293,7 @@ const canDeleteComment = (c: PostComment | CommentReply) =>
 /** 「作者」标：评论者即帖子作者 */
 const isAuthorComment = (userId: string) => userId === post.value?.userId
 
-/** 作者主页（票 04）尚未落地，路由暂落首页兜底 */
+/** 跳转作者主页（/user/:userId） */
 function openAuthor(userId: string) {
   router.push(`/user/${userId}`)
 }

@@ -19,7 +19,7 @@
   - 判据：`(refType === 'PRODUCT' || refType === 'POST')` 且 `refId` 匹配 `/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i`（删除 `Number.isInteger` / `<= 0` 判据，删除 `Number(idStr)`）；
   - 不合法 → 静默丢弃（原行为）；合法 → `pendingCard.value = { refType, refId }` 并 `ensureCard`。
 - `watermark(userId: string)`：`chatRooms.readSeqs[roomId]?.[userId] ?? 0` —— 水位线返回值仍是 `number`。
-- `READ` 载荷：`{ roomId: string; userId: string; readSeq: number }`；`RECALL` 载荷：`{ roomId: string; seq: number }`；两者判空改成 `payload?.roomId !== undefined`（空串不是合法 ID，但用 `!== undefined` 更贴类型；`seq` 仍用真值判断）。
+- `READ` 载荷：`{ roomId: string; userId: string; readSeq: number }`；`RECALL` 载荷：`{ roomId: string; seq: number }`。载荷字段为字符串后按等值比对（详情页 `payload?.roomId !== roomId`）、`seq` 仍用真值判断；`stores/chatRooms.ts` 的 READ 真值判空保留（空串不是合法 ID）。
 - `systemInfoOf` 的 `SystemPayload.refId` 本来就是 `string`，不动；`CARD` 气泡的 `cardInfos` 键 `${refType}:${refId}` 是字符串拼接，不动。
 - 其余 `msg.roomId !== roomId` / `row.msg.clientMsgId` / `msg.seq <= maxSeq` 比对保持。
 
