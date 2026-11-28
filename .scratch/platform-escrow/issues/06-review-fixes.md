@@ -86,7 +86,7 @@ spec 的 User Story 24 要求「DB 文档同步资金归属口径」，票 05 �
 - [x] `sql.md` 的 wallet 四块与 `schema.sql` 注释逐字一致，旧「冻结/扣冻」现行表述清零
 - [x] ADR-0019 补上超时不退款、平台腿硬守卫两条 Decision，并修正历史数据收敛那句
 - [x] 三个测试的 `createProduct` 都传 `quantity=2`；票 05 复选框已勾、失真注记已改
-- [x] 不跑构建；`git grep -n "Constants.PLATFORM_USER_ID"` 只剩 `.scratch/` 历史票与 `common.Constants` 无关内容
+- [x] 不跑构建；`git grep -n "Constants.PLATFORM_USER_ID"` 只剩 `.scratch/` 历史票与 `common.Constants` 无关内容（字面 grep 现在必然命中 Java 侧的 `Constants.PLATFORM_USER_ID`——那里的 `Constants` 就是 import 进来的 `types.wallet.Constants`；真正的判断口径是「文档 / SQL 里零裸引用、全仓无 `types.common` 钱包常量残留」）
 
 **落地注记（实现取舍）：**
 
@@ -100,7 +100,7 @@ spec 的 User Story 24 要求「DB 文档同步资金归属口径」，票 05 �
   - `bs-types/.../types/common/Constants.java`：删除 `PLATFORM_USER_ID` 与它的 Javadoc（`SYSTEM_USER_ID` 等其余常量原样留在 common）。
   - 代码 4 个文件改 import：`WalletRepository`、`ProductPayCompositeTxIntegrationTest`、`ProductCancelFundConsistencyIntegrationTest`、`ProductSettleFundConsistencyIntegrationTest`。每个文件只有一条 `Constants` 单类型 import，不存在「两个 Constants 同时 import」的编译问题。
   - 文档 3 个：`CONTEXT.md`（平台代收账户词条）、`docs/adr/0019-platform-escrow-account.md`（一句话决定 + Decision 首条 + Migration 代码清单）、`backend/better-school/docs/db/user.md`（`virtual_wallet` 两处）——统一写成 `types.wallet.Constants.PLATFORM_USER_ID`。
-  - 未改：`schema.sql` 表注释里的裸 `Constants.PLATFORM_USER_ID`（本票明令不碰 schema 注释本体），因此 `sql.md` 的镜像 DDL 也保持裸写；这是全仓唯一「非全限定」的残留表述，见「还发现的问题」。
+  - `schema.sql:812` 的 `virtual_wallet` 表注释与 `sql.md` 的镜像同步改成 `user_id = types.wallet.Constants.PLATFORM_USER_ID`（只换这一个字符串，列 / 索引 / 约束未动）——按 lead 追加裁决：常量已换包，裸写指向已不存在的类；票里「不要碰 `schema.sql` 注释本体」那条限制因此收窄为「不改列 / 索引 / 约束」。全仓已无裸 `Constants.PLATFORM_USER_ID`。
 
 - **B1 与 schema 的对齐方式**：四个围栏块（`virtual_wallet` / `wallet_detail` / `payment_order` / `wallet_pay_task`）的 DDL 现在逐行取自 `schema.sql`（:801–812、:814–827、:832–847、:854–866），并用脚本把两边 `CREATE TABLE … ) ENGINE … ;` 区间取出做字符串比对，四块全部相等（不是「看着一样」）。逐字一致的要求顺带修掉票里没点名的两处漂移：`wallet_pay_task` 的 `uk_order_id` 注释（「支付任务」→「回调任务」）与表注释（「钱包支付收敛任务 / 冻结事务内落行」→「支付回调任务 / 支付事务内落行，与支付单 PAID + 平台代收入账同生同死」）；`virtual_wallet` / `wallet_detail` 两处 `user_id` 的列对齐空格也随 schema 对齐（逐字一致下无法保留 sql.md 原来的对齐风格）。
   - 说明段落：`payment_order` / `wallet_pay_task` 的散文改成 schema 注释块的同一措辞（「落买家出账 `PRODUCT_PAY` + 平台入账 `PLATFORM_IN` 双边流水、买家余额条件扣减 + 平台余额入账」「钱已由平台代收」），旧「落 `PRODUCT_FROZEN` 流水并扣冻」「钱已冻」清零。
@@ -119,9 +119,11 @@ spec 的 User Story 24 要求「DB 文档同步资金归属口径」，票 05 �
 - **B4 结论与剩余风险**：`quantity` 从 `ProductPublishRequestDTO`（`@Min(1)` / `@Max(999)`）→ `ProductController.publishProduct` → `IdleCase` → `IdleServiceImpl.publishProduct` → `ProductEntity.create`（:54 赋值）→ `IdleRepository.save`（:163 缺省 1）全链路通，夹具补 `Map.entry("quantity", 2)` 后：7 个 `createProductOrder(..., 2)` 的用例都有 2 件可扣，`quantity=1` 的两个用例（余额不足、待支付取消）也仍成立（2 ≥ 1）；断言金额（39.80 / 960.20 / 1039.80）与 `19.90 × 2` 一致，未改。真跑会红的风险主要不在夹具而在钱包口径本身（平台行懒创建的回滚、`balance − frozen_amount` 守卫），本票按要求未执行验证。
 
 - **还发现的问题**（都没在本票改，留记录）：
-  1. `schema.sql:812` 表注释里的裸 `Constants.PLATFORM_USER_ID` 在 A2 后已不是全限定名，`sql.md` 必须跟着镜像成裸写；建议后续纯文档票把两处都改成 `types.wallet.Constants.PLATFORM_USER_ID`（本票禁改 schema 注释本体）。
+  1. `schema.sql:812` 表注释里的裸 `Constants.PLATFORM_USER_ID`（A2 后已非全限定名）**已在本票追加轮修掉**，`sql.md:647` 镜像同步、块级比对仍全等——见注记末尾「追加轮」。
   2. 仓库根 `review_diff.txt` 是 `8eb9548` 就提交进来的评审 diff 产物（约 500 行、含 wallet 段历史 diff），不属于任何特性；建议删除或进 `.gitignore`。
   3. `docs/plans/notify-event-refactor.md:53` 仍以 `types/common/Constants.java` 为编辑目标——那是通知 topic 的历史计划、与钱包常量无关，A2 未动它。
   4. `pay` 的「买家锚 0 行即视为已支付、直接返回」与 `insertPlatformDetail` 的硬守卫之间有个理论缝隙：若买家 `PRODUCT_PAY` 行已存在而平台 `PLATFORM_IN` 行缺失（历史半截数据），重复支付会一直走 `alreadyPaid` 短路、不会补平台腿，孤儿扫描也看不见（它判的是「有入账无出账」）。属存量数据修复范畴（spec Out of Scope），记录待后续。
 
 - **交付口径**：按要求**未运行 `mvn`、任何测试、构建与 SQL**；全部结论来自静态阅读、`git grep` 与两份文档的块级字符串比对。
+
+- **追加轮（lead 裁决，同票同分支）**：把 `backend/better-school/sql/schema.sql:812` 与 `sql.md:647` 的 `virtual_wallet` 表注释从裸 `Constants.PLATFORM_USER_ID` 改成 `types.wallet.Constants.PLATFORM_USER_ID`——A2 换包后裸写指向已不存在的类，lead 裁决推翻本票原「不要碰 schema.sql 注释本体」的限制（收窄为「不改列 / 索引 / 约束」）。只改这一个字符串（`git diff -U0 -- schema.sql` 恰好 1 行），改完重跑四块块级比对仍 4/4 全等；仍未跑 mvn / 测试。

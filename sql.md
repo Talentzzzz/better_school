@@ -644,7 +644,7 @@ CREATE TABLE IF NOT EXISTS virtual_wallet (
     PRIMARY KEY (id),
     UNIQUE KEY uk_wallet_id (wallet_id),
     UNIQUE KEY uk_user (user_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '虚拟钱包表（一人一行：余额账户；平台代收账户也是本表一行，user_id = Constants.PLATFORM_USER_ID）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '虚拟钱包表（一人一行：余额账户；平台代收账户也是本表一行，user_id = types.wallet.Constants.PLATFORM_USER_ID）';
 ```
 
 > **平台代收账户就是本表一行**：`user_id = types.wallet.Constants.PLATFORM_USER_ID`，`balance` 从 0 起、`frozen_amount` 恒 0，懒创建（`INSERT IGNORE` 撞 `uk_user` 幂等），不出现在任何用户可见接口里。**对账不变量**：平台账户 `balance` = Σ（有 `PLATFORM_IN` 且无 `PLATFORM_OUT` 的订单金额之和）——本期只定口径，没有定时对账 job（ADR-0019）。
