@@ -1,8 +1,8 @@
 package com.betterschool.integration.idle;
 
 import com.betterschool.integration.support.PostApiTestBase;
-import com.betterschool.types.common.Constants;
 import com.betterschool.types.exception.BusinessException;
+import com.betterschool.types.wallet.Constants;
 import com.betterschool.usecase.idle.IdleCase;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -114,7 +114,9 @@ class ProductPayCompositeTxIntegrationTest extends PostApiTestBase {
                 Map.entry("images", List.of()),
                 Map.entry("price", new BigDecimal(price)),
                 Map.entry("tradeLocation", "图书馆门口"),
-                Map.entry("category", "BOOKS")), seller);
+                Map.entry("category", "BOOKS"),
+                // 发布即落台账（quantity 缺省 = 1）；用例下单 quantity=2，故夹具必须挂 2 件
+                Map.entry("quantity", 2)), seller);
         assertSuccess(response, "发布商品");
         return response.path("data").asText();
     }

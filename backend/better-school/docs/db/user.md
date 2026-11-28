@@ -58,7 +58,7 @@
 |----|----|----|----|
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
 |wallet_id|varchar(36)|UNIQUE(uk_wallet_id), NOT NULL|业务 ID（UUID 字符串，对外唯一标识）|
-|user_id|varchar(36)|UNIQUE(uk_user), NOT NULL|钱包所有者；一人一钱包。平台代收账户用保留 `user_id`（`Constants.PLATFORM_USER_ID`）|
+|user_id|varchar(36)|UNIQUE(uk_user), NOT NULL|钱包所有者；一人一钱包。平台代收账户用保留 `user_id`（`types.wallet.Constants.PLATFORM_USER_ID`）|
 |balance|decimal(10,2)|NOT NULL, DEFAULT 0.00|余额|
 |frozen_amount|decimal(10,2)|NOT NULL, DEFAULT 0.00|冻结金额（**商品链路已退役**：不再写入、不再解冻；仅历史残留，作买家出账守卫的减项）|
 |create_time|datetime|NOT NULL|创建时间|
@@ -66,7 +66,7 @@
 
 ## 注意
 - 建钱包走 `INSERT IGNORE`（撞 `uk_user` = 已存在，幂等）；`wallet_id` 由应用层 `UUID.randomUUID()` 在 insert 前生成随行写入（uuid-biz-id 票 06 起，不再回写）
-- **平台代收账户就是本表一行**：`user_id = Constants.PLATFORM_USER_ID`（保留常量，与系统通知助手 `SYSTEM_USER_ID` 分开），`balance` 初始 0、`frozen_amount` 恒 0；懒创建（`ensureWallet(userId, initialBalance)` 带初始余额，注册路径用注册赠送额、平台路径用 0，`INSERT IGNORE` 撞 `uk_user` 幂等）。它不出现在任何用户可见接口里
+- **平台代收账户就是本表一行**：`user_id = types.wallet.Constants.PLATFORM_USER_ID`（保留常量，与系统通知助手 `SYSTEM_USER_ID` 分开），`balance` 初始 0、`frozen_amount` 恒 0；懒创建（`ensureWallet(userId, initialBalance)` 带初始余额，注册路径用注册赠送额、平台路径用 0，`INSERT IGNORE` 撞 `uk_user` 幂等）。它不出现在任何用户可见接口里
 - 可用余额 = `balance − frozen_amount`；对商品链路**只在买家出账守卫里生效**（条件 UPDATE：`balance − frozen_amount >= amount`，不满足 = 余额不足）。商品链路不再冻结、不再解冻
 - 平台出账守卫是 `balance >= amount`（不减 `frozen_amount`）；不足视为不变量破坏 → 整笔回滚 + ERROR 日志，不允许把平台余额扣成负数
 - **对账不变量**：平台账户 `balance` = Σ（有 `PLATFORM_IN` 且无 `PLATFORM_OUT` 的订单金额之和）。本期只定口径，没有定时对账 job（见 ADR-0019）

@@ -56,17 +56,17 @@
 
 验收清单：
 
-- [ ] 新 ADR 0019 存在且含三笔归属表 + 对账不变量 + 历史映射 + 被否方案；ADR 0018 顶部有取代注记
-- [ ] `CONTEXT.md` 支付段与两个新词条口径一致，`关闭支付单` 不再说「退款走解冻」
-- [ ] `docs/db/user.md` / `docs/db/idle.md` / `docs/db/outbox.md` / `docs/api/idle.md` / `docs/api/payment.md` 中「冻结/解冻」作为**现行**口径的表述清零（历史注记与 `Avoid` 词可留）
-- [ ] `schema.sql` 只改注释；`migrations/` 下新增映射 SQL
-- [ ] 全仓 grep `PRODUCT_FROZEN` / `PRODUCT_UNFROZEN`：只剩「历史 / 已映射 / 枚举兼容」语义的表述
-- [ ] 不碰任何 Java 代码（票 01–04 负责）；**不运行 mvn / 任何测试**
+- [x] 新 ADR 0019 存在且含三笔归属表 + 对账不变量 + 历史映射 + 被否方案；ADR 0018 顶部有取代注记
+- [x] `CONTEXT.md` 支付段与两个新词条口径一致，`关闭支付单` 不再说「退款走解冻」
+- [x] `docs/db/user.md` / `docs/db/idle.md` / `docs/db/outbox.md` / `docs/api/idle.md` / `docs/api/payment.md` 中「冻结/解冻」作为**现行**口径的表述清零（历史注记与 `Avoid` 词可留）
+- [x] `schema.sql` 只改注释；`migrations/` 下新增映射 SQL
+- [x] 全仓 grep `PRODUCT_FROZEN` / `PRODUCT_UNFROZEN`：只剩「历史 / 已映射 / 枚举兼容」语义的表述
+- [x] 不碰任何 Java 代码（票 01–04 负责）；**不运行 mvn / 任何测试**
 
 **落地注记（实现取舍）：**
 
 - **ADR 编号定为 0019**：`docs/adr/0019-platform-escrow-account.md`，照 0016 / 0018 的体裁（标题 / 一句话决定 / 为什么改 / Decision / Considered Options / Consequences / Migration / References）。含三笔资金归属表、双边流水语义、幂等锚、两条余额守卫、`frozen_amount` 退役、对账不变量、孤儿扫描新判据、5 个被否方案（新建账户表 / 只改支付一笔 / 给支付单加 REFUNDED / 保留冻结双记 / 平台出账不校验余额）与历史映射 SQL。
-- **ADR-0018 取代注记**：标题下加引用块（按票的原文），另在开头段、支付事务条、`wallet_pay_task` 条、关闭支付单条各补一句「（口径见 0019：…）」——都是就地补注，原文保留为当时的历史记录。`Considered Options` 表里关于 `PRODUCT_UNFROZEN` 的句子是「当时为何否 REFUNDED」的推理，未改。
+- **ADR-0018 取代注记**：标题下加引用块（按票的原文），另在开头段、支付事务条、`wallet_pay_task` 条、关闭支付单条各补一句「（口径见 0019：…）」——都是就地补注，原文保留为当时的历史记录。`Considered Options` 表里那行「给 `payment_order` 加 REFUNDED 状态」的推理被改了一处事实：原文把退款事实源写成「`wallet_detail` PRODUCT_UNFROZEN」，随新口径改成泛称「退款流水」（不改推理，只去掉退役类型名；票 06 复核发现本票注记原先误称此处「未改」）。
 - **`CONTEXT.md`**：支付段改「支付单」不承载余额的表述（改成平台代收 + 平台出账）；「关闭支付单」词条正文与 `_Avoid_` 都换成平台出账口径；新增「平台代收账户」「平台出账」两个词条，放在「关闭支付单」之后（支付段的词条读完再展开账务词）。`平台出账` 的 `_Avoid_` 收「解冻、退款流水」。
 - **DB 文档**：`db/user.md` 改 `virtual_wallet`（平台行 = 保留 `user_id` / 0 余额 / 懒创建、`frozen_amount` 商品链路退役、买家出账守卫 `balance − frozen_amount >= amount`、平台出账守卫 `balance >= amount`、对账不变量）、`wallet_detail`（新 type 串 + 双边流水 + 幂等锚 = 业务侧那一行 + 结算退款共用 `PLATFORM_OUT` 互斥 + 历史映射 + 「只插不改」加 DBA 脚本例外）、`payment_order`（支付事务 / 关闭）、`wallet_pay_task`（「行在 ⇒ 钱已由平台代收」）；`db/idle.md`、`db/outbox.md` 同步。
 - **API 文档**：`api/idle.md` 确认收货 / 取消两条 + 订单详情「下单不做资金动作」；`api/payment.md` 开头、隐藏钱包注、支付资金动作三条、状态机图、回调与退款两条。

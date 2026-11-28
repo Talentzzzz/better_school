@@ -17,10 +17,10 @@ import com.betterschool.infrastructure.dao.wallet.po.PaymentOrderPO;
 import com.betterschool.infrastructure.dao.wallet.po.VirtualWallet;
 import com.betterschool.infrastructure.dao.wallet.po.WalletDetail;
 import com.betterschool.infrastructure.dao.wallet.po.WalletPayTaskPO;
-import com.betterschool.types.common.Constants;
 import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import com.betterschool.types.id.IIdGenerator;
+import com.betterschool.types.wallet.Constants;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
@@ -127,8 +127,11 @@ public class WalletRepository implements IWalletRepository {
     /**
      * 确认收货结算：平台出账 + 卖家入账，一个钱包事务。
      * <p>
-     * 事务内顺序固定为「双边流水 → 双边余额」：幂等锚（卖家 {@code PRODUCT_INCOME}）先行，
-     * 它返回 0 就整笔返回——流水表是事实源，锚没进去说明这笔早结算过，此时动任何余额都会重复记账。
+     * 事务内四步固定顺序：平台钱包行就位 → 幂等锚（卖家 {@code PRODUCT_INCOME}）→ 锚返回 0 就整笔返回
+     * → 平台出账 + 卖家加余额（{@link #platformOutAndCredit}）。流水表是事实源，锚没进去说明这笔早结算过，
+     * 此时动任何余额都会重复记账，所以幂等锚刻意留在 public 方法里、不参数化进私有方法
+     * （锚类型是结算与退款唯一的真差异）。
+     * <p>
      * 平台腿 {@code PLATFORM_OUT} 与退款共用同一类型：同一订单只有一个终态，唯一键
      * {@code uk_order_type(order_id, type, biz_round, user_id)} 因此保证平台对同一订单只出账一次。
      */
@@ -138,24 +141,16 @@ public class WalletRepository implements IWalletRepository {
             // 平台钱包行必须先存在，否则下面 PLATFORM_OUT 的 INSERT ... SELECT 会插 0 行
             ensurePlatformWallet();
             // 幂等锚 = 业务侧那一行（卖家结算行）：0 行即整笔已结算过，余额一律不碰
-            WalletDetail sellerDetail = new WalletDetail();
-            sellerDetail.setUserId(sellerId);
-            sellerDetail.setType(WalletDetailTypeEnum.PRODUCT_INCOME.name());
-            sellerDetail.setAmount(amount);
-            sellerDetail.setOrderId(orderId);
-            sellerDetail.setBizRound(0);
-            if (walletDetailDao.insertIgnoreDetail(sellerDetail) == 0) {
+            WalletDetail walletDetail = new WalletDetail();
+            walletDetail.setUserId(sellerId);
+            walletDetail.setType(WalletDetailTypeEnum.PRODUCT_INCOME.name());
+            walletDetail.setAmount(amount);
+            walletDetail.setOrderId(orderId);
+            walletDetail.setBizRound(0);
+            if (walletDetailDao.insertIgnoreDetail(walletDetail) == 0) {
                 return null;
             }
-            insertPlatformDetail(WalletDetailTypeEnum.PLATFORM_OUT, orderId, amount);
-            // 平台余额守卫：不足视为不变量破坏（平台付了没收过的钱）→ ERROR + 抛异常，整笔回滚
-            if (walletDao.updateDecreaseBalance(Constants.PLATFORM_USER_ID, amount) == 0) {
-                VirtualWallet virtualWallet = walletDao.selectByUserId(Constants.PLATFORM_USER_ID);
-                log.error("平台代收余额不足，结算整笔回滚：orderId={} sellerId={} amount={} platformBalance={}",
-                        orderId, sellerId, amount, virtualWallet == null ? null : virtualWallet.getBalance());
-                throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "平台代收余额不足，结算失败");
-            }
-            walletDao.updateIncreaseBalance(sellerId, amount);
+            platformOutAndCredit(walletDetail, "结算");
             return null;
         });
     }
@@ -170,26 +165,40 @@ public class WalletRepository implements IWalletRepository {
         transactionTemplate.execute(status -> {
             ensurePlatformWallet();
             // 幂等锚 = 业务侧那一行（买家退款行）：0 行即整笔已退过款，余额一律不碰
-            WalletDetail buyerDetail = new WalletDetail();
-            buyerDetail.setUserId(buyerId);
-            buyerDetail.setType(WalletDetailTypeEnum.PRODUCT_REFUND.name());
-            buyerDetail.setAmount(amount);
-            buyerDetail.setOrderId(orderId);
-            buyerDetail.setBizRound(0);
-            if (walletDetailDao.insertIgnoreDetail(buyerDetail) == 0) {
+            WalletDetail walletDetail = new WalletDetail();
+            walletDetail.setUserId(buyerId);
+            walletDetail.setType(WalletDetailTypeEnum.PRODUCT_REFUND.name());
+            walletDetail.setAmount(amount);
+            walletDetail.setOrderId(orderId);
+            walletDetail.setBizRound(0);
+            if (walletDetailDao.insertIgnoreDetail(walletDetail) == 0) {
                 return null;
             }
-            insertPlatformDetail(WalletDetailTypeEnum.PLATFORM_OUT, orderId, amount);
-            // 平台余额守卫：不足 → ERROR + 抛异常，整笔回滚（绝不让平台余额为负）
-            if (walletDao.updateDecreaseBalance(Constants.PLATFORM_USER_ID, amount) == 0) {
-                VirtualWallet virtualWallet = walletDao.selectByUserId(Constants.PLATFORM_USER_ID);
-                log.error("平台代收余额不足，退款整笔回滚：orderId={} buyerId={} amount={} platformBalance={}",
-                        orderId, buyerId, amount, virtualWallet == null ? null : virtualWallet.getBalance());
-                throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "平台代收余额不足，退款失败");
-            }
-            walletDao.updateIncreaseBalance(buyerId, amount);
+            platformOutAndCredit(walletDetail, "退款");
             return null;
         });
+    }
+
+    /**
+     * 平台出账 + 收款方入账：平台配对流水 → 平台余额守卫扣减 → 收款方加余额（结算与退款共用）。
+     * <p>
+     * 参数是调用方先落好的业务侧那一行（幂等锚，已带 orderId / amount / userId / bizRound）：本方法只从它
+     * 读订单、金额与收款方，不重复插锚——锚归调用方，锚类型才是结算与退款的唯一真差异。
+     * {@code scene} 只进日志与异常文案（「结算」/「退款」）。
+     * <p>
+     * 平台余额守卫：不足视为不变量破坏（平台付了没收过的钱）→ ERROR + 抛异常，整笔回滚，
+     * 绝不让平台余额扣成负数。
+     */
+    private void platformOutAndCredit(WalletDetail walletDetail, String scene) {
+        insertPlatformDetail(WalletDetailTypeEnum.PLATFORM_OUT, walletDetail.getOrderId(), walletDetail.getAmount());
+        if (walletDao.updateDecreaseBalance(Constants.PLATFORM_USER_ID, walletDetail.getAmount()) == 0) {
+            VirtualWallet virtualWallet = walletDao.selectByUserId(Constants.PLATFORM_USER_ID);
+            log.error("平台代收余额不足，{}整笔回滚：orderId={} receiverId={} amount={} platformBalance={}",
+                    scene, walletDetail.getOrderId(), walletDetail.getUserId(), walletDetail.getAmount(),
+                    virtualWallet == null ? null : virtualWallet.getBalance());
+            throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "平台代收余额不足，" + scene + "失败");
+        }
+        walletDao.updateIncreaseBalance(walletDetail.getUserId(), walletDetail.getAmount());
     }
 
     /**
@@ -199,15 +208,16 @@ public class WalletRepository implements IWalletRepository {
      * 继续动余额，否则同一订单会被平台收 / 付第二次。这里把唯一键当成硬守卫：记 ERROR 并整笔回滚，
      * 让「平台对同一订单只收一次、只付一次」真正由数据库约束守住，而不是靠调用顺序的善意。
      */
-    private void insertPlatformDetail(WalletDetailTypeEnum platformType, String orderId, BigDecimal amount) {
+    private void insertPlatformDetail(WalletDetailTypeEnum walletDetailTypeEnum, String orderId, BigDecimal amount) {
         WalletDetail walletDetail = new WalletDetail();
         walletDetail.setUserId(Constants.PLATFORM_USER_ID);
-        walletDetail.setType(platformType.name());
+        walletDetail.setType(walletDetailTypeEnum.name());
         walletDetail.setAmount(amount);
         walletDetail.setOrderId(orderId);
         walletDetail.setBizRound(0);
         if (walletDetailDao.insertIgnoreDetail(walletDetail) == 0) {
-            log.error("平台流水已存在，资金状态不一致，整笔回滚：type={} orderId={} amount={}", platformType, orderId, amount);
+            log.error("平台流水已存在，资金状态不一致，整笔回滚：type={} orderId={} amount={}",
+                    walletDetailTypeEnum, orderId, amount);
             throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "平台流水已存在，资金状态不一致");
         }
     }
@@ -355,13 +365,13 @@ public class WalletRepository implements IWalletRepository {
                 throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "支付单状态已变化，请刷新重试");
             }
             // 双边流水先行：买家出账行是幂等锚（uk 冲突 = 这笔支付已处理过，整笔返回、不动任何余额）
-            WalletDetail buyerDetail = new WalletDetail();
-            buyerDetail.setUserId(userId);
-            buyerDetail.setType(WalletDetailTypeEnum.PRODUCT_PAY.name());
-            buyerDetail.setAmount(paymentOrderPO.getAmount());
-            buyerDetail.setOrderId(paymentOrderPO.getBizOrderId());
-            buyerDetail.setBizRound(0);
-            if (walletDetailDao.insertIgnoreDetail(buyerDetail) == 0) {
+            WalletDetail walletDetail = new WalletDetail();
+            walletDetail.setUserId(userId);
+            walletDetail.setType(WalletDetailTypeEnum.PRODUCT_PAY.name());
+            walletDetail.setAmount(paymentOrderPO.getAmount());
+            walletDetail.setOrderId(paymentOrderPO.getBizOrderId());
+            walletDetail.setBizRound(0);
+            if (walletDetailDao.insertIgnoreDetail(walletDetail) == 0) {
                 return toPayResult(paymentOrderPO, true);
             }
             // 平台代收入账行：与买家出账行同事务成对
