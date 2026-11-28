@@ -26,7 +26,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const chatRooms = useChatRoomsStore()
 
-const productId = Number(route.params.id)
+const productId = String(route.params.id ?? '')
 const product = ref<Product | null>(null)
 const favBusy = ref(false)
 
