@@ -4,7 +4,7 @@
 
 **Blocked by:** 无
 
-**Status:** ready-for-agent
+**Status:** resolved（`types/api.ts` 与 `api/*` 全部业务 ID 转 `string`；数值语义 31 处逐项复核未动；`id: number` 只剩 `CreditLog.id`（物理自增流水）、`httpPost<number>` 只剩 `markRead`（已读水位线）两处预期例外）
 
 ## 判据（唯一一条，别逐字段讨论）
 
@@ -59,7 +59,14 @@
 
 ## 验收（静态检索自查，**不跑构建 / 类型检查 / 测试**，spec 交付口径）
 
-- [ ] `front/src/types/api.ts` 中 `Id\s*[:?]\s*number` 命中 0（`number` 只出现在上表「保持 number」清单）。
-- [ ] `front/src/api/` 中 `Id\s*[:?]\s*number` 命中 0，`httpPost<number>` 只剩 `markRead` 一处（且已确认是水位线）。
-- [ ] 上表「保持 number」清单逐项人工对了一遍，一个没错改。
-- [ ] `git diff --stat` 只包含本票文件。
+- [x] `front/src/types/api.ts` 中 `Id\s*[:?]\s*number` 命中 0（`number` 只出现在上表「保持 number」清单）。
+- [x] `front/src/api/` 中 `Id\s*[:?]\s*number` 命中 0，`httpPost<number>` 只剩 `markRead` 一处（且已确认是水位线）。
+- [x] 上表「保持 number」清单逐项人工对了一遍，一个没错改。
+- [x] `git diff --stat` 只包含本票文件。
+
+## Comments
+
+- 判据以 `backend/**/*ResponseDTO.java` 与 controller 签名逐字段核对（`String` → `string`，`Long`/`int`/`Integer` → `number`）。
+- 清单外一并纠正：`savePostDraft` 后端是 `Response<String>`，返回类型同步改 `httpPost<string>`。
+- 有意不动：`ProductOrder.quantity`（后端新增字段，扩大 UI 面超出本票）、`PRIZE_TINTS`（票 07）。
+- 交付口径：未跑构建 / 类型检查 / 测试（spec 明示）。

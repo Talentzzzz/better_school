@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02
 
-**Status:** ready-for-agent
+**Status:** resolved（`postId` 原样字符串；楼中楼状态表 / 回复目标 / 点赞防抖集合改字符串键；草稿 `?draft=` 与草稿箱 `actingId` 原样承载；HomeView / PostCard / ProfileCommentRow 审计后零改动）
 
 票 01 之后线契约已是 `string`，票 02 之后 `/post/:id` 已不限数字。本票只改视图层，**不要**再动 `types/api.ts`、`api/*`、`router`、`stores`。
 
@@ -39,7 +39,12 @@
 
 ## 验收（静态检索自查，**不跑构建 / 类型检查 / 测试**）
 
-- [ ] `front/src/views/post/` 与 `front/src/components/PostCard.vue`、`ProfileCommentRow.vue` 中 `Number(` / `parseInt(` 命中 0（本簇只允许 `likeCount` 之类数值运算，不允许对 id 解析）。
-- [ ] 上述文件中 `Id\s*[:?]\s*number`、`Record<number`、`Set<number>` 命中 0。
-- [ ] 手动走查 4 条路径的代码可读性：帖子详情加载 → 点赞 → 发根评论 → 展开楼中楼 → 回复子回复 → 删评论；草稿箱 → 编辑草稿 → 提交。
-- [ ] `git diff --stat` 只包含本票文件。
+- [x] `front/src/views/post/` 与 `front/src/components/PostCard.vue`、`ProfileCommentRow.vue` 中 `Number(` / `parseInt(` 命中 0（本簇只允许 `likeCount` 之类数值运算，不允许对 id 解析）。
+- [x] 上述文件中 `Id\s*[:?]\s*number`、`Record<number`、`Set<number>` 命中 0。
+- [x] 手动走查 4 条路径的代码可读性：帖子详情加载 → 点赞 → 发根评论 → 展开楼中楼 → 回复子回复 → 删评论；草稿箱 → 编辑草稿 → 提交。
+- [x] `git diff --stat` 只包含本票文件。
+
+## Comments
+
+- HomeView / PostCard / ProfileCommentRow 审计后零改动（无 `number` 注解、无数值解析，`AppImage.seed` 本就接受 `string | number`）。
+- 旧数字形链接不写兼容分支：后端按 UUID 解析失败即不存在，前端落现有加载 / 空态。

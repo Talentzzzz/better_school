@@ -4,7 +4,7 @@
 
 **Blocked by:** 无（与票 01 文件不重叠，可并行；语义上依赖票 01 的线契约）
 
-**Status:** ready-for-agent
+**Status:** resolved（六条详情路由去掉 `\d+`；`chatRooms` 的 `appliedSeq` / `readSeqs` 改字符串键、READ/RECALL 载荷转 `string`；`notices` 的 `refId` 转 `string`，水位游标仍是 `number`）
 
 ## 1. `front/src/router/index.ts`
 
@@ -40,7 +40,12 @@
 
 ## 验收（静态检索自查，**不跑构建 / 类型检查 / 测试**）
 
-- [ ] `front/src/router/index.ts` 中 `\\d+` 命中 0。
-- [ ] `front/src/stores/` 中 `Record<number` 命中 0。
-- [ ] `chatRooms.ts` 里所有 roomId / userId 形参与载荷类型都是 `string`，`seq` / `readSeq` / `unread` 仍是 `number`。
-- [ ] `git diff --stat` 只包含本票文件。
+- [x] `front/src/router/index.ts` 中 `\\d+` 命中 0。
+- [x] `front/src/stores/` 中 `Record<number` 命中 0。
+- [x] `chatRooms.ts` 里所有 roomId / userId 形参与载荷类型都是 `string`，`seq` / `readSeq` / `unread` 仍是 `number`。
+- [x] `git diff --stat` 只包含本票文件。
+
+## Comments
+
+- READ/RECALL 判空保留真值判断；详情页 RECALL 用等值比对 `payload?.roomId !== roomId`，已覆盖 `undefined`，改成 `!== undefined` 会丢掉「非本会话」过滤（见票 06）。
+- `stores/auth.ts` 未改：`userId` getter 随 `UserInfo.userId` 自动成 `string | null`。

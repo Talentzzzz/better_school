@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02
 
-**Status:** ready-for-agent
+**Status:** resolved（作者主页 `userId` 取字符串，五条取数链路与私信入口实参一致；`auth.userId` 随线契约转 `string | null`；搜索 / 历史 / 收藏 / 设置审计后零改动）
 
 票 01 之后 `UserSummary.userId` / `PublicUserProfile.userId` / 三个 `listUser*` 形参都是 `string`，`auth.userId` 也自动变成 `string | null`；票 02 之后 `/user/:userId` 不限数字。本票只改视图层。
 
@@ -35,7 +35,12 @@
 
 ## 验收（静态检索自查，**不跑构建 / 类型检查 / 测试**）
 
-- [ ] 本票文件中 `Number(` / `parseInt(` 命中 0。
-- [ ] 本票文件中 `Id\s*[:?]\s*number` 命中 0。
-- [ ] 作者主页：`/user/<uuid>` 取到字符串 → 资料 / 帖子 / 评论 / 闲置 / 私信五条调用链的实参类型一致（逐行读一遍）。
-- [ ] `git diff --stat` 只包含本票文件。
+- [x] 本票文件中 `Number(` / `parseInt(` 命中 0。
+- [x] 本票文件中 `Id\s*[:?]\s*number` 命中 0。
+- [x] 作者主页：`/user/<uuid>` 取到字符串 → 资料 / 帖子 / 评论 / 闲置 / 私信五条调用链的实参类型一致（逐行读一遍）。
+- [x] `git diff --stat` 只包含本票文件。
+
+## Comments
+
+- 仅 `AuthorProfileView.vue` 一行改动；其余六个文件审计后零改动。
+- SearchView 的用户结果卡片改造前就不可点，按「不改交互」未新增跳转（spec Out of Scope：本轮之外的新功能）。

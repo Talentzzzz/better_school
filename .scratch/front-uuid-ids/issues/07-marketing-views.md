@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02
 
-**Status:** ready-for-agent
+**Status:** resolved（`prizeId` / `recordId` / 我的奖品 `id` / 购买单号转 `string`；取色从 `PRIZE_TINTS[id % n]` 换成 `prizeTint` 字符串哈希，目录与我的奖品同一奖品恒同色；`tier` / 次数 / 积分余额仍 `number`）
 
 票 01 之后 `LotteryPrize.prizeId`、`DrawResult.recordId` / `prizeId`、`UserPrize.id` / `prizeId`、`confirmReceived(id: string)`、`exchangeDrawCount` 返回的 `redeemOrderId` 都是 `string`。`tier`、`pointsAmount`、`remaining`、`total`、`drawCount`、积分余额仍是 `number`。
 
@@ -40,7 +40,12 @@ export function prizeTint(prizeId: string): string {
 
 ## 验收（静态检索自查，**不跑构建 / 类型检查 / 测试**）
 
-- [ ] `front/src/views/marketing/` 中 `Id %` / `Id\s*[:?]\s*number` / `Number(` / `parseInt(` 命中 0。
-- [ ] `PRIZE_TINTS[… % …]` 的直接取模只剩 `prizeTint` 内部一处。
-- [ ] 逐行确认：目录渲染、抽奖结果定位、我的奖品列表、确认收货提交四条链路实参类型一致（`string`），而 `tier` / 次数 / 积分余额仍是 `number`。
-- [ ] `git diff --stat` 只包含本票文件。
+- [x] `front/src/views/marketing/` 中 `Id %` / `Id\s*[:?]\s*number` / `Number(` / `parseInt(` 命中 0。
+- [x] `PRIZE_TINTS[… % …]` 的直接取模只剩 `prizeTint` 内部一处。
+- [x] 逐行确认：目录渲染、抽奖结果定位、我的奖品列表、确认收货提交四条链路实参类型一致（`string`），而 `tier` / 次数 / 积分余额仍是 `number`。
+- [x] `git diff --stat` 只包含本票文件。
+
+## Comments
+
+- 取色改 `prizeTint` 字符串哈希；抽奖弹窗的 `winTint` 一并统一到同一辅助，避免目录与弹窗同奖品不同色。
+- 「兑换单号」按 GLOSSARY 词表改称「购买单号」（本域统一「购买」，`_Avoid_: 兑换单`）。

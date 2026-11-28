@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02
 
-**Status:** ready-for-agent
+**Status:** resolved（商品与订单详情路由参数取字符串，`?card=PRODUCT:<uuid>` 原样拼入；`createProduct` / `createProductOrder` 返回 `string` 后直接透传；收银台与订单列表审计后零改动）
 
 票 01 之后 `Product.productId` / `ProductOrder.orderId` 等已是 `string`，`createProduct` / `createProductOrder` 返回 `string`；票 02 之后 `/product/:id`、`/idle/order/:id`、`/trade/order/:id` 不限数字。本票只改视图层。
 
@@ -35,7 +35,13 @@
 
 ## 验收（静态检索自查，**不跑构建 / 类型检查 / 测试**）
 
-- [ ] `front/src/views/idle/` 中 `Number(` 只剩 `ProductPublishView` 的价格解析（`Number(price.value)`）；`Id\s*[:?]\s*number` 命中 0。
-- [ ] `ProductDetailView`：路由参数 → 详情 → 收藏 / 建会话（带 `?card=PRODUCT:<uuid>`）/ 建订单 → 跳订单详情，五条链实参类型一致。
-- [ ] `ProductOrderView`：角色判定（买家/卖家）两侧同为字符串；三个资金动作传的是同一个 `orderId` 字符串。
-- [ ] `git diff --stat` 只包含本票文件。
+- [x] `front/src/views/idle/` 中 `Number(` 只剩 `ProductPublishView` 的价格解析（`Number(price.value)`）；`Id\s*[:?]\s*number` 命中 0。
+- [x] `ProductDetailView`：路由参数 → 详情 → 收藏 / 建会话（带 `?card=PRODUCT:<uuid>`）/ 建订单 → 跳订单详情，五条链实参类型一致。
+- [x] `ProductOrderView`：角色判定（买家/卖家）两侧同为字符串；三个资金动作传的是同一个 `orderId` 字符串。
+- [x] `git diff --stat` 只包含本票文件。
+
+## Comments
+
+- 仅两行路由参数取字符串；其余文件审计后零改动。
+- `ProductPublishView` 的 `Number(price.value)` 是价格，保留。
+- 订单详情的「联系买家 / 卖家头像跳主页」改造前就没有入口，按「不改交互」未新增（spec Out of Scope）。
