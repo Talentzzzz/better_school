@@ -445,8 +445,8 @@ public class PostServiceImpl implements IPostService {
         softDelete(postCommentEntity);
     }
     @Override
-    public void rebuildCommentFeedIndex() {
-        postRepository.rebuildCommentFeedIndex();
+    public void rebuildFeedIndex() {
+        postRepository.rebuildFeedIndex();
     }
     /**
      * 统一软删（用户删除与举报下架同轨，物理 DELETE 废弃）：状态转 DELETED、行保留。

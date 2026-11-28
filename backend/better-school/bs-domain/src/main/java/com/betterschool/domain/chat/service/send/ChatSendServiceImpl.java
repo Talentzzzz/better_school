@@ -57,9 +57,9 @@ public class ChatSendServiceImpl implements IChatSendService {
         DirectRoomPairVO directRoomPairVO = DirectRoomPairVO.canonicalOf(userId, targetUserId);
 
         // 首来源钉死：既有会话原样返回，带来源的二次进入（如先私信后从市集联系）不覆盖来源与创建人
-        RoomEntity roomEntity = chatRepository.findDirectRoom(directRoomPairVO.getUserMin(), directRoomPairVO.getUserMax());
-        if (roomEntity != null) {
-            return roomEntity;
+        RoomEntity existingRoomEntity = chatRepository.findDirectRoom(directRoomPairVO.getUserMin(), directRoomPairVO.getUserMax());
+        if (existingRoomEntity != null) {
+            return existingRoomEntity;
         }
         RoomEntity roomEntity = new RoomEntity();
         roomEntity.setSource(roomSourceEnum);

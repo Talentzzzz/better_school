@@ -78,7 +78,7 @@ public class ChatController implements IChatService {
         messageEntity.setContent(sendMessageRequestDTO.getContent());
         messageEntity.setRefType(parseRefType(sendMessageRequestDTO.getRefType()));
         messageEntity.setRefId(sendMessageRequestDTO.getRefId());
-        MessageEntity messageEntity = chatCase.sendMessage(messageEntity);
+        messageEntity = chatCase.sendMessage(messageEntity);
         ChatMessageResponseDTO chatMessageResponseDTO = toMessageResponseDTO(messageEntity, null);
         fillSenderInfo(chatMessageResponseDTO, messageEntity.getFromUserId());
         return Response.ok(chatMessageResponseDTO);
