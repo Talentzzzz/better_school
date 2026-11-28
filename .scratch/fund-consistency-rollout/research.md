@@ -24,8 +24,8 @@
 
 接口 `Z:/better_school/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/wallet/service/IWalletAccountService.java`：
 - L23 `void freeze(String userId, BigDecimal amount, String orderId)` —— 冻结悬赏（跑腿，流水类型 FROZEN）
-- L26 `freeze(..., WalletDetailTypeVO type)` —— 带流水类型（跑腿 FROZEN / 商品 PRODUCT_FROZEN）
-- L29 `freeze(..., WalletDetailTypeVO type, int bizRound)` —— 带业务轮次（同一订单同类型多轮，uk 按 biz_round 区分）
+- L26 `freeze(..., WalletDetailTypeEnum type)` —— 带流水类型（跑腿 FROZEN / 商品 PRODUCT_FROZEN）
+- L29 `freeze(..., WalletDetailTypeEnum type, int bizRound)` —— 带业务轮次（同一订单同类型多轮，uk 按 biz_round 区分）
 - L32/L35/L38 `unfreeze` 三重载 —— 解冻退回（默认 UNFROZEN）
 - L41/L44 `income` —— 接单方/接收方入账（默认 INCOME）
 - L47 `getBalance`（钱包不存在懒建自愈）
@@ -34,7 +34,7 @@
 
 ### 1.2 流水类型枚举
 
-`.../domain/wallet/model/valobj/WalletDetailTypeVO.java`（L8-19）：
+`.../domain/wallet/model/valobj/WalletDetailTypeEnum.java`（L8-19）：
 `RECHARGE / FROZEN(托管冻结) / UNFROZEN(解冻退回) / INCOME(接单收入) / PRODUCT_FROZEN(商品托管冻结) / PRODUCT_UNFROZEN(商品托管解冻) / PRODUCT_INCOME(商品售卖收入)`
 
 ### 1.3 仓储实现（事务真源）
@@ -46,7 +46,7 @@
   transactionTemplate.execute(status -> {
       if (insertDetail(userId, type, amount, orderId, bizRound) == 0) { return null; }  // 流水先行：uk 冲突 → 幂等跳过
       if (walletDao.updateFreeze(userId, amount) == 0) {                                  // 余额条件 UPDATE
-          throw new BusinessException(ResponseCode.PARAM_ERROR, "余额不足，无法完成操作"); // 整事务回滚（含流水）
+          throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "余额不足，无法完成操作"); // 整事务回滚（含流水）
       }
       return null;
   });
@@ -79,7 +79,7 @@ ADR 文档：`Z:/better_school/docs/adr/0014-draw-count-purchase-eventual-consis
 
 ### 2.1 状态表与状态机
 
-- 枚举 `Z:/better_school/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/raffle/DrawCountPurchaseState.java`：`DEDUCTED(0) / DONE(1) / DEAD(2)`。
+- 枚举 `Z:/better_school/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/raffle/DrawCountPurchaseStateEnum.java`：`DEDUCTED(0) / DONE(1) / DEAD(2)`。
 - 表 `draw_count_purchase_order`：`Z:/better_school/backend/marketing/sql/schema.sql` L77-95 附近（`purchase_order_id` = `hash(userId, token)`；`state/retry_count/next_retry_at/finish_time`；uk `uk_purchase_order_id`）。
 - 幂等键工具 `.../marketing-types/src/main/java/com/betterschool/marketing/types/common/IdempotencyKeys.java`（`IdempotencyKeys.of(userId, token)`）。
 
@@ -87,7 +87,7 @@ ADR 文档：`Z:/better_school/docs/adr/0014-draw-count-purchase-eventual-consis
 
 `Z:/better_school/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/raffle/adapter/port/points/PointsDeductPort.java`：
 - 域接口：`.../marketing-domain/.../raffle/adapter/port/points/IPointsDeductPort.java`
-- L40-65 `deductForOrder(DrawCountPurchaseOrderEntity order)`：`transactionTemplate.execute` 内① `raffleRepository.insertPurchaseOrder(...)`（L44，REQUIRED 并入）→ ② `pointsAccountService.deduct(userId, pointsCost, PointsReasonType.REDEEM_DRAW_COUNT, purchaseOrderId)`（L46-48，幂等键 = 购买单 id）→ 成功 `ok` / 不足 `setRollbackOnly` + `insufficient` / 失败 `failed`（L49-62）。
+- L40-65 `deductForOrder(DrawCountPurchaseOrderEntity order)`：`transactionTemplate.execute` 内① `raffleRepository.insertPurchaseOrder(...)`（L44，REQUIRED 并入）→ ② `pointsAccountService.deduct(userId, pointsCost, PointsReasonTypeEnum.REDEEM_DRAW_COUNT, purchaseOrderId)`（L46-48，幂等键 = 购买单 id）→ 成功 `ok` / 不足 `setRollbackOnly` + `insufficient` / 失败 `failed`（L49-62）。
 - 类头注释 L18-29 说明为什么组合事务在基础设施 port 而非 case 层或积分侧。
 
 ### 2.3 领域服务（Stripe 幂等入口 + 补偿扫描逻辑）
@@ -142,10 +142,10 @@ ADR 文档：`Z:/better_school/docs/adr/0014-draw-count-purchase-eventual-consis
 
 `Z:/better_school/backend/better-school/bs-case/src/main/java/com/betterschool/usecase/errand/ErrandOrderCase.java`（类头 L34-37：本层不做事务）：
 - L61-64 `payOrder`：**先** `errandOrderService.payOrder`（状态已翻转提交）**后** `walletAccountService.freeze(userId, amount, orderId)`（默认 FROZEN 类型）——两步之间无事务：冻结失败 = 订单已在大厅但悬赏未冻结；宕机 = 永久悬置。**这是收口点。**
-- L157-166 `cancelOrder`：`needRefund` → `walletAccountService.unfreeze`（L161）；`takerCanceled` → `creditAccountService.applyChange(takerId, CreditReasonTypeVO.ERRAND_TAKER_CANCEL, orderId)`（L164）。
+- L157-166 `cancelOrder`：`needRefund` → `walletAccountService.unfreeze`（L161）；`takerCanceled` → `creditAccountService.applyChange(takerId, CreditReasonTypeEnum.ERRAND_TAKER_CANCEL, orderId)`（L164）。
 - L148-155 `confirmOrder`：unfreeze 发布方 + 逐条 `income` 接单方（**已收敛样板：终态短路回放完整结算结果 + 流水 uk 去重**，spec Further Notes 称之为正面样板）。
 - L172-179 `arbitrateOrder`：同 confirm 口径。
-- L244-253 `handleOrderTimeout`（超时中心回调）：unfreeze 发布方（L249）+ `committed` 时 `creditAccountService.applyChange(takerId, CreditReasonTypeVO.ERRAND_TIMEOUT, orderId)`（L251）——**重试被终态短路吞掉后第二段不补跑，是收口点**。
+- L244-253 `handleOrderTimeout`（超时中心回调）：unfreeze 发布方（L249）+ `committed` 时 `creditAccountService.applyChange(takerId, CreditReasonTypeEnum.ERRAND_TIMEOUT, orderId)`（L251）——**重试被终态短路吞掉后第二段不补跑，是收口点**。
 - L255-265 `handleAutoComplete`：unfreeze + income——**接单方悬赏收入可能永久不结算，是收口点**。
 - L189-191 `handlePayTimeout`（无资金动作）；L199-219 `handleLockTimeout`（通知尽力而为）。
 
@@ -176,9 +176,9 @@ ADR 文档：`Z:/better_school/docs/adr/0014-draw-count-purchase-eventual-consis
 
 ### 3.7 信用分扣减入口
 
-- 接口 `Z:/better_school/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/credit/service/ICreditAccountService.java` L19：`CreditChangeResult applyChange(String userId, CreditReasonTypeVO reasonType, String refId)`。
+- 接口 `Z:/better_school/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/credit/service/ICreditAccountService.java` L19：`CreditChangeResult applyChange(String userId, CreditReasonTypeEnum reasonType, String refId)`。
 - 实现 `.../credit/service/CreditAccountServiceImpl.java` L42-50（每次变更 = 仓储原子用例：分数 + 流水 + 封禁联动；流水 uk_user_reason_ref 幂等，见 `CreditRepository.applyChangeWithDetail` L86）。
-- 枚举 `.../credit/model/valobj/CreditReasonTypeVO.java`：L14 `ERRAND_TAKER_CANCEL(-20, "跑腿接单后取消")`、L15 `ERRAND_TIMEOUT(-20, "跑腿超时未完成")`。
+- 枚举 `.../credit/model/valobj/CreditReasonTypeEnum.java`：L14 `ERRAND_TAKER_CANCEL(-20, "跑腿接单后取消")`、L15 `ERRAND_TIMEOUT(-20, "跑腿超时未完成")`。
 
 ### 3.8 超时回调分发（超时中心的入口形状）
 
@@ -190,7 +190,7 @@ ADR 文档：`Z:/better_school/docs/adr/0014-draw-count-purchase-eventual-consis
 
 ### 4.1 状态机
 
-`Z:/better_school/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/model/valobj/ProductOrderStatusVO.java` L11-13：`PENDING_PAYMENT, PAID, DELIVERED, COMPLETED, CANCELLED`（注释 L7-10：取消 PENDING_PAYMENT 无退款 / PAID 需解冻退款）。
+`Z:/better_school/backend/better-school/bs-domain/src/main/java/com/betterschool/domain/trade/model/valobj/ProductOrderStatusEnum.java` L11-13：`PENDING_PAYMENT, PAID, DELIVERED, COMPLETED, CANCELLED`（注释 L7-10：取消 PENDING_PAYMENT 无退款 / PAID 需解冻退款）。
 
 ### 4.2 域服务
 
@@ -203,7 +203,7 @@ ADR 文档：`Z:/better_school/docs/adr/0014-draw-count-purchase-eventual-consis
 ### 4.3 case 编排层（资金缺口所在）
 
 `Z:/better_school/backend/better-school/bs-case/src/main/java/com/betterschool/usecase/trade/ProductOrderCase.java`：
-- L33-36 `payOrder`：先 `productOrderService.payOrder` 后 `walletAccountService.freeze(buyerId, amount, orderId, WalletDetailTypeVO.PRODUCT_FROZEN)`——**两步无事务：买家钱未冻结订单已 PAID，是收口点**。
+- L33-36 `payOrder`：先 `productOrderService.payOrder` 后 `walletAccountService.freeze(buyerId, amount, orderId, WalletDetailTypeEnum.PRODUCT_FROZEN)`——**两步无事务：买家钱未冻结订单已 PAID，是收口点**。
 - L42-48 `confirmReceived`：unfreeze(PRODUCT_UNFROZEN) + income(PRODUCT_INCOME)——现有幂等口径已收敛，**不改**（spec 决策）。
 - L50-56 `cancelOrder`：needRefund → unfreeze(PRODUCT_UNFROZEN)——**与跑腿取消同型，是收口点**。
 

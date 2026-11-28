@@ -2,6 +2,10 @@
 
 > 状态：已执行（2026-11-16，静态验收通过；未启动环境、未跑集成测试、前端零改动）。执行窗口不需要看到本文档所属对话——本计划自包含。
 > **约束：改完后不启动环境、不运行集成测试；测试代码只写不跑。前端零改动。**
+>
+> **后续变更（2026-11-27）**：投递第二跳已折叠——`bs-notify-chat` / `bs-notify-push` 两条 outbox 与 `NotifyChatConsumer` / `NotifyPushConsumer` 已删除，
+> `NotifyEventConsumer` 落库后直接调 `NotificationCase.deliver / push`。本文档中关于“写投递 outbox、再经消费者投递”的段落为历史方案，当前口径见
+> [`backend/better-school/docs/api/notify-channels.md`](../../backend/better-school/docs/api/notify-channels.md)。
 
 ## 1. 背景与目标
 
@@ -64,8 +68,8 @@ public final static String NOTIFY_EVENT_TOPIC = "bs-notify-event";
 public class NotificationEventMessage {
     private String notificationId;   // 生产点预生成 UUID
     private String userId;           // 收件人
-    private String scope;            // NotificationScopeVO.name()
-    private String type;             // NotificationTypeVO.name()
+    private String scope;            // NotificationScopeEnum.name()
+    private String type;             // NotificationTypeEnum.name()
     private String senderId;         // 触发者，可空
     private String title;
     private String content;
@@ -78,7 +82,7 @@ public class NotificationEventMessage {
 **`bs-trigger/src/main/java/com/betterschool/trigger/listener/NotifyEventConsumer.java`**（新建）
 ```java
 /**
- * 通知事件消费方（通知域唯一写入口）：落 notification（幂等）→ 按 NotificationTypeVO.Channel
+ * 通知事件消费方（通知域唯一写入口）：落 notification（幂等）→ 按 NotificationTypeEnum.ChannelEnum
  * 写投递 outbox（CHAT→bs-notify-chat / BANNER→bs-notify-push / NONE→止）。
  * 失败向上抛由 broker 重试；幂等靠 notificationId（uk_notification_id）+ dedupKey（uk_dedup）
  */
@@ -92,7 +96,7 @@ public class NotifyEventConsumer implements RocketMQListener<String> {
     //     —— 参照 NotificationRepository.insertBroadcast 的组装方式（NotificationEntity.create 系列工厂
     //        + 手工 setNotificationId / setBroadcastMsgId 同形状）
     //  3. notificationRepository.insertOne(entity)（doInsertOne 内 seq 回填到 entity）
-    //  4. 按 NotificationTypeVO.valueOf(msg.type).getChannel() 路由：
+    //  4. 按 NotificationTypeEnum.valueOf(msg.type).getChannel() 路由：
     //     CHAT   → outboxMessageStore.save(Constants.NOTIFY_CHAT_TOPIC, new NotifyChatMessage(notificationId, userId, type, title, content, refType, refId))
     //     BANNER → outboxMessageStore.save(Constants.NOTIFY_PUSH_TOPIC, new NotifyPushMessage(userId, scope, entity.getSeq(), type, title, content, refType, refId))
     //     NONE   → log.info 落库完成

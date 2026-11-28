@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.wallet.IPaymentOrderDao">
+
+    <!-- 预下单：uk_biz_order_id 冲突即该订单已有支付单，不覆盖（金额/标题为下单快照，重试零副作用） -->
+    <insert id="insertIgnore" parameterType="com.betterschool.infrastructure.dao.wallet.po.PaymentOrderPO">
+        INSERT IGNORE INTO payment_order (pay_no, biz_order_id, user_id, amount, subject, state, pay_time, create_time, update_time)
+        VALUES (#{payNo}, #{bizOrderId}, #{userId}, #{amount}, #{subject}, #{state}, #{payTime}, NOW(), NOW())
+    </insert>
+
+    <select id="selectByPayNo" resultType="com.betterschool.infrastructure.dao.wallet.po.PaymentOrderPO">
+        SELECT id, pay_no, biz_order_id, user_id, amount, subject, state, pay_time, create_time, update_time
+        FROM payment_order
+        WHERE pay_no = #{payNo}
+    </select>
+
+    <select id="selectByPayNoForUpdate" resultType="com.betterschool.infrastructure.dao.wallet.po.PaymentOrderPO">
+        SELECT id, pay_no, biz_order_id, user_id, amount, subject, state, pay_time, create_time, update_time
+        FROM payment_order
+        WHERE pay_no = #{payNo}
+        FOR UPDATE
+    </select>
+
+    <select id="selectByBizOrderId" resultType="com.betterschool.infrastructure.dao.wallet.po.PaymentOrderPO">
+        SELECT id, pay_no, biz_order_id, user_id, amount, subject, state, pay_time, create_time, update_time
+        FROM payment_order
+        WHERE biz_order_id = #{bizOrderId}
+    </select>
+
+    <!-- 支付成功：WAIT_PAY → PAID 条件更新；0 行 = 已支付 / 已关闭 / 并发抢先 -->
+    <update id="markPaid">
+        UPDATE payment_order
+        SET state     = 'PAID',
+            pay_time  = NOW(),
+            update_time = NOW()
+        WHERE pay_no = #{payNo}
+          AND state = 'WAIT_PAY'
+    </update>
+
+    <!-- 关闭支付单：仅 WAIT_PAY 生效；已支付/已关闭是空操作 -->
+    <update id="closeByBizOrderId">
+        UPDATE payment_order
+        SET state     = 'CLOSED',
+            update_time = NOW()
+        WHERE biz_order_id = #{bizOrderId}
+          AND state = 'WAIT_PAY'
+    </update>
+
+</mapper>

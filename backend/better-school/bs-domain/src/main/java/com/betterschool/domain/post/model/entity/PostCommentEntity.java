@@ -1,6 +1,6 @@
 package com.betterschool.domain.post.model.entity;
 
-import com.betterschool.domain.post.model.valobj.PostStatusVO;
+import com.betterschool.domain.post.model.valobj.PostStatusEnum;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -15,7 +15,7 @@ public class PostCommentEntity {
     private String postId;
     private String userId;
     private String content;
-    private PostStatusVO status;
+    private PostStatusEnum status;
     /** 楼根评论业务 ID（"0"=根评论），语义见 ADR-0001 */
     private String rootId;
     /** 被回复评论业务 ID（根评论为 "0"；回复根评论时=根评论 id） */
@@ -37,23 +37,23 @@ public class PostCommentEntity {
     private String postTitle;
     private String postCover;
 
-    public static PostCommentEntity create(String postId, String userId, String content, PostStatusVO initialStatus) {
-        PostCommentEntity commentEntity = new PostCommentEntity();
-        commentEntity.postId = postId;
-        commentEntity.userId = userId;
-        commentEntity.content = content;
-        commentEntity.status = initialStatus;
-        commentEntity.rootId = NO_REFERENCE;
-        commentEntity.parentId = NO_REFERENCE;
-        return commentEntity;
+    public static PostCommentEntity create(String postId, String userId, String content, PostStatusEnum postStatusVO) {
+        PostCommentEntity postCommentEntity = new PostCommentEntity();
+        postCommentEntity.postId = postId;
+        postCommentEntity.userId = userId;
+        postCommentEntity.content = content;
+        postCommentEntity.status = postStatusVO;
+        postCommentEntity.rootId = NO_REFERENCE;
+        postCommentEntity.parentId = NO_REFERENCE;
+        return postCommentEntity;
     }
 
     public static PostCommentEntity createReply(String postId, String rootId, String parentId, String userId,
-                                                String content, PostStatusVO initialStatus) {
-        PostCommentEntity commentEntity = create(postId, userId, content, initialStatus);
-        commentEntity.rootId = rootId;
-        commentEntity.parentId = parentId;
-        return commentEntity;
+                                                String content, PostStatusEnum postStatusVO) {
+        PostCommentEntity postCommentEntity = create(postId, userId, content, postStatusVO);
+        postCommentEntity.rootId = rootId;
+        postCommentEntity.parentId = parentId;
+        return postCommentEntity;
     }
 
     /** 是否根评论（root_id = "0"）：子回复才入楼、才可能带「回复指向」 */

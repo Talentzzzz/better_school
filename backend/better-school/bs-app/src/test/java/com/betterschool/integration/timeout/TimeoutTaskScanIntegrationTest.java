@@ -48,12 +48,12 @@ class TimeoutTaskScanIntegrationTest extends TimeoutScanTestBase {
         registerDue(bizId, -1);
         callbackProbe.stubSuccess();
 
-        ScanSummary summary = scan(slotOf(bizId), TOTAL_SLOTS);
+        ScanSummary scanSummary = scan(slotOf(bizId), TOTAL_SLOTS);
 
-        assertThat(summary.getSlotCount()).isEqualTo(1);
-        assertThat(summary.getBatchCount()).isEqualTo(1);
-        assertThat(summary.getTaskCount()).isEqualTo(1);
-        assertThat(summary.getSuccessCount()).isEqualTo(1);
+        assertThat(scanSummary.getSlotCount()).isEqualTo(1);
+        assertThat(scanSummary.getBatchCount()).isEqualTo(1);
+        assertThat(scanSummary.getTaskCount()).isEqualTo(1);
+        assertThat(scanSummary.getSuccessCount()).isEqualTo(1);
         assertThat(callbackProbe.invocationCountOf(TASK_TYPE, bizId)).isEqualTo(1);
         Map<String, Object> row = physicalRow(bizId);
         assertThat(row.get("status")).isEqualTo("SUCCESS");
@@ -67,10 +67,10 @@ class TimeoutTaskScanIntegrationTest extends TimeoutScanTestBase {
         callbackProbe.stubFailure();
         LocalDateTime beforeScan = LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS);
 
-        ScanSummary summary = scan(slotOf(bizId), TOTAL_SLOTS);
+        ScanSummary scanSummary = scan(slotOf(bizId), TOTAL_SLOTS);
 
-        assertThat(summary.getRetryCount()).isEqualTo(1);
-        assertThat(summary.getSuccessCount()).isZero();
+        assertThat(scanSummary.getRetryCount()).isEqualTo(1);
+        assertThat(scanSummary.getSuccessCount()).isZero();
         // 「循环拉批到空」的终止条件：退避把行推到 dueBefore 之后，同一 tick 的下一轮 fetch 捞不到它
         assertThat(callbackProbe.invocationCountOf(TASK_TYPE, bizId))
                 .as("同一 tick 内被重复回调 = dueBefore 每批现取，退避没挡住重捞")
@@ -123,10 +123,10 @@ class TimeoutTaskScanIntegrationTest extends TimeoutScanTestBase {
         callbackProbe.stubSuccess();
 
         // 单实例（shardTotal = 1）认领全部 16 个槽位
-        ScanSummary summary = scan(0, 1);
+        ScanSummary scanSummary = scan(0, 1);
 
-        assertThat(summary.getSlotCount()).isEqualTo(TOTAL_SLOTS);
-        assertThat(summary.getTaskCount()).isZero();
+        assertThat(scanSummary.getSlotCount()).isEqualTo(TOTAL_SLOTS);
+        assertThat(scanSummary.getTaskCount()).isZero();
         assertThat(callbackProbe.invocationCount()).isZero();
         assertThat(physicalRow("scan-future-1").get("status")).isEqualTo("WAITING");
         assertThat(physicalRow("scan-canceled-1").get("status")).isEqualTo("CANCELED");
@@ -139,11 +139,11 @@ class TimeoutTaskScanIntegrationTest extends TimeoutScanTestBase {
         bizIds.forEach(bizId -> registerDue(bizId, -1));
         callbackProbe.stubSuccess();
 
-        ScanSummary summary = scan(slot, TOTAL_SLOTS);
+        ScanSummary scanSummary = scan(slot, TOTAL_SLOTS);
 
-        assertThat(summary.getBatchCount()).as("单批上限 %d：%d 条 = 两批", batchSize, batchSize + 5).isEqualTo(2);
-        assertThat(summary.getTaskCount()).isEqualTo(batchSize + 5);
-        assertThat(summary.getSuccessCount()).isEqualTo(batchSize + 5);
+        assertThat(scanSummary.getBatchCount()).as("单批上限 %d：%d 条 = 两批", batchSize, batchSize + 5).isEqualTo(2);
+        assertThat(scanSummary.getTaskCount()).isEqualTo(batchSize + 5);
+        assertThat(scanSummary.getSuccessCount()).isEqualTo(batchSize + 5);
         assertThat(callbackProbe.invocationCount()).isEqualTo(batchSize + 5);
         assertThat(physicalRow(bizIds.get(0)).get("status")).isEqualTo("SUCCESS");
         assertThat(physicalRow(bizIds.get(bizIds.size() - 1)).get("status")).isEqualTo("SUCCESS");
@@ -156,9 +156,9 @@ class TimeoutTaskScanIntegrationTest extends TimeoutScanTestBase {
         int otherSlot = (slotOf(bizId) + 1) % TOTAL_SLOTS;
         callbackProbe.stubSuccess();
 
-        ScanSummary otherSummary = scan(otherSlot, TOTAL_SLOTS);
+        ScanSummary scanSummary = scan(otherSlot, TOTAL_SLOTS);
         assertThat(callbackProbe.invocationCount()).isZero();
-        assertThat(otherSummary.getTaskCount()).isZero();
+        assertThat(scanSummary.getTaskCount()).isZero();
         assertThat(physicalRow(bizId).get("status")).isEqualTo("WAITING");
 
         // 轮到它自己的槽位才回调（hint 强制路由精确落到那一张分表）
@@ -178,10 +178,10 @@ class TimeoutTaskScanIntegrationTest extends TimeoutScanTestBase {
         }
         callbackProbe.stubSuccess();
 
-        ScanSummary summary = scan(1, 3);
+        ScanSummary scanSummary = scan(1, 3);
 
-        assertThat(summary.getSlotCount()).isEqualTo(5);
-        assertThat(summary.getTaskCount()).isEqualTo(5);
+        assertThat(scanSummary.getSlotCount()).isEqualTo(5);
+        assertThat(scanSummary.getTaskCount()).isEqualTo(5);
         List<String> expectedBizIds = IntStream.range(0, TOTAL_SLOTS)
                 .filter(slot -> slot % 3 == 1)
                 .mapToObj(bizIds::get)
@@ -233,10 +233,10 @@ class TimeoutTaskScanIntegrationTest extends TimeoutScanTestBase {
         registerDue(bad, -1);
         callbackProbe.failOnly(TASK_TYPE, bad);
 
-        ScanSummary summary = scan(slot, TOTAL_SLOTS);
+        ScanSummary scanSummary = scan(slot, TOTAL_SLOTS);
 
-        assertThat(summary.getSuccessCount()).isEqualTo(1);
-        assertThat(summary.getRetryCount()).isEqualTo(1);
+        assertThat(scanSummary.getSuccessCount()).isEqualTo(1);
+        assertThat(scanSummary.getRetryCount()).isEqualTo(1);
         assertThat(physicalRow(good).get("status")).isEqualTo("SUCCESS");
         assertThat(physicalRow(bad).get("status")).isEqualTo("RETRYING");
     }
@@ -248,10 +248,10 @@ class TimeoutTaskScanIntegrationTest extends TimeoutScanTestBase {
         // 探针在回调途中（= 捞批与结算之间的窗口）把这一行取消掉，再回报成功
         callbackProbe.cancelOnCallback(TASK_TYPE, bizId);
 
-        ScanSummary summary = scan(slotOf(bizId), TOTAL_SLOTS);
+        ScanSummary scanSummary = scan(slotOf(bizId), TOTAL_SLOTS);
 
         // 账本按回报记账（这一项确实回报了成功），但库上的行级守卫说了算
-        assertThat(summary.getSuccessCount()).isEqualTo(1);
+        assertThat(scanSummary.getSuccessCount()).isEqualTo(1);
         Map<String, Object> row = physicalRow(bizId);
         assertThat(row.get("status"))
                 .as("结算的三条 UPDATE 都带 status IN ('WAITING','RETRYING')，取消不该被翻回 SUCCESS")
@@ -324,8 +324,8 @@ class TimeoutTaskScanIntegrationTest extends TimeoutScanTestBase {
         registerDue(bizId, -1);
         setRetryCount(TASK_TYPE, bizId, retryMaxTimes - 1);
         callbackProbe.stubFailure();
-        ScanSummary summary = scan(slotOf(bizId), TOTAL_SLOTS);
-        assertThat(summary.getDeadCount()).as("前置条件：%s 应进死信", bizId).isEqualTo(1);
+        ScanSummary scanSummary = scan(slotOf(bizId), TOTAL_SLOTS);
+        assertThat(scanSummary.getDeadCount()).as("前置条件：%s 应进死信", bizId).isEqualTo(1);
         assertThat(physicalRow(bizId).get("status")).isEqualTo("FAILED");
     }
 }

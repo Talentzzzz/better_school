@@ -24,11 +24,11 @@ public class ProductFundOrphanScanJob {
     @XxlJob("productFundOrphanScan")
     public void scanJob() {
         try {
-            ProductFundOrphanScanSummaryVO summary = idleCase.scanFundOrphans();
+            ProductFundOrphanScanSummaryVO productFundOrphanScanSummaryVO = idleCase.scanFundOrphans();
             XxlJobHelper.handleSuccess(String.format(
                     "商品孤儿扫描完成：冻结孤儿 %d 行（补解冻 %d）、已支付取消补解冻 %d",
-                    summary.getFrozenOrphanTotal(), summary.getOrphanUnfrozenDone(),
-                    summary.getReplayUnfrozenDone()));
+                    productFundOrphanScanSummaryVO.getFrozenOrphanTotal(), productFundOrphanScanSummaryVO.getOrphanUnfrozenDone(),
+                    productFundOrphanScanSummaryVO.getReplayUnfrozenDone()));
         } catch (Exception e) {
             // 本轮失败不补跑：job 调度层重试 0，下个周期照常重扫（未收敛行永远满足扫描条件）
             log.error("[资金孤儿告警] 商品孤儿扫描 job 异常", e);

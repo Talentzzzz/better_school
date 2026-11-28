@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 探活接口（合并前 points / raffle 两域各一份，随单体回归留一份在 points 域）：
+ * 探活接口（合并前 points / draw 两域各一份，随单体回归留一份在 points 域）：
  * 返回当前登录用户的基本信息。
  * <p>
  * 它是「Nacos 配置 → JWT 验签 → 用户域查询」这条链路的端到端证人——任何一环断了这里就直接报错，
@@ -27,15 +27,15 @@ public class PingController {
 
     @GetMapping("/ping")
     public Response<UserBasicResponseDTO> ping() {
-        UserEntity user = userRepository.findById(SecurityUtils.currentUserId());
-        if (user == null) {
+        UserEntity userEntity = userRepository.findById(SecurityUtils.currentUserId());
+        if (userEntity == null) {
             return Response.ok(null);
         }
-        UserBasicResponseDTO dto = new UserBasicResponseDTO();
-        dto.setUserId(user.getUserId());
-        dto.setNickname(user.getNickname());
-        dto.setAvatar(user.getAvatar());
-        dto.setCreatedAt(user.getCreatedAt());
-        return Response.ok(dto);
+        UserBasicResponseDTO userBasicResponseDTO = new UserBasicResponseDTO();
+        userBasicResponseDTO.setUserId(userEntity.getUserId());
+        userBasicResponseDTO.setNickname(userEntity.getNickname());
+        userBasicResponseDTO.setAvatar(userEntity.getAvatar());
+        userBasicResponseDTO.setCreatedAt(userEntity.getCreatedAt());
+        return Response.ok(userBasicResponseDTO);
     }
 }

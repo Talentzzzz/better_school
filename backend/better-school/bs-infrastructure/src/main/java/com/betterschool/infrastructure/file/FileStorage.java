@@ -1,7 +1,7 @@
 package com.betterschool.infrastructure.file;
 
 import com.betterschool.types.common.Constants;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import io.minio.BucketExistsArgs;
 import io.minio.MakeBucketArgs;
@@ -68,18 +68,18 @@ public class FileStorage {
      */
     public String uploadImage(byte[] content, String fileName, String contentType) {
         if (content == null || content.length == 0) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "文件为空");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "文件为空");
         }
         if (content.length > Constants.UPLOAD_IMAGE_MAX_BYTES) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "单张图片不能超过 5MB");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "单张图片不能超过 5MB");
         }
         String extension = extensionOf(fileName);
         String expectedContentType = Constants.UPLOAD_IMAGE_CONTENT_TYPES.get(extension);
         if (expectedContentType == null) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "仅支持 jpg/png/webp 图片");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "仅支持 jpg/png/webp 图片");
         }
         if (!expectedContentType.equals(contentType)) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "文件内容与扩展名不符");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "文件内容与扩展名不符");
         }
         return store(content, extension, contentType);
     }
@@ -101,7 +101,7 @@ public class FileStorage {
             throw e;
         } catch (Exception e) {
             log.error("MinIO 存储文件失败", e);
-            throw new BusinessException(ResponseCode.SYSTEM_ERROR, "文件上传失败，请稍后重试");
+            throw new BusinessException(ResponseCodeEnum.SYSTEM_ERROR, "文件上传失败，请稍后重试");
         }
     }
 

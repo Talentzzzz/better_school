@@ -21,7 +21,7 @@ public class DrawReconAlertMessage {
 
     /** 对账轮次号（差错表 round_no）：定位到是哪一轮大考点的名 */
     private String roundNo;
-    /** 检查类型（差错表 check_type，如 B1 台账守恒 / B3 预扣守恒 / 正向配对 / 反向配对 / 孤儿单死信） */
+    /** 检查类型（差错表 check_type，如 B3 预扣守恒 / 正向配对 / 反向配对 / 孤儿单死信） */
     private String checkType;
     /** 定位键 scope_key（award_id 或 record_id；无自然定位键的检查为空） */
     private String scopeKey;

@@ -48,31 +48,31 @@ scripts/test-env.sh up
    - `dubbo.protocol.port` 取一个空闲端口——`application.yml` 里的 50051 是给 IDE 里的单体用的，
      本机同时开着它会 `Address already in use`。
 
-## 营销域的测试设施（营销票 05 建立，票 06/07 扩域，票 13 抽奖换 raffle 域段；monolith-restructure 票 05/07 起随代码并入 `bs-app`）
+## 营销域的测试设施（营销票 05 建立，票 06/07 扩域，票 13 抽奖换 draw 域段；monolith-restructure 票 05/07 起随代码并入 `bs-app`）
 
 营销四域随单体收口并入 `bs-*` 七模块，测试因此全部落在**唯一组装层 `bs-app`**
-（`com.betterschool.integration.{points,raffle,inventory,marketing}`，基类在 `integration.support`）：
+（`com.betterschool.integration.{points,draw,award,marketing}`，基类在 `integration.support`）：
 
 ```bash
 # 单个测试类（-am 连带构建依赖模块）
-mvn test -pl bs-app -am -Dtest=RaffleDrawPipelineIntegrationTest
+mvn test -pl bs-app -am -Dtest=DrawPipelineIntegrationTest
 ```
 
-| 项 | 单体既有测试 | 营销域测试（points + raffle + rebate + inventory） |
+| 项 | 单体既有测试 | 营销域测试（points + draw + rebate + award） |
 | --- | --- | --- |
-| 测试库 | `better_school_test` | 同一份（票 07 合库后与单体同库）+ **redis 逻辑库 1**（key 前缀 `bs:points:` / `bs:raffle:` / `bs:inventory:`） |
-| 基类 | `integration.support.PostApiTestBase` | `integration.support.{PointsApiTestBase, RaffleApiTestBase}`（两类按域共存；VT 两个 seam 测试跑在 `RaffleApiTestBase` 上） |
-| 登录态 | 真链路 send-code → register 换 JWT | 营销域没有注册链路，基类按共享密钥**直接签发** JWT（形状与单体 `JwtService.generateToken` 一致）；`RaffleApiTestBase` 另有 `ADMIN` 角色的签发方法 |
-| MQ 消费 | 直调消费者 Bean | 同左（测试栈无 broker，构造 payload 直调消费者）；points 域直调 `LotteryDrawnConsumer`，raffle 域没有消费者（只发事件），断言只看 outbox 落行 |
+| 测试库 | `better_school_test` | 同一份（票 07 合库后与单体同库）+ **redis 逻辑库 1**（key 前缀 `bs:points:` / `bs:draw:`） |
+| 基类 | `integration.support.PostApiTestBase` | `integration.support.{PointsApiTestBase, DrawApiTestBase}`（两类按域共存；VT 两个 seam 测试跑在 `DrawApiTestBase` 上） |
+| 登录态 | 真链路 send-code → register 换 JWT | 营销域没有注册链路，基类按共享密钥**直接签发** JWT（形状与单体 `JwtService.generateToken` 一致）；`DrawApiTestBase` 另有 `ADMIN` 角色的签发方法 |
+| MQ 消费 | 直调消费者 Bean | 同左（测试栈无 broker，构造 payload 直调消费者）；points 域直调 `LotteryDrawnConsumer`，draw 域没有消费者（只发事件），断言只看 outbox 落行 |
 | Dubbo | 真 Consumer 打单体 Provider | 无 Dubbo 边（合并前营销侧的 `StubUserQueryPort` / `StubPointsExchangePort` 已随单体收口删除）；营销域自己的 Provider Bean（`PointsExchangeDubboService`）仍直接调用测 |
 
 - 建库走 `better-school/sql/init-{dev,test}.sql`（只建 `better_school` / `better_school_test`）+
-  `sql/schema.sql`（**唯一 DDL 主体**，79 张表，票 07 合库含营销 22 张）。
+  `sql/schema.sql`（**唯一 DDL 主体**，72 张表，票 07 合库含营销 20 张）。
   `scripts/test-env.sh` 把建库文件与 schema 按序拼给同一个连接——改过 schema 后用
   `scripts/test-env.sh reset-test-db` 重建。
-- **抽奖测试要重置活动配置**：`RaffleApiTestBase` 的 `@BeforeEach` 会 `TRUNCATE` 17 张业务表
-  （draw_* / draw_count_* / points_* / virtual_* / physical_* / outbox_message）并清
-  `bs:raffle:*` / `bs:inventory:*` 两段 redis key；活动配置与奖品位由用例自己用夹具铺
+- **抽奖测试要重置活动配置**：`DrawApiTestBase` 的 `@BeforeEach` 会 `TRUNCATE` 13 张业务表
+  （draw_* / draw_count_* / points_* / award_* / mq_outbox）并清 `bs:draw:*` 一段 redis key；
+  活动配置与奖品位由用例自己用夹具铺
   （`insertActivity` 是**先删再插**——活动是单行语义，重铺即改窗口与状态；活动窗口一律**相对 `now()`** 算，
   别拿夹具的绝对起点加天数）。
 - **outbox 在测试里的可观察形态**：测试栈有 namesrv、没有 broker，发送必然报
@@ -86,43 +86,15 @@ mvn test -pl bs-app -am -Dtest=RaffleDrawPipelineIntegrationTest
 - **抽奖测试的三个特有手法**（票 07 建立，票 13 沿用并换成新模型）：
   1. **把随机滚档做成确定**：`UPDATE draw_strategy_award SET award_rate = 0 WHERE type = 'normal'`
      后把目标档置 1，再 `warmupByStrategyId` 重预热，即必中该档——`ThreadLocalRandom` 在集成测试里注入不进去。
-  2. **redis 停服换桩**：测试源码里的 `@Primary SwitchableInventoryBucketPort` 默认原样委托真实现，
-     可以切成「抛 `BucketUnavailableException`」来表达 redis 挂了。
-  3. **断言 redis 桶值前先判 key 是否存在**：`getAtomicLong().get()` 会把不存在的 key 建成 0，
-     直接取值就永远看不出「这个桶从没被碰过」（`RaffleApiTestBase` 的 `*BucketValueInRedis` 已内置该判断）。
+  2. **黑名单直写 redis**：`DrawApiTestBase#blacklistUser` 往 `bs:draw:blacklist:user:{strategyId}:{userId}`
+     写 bucket（本域没有黑名单用户表，风控侧直写），命中即强制出 blacklist 奖品位。
+  3. **库存夹具直插台账**：`insertAwardInventory(awardId, type, surplusQty, valueQty, state)` 直接
+     `INSERT award_inventory`——没有配额池、没有分配调用；`insertDefaultAwards` + `prepareInventory`
+     铺齐「积分档 / 实物档 / 谢谢参与 / 兜底」四类账户。
 
-## 库存合并 · 定时投递真机时延（库存合并换轨票 05）
-
-`InventoryMergeDeliveryLatencyTest` 断的是「合并消息发出 → 消费端把明细合掉」落在 **2.0~3.2s**
-（下界来自 `delay_ms=2000` 的相对延迟，上界是 broker 时间轮按秒槽对齐、槽过完才排空的代价）。
-测试栈只有 namesrv、没有 broker，所以这个类**默认被系统属性关掉**——要跑就临时起一套**专用**的
-namesrv + broker。不要往测试栈的 `19876` 上挂 broker：其余用例的「发送必然失败、outbox 留 PENDING」
-正是建立在「没有 broker」之上，挂上去会让那批断言失效。
-
-```bash
-# 1) 专用 namesrv（9877）+ broker（10921），与测试栈 / 开发栈都不撞名不撞端口
-docker network create rmq-e2e 2>/dev/null || true
-docker run -d --name bs-rmq-e2e-namesrv --network rmq-e2e -p 9877:9876 apache/rocketmq:5.5.0 sh mqnamesrv
-# broker.conf 关键项：listenPort=10921、brokerName=broker-e2e、brokerIP1=127.0.0.1、
-# autoCreateTopicEnable=true、diskMaxUsedRatio=98
-# （宿主机盘用量 >90% 时默认 75 会让 broker 直接拒写：CODE 14，票 02 踩过）
-docker run -d --name bs-rmq-e2e-broker --network rmq-e2e -p 10921:10921 \
-  -e NAMESRV_ADDR=bs-rmq-e2e-namesrv:9876 \
-  -v "$TEMP/rmq-e2e/broker.conf:/home/rocketmq/broker.conf:ro" \
-  apache/rocketmq:5.5.0 sh mqbroker -c /home/rocketmq/broker.conf
-
-# 2) 先建 topic 再起应用：topic 不存在时消费者首次拉取要吃 ~20s 路由退避，会被误读成投递延迟
-docker exec bs-rmq-e2e-broker sh -c "cd /home/rocketmq/rocketmq-5.5.0/bin && \
-  sh mqadmin updateTopic -n bs-rmq-e2e-namesrv:9876 -c DefaultCluster -t bs-inventory-merge"
-
-# 3) 跑（namesrv 地址写在测试类的 @SpringBootTest(properties) 里，开关只有一个系统属性）
-mvn -o test -Dtest=InventoryMergeDeliveryLatencyTest -Dsurefire.failIfNoSpecifiedTests=false \
-  -Dbs.inventory.mq-e2e=true
-```
-
-- 用例先跑一轮「预热投递」（不计时），把首次拉取的路由退避用掉；计时那轮换另一个 `invId`，免得预热合掉的格影响计时。
-- 计时起点取 `preDeduct` 之前：outbox 的异步发送挂在 `afterCommit`，`preDeduct` 返回时消息已经在路上。
-- 跑完把两个 `bs-rmq-e2e-*` 容器和 `rmq-e2e` 网络删掉，别让它长期占着 10921。
+> 库存合并的 MQ 延迟投递真机测试（`InventoryMergeDeliveryLatencyTest`、`bs-inventory-merge` topic、
+> `-Dbs.inventory.mq-e2e` 开关）已随 hot-row-merge-l2w256 票 09 整条退休：合并进进程内，
+> 没有延迟消息可测。测试栈仍然只有 namesrv、刻意不挂 broker（outbox 断言依赖「发送必然失败」）。
 
 ## WS 全链路测试（chat 票 07 建立）
 

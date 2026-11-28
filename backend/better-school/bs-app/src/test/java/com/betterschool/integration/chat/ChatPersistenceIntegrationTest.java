@@ -6,7 +6,7 @@ import com.betterschool.domain.chat.model.entity.RoomEntity;
 import com.betterschool.domain.chat.model.entity.RoomMemberEntity;
 import com.betterschool.domain.chat.model.entity.TimelineEntity;
 import com.betterschool.domain.chat.model.entity.UserRoomEntity;
-import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
+import com.betterschool.domain.chat.model.valobj.MsgTypeEnum;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
 import com.betterschool.integration.support.PostApiTestBase;
 import jakarta.annotation.Resource;
@@ -89,7 +89,7 @@ public class ChatPersistenceIntegrationTest extends PostApiTestBase {
                     timeline(USER_A, newRoomId, seq, messageEntity.getMessageId(), deliveryA),
                     timeline(USER_B, newRoomId, seq, messageEntity.getMessageId(), deliveryB)));
 
-            chatRepository.updateUserRoomLastMsgTime(newRoomId, List.of(USER_A, USER_B),
+            chatRepository.updateUserRoomOnMessage(newRoomId, List.of(USER_A, USER_B),
                     messageEntity.getCreatedAt());
             return newRoomId;
         });
@@ -112,7 +112,7 @@ public class ChatPersistenceIntegrationTest extends PostApiTestBase {
         List<RoomListItemVO> items = chatRepository.listRoomItems(USER_A, 0, 10);
         assertThat(items).hasSize(1);
         assertThat(items.get(0).getRoomId()).isEqualTo(roomId);
-        assertThat(items.get(0).getLastMsgType()).as("lastMsgType 读时按 message 真相现算").isEqualTo(MsgTypeVO.TEXT);
+        assertThat(items.get(0).getLastMsgType()).as("lastMsgType 读时按 message 真相现算").isEqualTo(MsgTypeEnum.TEXT);
         assertThat(items.get(0).getLastMsgPreview()).as("预览读时现算 = message 原文").isEqualTo("同学你好，帖子还在吗？");
 
         // message：内容中心一行，NORMAL + client_msg_id
@@ -181,10 +181,10 @@ public class ChatPersistenceIntegrationTest extends PostApiTestBase {
     /** 名册与用户状态成对造数（与建会话事务同构：1v1 恒两行名册 + 两行 user_room） */
     private void insertMembersAndUserRooms(String roomId, List<String> userIds) {
         chatRepository.insertRoomMembers(userIds.stream().map(userId -> {
-            RoomMemberEntity memberEntity = new RoomMemberEntity();
-            memberEntity.setRoomId(roomId);
-            memberEntity.setUserId(userId);
-            return memberEntity;
+            RoomMemberEntity roomMemberEntity = new RoomMemberEntity();
+            roomMemberEntity.setRoomId(roomId);
+            roomMemberEntity.setUserId(userId);
+            return roomMemberEntity;
         }).toList());
         chatRepository.insertUserRooms(userIds.stream().map(userId -> {
             UserRoomEntity userRoomEntity = new UserRoomEntity();
@@ -199,7 +199,7 @@ public class ChatPersistenceIntegrationTest extends PostApiTestBase {
         messageEntity.setRoomId(roomId);
         messageEntity.setSeq(seq);
         messageEntity.setFromUserId(fromUserId);
-        messageEntity.setMsgType(MsgTypeVO.TEXT);
+        messageEntity.setMsgType(MsgTypeEnum.TEXT);
         messageEntity.setContent(content);
         messageEntity.setClientMsgId("client-msg-" + seq);
         return messageEntity;

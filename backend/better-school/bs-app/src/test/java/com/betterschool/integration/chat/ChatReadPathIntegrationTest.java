@@ -215,36 +215,27 @@ public class ChatReadPathIntegrationTest extends PostApiTestBase {
     }
 
     @Test
-    void markReadIdempotentNoNoiseReadEvents() {
+    void markReadIdempotentNoNoise() {
         initDirectRoom("已读用户A", "已读用户B");
         sendText("rm1", "已读测试1");
         sendText("rm2", "已读测试2");
 
-        // B 打开会话：水位线推到会话真源 room.last_seq，提交后一个 READ 事件
+        // B 打开会话：水位线推到会话真源 room.last_seq（READ 推送在提交后直接投递，由 WsIntegrationTest 断言）
         JsonNode readResp = postJson("/api/chat/rooms/" + roomId + "/read", Map.of(), userB);
         assertSuccess(readResp, "推水位线");
         assertThat(readResp.path("data").asLong()).isEqualTo(2);
         assertThat(queryLong("SELECT read_seq FROM user_room WHERE room_id = '" + roomId + "'"
                 + " AND user_id = '" + userB.userId() + "'" )).isEqualTo(2);
 
-        assertThat(readEventCount()).as("首次打开恰好一个 READ 事件").isEqualTo(1);
-        String payload = queryString("SELECT payload FROM mq_outbox WHERE destination = '"
-                + Constants.CHAT_READ_TOPIC + "'");
-        assertThat(payload).contains("\"roomId\":\"" + roomId + "\"")
-                .contains("\"userId\":\"" + userB.userId() + "\"")
-                .contains("\"readSeq\":2");
-
-        // 重复打开幂等：守卫 UPDATE 落空，无第二个 READ 事件（无噪音）
+        // 重复打开幂等：守卫 UPDATE 落空（水位线不前进即不产生 READ 推送）
         postJson("/api/chat/rooms/" + roomId + "/read", Map.of(), userB);
         postJson("/api/chat/rooms/" + roomId + "/read", Map.of(), userB);
-        assertThat(readEventCount()).as("重复打开不产生 READ 事件").isEqualTo(1);
         assertThat(queryLong("SELECT read_seq FROM user_room WHERE room_id = '" + roomId + "'"
                 + " AND user_id = '" + userB.userId() + "'" )).isEqualTo(2);
 
-        // 落后目标（水位线已高）同样不回退不产事件：B 水位线=2，手动压低后重读只前进
+        // 落后目标（水位线已高）同样不回退不重复推进：B 水位线=2，手动压低后重读只前进
         jdbcTemplate.update("UPDATE user_room SET read_seq = 1 WHERE room_id = '" + roomId + "' AND user_id = '" + userB.userId() + "'");
         postJson("/api/chat/rooms/" + roomId + "/read", Map.of(), userB);
-        assertThat(readEventCount()).isEqualTo(2);
         assertThat(queryLong("SELECT read_seq FROM user_room WHERE room_id = '" + roomId + "'"
                 + " AND user_id = '" + userB.userId() + "'" )).as("只前进不回退").isEqualTo(2);
 
@@ -321,10 +312,6 @@ public class ChatReadPathIntegrationTest extends PostApiTestBase {
         return StreamSupport.stream(response.path("data").spliterator(), false)
                 .map(node -> node.path("seq").asLong())
                 .collect(Collectors.toList());
-    }
-
-    private long readEventCount() {
-        return queryLong("SELECT COUNT(1) FROM mq_outbox WHERE destination = '" + Constants.CHAT_READ_TOPIC + "'");
     }
 
     private long queryLong(String sql) {

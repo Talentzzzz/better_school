@@ -1,7 +1,7 @@
 package com.betterschool.domain.idle.model.entity;
 
-import com.betterschool.domain.idle.model.valobj.ProductCategoryVO;
-import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
+import com.betterschool.domain.idle.model.valobj.ProductCategoryEnum;
+import com.betterschool.domain.idle.model.valobj.ProductStatusEnum;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -19,8 +19,8 @@ public class ProductEntity {
     private List<String> images;
     private BigDecimal price;
     private String tradeLocation;
-    private ProductCategoryVO category;
-    private ProductStatusVO status;
+    private ProductCategoryEnum category;
+    private ProductStatusEnum status;
     private long viewCount;
     private LocalDateTime createdAt;
 
@@ -42,7 +42,7 @@ public class ProductEntity {
 
     public static ProductEntity create(String userId, String title, String description, List<String> images,
                                        BigDecimal price, String tradeLocation,
-                                       ProductCategoryVO category, Integer quantity) {
+                                       ProductCategoryEnum productCategoryVO, Integer quantity) {
         ProductEntity productEntity = new ProductEntity();
         productEntity.userId = userId;
         productEntity.title = title;
@@ -50,10 +50,10 @@ public class ProductEntity {
         productEntity.images = images == null ? List.of() : images;
         productEntity.price = price;
         productEntity.tradeLocation = tradeLocation;
-        productEntity.category = category;
+        productEntity.category = productCategoryVO;
         productEntity.quantity = quantity;
         // 发布即可见
-        productEntity.status = ProductStatusVO.ON_SALE;
+        productEntity.status = ProductStatusEnum.ON_SALE;
         productEntity.viewCount = 0;
         return productEntity;
     }
@@ -61,7 +61,7 @@ public class ProductEntity {
     /** 草稿：字段可缺省（未填完就存），仅本人可见，可编辑后重新提交回发布流程 */
     public static ProductEntity createDraft(String userId, String title, String description, List<String> images,
                                             BigDecimal price, String tradeLocation,
-                                            ProductCategoryVO category, Integer quantity) {
+                                            ProductCategoryEnum productCategoryVO, Integer quantity) {
         ProductEntity productEntity = new ProductEntity();
         productEntity.userId = userId;
         productEntity.title = title;
@@ -69,22 +69,22 @@ public class ProductEntity {
         productEntity.images = images == null ? List.of() : images;
         productEntity.price = price;
         productEntity.tradeLocation = tradeLocation;
-        productEntity.category = category;
+        productEntity.category = productCategoryVO;
         productEntity.quantity = quantity;
-        productEntity.status = ProductStatusVO.DRAFT;
+        productEntity.status = ProductStatusEnum.DRAFT;
         productEntity.viewCount = 0;
         return productEntity;
     }
 
     /** 覆盖草稿内容（全量编辑：文字、图片、价格、件数等全部可改） */
     public void applyDraftContent(String title, String description, List<String> images, BigDecimal price,
-                                  String tradeLocation, ProductCategoryVO category, Integer quantity) {
+                                  String tradeLocation, ProductCategoryEnum productCategoryVO, Integer quantity) {
         this.title = title;
         this.description = description;
         this.images = images == null ? List.of() : images;
         this.price = price;
         this.tradeLocation = tradeLocation;
-        this.category = category;
+        this.category = productCategoryVO;
         this.quantity = quantity;
     }
 

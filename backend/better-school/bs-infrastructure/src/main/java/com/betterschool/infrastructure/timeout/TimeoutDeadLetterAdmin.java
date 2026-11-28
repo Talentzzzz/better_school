@@ -46,22 +46,22 @@ public class TimeoutDeadLetterAdmin {
      * （返回后由下一个扫描周期重投，重发不新开重试通路）。
      */
     public DeadLetterResendOutcome resend(List<TaskKey> keys) {
-        DeadLetterResendOutcome outcome = new DeadLetterResendOutcome();
-        for (TaskKey key : keys) {
-            boolean resent = timeoutTaskStore.resendDeadLetter(key.getTaskType(), key.getBizId());
+        DeadLetterResendOutcome deadLetterResendOutcome = new DeadLetterResendOutcome();
+        for (TaskKey taskKey : keys) {
+            boolean resent = timeoutTaskStore.resendDeadLetter(taskKey.getTaskType(), taskKey.getBizId());
             if (resent) {
-                outcome.success(key);
+                deadLetterResendOutcome.success(taskKey);
                 log.warn("[超时中心告警] 死信人工重发：taskType={}, bizId={}（retry_count 清零、立即重开一轮）",
-                        key.getTaskType(), key.getBizId());
+                        taskKey.getTaskType(), taskKey.getBizId());
             } else {
-                outcome.fail(key);
+                deadLetterResendOutcome.fail(taskKey);
             }
         }
-        if (!outcome.getFailList().isEmpty()) {
+        if (!deadLetterResendOutcome.getFailList().isEmpty()) {
             log.warn("[超时中心告警] 死信重发部分失败：成功 {} 条、失败 {} 条（失败项当前不是 FAILED）",
-                    outcome.getSuccessList().size(), outcome.getFailList().size());
+                    deadLetterResendOutcome.getSuccessList().size(), deadLetterResendOutcome.getFailList().size());
         }
-        return outcome;
+        return deadLetterResendOutcome;
     }
 
     /**

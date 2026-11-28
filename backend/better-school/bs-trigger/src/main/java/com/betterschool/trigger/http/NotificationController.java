@@ -8,9 +8,9 @@ import com.betterschool.api.dto.NotificationUnreadCountResponseDTO;
 import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
 import com.betterschool.domain.notification.model.entity.NotificationEntity;
-import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
+import com.betterschool.domain.notification.model.valobj.NotificationScopeEnum;
 import com.betterschool.trigger.http.security.SecurityUtils;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -44,10 +44,10 @@ public class NotificationController implements INotificationService {
             @RequestParam(required = false) String scope) {
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
-        NotificationScopeVO scopeVO = parseScope(scope);
+        NotificationScopeEnum notificationScopeVO = parseScope(scope);
         String userId = SecurityUtils.currentUserId();
-        long total = notificationService.countNotifications(userId, scopeVO);
-        List<NotificationEntity> notificationList = notificationService.listNotifications(userId, scopeVO, page, pageSize);
+        long total = notificationService.countNotifications(userId, notificationScopeVO);
+        List<NotificationEntity> notificationList = notificationService.listNotifications(userId, notificationScopeVO, page, pageSize);
         List<NotificationResponseDTO> dtoList = notificationList.stream().map(this::toNotificationResponseDTO).toList();
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
@@ -56,52 +56,52 @@ public class NotificationController implements INotificationService {
     @GetMapping("/notifications/unread-count")
     public Response<NotificationUnreadCountResponseDTO> unreadCount(@RequestParam String scope) {
         long count = notificationService.unreadCount(SecurityUtils.currentUserId(), requireScope(scope));
-        NotificationUnreadCountResponseDTO dto = new NotificationUnreadCountResponseDTO();
-        dto.setCount(count);
-        return Response.ok(dto);
+        NotificationUnreadCountResponseDTO notificationUnreadCountResponseDTO = new NotificationUnreadCountResponseDTO();
+        notificationUnreadCountResponseDTO.setCount(count);
+        return Response.ok(notificationUnreadCountResponseDTO);
     }
 
     @Override
     @PostMapping("/notifications/read")
-    public Response<Void> markRead(@Valid @RequestBody NotificationReadRequestDTO request) {
-        notificationService.markRead(SecurityUtils.currentUserId(), requireScope(request.getScope()));
+    public Response<Void> markRead(@Valid @RequestBody NotificationReadRequestDTO notificationReadRequestDTO) {
+        notificationService.markRead(SecurityUtils.currentUserId(), requireScope(notificationReadRequestDTO.getScope()));
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/notifications/broadcast")
-    public Response<Void> broadcast(@Valid @RequestBody NotificationBroadcastRequestDTO request) {
+    public Response<Void> broadcast(@Valid @RequestBody NotificationBroadcastRequestDTO notificationBroadcastRequestDTO) {
         if (!"ADMIN".equals(SecurityUtils.currentRole())) {
-            throw new BusinessException(ResponseCode.FORBIDDEN, "无权限，仅管理员可发布公告");
+            throw new BusinessException(ResponseCodeEnum.FORBIDDEN, "无权限，仅管理员可发布公告");
         }
-        notificationService.broadcast(request.getType(), request.getTitle(), request.getContent());
+        notificationService.broadcast(notificationBroadcastRequestDTO.getType(), notificationBroadcastRequestDTO.getTitle(), notificationBroadcastRequestDTO.getContent());
         return Response.ok(null);
     }
 
     /** 列表的 scope 可省略（不过滤）；unread-count / read 的 scope 必填，空白也按参数错误拒绝 */
-    private NotificationScopeVO parseScope(String scope) {
-        return scope == null || scope.isBlank() ? null : NotificationScopeVO.from(scope);
+    private NotificationScopeEnum parseScope(String scope) {
+        return scope == null || scope.isBlank() ? null : NotificationScopeEnum.from(scope);
     }
 
-    private NotificationScopeVO requireScope(String scope) {
+    private NotificationScopeEnum requireScope(String scope) {
         if (scope == null || scope.isBlank()) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "通知范围不能为空");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "通知范围不能为空");
         }
-        return NotificationScopeVO.from(scope);
+        return NotificationScopeEnum.from(scope);
     }
 
     private NotificationResponseDTO toNotificationResponseDTO(NotificationEntity notificationEntity) {
-        NotificationResponseDTO dto = new NotificationResponseDTO();
-        dto.setId(notificationEntity.getNotificationId());
-        dto.setSeq(notificationEntity.getSeq());
-        dto.setSenderId(notificationEntity.getSenderId());
-        dto.setType(notificationEntity.getType().name());
-        dto.setTitle(notificationEntity.getTitle());
-        dto.setContent(notificationEntity.getContent());
-        dto.setRead(notificationEntity.isRead());
-        dto.setRefType(notificationEntity.getRefType());
-        dto.setRefId(notificationEntity.getRefId());
-        dto.setCreatedAt(notificationEntity.getCreatedAt());
-        return dto;
+        NotificationResponseDTO notificationResponseDTO = new NotificationResponseDTO();
+        notificationResponseDTO.setId(notificationEntity.getNotificationId());
+        notificationResponseDTO.setSeq(notificationEntity.getSeq());
+        notificationResponseDTO.setSenderId(notificationEntity.getSenderId());
+        notificationResponseDTO.setType(notificationEntity.getType().name());
+        notificationResponseDTO.setTitle(notificationEntity.getTitle());
+        notificationResponseDTO.setContent(notificationEntity.getContent());
+        notificationResponseDTO.setRead(notificationEntity.isRead());
+        notificationResponseDTO.setRefType(notificationEntity.getRefType());
+        notificationResponseDTO.setRefId(notificationEntity.getRefId());
+        notificationResponseDTO.setCreatedAt(notificationEntity.getCreatedAt());
+        return notificationResponseDTO;
     }
 }

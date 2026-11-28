@@ -17,8 +17,8 @@ public interface ITimeoutTaskAdminService {
     Response<PageResult<DeadLetterTaskDTO>> listDeadLetters(int page, int pageSize);
 
     /** 批量重发死信（单条也放进列表）；failList = 该键当前不是 FAILED，无副作用 */
-    Response<DeadLetterResendResultDTO> resendDeadLetters(TaskKeysRequestDTO request);
+    Response<DeadLetterResendResultDTO> resendDeadLetters(TaskKeysRequestDTO taskKeysRequestDTO);
 
     /** 取消死信（FAILED → CANCELED）；返回 false = 该键当前不是 FAILED，无副作用 */
-    Response<Boolean> cancelDeadLetter(TaskKeyDTO request);
+    Response<Boolean> cancelDeadLetter(TaskKeyDTO taskKeyDTO);
 }

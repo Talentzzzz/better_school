@@ -26,9 +26,9 @@ public class NotificationBroadcastConsumer implements RocketMQListener<String> {
     @Override
     public void onMessage(String payload) {
         try {
-            NotificationBroadcastMessage message = objectMapper.readValue(payload, NotificationBroadcastMessage.class);
-            notificationService.insertBroadcast(message.getMsgId(), message.getType(), message.getTitle(), message.getContent());
-            log.info("[NotificationBroadcastConsumer] 公告广播落库 msgId={}, title={}", message.getMsgId(), message.getTitle());
+            NotificationBroadcastMessage notificationBroadcastMessage = objectMapper.readValue(payload, NotificationBroadcastMessage.class);
+            notificationService.insertBroadcast(notificationBroadcastMessage.getMsgId(), notificationBroadcastMessage.getType(), notificationBroadcastMessage.getTitle(), notificationBroadcastMessage.getContent());
+            log.info("[NotificationBroadcastConsumer] 公告广播落库 msgId={}, title={}", notificationBroadcastMessage.getMsgId(), notificationBroadcastMessage.getTitle());
         } catch (Exception e) {
             log.error("[NotificationBroadcastConsumer] 公告广播落库失败 payload={}", payload, e);
         }

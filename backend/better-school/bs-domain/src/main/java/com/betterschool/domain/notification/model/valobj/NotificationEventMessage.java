@@ -21,9 +21,9 @@ public class NotificationEventMessage {
     private String notificationId;
     /** 收件人 */
     private String userId;
-    /** NotificationScopeVO.name() */
+    /** NotificationScopeEnum.name() */
     private String scope;
-    /** NotificationTypeVO.name() */
+    /** NotificationTypeEnum.name() */
     private String type;
     /** 触发者，可空 */
     private String senderId;

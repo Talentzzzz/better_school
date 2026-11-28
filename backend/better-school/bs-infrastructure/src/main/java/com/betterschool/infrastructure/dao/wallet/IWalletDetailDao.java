@@ -14,7 +14,7 @@ import java.util.List;
 public interface IWalletDetailDao {
 
     /** 流水先行插入（uk(order_id, type, biz_round, user_id) 冲突返回 0 = 该操作已执行过），返回影响行数 */
-    int insertIgnoreDetail(WalletDetail detail);
+    int insertIgnoreDetail(WalletDetail walletDetail);
 
     List<WalletDetail> selectDetails(@Param("userId") String userId,
                                        @Param("offset") int offset, @Param("limit") int limit);

@@ -2,10 +2,12 @@ package com.betterschool.domain.post.service.post;
 
 import com.betterschool.domain.post.model.entity.PostCommentEntity;
 import com.betterschool.domain.post.model.entity.PostEntity;
+import com.betterschool.domain.post.model.entity.PostRebateClaimTaskEntity;
 import com.betterschool.domain.post.model.valobj.FeedPageVO;
 import com.betterschool.domain.post.model.valobj.PostPublishResultVO;
 import com.betterschool.types.common.SearchPageVO;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -13,10 +15,13 @@ import java.util.List;
  */
 public interface IPostService {
 
+    /** 领取任务重试上限：扫描重放失败累计到该次数置死信，人工重置回 PENDING 可自愈 */
+    int REBATE_CLAIM_MAX_RETRY = 5;
+
     /**
-     * 发布（落库即可见；信用分门槛由 case 层前置校验）：事务内写帖子行 + feed 索引 + 领取任务 outbox
-     * （PENDING，不在事务内发送）+ 搜索同步 outbox，提交后只同步发送搜索同步消息；返回业务 ID
-     * （postId）与数据库时钟的发布时间（返利周期键由它定死）
+     * 发布（落库即可见；信用分门槛由 case 层前置校验）：事务内写帖子行 + feed 索引 + 领取任务行
+     * （{@code post_rebate_claim_task}，PENDING）+ 搜索同步 outbox，提交后只同步发送搜索同步消息；
+     * 返回业务 ID（postId）与数据库时钟的发布时间（返利周期键由它定死）
      */
     PostPublishResultVO publishPost(String userId, String title, String content, List<String> images, String cover);
 
@@ -27,13 +32,13 @@ public interface IPostService {
     void updatePostDraft(String userId, String postId, String title, String content, List<String> images,
                          String cover);
 
-    /** 取本人草稿（归属 + DRAFT 状态守卫；提交前校验用） */
+    /** 取本人草稿（归属 + DRAFT 状态守卫）；提交路径复用这次读做发布不变式校验 */
     PostEntity getOwnedPostDraft(String userId, String postId);
 
     /**
-     * 提交草稿（完整性由 case 层前置；通过即发布可见）：事务内条件 UPDATE + feed 索引 + 领取任务 outbox
-     * （PENDING，不在事务内发送）+ 搜索同步 outbox，提交后只同步发送搜索同步消息；返回业务 ID
-     * （postId）与提交时刻的数据库发布时间
+     * 提交草稿（归属/状态守卫与发布不变式「正文必填」都在本域内裁决；通过即发布可见）：事务内条件 UPDATE
+     * （同一内容不变式进 SQL，兜底并发编辑竞态）+ feed 索引 + 领取任务行（PENDING，不在事务内发送）+
+     * 搜索同步 outbox，提交后只同步发送搜索同步消息；返回业务 ID（postId）与提交时刻的数据库发布时间
      */
     PostPublishResultVO submitPostDraft(String userId, String postId);
 
@@ -75,10 +80,10 @@ public interface IPostService {
     PostEntity postDetail(String postId, String currentUserId);
 
     /** 读单条帖（无副作用不计数，任何状态可读；通知场景用） */
-    PostEntity getPost(String postId);
+    PostEntity getPostEntity(String postId);
 
     /** 删除（作者可删自己 NORMAL/DRAFT 帖） */
-    void deletePost(String postId, String currentUserId);
+    void deletePostEntity(String postId, String currentUserId);
 
     /** feed 索引全量重建（feed-index-uv 票 07，兜底恢复手段：索引行与窄表/明细表漂移时手动触发） */
     void rebuildFeedIndex();
@@ -123,16 +128,16 @@ public interface IPostService {
      * 发布根评论：落库即可见，计数与索引同事务推进；
      * 不计数，审核通过时（消费者/人工）再 +1。返回完整实体（含 commentId、作者昵称）供响应 DTO。
      */
-    PostCommentEntity addComment(String postId, String userId, String content);
+    PostCommentEntity publishRootComment(String postId, String userId, String content);
 
     /**
      * 回复评论（楼中楼，树模型语义见 ADR-0001）：root/parent 由被回复评论推导，不接受客户端传入。
      * 发布语义与根评论一致（落库即待审 + 同事务 outbox，不计数）。返回完整实体供响应 DTO。
      */
-    PostCommentEntity addReply(String targetCommentId, String userId, String content);
+    PostCommentEntity publishReplyComment(String targetCommentId, String userId, String content);
 
     /** 读单条评论（无副作用；审核消费者/通知场景用，驳回/下架评论不可从列表读出但按 id 仍可读） */
-    PostCommentEntity getComment(String commentId);
+    PostCommentEntity getCommentEntity(String commentId);
 
     /** 楼内子回复平铺分页（create_time 升序 + 业务 ID 升序）：NORMAL 公开 + viewerId 本人待审/未通过评论可见（不对外展示） */
     List<PostCommentEntity> listReplies(String rootId, String viewerId, int offset, int limit);
@@ -147,7 +152,7 @@ public interface IPostService {
     long countCommentsByUser(String userId, String viewerId);
 
     /** 评论作者本人或帖子作者可删 */
-    void deleteComment(String commentId, String currentUserId);
+    void deleteCommentEntity(String commentId, String currentUserId);
 
     /**
      * 点赞评论（根评论与子回复通用）：仅 NORMAL 可见评论可赞（待审/驳回/下架一律拒绝），
@@ -167,4 +172,19 @@ public interface IPostService {
 
     /** 热评索引全量重建（comment-count-narrow-table 票 03，兜底恢复手段：索引行与窄表漂移时手动触发） */
     void rebuildCommentFeedIndex();
+
+    /**
+     * 领取任务置 DONE：尽力而为——失败只告警不抛，任务留 PENDING 由 {@code postRebateClaimScan}
+     * 重放（重放按 ref 幂等，不会重复发）。
+     */
+    void markRebateClaimTaskDone(String postId);
+
+    /** 到期待领取任务（state=0 且到点），按 id 升序 */
+    List<PostRebateClaimTaskEntity> listDueRebateClaimTasks(int limit);
+
+    /** 抢占式认领：递增重试次数并写退避时点；false = 被其他实例抢先 / 状态漂移 */
+    boolean claimRebateClaimTask(PostRebateClaimTaskEntity postRebateClaimTaskEntity);
+
+    /** 置 DEAD（重试耗尽） */
+    void markRebateClaimTaskDead(Long id);
 }

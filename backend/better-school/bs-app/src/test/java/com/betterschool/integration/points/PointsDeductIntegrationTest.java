@@ -36,17 +36,17 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
     /** 并发用例独占的兑换单号：与顺序用例的 90001 分开，免得前置态互相解释 */
     private static final String CONCURRENT_REDEEM_ORDER_ID = "99001";
 
-    private PointsDeductResponseDTO deduct(PointsDeductRequestDTO request) {
-        return pointsExchangeDubboService.deduct(request);
+    private PointsDeductResponseDTO deduct(PointsDeductRequestDTO pointsDeductRequestDTO) {
+        return pointsExchangeDubboService.deduct(pointsDeductRequestDTO);
     }
 
     private PointsDeductRequestDTO request(int amount, String reasonType, String refId) {
-        PointsDeductRequestDTO request = new PointsDeductRequestDTO();
-        request.setUserId(USER_ID);
-        request.setAmount(amount);
-        request.setReasonType(reasonType);
-        request.setRefId(refId);
-        return request;
+        PointsDeductRequestDTO pointsDeductRequestDTO = new PointsDeductRequestDTO();
+        pointsDeductRequestDTO.setUserId(USER_ID);
+        pointsDeductRequestDTO.setAmount(amount);
+        pointsDeductRequestDTO.setReasonType(reasonType);
+        pointsDeductRequestDTO.setRefId(refId);
+        return pointsDeductRequestDTO;
     }
 
     /** 桶行 id → 桶业务 ID（消费明细的 bucket_id 指向业务 ID，不是行 id；uuid-biz-id 票 07 起 bucket_id 是 UUID 字符串） */
@@ -110,10 +110,10 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
         long firstBucketId = insertBucket(USER_ID, 60, 60, LocalDateTime.now().plusDays(1), "LOTTERY_WIN", "91001");
         long secondBucketId = insertBucket(USER_ID, 100, 100, LocalDateTime.now().plusDays(10), "LOTTERY_WIN", "91002");
 
-        PointsDeductResponseDTO result = deduct(request(100, "REDEEM_DRAW_COUNT", REDEEM_ORDER_ID));
+        PointsDeductResponseDTO pointsDeductResponseDTO = deduct(request(100, "REDEEM_DRAW_COUNT", REDEEM_ORDER_ID));
 
-        assertThat(result.isSuccess()).isTrue();
-        assertThat(result.getBalance()).as("160 - 100").isEqualTo(60);
+        assertThat(pointsDeductResponseDTO.isSuccess()).isTrue();
+        assertThat(pointsDeductResponseDTO.getBalance()).as("160 - 100").isEqualTo(60);
         assertThat(bucketRemainOf(firstBucketId)).as("先过期的那桶被扣光").isZero();
         assertThat(bucketRemainOf(secondBucketId)).as("差额落到后过期的桶").isEqualTo(60);
 
@@ -155,10 +155,10 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
         long third = insertBucket(USER_ID, 25, 25, sameExpiry, "LOTTERY_WIN", "96003");
         long thirdTwin = insertBucket(USER_ID, 40, 40, sameExpiry, "LOTTERY_WIN", "96004");
 
-        PointsDeductResponseDTO result = deduct(request(100, "REDEEM_DRAW_COUNT", REDEEM_ORDER_ID));
+        PointsDeductResponseDTO pointsDeductResponseDTO = deduct(request(100, "REDEEM_DRAW_COUNT", REDEEM_ORDER_ID));
 
-        assertThat(result.isSuccess()).isTrue();
-        assertThat(result.getBalance()).as("115 - 100").isEqualTo(15);
+        assertThat(pointsDeductResponseDTO.isSuccess()).isTrue();
+        assertThat(pointsDeductResponseDTO.getBalance()).as("115 - 100").isEqualTo(15);
 
         // 每张券各自的剩余量：前三张扣光，最后一张只扣差额
         assertThat(bucketRemainOf(earliest)).as("最早过期的券先被扣光").isZero();
@@ -199,10 +199,10 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
         long second = insertBucket(USER_ID, 70, 70, LocalDateTime.now().plusDays(3), "LOTTERY_WIN", "97002");
         long untouched = insertBucket(USER_ID, 50, 50, LocalDateTime.now().plusDays(5), "LOTTERY_WIN", "97003");
 
-        PointsDeductResponseDTO result = deduct(request(100, "REDEEM_DRAW_COUNT", REDEEM_ORDER_ID));
+        PointsDeductResponseDTO pointsDeductResponseDTO = deduct(request(100, "REDEEM_DRAW_COUNT", REDEEM_ORDER_ID));
 
-        assertThat(result.isSuccess()).isTrue();
-        assertThat(result.getBalance()).as("150 - 100，只剩没被碰到的那张").isEqualTo(50);
+        assertThat(pointsDeductResponseDTO.isSuccess()).isTrue();
+        assertThat(pointsDeductResponseDTO.getBalance()).as("150 - 100，只剩没被碰到的那张").isEqualTo(50);
 
         assertThat(bucketRemainOf(first)).as("恰好扣完的第一张归零").isZero();
         assertThat(bucketRemainOf(second)).as("恰好扣完的第二张归零").isZero();
@@ -225,10 +225,10 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
     void deduct_fromSingleBucket_behavesLikeSingleBucketDeduction() {
         long bucketId = insertBucket(USER_ID, 100, 100, LocalDateTime.now().plusDays(5), "LOTTERY_WIN", "98001");
 
-        PointsDeductResponseDTO result = deduct(request(60, "REDEEM_DRAW_COUNT", REDEEM_ORDER_ID));
+        PointsDeductResponseDTO pointsDeductResponseDTO = deduct(request(60, "REDEEM_DRAW_COUNT", REDEEM_ORDER_ID));
 
-        assertThat(result.isSuccess()).isTrue();
-        assertThat(result.getBalance()).as("100 - 60").isEqualTo(40);
+        assertThat(pointsDeductResponseDTO.isSuccess()).isTrue();
+        assertThat(pointsDeductResponseDTO.getBalance()).as("100 - 60").isEqualTo(40);
         assertThat(bucketRemainOf(bucketId)).isEqualTo(40);
 
         Map<String, Integer> deductedByBucket = detailAmountsByBucketOf(USER_ID);
@@ -283,12 +283,12 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
     void deduct_insufficientPoints_changesNothing() {
         long bucketId = insertBucket(USER_ID, 50, 50, LocalDateTime.now().plusDays(5), "LOTTERY_WIN", "92001");
 
-        PointsDeductResponseDTO result = deduct(request(100, "REDEEM_PRIZE", REDEEM_ORDER_ID));
+        PointsDeductResponseDTO pointsDeductResponseDTO = deduct(request(100, "REDEEM_PRIZE", REDEEM_ORDER_ID));
 
-        assertThat(result.isSuccess()).isFalse();
-        assertThat(result.getCode()).isEqualTo("4101");
-        assertThat(result.getInfo()).isEqualTo("积分不足");
-        assertThat(result.getBalance()).as("失败也回报当前余额").isEqualTo(50);
+        assertThat(pointsDeductResponseDTO.isSuccess()).isFalse();
+        assertThat(pointsDeductResponseDTO.getCode()).isEqualTo("4101");
+        assertThat(pointsDeductResponseDTO.getInfo()).isEqualTo("积分不足");
+        assertThat(pointsDeductResponseDTO.getBalance()).as("失败也回报当前余额").isEqualTo(50);
         assertThat(detailCountOf(USER_ID)).isZero();
         assertThat(bucketRemainOf(bucketId)).isEqualTo(50);
         assertThat(outboxPayloads("bs-points-changed")).isEmpty();
@@ -300,10 +300,10 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
         long bucketId = insertBucket(USER_ID, 100, 100, LocalDateTime.now().plusDays(5), "LOTTERY_WIN", "93001");
 
         deduct(request(30, "REDEEM_DRAW_COUNT", REDEEM_ORDER_ID));
-        PointsDeductResponseDTO replay = deduct(request(30, "REDEEM_DRAW_COUNT", REDEEM_ORDER_ID));
+        PointsDeductResponseDTO pointsDeductResponseDTO = deduct(request(30, "REDEEM_DRAW_COUNT", REDEEM_ORDER_ID));
 
-        assertThat(replay.isSuccess()).isTrue();
-        assertThat(replay.getBalance()).as("只扣一次").isEqualTo(70);
+        assertThat(pointsDeductResponseDTO.isSuccess()).isTrue();
+        assertThat(pointsDeductResponseDTO.getBalance()).as("只扣一次").isEqualTo(70);
         assertThat(bucketRemainOf(bucketId)).isEqualTo(70);
         assertThat(detailCountOf(USER_ID)).isEqualTo(1);
         assertThat(outboxPayloads("bs-points-changed")).hasSize(1);
@@ -314,10 +314,10 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
     void deduct_withNonRedeemReason_isRejected() {
         insertBucket(USER_ID, 100, 100, LocalDateTime.now().plusDays(5), "LOTTERY_WIN", "94001");
 
-        PointsDeductResponseDTO result = deduct(request(10, "LOTTERY_WIN", REDEEM_ORDER_ID));
+        PointsDeductResponseDTO pointsDeductResponseDTO = deduct(request(10, "LOTTERY_WIN", REDEEM_ORDER_ID));
 
-        assertThat(result.isSuccess()).isFalse();
-        assertThat(result.getCode()).isEqualTo("400");
+        assertThat(pointsDeductResponseDTO.isSuccess()).isFalse();
+        assertThat(pointsDeductResponseDTO.getCode()).isEqualTo("400");
         assertThat(detailCountOf(USER_ID)).isZero();
         assertThat(outboxPayloads("bs-points-changed")).isEmpty();
     }
@@ -328,10 +328,10 @@ class PointsDeductIntegrationTest extends PointsApiTestBase {
         long expiredBucketId = insertBucket(USER_ID, 100, 100, LocalDateTime.now().minusDays(1), "LOTTERY_WIN", "95001");
         insertBucket(USER_ID, 40, 40, LocalDateTime.now().plusDays(3), "LOTTERY_WIN", "95002");
 
-        PointsDeductResponseDTO result = deduct(request(40, "REDEEM_DRAW_COUNT", REDEEM_ORDER_ID));
+        PointsDeductResponseDTO pointsDeductResponseDTO = deduct(request(40, "REDEEM_DRAW_COUNT", REDEEM_ORDER_ID));
 
-        assertThat(result.isSuccess()).isTrue();
-        assertThat(result.getBalance()).isZero();
+        assertThat(pointsDeductResponseDTO.isSuccess()).isTrue();
+        assertThat(pointsDeductResponseDTO.getBalance()).isZero();
         assertThat(bucketRemainOf(expiredBucketId)).as("过期桶不被扣").isEqualTo(100);
     }
 }

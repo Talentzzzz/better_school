@@ -23,13 +23,13 @@ class MergeConfigTest {
     @Test
     @DisplayName("默认值：8(退役兼容) / 5ms / 200 / 2000 / 5s")
     void defaultsMatchSpec() {
-        MergeConfig config = MergeConfig.defaults();
+        MergeConfig mergeConfig = MergeConfig.defaults();
 
-        assertEquals(8, config.shardCount());
-        assertEquals(5, config.maxFlushDelayMillis(), "退役兼容键的默认值沿用现值：不参与发车判定");
-        assertEquals(200, config.maxBatch());
-        assertEquals(2000, config.shardCapacity(), "容量默认 2000：满了就拒收，队列别长");
-        assertEquals(5000, config.drainTimeoutMs());
+        assertEquals(8, mergeConfig.shardCount());
+        assertEquals(5, mergeConfig.maxFlushDelayMillis(), "退役兼容键的默认值沿用现值：不参与发车判定");
+        assertEquals(200, mergeConfig.maxBatch());
+        assertEquals(2000, mergeConfig.shardCapacity(), "容量默认 2000：满了就拒收，队列别长");
+        assertEquals(5000, mergeConfig.drainTimeoutMs());
     }
 
     @Test

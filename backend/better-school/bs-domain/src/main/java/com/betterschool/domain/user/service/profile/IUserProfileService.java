@@ -24,6 +24,12 @@ public interface IUserProfileService {
     /** 获赞：该用户 NORMAL 帖 like_count 之和（不含评论获赞，不含待审/驳回/草稿帖） */
     long countReceivedLikes(String userId);
 
+    /** 获赞列表对外可见性：本人恒可见；showLiked 关闭则他人不可见；用户不存在按可见处理 */
+    boolean isLikedVisibleTo(String ownerId, String viewerId);
+
+    /** 评论列表对外可见性：本人恒可见；showComments 关闭则他人不可见；用户不存在按可见处理 */
+    boolean isCommentsVisibleTo(String ownerId, String viewerId);
+
     /**
      * 编辑资料（整体覆盖可编辑的两字段）：signature 空串/null＝清空，≤40 字；gender null/空串＝不展示。
      * 昵称/头像不在此动作内（牵动全站展示口径，另立 effort）

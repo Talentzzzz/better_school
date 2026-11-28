@@ -15,18 +15,18 @@ import com.betterschool.api.response.Response;
  */
 public interface IUserService {
 
-    Response<Void> sendCode(SendCodeRequestDTO request);
+    Response<Void> sendCode(SendCodeRequestDTO sendCodeRequestDTO);
 
-    Response<UserAuthResponseDTO> register(UserRegisterRequestDTO request);
+    Response<UserAuthResponseDTO> register(UserRegisterRequestDTO userRegisterRequestDTO);
 
-    Response<UserAuthResponseDTO> login(UserLoginRequestDTO request);
+    Response<UserAuthResponseDTO> login(UserLoginRequestDTO userLoginRequestDTO);
 
     /** 公开资料（免登录；不含手机号） */
     Response<PublicUserProfileResponseDTO> getProfile(String userId);
 
     /** 编辑资料（需登录；签名 ≤40 字、性别 MALE/FEMALE/不展示） */
-    Response<PublicUserProfileResponseDTO> updateProfile(UserProfileUpdateRequestDTO request);
+    Response<PublicUserProfileResponseDTO> updateProfile(UserProfileUpdateRequestDTO userProfileUpdateRequestDTO);
 
     /** 隐私设置（需登录；两个全局开关，仅他视生效） */
-    Response<UserPrivacyResponseDTO> updatePrivacy(UserPrivacyUpdateRequestDTO request);
+    Response<UserPrivacyResponseDTO> updatePrivacy(UserPrivacyUpdateRequestDTO userPrivacyUpdateRequestDTO);
 }

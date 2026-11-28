@@ -9,12 +9,12 @@ import lombok.Data;
 @Data
 public class MessagePreviewVO {
 
-    private MsgTypeVO msgType;
+    private MsgTypeEnum msgType;
 
     private String content;
 
     /** CARD 引用类型（PRODUCT/POST；非 CARD 为 null） */
-    private CardRefTypeVO refType;
+    private CardRefTypeEnum refType;
 
     /** 是否已撤回：为真时 content/refType 一律不参与渲染，文案由渲染器给「[已撤回]」 */
     private boolean recalled;

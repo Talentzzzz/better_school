@@ -22,8 +22,8 @@ public class WsTicketController {
 
     @PostMapping("/ws-ticket")
     public Response<WsTicketResponseDTO> createWsTicket() {
-        WsTicketResponseDTO dto = new WsTicketResponseDTO();
-        dto.setTicket(wsService.createTicket(SecurityUtils.currentUserId()));
-        return Response.ok(dto);
+        WsTicketResponseDTO wsTicketResponseDTO = new WsTicketResponseDTO();
+        wsTicketResponseDTO.setTicket(wsService.createTicket(SecurityUtils.currentUserId()));
+        return Response.ok(wsTicketResponseDTO);
     }
 }

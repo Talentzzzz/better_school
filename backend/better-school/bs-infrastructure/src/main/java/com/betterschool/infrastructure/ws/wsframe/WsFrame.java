@@ -19,15 +19,15 @@ import lombok.Getter;
 @Getter
 public class WsFrame<T> {
 
-    private final WsFrameType type;
+    private final WsFrameTypeEnum type;
 
     /** 与业务无关的载荷槽位：形状按 type 解释，契约见对应 Ws*Payload 类 */
     private final T payload;
 
     private final Long ts;
 
-    WsFrame(WsFrameType type, T payload, Long ts) {
-        this.type = type;
+    WsFrame(WsFrameTypeEnum wsFrameType, T payload, Long ts) {
+        this.type = wsFrameType;
         this.payload = payload;
         this.ts = ts;
     }

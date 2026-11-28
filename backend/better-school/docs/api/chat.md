@@ -15,7 +15,7 @@ chat 域接口（room / user_room + room_member 名册 / message / timeline 模�
 - 返回 `{page, pageSize, total, list}`
 
 ### POST /rooms/{roomId}/read
-打开会话推水位线到 room.last_seq（微信「打开即已读」）。幂等：仅水位线实际前进才 UPDATE + 提交后投递 READ outbox 事件（outbox `destination` = `bs-chat-read`，载荷 `{roomId, userId, readSeq}`，WS 推送归票 04），重复打开无噪音。返回 `data = readSeq`（推进后水位线）。非成员 403。
+打开会话推水位线到 room.last_seq（微信「打开即已读」）。幂等：仅水位线实际前进才 UPDATE，事务提交后直接投递 READ 推送（载荷 `{roomId, userId, readSeq}`），重复打开无噪音。返回 `data = readSeq`（推进后水位线）。非成员 403。
 
 ### POST /rooms/{roomId}/hide
 会话隐藏（用户侧删除会话）：置 hidden_at，列表立即消失；新消息自动清空 hidden_at 弹回。非成员 403。
@@ -52,7 +52,7 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
   - CARD：`content` 恒空；`refType`（PRODUCT/POST）+ `refId` 必填；目标须存在且未删（post 非 DELETED/DRAFT、product 非 DELETED），失效报「内容已失效」
 - 非成员 403
 - **发送幂等**：同 `clientMsgId` 重复提交（双击/超时重发）撞 `uk_client_msg` 回查返回原消息，收敛同一条（已落库快路径 + 并发未落库回滚后回查两个时序）；幂等收敛优先于载荷校验，重发不受卡片目标失效影响
-- 事务内：room 取 seq（UPDATE+1 读回，失败回滚无空洞）→ message INSERT → user_seq 取号 → timeline 扇出（恒两行，同时清空 hidden_at 弹回列表）→ user_room×2 只刷 `last_msg_time` 排序键（预览不落副本，读时按 message 真相现算）→ outbox MSG 推送事件（WS 推送归票 04）
+- 事务内：room 取 seq（UPDATE+1 读回，失败回滚无空洞）→ message INSERT → user_seq 取号 → timeline 扇出（恒两行，同时清空 hidden_at 弹回列表）→ user_room×2 只刷 `last_msg_time` 排序键（预览不落副本，读时按 message 真相现算）；事务提交后直接推送 MSG 帧（不经 MQ，漏推由客户端 `(roomId, seq)` 补拉兜底）
 - 200 返回完整消息体：`{roomId, messageId, seq, fromUserId, fromNickname, fromAvatar, msgType, status, content, refType, refId, clientMsgId, deliverySeq, createdAt}`（`status` NORMAL/RECALLED；`deliverySeq` 仅补拉返回）
 - 失败消息不占 seq：所有校验拒绝发生在取号之前
 
@@ -62,7 +62,7 @@ WS 连接一次性票据（60s 有效）：Redis 原子取删，同一票据只�
 - 仅发送者本人（非本人/会话外路人 403）；超 2 分钟拒绝（500）；消息不存在 404
 - 占 seq 不回退、不动已读水位线（计入未读）；content 库内保留取证，读路径与补拉一律脱敏空壳
 - 已撤回消息重复撤回幂等静默成功，不重复投递事件
-- 事务内：message 三件套（state=RECALLED + recalled_at + recalled_by=USER）——**零 user_room 写**（列表「[已撤回]」由读时现算呈现，无预览维护写）→ outbox RECALL 轻事件（outbox `destination` = `bs-chat-recall`，载荷 `{roomId, seq}`，WS 推送归票 04）
+- 事务内：message 三件套（state=RECALLED + recalled_at + recalled_by=USER）——**零 user_room 写**（列表「[已撤回]」由读时现算呈现，无预览维护写）；提交后直接投递 RECALL 轻事件（载荷 `{roomId, seq}`，内容终态以拉取为准）
 
 ## WS 长连接（票 04，spec §3；连接层为全站共享，类名与端口不带 chat 前缀）
 

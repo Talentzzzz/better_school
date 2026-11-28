@@ -6,7 +6,7 @@ import com.betterschool.domain.credit.model.valobj.CreditChangeResult;
 import com.betterschool.infrastructure.dao.credit.IUserCreditAccountDao;
 import com.betterschool.infrastructure.dao.credit.IUserCreditDao;
 import com.betterschool.infrastructure.dao.credit.po.CreditDetail;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
@@ -122,7 +122,7 @@ public class CreditRepository implements ICreditRepository {
                 if (STATE_BANNED.equals(getStatus(creditDetailEntity.getUserId()))) {
                     return null;
                 }
-                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "用户状态已变化，请刷新重试");
+                throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "用户状态已变化，请刷新重试");
             }
             insertCreditDetail(creditDetailEntity);
             return null;
@@ -137,7 +137,7 @@ public class CreditRepository implements ICreditRepository {
                 if (STATE_NORMAL.equals(getStatus(creditDetailEntity.getUserId()))) {
                     return null;
                 }
-                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "用户状态已变化，请刷新重试");
+                throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "用户状态已变化，请刷新重试");
             }
             insertCreditDetail(creditDetailEntity);
             return null;

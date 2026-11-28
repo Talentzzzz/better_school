@@ -33,12 +33,12 @@ public class TimeoutActionRouter implements ITimeoutHandler {
     private final IdleCase idleCase;
 
     @Override
-    public void fire(TimeoutTaskEntity taskEntity) {
-        switch (taskEntity.getTaskType()) {
-            case Constants.PRODUCT_ORDER_PAY_TIMEOUT -> idleCase.handlePayTimeout(taskEntity.getBizId());
+    public void fire(TimeoutTaskEntity timeoutTaskEntity) {
+        switch (timeoutTaskEntity.getTaskType()) {
+            case Constants.PRODUCT_ORDER_PAY_TIMEOUT -> idleCase.handlePayTimeout(timeoutTaskEntity.getBizId());
             // 业务侧不认识这个 taskType = 注册与消费的代码不一致（如改了 Constants 取值），
             // 按失败重投直到进死信，在管理面显式暴露，不静默吞掉
-            default -> throw new IllegalStateException("未接入的 taskType：" + taskEntity.getTaskType());
+            default -> throw new IllegalStateException("未接入的 taskType：" + timeoutTaskEntity.getTaskType());
         }
     }
 }

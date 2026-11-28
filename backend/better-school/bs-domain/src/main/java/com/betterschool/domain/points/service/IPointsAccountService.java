@@ -2,7 +2,7 @@ package com.betterschool.domain.points.service;
 
 import com.betterschool.domain.points.model.valobj.PointsDeductResultVO;
 import com.betterschool.domain.points.model.valobj.PointsTransactionVO;
-import com.betterschool.types.points.PointsReasonType;
+import com.betterschool.types.points.PointsReasonTypeEnum;
 
 import java.util.List;
 
@@ -21,23 +21,16 @@ public interface IPointsAccountService {
     void addForLotteryWin(String userId, String recordId, int pointsAmount);
 
     /**
-     * 行为返利入账（签到 / 支付等，规则见 {@code action_rebate_config} 的 POINTS 行）：
-     * 规则未配或已关闭 → 返回 false 什么都不做；命中则落一行 REBATE 桶并发变动事件，
-     * 幂等键 = {@code (userId, REBATE, refId)}（refId = 调用方的发放幂等键）。
-     */
-    boolean creditForRebate(String actionType, String userId, String refId);
-
-    /**
-     * 按显式金额入账行为返利（credit 消费者用）：金额 &le; 0 直接返回 false 不落桶；
+     * 按显式金额入账行为返利（{@code PostRebateCreditConsumer} 用）：金额 &le; 0 直接返回 false 不落桶；
      * 幂等键 = {@code (userId, REBATE, refId)}；撞键只记日志，不重复入账、不重复发变动事件。
      */
-    boolean creditRebate(String userId, int amount, String refId);
+    boolean addForRebate(String userId, String refId, int amount);
 
     /**
      * 兑换扣分（Dubbo 同步边，幂等键 = 兑换单 id）：FIFO 跨桶扣减，凑不够返回「积分不足」而不扣任何一行。
      * 业务失败以结果对象返回，不抛异常——异常跨 Dubbo 会把「积分不足」这个语义抹平。
      */
-    PointsDeductResultVO deduct(String userId, int amount, PointsReasonType reasonType, String refId);
+    PointsDeductResultVO deduct(String userId, int amount, PointsReasonTypeEnum pointsReasonType, String refId);
 
     /** 我的积分余额 */
     int getBalance(String userId);

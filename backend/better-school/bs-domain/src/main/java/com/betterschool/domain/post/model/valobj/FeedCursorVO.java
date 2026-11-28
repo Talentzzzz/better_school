@@ -1,6 +1,6 @@
 package com.betterschool.domain.post.model.valobj;
 
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 
 import java.nio.charset.StandardCharsets;
@@ -55,11 +55,11 @@ public final class FeedCursorVO {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof FeedCursorVO other)) return false;
-        return Objects.equals(sortType, other.sortType)
-                && Objects.equals(feedTime, other.feedTime)
-                && Objects.equals(likeCount, other.likeCount)
-                && Objects.equals(postId, other.postId);
+        if (!(o instanceof FeedCursorVO feedCursorVO)) return false;
+        return Objects.equals(sortType, feedCursorVO.sortType)
+                && Objects.equals(feedTime, feedCursorVO.feedTime)
+                && Objects.equals(likeCount, feedCursorVO.likeCount)
+                && Objects.equals(postId, feedCursorVO.postId);
     }
 
     @Override
@@ -85,11 +85,11 @@ public final class FeedCursorVO {
     }
 
     /** 从索引扫描行取续页锚点：排序键随 sort 而异（time = feed_time、hot = like_count），feed_time + post_id 两档都带 */
-    public static FeedCursorVO anchorOf(String sortType, FeedIndexItemVO row) {
+    public static FeedCursorVO anchorOf(String sortType, FeedIndexItemVO feedIndexItemVO) {
         return new FeedCursorVO(sortType,
-                row.getFeedTime(),
-                SORT_HOT.equals(sortType) ? (long) row.getLikeCount() : null,
-                row.getPostId());
+                feedIndexItemVO.getFeedTime(),
+                SORT_HOT.equals(sortType) ? (long) feedIndexItemVO.getLikeCount() : null,
+                feedIndexItemVO.getPostId());
     }
 
     /** 是否首页锚点（无 (排序键, feed_time, post_id) 下界） */
@@ -111,11 +111,11 @@ public final class FeedCursorVO {
         try {
             raw = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
         } catch (IllegalArgumentException e) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "无效的游标");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "无效的游标");
         }
         String[] parts = raw.split("\\|", -1);
         if (parts.length != PARTS || !parts[0].equals(expectedSort) || parts[2].isEmpty() || parts[3].isEmpty()) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "无效的游标");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "无效的游标");
         }
         try {
             LocalDateTime feedTime = LocalDateTime.parse(parts[2], FEED_TIME_FORMAT);
@@ -123,7 +123,7 @@ public final class FeedCursorVO {
                     ? new FeedCursorVO(expectedSort, feedTime, Long.parseLong(parts[1]), parts[3])
                     : new FeedCursorVO(expectedSort, feedTime, null, parts[3]);
         } catch (NumberFormatException | DateTimeParseException e) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "无效的游标");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "无效的游标");
         }
     }
 }

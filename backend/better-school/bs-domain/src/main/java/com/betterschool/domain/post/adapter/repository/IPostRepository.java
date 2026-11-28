@@ -2,13 +2,15 @@ package com.betterschool.domain.post.adapter.repository;
 
 import com.betterschool.domain.post.model.entity.PostCommentEntity;
 import com.betterschool.domain.post.model.entity.PostEntity;
+import com.betterschool.domain.post.model.entity.PostRebateClaimTaskEntity;
 import com.betterschool.domain.post.model.valobj.FeedCursorVO;
 import com.betterschool.domain.post.model.valobj.FeedIndexItemVO;
-import com.betterschool.domain.post.model.valobj.LikeStateVO;
+import com.betterschool.domain.post.model.valobj.PostLikeStateEnum;
 import com.betterschool.domain.post.model.valobj.PostPublishResultVO;
-import com.betterschool.domain.post.model.valobj.PostStatusVO;
+import com.betterschool.domain.post.model.valobj.PostStatusEnum;
 import com.betterschool.types.common.SearchPageVO;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -23,10 +25,10 @@ public interface IPostRepository {
     // ---------- 帖子 ----------
 
     /**
-     * 新建并发布帖子（NORMAL）：事务内写帖子行 + feed 索引行 + 领取任务 outbox 行（PENDING，不发送）+
-     * 搜索同步 outbox 行；按数据库时钟读回发布时间定死返利周期键。提交后只同步发送搜索同步消息
-     * （broker 确认后标记已发送，失败留 PENDING 交扫描兜底）；领取任务等 case 同步领取后标记已处理，
-     * 领取异常才由 outbox 扫描重放到 claim topic。返回 postId + 数据库发布时间
+     * 新建并发布帖子（NORMAL）：事务内写帖子行 + feed 索引行 + 领取任务行（{@code post_rebate_claim_task}，
+     * PENDING）+ 搜索同步 outbox 行；按数据库时钟读回发布时间定死返利周期键。提交后只同步发送搜索同步消息
+     * （broker 确认后标记已发送，失败留 PENDING 交扫描兜底）；领取任务等 case 同步领取后置 DONE，
+     * 领取异常才由 {@code postRebateClaimScan} 进程内重放（不经过 broker）。返回 postId + 数据库发布时间
      */
     PostPublishResultVO savePublished(PostEntity postEntity);
 
@@ -34,26 +36,33 @@ public interface IPostRepository {
     void saveDraft(PostEntity postEntity);
 
     /** 单个帖子（帖子/评论同表域，故两读入口显式区分命名） */
-    PostEntity findPostById(String postId);
+    PostEntity getPostEntityById(String postId);
 
     /** 覆盖草稿内容（仅 DRAFT 行生效） */
     void updateDraft(PostEntity postEntity);
 
     /**
      * 提交草稿：DRAFT -> NORMAL（返回 null = 状态已变化）。事务内条件 UPDATE + feed 索引 +
-     * 领取任务 outbox（PENDING，不发送）+ 搜索同步 outbox，按提交时刻读回发布时间定死返利周期键；
-     * 提交后只同步发送搜索同步消息，与 {@link #savePublished} 同一套发布语义。返回 postId + 数据库发布时间
+     * 领取任务行（{@code post_rebate_claim_task}，PENDING）+ 搜索同步 outbox，按提交时刻读回发布时间
+     * 定死返利周期键；提交后只同步发送搜索同步消息，与 {@link #savePublished} 同一套发布语义。
+     * 返回 postId + 数据库发布时间
      */
     PostPublishResultVO submitDraftAsPublished(String userId, String postId);
 
-    /**
-     * 把该帖子的领取任务 outbox 按确定性 msgId 标记已发送（state=1）。单条条件 UPDATE、无需显式事务，
-     * 重复调用无副作用（已发送时影响 0 行）
-     */
-    void markRebateClaimTaskProcessed(String postId);
+    /** 领取任务置 DONE（state 0 -> 1）。单条条件 UPDATE、无需显式事务，重复调用无副作用 */
+    void markRebateClaimTaskDone(String postId);
+
+    /** 到期待领取任务：state=0 且 next_retry_at 为空或已到点，按 id 升序（FIFO） */
+    List<PostRebateClaimTaskEntity> listDueRebateClaimTasks(int limit);
+
+    /** 抢占式认领：state=0 且到点才生效，递增 retry_count 并写退避时点；false = 被抢 / 状态漂移 */
+    boolean claimRebateClaimTask(Long id, LocalDateTime nextRetryAt);
+
+    /** 置 DEAD（state=0 才生效）；扫描重试耗尽时人工介入 */
+    void markRebateClaimTaskDead(Long id);
 
     /** 软删：status -> DELETED */
-    void deletePostById(String postId);
+    void deletePostEntityById(String postId);
 
     List<PostEntity> pageList(String sort, int offset, int limit);
 
@@ -65,7 +74,7 @@ public interface IPostRepository {
      * {@code WHERE (排序键, post_id) < (?, ?)} 续页。排序键随行带出（游标锚点用）；
      * 查询异常向上抛，由调用方降级直查
      */
-    List<FeedIndexItemVO> scanFeedIndex(String sortType, FeedCursorVO cursor, int limit);
+    List<FeedIndexItemVO> scanFeedIndex(String sortType, FeedCursorVO feedCursorVO, int limit);
 
     /**
      * feed 索引全量重建（feed-index-uv 票 07，兜底恢复手段）：清空重灌 post_feed_index（post 表 +
@@ -123,9 +132,6 @@ public interface IPostRepository {
     /** 搜索索引全量重建的游标页：id > lastId 按 id 升序取 limit 条（无界结果集一律游标化） */
     List<String> listIdsAfter(String lastId, int limit);
 
-    /** 落一条"搜索索引同步"待发送消息（必须与帖子状态变更同事务调用，实现层写 outbox 表） */
-    void saveSearchSyncMessage(String postId);
-
     // ---------- 搜索索引（技术能力，落本域仓储：backend/CLAUDE.md §1） ----------
 
     /** 帖子检索：ES 命中只回 id（相关度倒序）与近似总数，展示字段由领域服务回库组装 */
@@ -153,7 +159,7 @@ public interface IPostRepository {
     void recordPostView(String postId, String userId);
 
     /** 软删帖子 + 落搜索同步消息（消费方删除 ES 文档），同一事务原子 */
-    void deleteWithSearchSync(String postId);
+    void deletePostEntityWithSearchSync(String postId);
 
     /**
      * 点赞（合并写）：窗口合并成一组一事务落库，<b>返回时计数已精确</b>（与关系行条数相等，无需等待）。
@@ -161,17 +167,29 @@ public interface IPostRepository {
      * @return {@code LIKED} 已写入；{@code DUPLICATE} 已经赞过（唯一键裁决，计数未重复推进）
      * @throws com.betterschool.types.exception.BusinessException 等超时 / 落库失败：可安全重试（重复由唯一键吸收）
      */
-    LikeStateVO likePostWithMergedCount(String postId, String userId);
+    PostLikeStateEnum likePostWithMergedCount(String postId, String userId);
 
     /** 取消点赞（合并写，计数按本组真正删掉的行数回落，不为负）；{@code NOT_FOUND} = 本来就没赞 */
-    LikeStateVO unlikePostWithMergedCount(String postId, String userId);
+    PostLikeStateEnum unlikePostWithMergedCount(String postId, String userId);
+
+    /**
+     * 发布「帖子被赞」事实事件（落 outbox 后发送），只带 id，不含通知语义——通知内容由消费端决定。
+     * 点赞已提交，事件是附属动作：落库/发送失败只记日志，不回滚点赞。
+     */
+    void publishPostLiked(String postId, String likerUserId, String authorId);
+
+    /**
+     * 发布「评论被赞」事实事件（落 outbox 后发送），只带 id，不含通知语义——通知内容由消费端决定。
+     * 点赞已提交，事件是附属动作：落库/发送失败只记日志，不回滚点赞。
+     */
+    void publishCommentLiked(String commentId, String likerUserId, String authorId);
 
     // ---------- 评论 ----------
 
-    void saveComment(PostCommentEntity commentEntity);
+    void saveComment(PostCommentEntity postCommentEntity);
 
     /** 评论发布即可见（落库 + 取回业务 id）+ 评论数/楼根回复数/热评索引同事务推进 */
-    void saveVisibleCommentWithCount(PostCommentEntity commentEntity);
+    void publishCommentAndPush(PostCommentEntity postCommentEntity);
 
     /**
      * 根评论列表分页（root_id='0'）：
@@ -221,8 +239,8 @@ public interface IPostRepository {
 
     long countCommentsByUser(String userId);
 
-    /** 评论详情；不同于 {@link #findPostById}，本条按评论 id 取 */
-    PostCommentEntity findCommentById(String commentId);
+    /** 评论详情；不同于 {@link #getPostEntityById}，本条按评论 id 取 */
+    PostCommentEntity getCommentEntityById(String commentId);
 
     /** 帖子评论数变更（与评论写入同事务调用） */
     void updatePostCommentCount(String postId, int delta);
@@ -231,7 +249,7 @@ public interface IPostRepository {
      * 统一软删：仅 NORMAL 可翻转为 DELETED（用户删除与举报下架同轨）。
      * 白名单条件 UPDATE：扣减计数与否由实际翻转的前置状态决定，防并发下读旧态漂移；返回是否本次生效
      */
-    boolean markDeletedFromStatus(String commentId, PostStatusVO fromStatus);
+    boolean markDeletedFromStatus(String commentId, PostStatusEnum postStatusVO);
 
     // ---------- 评论：多写原子用例（实现内编程式事务，REQUIRED） ----------
 
@@ -251,7 +269,7 @@ public interface IPostRepository {
      *
      * @return {@code LIKED} 已写入；{@code DUPLICATE} 已经赞过（计数未重复推进）
      */
-    LikeStateVO likeCommentWithMergedCount(String commentId, String userId);
+    PostLikeStateEnum likeCommentWithMergedCount(String commentId, String userId);
 
     /**
      * 取消评论点赞：仍走同事务精确 -1（不在本票的三条合并入口里，见 spec §3.1 的 SQL 清单）+

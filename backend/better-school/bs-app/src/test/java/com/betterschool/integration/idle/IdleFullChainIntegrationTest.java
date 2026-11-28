@@ -145,7 +145,10 @@ class IdleFullChainIntegrationTest extends PostApiTestBase {
                 .containsEntry("actor_role", "BUYER")
                 .containsEntry("actor_id", buyer.userId());
 
-        assertSuccess(postJson("/api/idle/orders/" + orderId + "/pay", null, buyer), "买家支付");
+        // 支付入口已迁至独立收银台：订单详情取 payNo，再走 /api/pay 支付
+        String payNo = getJson("/api/idle/orders/" + orderId, buyer).path("data").path("payNo").asText();
+        assertThat(payNo).as("订单详情返回收银台支付单号").isNotBlank();
+        assertSuccess(postJson("/api/pay/orders/" + payNo + "/pay", null, buyer), "买家支付");
         assertSuccess(postJson("/api/idle/orders/" + orderId + "/mark-delivered", null, seller), "卖家标记已交付");
         assertSuccess(postJson("/api/idle/orders/" + orderId + "/confirm", null, buyer), "买家确认收货");
 

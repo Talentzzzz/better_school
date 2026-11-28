@@ -99,14 +99,14 @@ public class TimeoutSettler {
      */
     private Map<String, BucketIds> partition(List<TimeoutTaskEntity> batch, CallbackReport report) {
         Map<String, BucketIds> byTaskType = new LinkedHashMap<>();
-        for (TimeoutTaskEntity taskEntity : batch) {
-            BucketIds buckets = byTaskType.computeIfAbsent(taskEntity.getTaskType(), key -> new BucketIds());
-            if (report.isSucceeded(TaskKey.of(taskEntity.getTaskType(), taskEntity.getBizId()))) {
-                buckets.successIds.add(taskEntity.getBizId());
-            } else if (reachesRetryLimit(taskEntity)) {
-                buckets.deadIds.add(taskEntity.getBizId());
+        for (TimeoutTaskEntity timeoutTaskEntity : batch) {
+            BucketIds buckets = byTaskType.computeIfAbsent(timeoutTaskEntity.getTaskType(), key -> new BucketIds());
+            if (report.isSucceeded(TaskKey.of(timeoutTaskEntity.getTaskType(), timeoutTaskEntity.getBizId()))) {
+                buckets.successIds.add(timeoutTaskEntity.getBizId());
+            } else if (reachesRetryLimit(timeoutTaskEntity)) {
+                buckets.deadIds.add(timeoutTaskEntity.getBizId());
             } else {
-                buckets.backoffSeconds.put(taskEntity.getBizId(), backoffSecondsAfterFailure(taskEntity));
+                buckets.backoffSeconds.put(timeoutTaskEntity.getBizId(), backoffSecondsAfterFailure(timeoutTaskEntity));
             }
         }
         return byTaskType;
@@ -174,13 +174,13 @@ public class TimeoutSettler {
      * <p>
      * 上限兜底 ≥1：配成 0 或负数时首次失败即进死信，是合理读法；但不能让它变成「永不进死信」。
      */
-    private boolean reachesRetryLimit(TimeoutTaskEntity taskEntity) {
-        return failedTimes(taskEntity) >= retryLimit();
+    private boolean reachesRetryLimit(TimeoutTaskEntity timeoutTaskEntity) {
+        return failedTimes(timeoutTaskEntity) >= retryLimit();
     }
 
     /** 本次失败之后 {@code retry_count} 会变成的值（行上的值时本次失败尚未记上） */
-    private static int failedTimes(TimeoutTaskEntity taskEntity) {
-        return (taskEntity.getRetryCount() == null ? 0 : taskEntity.getRetryCount()) + 1;
+    private static int failedTimes(TimeoutTaskEntity timeoutTaskEntity) {
+        return (timeoutTaskEntity.getRetryCount() == null ? 0 : timeoutTaskEntity.getRetryCount()) + 1;
     }
 
     private int retryLimit() {
@@ -195,8 +195,8 @@ public class TimeoutSettler {
      * 行上的 {@code retry_count} 是<b>已失败次数</b>：首次失败后它为 1，间隔就该是 base（30s），
      * 所以指数取 {@code 失败次数 - 1}。左移即乘 2 的幂（倍率固定 2，「指数翻倍」写死）。
      */
-    private int backoffSecondsAfterFailure(TimeoutTaskEntity taskEntity) {
-        int exponent = Math.min(Math.max(failedTimes(taskEntity) - 1, 0), MAX_BACKOFF_EXPONENT);
+    private int backoffSecondsAfterFailure(TimeoutTaskEntity timeoutTaskEntity) {
+        int exponent = Math.min(Math.max(failedTimes(timeoutTaskEntity) - 1, 0), MAX_BACKOFF_EXPONENT);
         // 两个配置项都兜底：底数 ≥1s、封顶 ≥1s（只兜底数是不够的——`max-seconds: 0` 会让退避算成 0，
         // next_fire_time 贴住落库时刻，那一行在同一轮里被反复捞起 → 「循环拉批到空」拉不到空，
         // 一次 tick 就把 16 次重试跑光。配置写错了也不该炸在这里）

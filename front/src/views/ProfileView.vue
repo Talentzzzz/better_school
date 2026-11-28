@@ -173,18 +173,6 @@ watch(() => auth.isLoggedIn, (v) => v && load())
       </div>
 
       <div class="hero-cards">
-        <button class="hero-card" @click="router.push('/me/wallet')">
-          <span class="card-icon">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="6" width="18" height="13" rx="2" />
-              <path d="M3 10h18M16 15h2" />
-            </svg>
-          </span>
-          <span class="card-text">
-            <span class="card-title">钱包</span>
-            <span class="card-sub">查看余额</span>
-          </span>
-        </button>
         <button class="hero-card" @click="router.push('/me/credit')">
           <span class="card-icon">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">

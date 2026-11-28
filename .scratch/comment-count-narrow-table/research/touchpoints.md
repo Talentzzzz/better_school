@@ -29,7 +29,7 @@
 
 **W1. `updateLikeCount`**（PostCommentMapper.xml:170-175，`SET like_count = GREATEST(0, like_count + ?), update_time = NOW()`）
 
-1. **点赞合并落库**（L2W256）：`likeCommentWithMergedCount`（CommunityRepository.java:717-720）→ `countMergeWriter.write(CountAction.COMMENT_LIKE, ...)`（:719）→ `CountFlushDispatcher.java:57` 分派 → `CommunityRepository.java:437` `case COMMENT_LIKE -> likeComments(...)` → `likeComments`（:513-521）：`insertCommentLikes`（INSERT IGNORE，mapper :146-152）影响行数 N → `commentDao.updateLikeCount(commentId, inserted)`（:518）。一组一个事务，事务由落库方法内 `transactionTemplate` 开（:437）。上游调用链：`CommentServiceImpl.likeComment`（CommentServiceImpl.java:185）← `CommentLikeCase.java:31` ← `PostController` 的 like 端点。
+1. **点赞合并落库**（L2W256）：`likeCommentWithMergedCount`（CommunityRepository.java:717-720）→ `countMergeWriter.write(CountActionEnum.COMMENT_LIKE, ...)`（:719）→ `CountFlushDispatcher.java:57` 分派 → `CommunityRepository.java:437` `case COMMENT_LIKE -> likeComments(...)` → `likeComments`（:513-521）：`insertCommentLikes`（INSERT IGNORE，mapper :146-152）影响行数 N → `commentDao.updateLikeCount(commentId, inserted)`（:518）。一组一个事务，事务由落库方法内 `transactionTemplate` 开（:437）。上游调用链：`CommentServiceImpl.likeComment`（CommentServiceImpl.java:185）← `CommentLikeCase.java:31` ← `PostController` 的 like 端点。
 2. **取消赞（同步，不走合并器）**：`unlikeCommentWithCount`（CommunityRepository.java:723-731）：同事务内 `deleteCommentLike`（:725，mapper :163-167）+ `updateLikeCount(commentId, -1)`（:728）。上游：`CommentServiceImpl.unlikeComment`（:195）。
 
 **W2. `updateReplyCount`**（PostCommentMapper.xml:103-108，`SET reply_count = GREATEST(0, reply_count + ?), update_time = NOW()`；只按 rootId 命中楼根）
@@ -59,7 +59,7 @@ DTO（bs-api/.../api/dto/）：
   · UserCommentResponseDTO.likeCount :15
 ```
 
-拆表后要改取数来源的类：`PostCommentPO`（去两列或改窄表 JOIN 填充）、`CommunityRepository.toCommentEntity` 与四个读方法（R1-R4 的 SQL）、`PostController` 组装方法若 entity 字段保留则零改动。域接口注释需同步：`ICommunityRepository.java:246`（「返回时 post_comment.like_count 已精确（最热排序直接读它）」）、`CommentServiceImpl.java:184`、`CommunityRepository.java:512/:718`、`CountAction.java:17`（「主表行 like_count（没有窄表）」）、`IPostCommentDao.java:22/:59`。
+拆表后要改取数来源的类：`PostCommentPO`（去两列或改窄表 JOIN 填充）、`CommunityRepository.toCommentEntity` 与四个读方法（R1-R4 的 SQL）、`PostController` 组装方法若 entity 字段保留则零改动。域接口注释需同步：`ICommunityRepository.java:246`（「返回时 post_comment.like_count 已精确（最热排序直接读它）」）、`CommentServiceImpl.java:184`、`CommunityRepository.java:512/:718`、`CountActionEnum.java:17`（「主表行 like_count（没有窄表）」）、`IPostCommentDao.java:22/:59`。
 
 ## ④ 测试面（直接断言这两个数的用例）
 
@@ -91,7 +91,7 @@ DTO（bs-api/.../api/dto/）：
 - **通知**：CommentLikeCase.java:31 发 COMMENT_LIKED 通知只用 `comment.getUserId()`，不读计数。
 - **搜索 doc**：PostSearchDocVO.java:8 注释明示仅帖子文档、展示字段由 MySQL 反查组装；不存在评论搜索 doc。
 - **缓存**：评论列表无缓存对象；PostCountMergeIntegrationTest.java:107-116 的 likeCount 是帖子详情缓存（post 侧）。
-- **合并器元数据**：CountAction.java:17-18（COMMENT_LIKE 注释「没有窄表」）、CountFlushDispatcher.java:57、CountMergeWriter.java:59——行为不用改，注释要改。
+- **合并器元数据**：CountActionEnum.java:17-18（COMMENT_LIKE 注释「没有窄表」）、CountFlushDispatcher.java:57、CountMergeWriter.java:59——行为不用改，注释要改。
 
 ## ⑥ 物理删除路径
 

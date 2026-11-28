@@ -24,5 +24,5 @@ public interface IActionRebateConfigDao {
                                       @Param("rebateType") String rebateType);
 
     /** 按 uk (action_type, rebate_type) upsert：命中已存在行时更新其余列 */
-    int upsertRebate(ActionRebateConfigPO rebatePO);
+    int upsertRebate(ActionRebateConfigPO actionRebateConfigPO);
 }

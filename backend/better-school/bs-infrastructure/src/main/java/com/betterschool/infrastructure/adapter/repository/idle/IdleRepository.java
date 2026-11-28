@@ -5,15 +5,15 @@ import com.betterschool.infrastructure.timeout.TimeoutTaskStore;
 import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
 import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
-import com.betterschool.domain.idle.model.valobj.ProductCategoryVO;
+import com.betterschool.domain.idle.model.valobj.ProductCategoryEnum;
 import com.betterschool.domain.idle.model.valobj.ProductFeedCursorVO;
 import com.betterschool.domain.idle.model.valobj.ProductFeedIndexItemVO;
 import com.betterschool.domain.idle.model.valobj.ProductOrderEventVO;
-import com.betterschool.domain.idle.model.valobj.ProductOrderStatusVO;
-import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
-import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.domain.idle.model.valobj.ProductOrderStatusEnum;
+import com.betterschool.domain.idle.model.valobj.ProductStatusEnum;
+import com.betterschool.infrastructure.adapter.repository.CountActionEnum;
 import com.betterschool.infrastructure.adapter.repository.CountEvent;
-import com.betterschool.infrastructure.adapter.repository.LikeState;
+import com.betterschool.infrastructure.adapter.repository.LikeStateEnum;
 import com.betterschool.infrastructure.merge.MergeConfig;
 import com.betterschool.infrastructure.merge.MergeEngine;
 import com.betterschool.infrastructure.merge.MergeResult;
@@ -46,10 +46,10 @@ import com.betterschool.infrastructure.search.ISearchIndex;
 import com.betterschool.infrastructure.search.ProductSearchDoc;
 import com.betterschool.infrastructure.search.SearchIndexName;
 import com.betterschool.types.common.Constants;
-import com.betterschool.types.common.SearchEntityType;
+import com.betterschool.types.common.SearchEntityTypeEnum;
 import com.betterschool.types.common.SearchPageVO;
 import com.betterschool.types.common.SearchSyncMessage;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import com.betterschool.types.exception.FrameworkException;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -62,7 +62,6 @@ import org.apache.rocketmq.client.producer.SendStatus;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -71,7 +70,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -122,7 +120,7 @@ public class IdleRepository implements IIdleRepository {
      * 商品浏览的合并引擎（通用 {@link MergeEngine}，本仓储独占一个实例：它只写 product_view_* 这几张表）。
      * 非 final：出口是 {@code this::flushViewGroup}，只能在依赖注入完成后再建。
      */
-    private MergeEngine<CountEvent, LikeState> viewEngine;
+    private MergeEngine<CountEvent, LikeStateEnum> viewEngine;
 
     /**
      * 引擎由本类自建（通用引擎不是 Spring 托管对象，谁用谁 new），策略里只有两件业务知识：
@@ -155,6 +153,7 @@ public class IdleRepository implements IIdleRepository {
 
     @Override
     public void save(ProductEntity productEntity) {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
         transactionTemplate.execute(status -> {
             // 业务 ID 落库前发号（uuid-biz-id 票 05）：随行一次写入，不再自增同值回写
             productEntity.setProductId(UUID.randomUUID().toString());
@@ -162,27 +161,29 @@ public class IdleRepository implements IIdleRepository {
             productDao.insert(product);
             // 库存台账行同事务诞生（multi-quantity-listing）：quantity 取入参（null = 1），INIT 流水建账
             int quantity = productEntity.getQuantity() == null ? 1 : productEntity.getQuantity();
-            ProductInventory inventory = new ProductInventory();
-            inventory.setProductId(productEntity.getProductId());
-            inventory.setQuantity(quantity);
-            inventory.setRemaining(quantity);
-            productInventoryDao.insert(inventory);
+            ProductInventory productInventory = new ProductInventory();
+            productInventory.setProductId(productEntity.getProductId());
+            productInventory.setQuantity(quantity);
+            productInventory.setRemaining(quantity);
+            productInventoryDao.insert(productInventory);
             saveStockEvent(productEntity.getProductId(), "INIT", quantity, quantity,
                     null, productEntity.getUserId(), "SELLER");
-            if (productEntity.getStatus() == ProductStatusVO.ON_SALE) {
+            if (productEntity.getStatus() == ProductStatusEnum.ON_SALE) {
                 // 发布即可见：feed 索引行诞生 + 搜索同步消息，与落库同一事务
                 productFeedIndexDao.upsertFeedIndexOnApprove(productEntity.getProductId());
-                saveSearchSyncMessage(productEntity.getProductId());
+                pendingOutboxList.add(saveSearchSyncMessage(productEntity.getProductId()));
             }
             return null;
         });
+        // 事务已提交：事务外同步发送并更新 outbox 状态，失败留 PENDING 交 outboxScan 兜底
+        sendOutboxes(pendingOutboxList);
     }
 
     @Override
     public ProductEntity findById(String productId) {
-        Product row = productDao.selectById(productId);
-        fillProductExtras(row == null ? List.of() : List.of(row));
-        return toProductEntity(row);
+        Product product = productDao.selectById(productId);
+        fillProductExtras(product == null ? List.of() : List.of(product));
+        return toProductEntity(product);
     }
 
     @Override
@@ -190,7 +191,7 @@ public class IdleRepository implements IIdleRepository {
         transactionTemplate.execute(status -> {
             if (productDao.softDelete(productId) > 0) {
                 // feed 索引行同事务不可见化（market-feed-uv 票 03）：行不存在（从未通过审）时 0 行静默
-                syncFeedIndexState(productId, ProductStatusVO.DELETED);
+                syncFeedIndexState(productId, ProductStatusEnum.DELETED);
             }
             return null;
         });
@@ -201,12 +202,12 @@ public class IdleRepository implements IIdleRepository {
         transactionTemplate.execute(status -> {
             if (productDao.markSold(productId) > 0) {
                 // 标记已出 = 售罄：台账剩余清零 + ADJUST 流水（delta 按清零前剩余记账）
-                ProductInventory before = productInventoryDao.selectByProductId(productId);
-                if (before != null && before.getRemaining() > 0
+                ProductInventory productInventory = productInventoryDao.selectByProductId(productId);
+                if (productInventory != null && productInventory.getRemaining() > 0
                         && productInventoryDao.clearRemainingReturnDelta(productId) > 0) {
-                    saveStockEvent(productId, "ADJUST", -before.getRemaining(), 0, null, null, "SELLER");
+                    saveStockEvent(productId, "ADJUST", -productInventory.getRemaining(), 0, null, null, "SELLER");
                 }
-                syncFeedIndexState(productId, ProductStatusVO.SOLD);
+                syncFeedIndexState(productId, ProductStatusEnum.SOLD);
             }
             return null;
         });
@@ -214,9 +215,10 @@ public class IdleRepository implements IIdleRepository {
 
     @Override
     public boolean relist(String productId) {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
         Boolean relisted = transactionTemplate.execute(status -> {
-            ProductInventory inventory = productInventoryDao.selectByProductId(productId);
-            if (inventory == null || inventory.getRemaining() == 0) {
+            ProductInventory productInventory = productInventoryDao.selectByProductId(productId);
+            if (productInventory == null || productInventory.getRemaining() == 0) {
                 // 真卖完（remaining = 0）：无货不可重上架
                 return false;
             }
@@ -224,26 +226,28 @@ public class IdleRepository implements IIdleRepository {
                 return false; // 条件 UPDATE 0 行 = 状态已变化
             }
             // 索引行同事务翻回可见（行必存在：SOLD 前必经过 ON_SALE）
-            syncFeedIndexState(productId, ProductStatusVO.ON_SALE);
+            syncFeedIndexState(productId, ProductStatusEnum.ON_SALE);
             // 重新对外可见，落搜索同步消息（消费方按状态 upsert）
-            saveSearchSyncMessage(productId);
+            pendingOutboxList.add(saveSearchSyncMessage(productId));
             return true;
         });
+        // 事务已提交：事务外同步发送并更新 outbox 状态
+        sendOutboxes(pendingOutboxList);
         return Boolean.TRUE.equals(relisted);
     }
 
     @Override
     public void restock(String productId, int quantity, String actorId) {
         transactionTemplate.execute(status -> {
-            Product productRow = productDao.selectById(productId);
-            if (productRow == null || !ProductStatusVO.ON_SALE.name().equals(productRow.getState())) {
-                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅在售商品可加货");
+            Product product = productDao.selectById(productId);
+            if (product == null || !ProductStatusEnum.ON_SALE.name().equals(product.getState())) {
+                throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "仅在售商品可加货");
             }
             if (productInventoryDao.restock(productId, quantity) == 0) {
-                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "库存台账行缺失，请联系管理员");
+                throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "库存台账行缺失，请联系管理员");
             }
-            ProductInventory inventory = productInventoryDao.selectByProductId(productId);
-            saveStockEvent(productId, "RESTOCK", quantity, inventory.getRemaining(), null, actorId, "SELLER");
+            ProductInventory productInventory = productInventoryDao.selectByProductId(productId);
+            saveStockEvent(productId, "RESTOCK", quantity, productInventory.getRemaining(), null, actorId, "SELLER");
             return null;
         });
     }
@@ -259,15 +263,18 @@ public class IdleRepository implements IIdleRepository {
 
     @Override
     public boolean submitDraft(String productId) {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
         Boolean submitted = transactionTemplate.execute(status -> {
             boolean updated = productDao.submitDraft(productId) > 0;
             if (updated) {
                 // 提交即上架可见：feed 索引行诞生/翻回 + 搜索同步消息，同一事务
                 productFeedIndexDao.upsertFeedIndexOnApprove(productId);
-                saveSearchSyncMessage(productId);
+                pendingOutboxList.add(saveSearchSyncMessage(productId));
             }
             return updated;
         });
+        // 事务已提交：事务外同步发送并更新 outbox 状态
+        sendOutboxes(pendingOutboxList);
         return Boolean.TRUE.equals(submitted);
     }
 
@@ -277,7 +284,7 @@ public class IdleRepository implements IIdleRepository {
             boolean takenDown = productDao.takeDown(productId) > 0;
             if (takenDown) {
                 // 在售→草稿（主动下架/到期汇入）：索引行必存在（ON_SALE 前必通过审），同事务不可见化
-                syncFeedIndexState(productId, ProductStatusVO.DRAFT);
+                syncFeedIndexState(productId, ProductStatusEnum.DRAFT);
             }
             return takenDown;
         }));
@@ -328,9 +335,9 @@ public class IdleRepository implements IIdleRepository {
     }
 
     @Override
-    public List<ProductEntity> pageList(ProductCategoryVO category, BigDecimal minPrice, BigDecimal maxPrice,
+    public List<ProductEntity> pageList(ProductCategoryEnum productCategoryVO, BigDecimal minPrice, BigDecimal maxPrice,
                                         String sort, int offset, int limit) {
-        String categoryName = category == null ? null : category.name();
+        String categoryName = productCategoryVO == null ? null : productCategoryVO.name();
         // hot 档排序键 view_count 在窄表（SQL 不能 JOIN 进来）：ON_SALE 全集 + 窄表批量回查 + 内存排序切片。
         // 旧直查路径仅作降级（索引不可用时），数据集有界，可接受
         List<Product> productList;
@@ -340,7 +347,7 @@ public class IdleRepository implements IIdleRepository {
                     allOnSaleProductList.stream().map(Product::getProductId).toList()));
             productList = allOnSaleProductList.stream()
                     .sorted(Comparator
-                            .comparing((Product p) -> viewCountOf(viewRows, p.getProductId())).reversed()
+                            .comparing((Product product) -> viewCountOf(viewRows, product.getProductId())).reversed()
                             .thenComparing(Product::getCreateTime, Comparator.reverseOrder())
                             .thenComparing(Product::getProductId, Comparator.reverseOrder()))
                     .skip(offset)
@@ -354,14 +361,14 @@ public class IdleRepository implements IIdleRepository {
     }
 
     @Override
-    public long count(ProductCategoryVO category, BigDecimal minPrice, BigDecimal maxPrice) {
-        String categoryName = category == null ? null : category.name();
+    public long count(ProductCategoryEnum productCategoryVO, BigDecimal minPrice, BigDecimal maxPrice) {
+        String categoryName = productCategoryVO == null ? null : productCategoryVO.name();
         return productDao.count(categoryName, minPrice, maxPrice);
     }
 
     @Override
-    public List<ProductFeedIndexItemVO> scanFeedIndex(String sortType, ProductFeedCursorVO cursor, int limit) {
-        return productFeedIndexDao.selectFeedIndex(sortType, cursor, limit);
+    public List<ProductFeedIndexItemVO> scanFeedIndex(String sortType, ProductFeedCursorVO productFeedCursorVO, int limit) {
+        return productFeedIndexDao.selectFeedIndex(sortType, productFeedCursorVO, limit);
     }
 
     /**
@@ -390,7 +397,7 @@ public class IdleRepository implements IIdleRepository {
     private int rebuildFeedIndexRows() {
         List<ProductFeedIndexRow> feedIndexRowList = new ArrayList<>();
         for (ProductFeedIndexRow candidate : productDao.selectRebuildRows()) {
-            if (!ProductStatusVO.ON_SALE.name().equals(candidate.getState())) {
+            if (!ProductStatusEnum.ON_SALE.name().equals(candidate.getState())) {
                 // 草稿/已删商品不凭空进索引
                 continue;
             }
@@ -442,7 +449,7 @@ public class IdleRepository implements IIdleRepository {
         List<Product> visibleProductList = new ArrayList<>(favoriteIdList.size());
         for (String productId : favoriteIdList) {
             Product product = productsById.get(productId);
-            if (product != null && !ProductStatusVO.DELETED.name().equals(product.getState())) {
+            if (product != null && !ProductStatusEnum.DELETED.name().equals(product.getState())) {
                 visibleProductList.add(product);
             }
         }
@@ -485,7 +492,7 @@ public class IdleRepository implements IIdleRepository {
             return;
         }
         // 商品业务 ID 已是 UUID 字符串（uuid-biz-id 票 05）：合并器键直传
-        writeView(CountAction.PRODUCT_VIEW, productId, userId);
+        writeView(CountActionEnum.PRODUCT_VIEW, productId, userId);
     }
 
     /**
@@ -493,17 +500,17 @@ public class IdleRepository implements IIdleRepository {
      * 前者件大概率仍会落库，后者确定没落；重放被 UV 明细唯一键吸收，不会重复计。
      * {@code BUFFER_FULL} / {@code CLOSED} 不该冒到这里：引擎在入队阶段已就地降级。
      */
-    private void writeView(CountAction action, String rowId, String userId) {
-        MergeResult<LikeState> outcome = viewEngine.commit(new CountEvent(action, rowId, userId));
+    private void writeView(CountActionEnum action, String rowId, String userId) {
+        MergeResult<LikeStateEnum> outcome = viewEngine.commit(new CountEvent(action, rowId, userId));
         if (!outcome.isCompleted()) {
             throw retryable(action, rowId, "确定没落（整组已回滚 / 件未入队），可安全重试");
         }
     }
 
     /** 可重试：行一定没动（或重试会被 UV 明细唯一键吸收），对外统一「系统繁忙，请稍后重试」 */
-    private static BusinessException retryable(CountAction action, String rowId, String detail) {
+    private static BusinessException retryable(CountActionEnum action, String rowId, String detail) {
         log.warn("商品浏览写入需重试：action={}, rowId={}, 原因={}", action, rowId, detail);
-        return new BusinessException(ResponseCode.SYSTEM_ERROR, ResponseCode.SYSTEM_ERROR.getInfo());
+        return new BusinessException(ResponseCodeEnum.SYSTEM_ERROR, ResponseCodeEnum.SYSTEM_ERROR.getInfo());
     }
 
     @Override
@@ -526,22 +533,35 @@ public class IdleRepository implements IIdleRepository {
         return productDao.selectIdsAfter(lastProductId, limit);
     }
 
-    @Override
-    public void saveSearchSyncMessage(String productId) {
-        saveOutbox(Constants.SEARCH_SYNC_TOPIC,
-                new SearchSyncMessage(SearchEntityType.PRODUCT.name().toLowerCase(), productId));
+    /** 事务内落一条搜索同步 outbox（返回待事务后发送的行；只允许在仓储事务方法内调用） */
+    private MqOutbox saveSearchSyncMessage(String productId) {
+        return saveOutbox(Constants.SEARCH_SYNC_TOPIC,
+                new SearchSyncMessage(SearchEntityTypeEnum.PRODUCT.name().toLowerCase(), productId));
     }
 
-    /** 事务内落一行 outbox，提交后同步发送并标记 SENT；失败留 PENDING 交 outboxScan 兜底 */
-    private void saveOutbox(String destination, Object payload) {
+    /** 事务内只做 DAO 写：落一行 PENDING outbox，发送交给事务提交后的调用点 */
+    private MqOutbox saveOutbox(String destination, Object payload) {
         MqOutbox mqOutbox = MqOutbox.pending(destination, payload, objectMapper);
         mqOutboxDao.insert(mqOutbox);
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                sendOutbox(mqOutbox);
-            }
-        });
+        return mqOutbox;
+    }
+
+    /**
+     * 事务外逐条同步发送并更新 outbox 状态。仓储事务是 REQUIRED——若并入调用方事务（执行后事务仍活跃），
+     * 不在提交前发送，留给 outboxScan 兜底，避免「消息已发、外层事务回滚」。
+     */
+    private void sendOutboxes(List<MqOutbox> outboxList) {
+        if (outboxList.isEmpty()) {
+            return;
+        }
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            log.debug("[IdleRepository] outbox 并入调用方事务，留给 outboxScan 兜底 msgIds={}",
+                    outboxList.stream().map(MqOutbox::getMsgId).toList());
+            return;
+        }
+        for (MqOutbox mqOutbox : outboxList) {
+            sendOutbox(mqOutbox);
+        }
     }
 
     private void sendOutbox(MqOutbox mqOutbox) {
@@ -570,13 +590,13 @@ public class IdleRepository implements IIdleRepository {
     public SearchPageVO<String> searchProductIds(String keyword, int page, int pageSize) {
         // ES 侧 status 过滤只是冗余兜底（索引可能短暂滞后），最终公开判定在领域服务回库后做
         return searchIndex.search(SearchIndexName.PRODUCT, SearchIndexName.PRODUCT_SEARCH_FIELDS,
-                List.of(ProductStatusVO.ON_SALE.name()), keyword, page, pageSize);
+                List.of(ProductStatusEnum.ON_SALE.name()), keyword, page, pageSize);
     }
 
     @Override
     public void syncProductSearchDoc(String productId) {
         ProductEntity productEntity = findById(productId);
-        if (productEntity != null && productEntity.getStatus() == ProductStatusVO.ON_SALE) {
+        if (productEntity != null && productEntity.getStatus() == ProductStatusEnum.ON_SALE) {
             searchIndex.bulkUpsert(SearchIndexName.PRODUCT, List.of(toProductSearchDoc(productEntity)),
                     ProductSearchDoc::getProductId);
         } else {
@@ -596,7 +616,7 @@ public class IdleRepository implements IIdleRepository {
             }
             // 批内一次 IN 回查 + Java 侧过滤（SQL 层零 JOIN 的收口点），游标推进到空批是唯一终止条件
             List<ProductSearchDoc> docList = listByIds(idList).stream()
-                    .filter(product -> product.getStatus() == ProductStatusVO.ON_SALE)
+                    .filter(product -> product.getStatus() == ProductStatusEnum.ON_SALE)
                     .map(this::toProductSearchDoc)
                     .toList();
             searchIndex.bulkUpsert(SearchIndexName.PRODUCT, docList, ProductSearchDoc::getProductId);
@@ -608,15 +628,15 @@ public class IdleRepository implements IIdleRepository {
 
     /** 实体 → 索引文档：只取检索/过滤字段，价格/图片等展示字段不进索引（避免双写漂移） */
     private ProductSearchDoc toProductSearchDoc(ProductEntity productEntity) {
-        ProductSearchDoc doc = new ProductSearchDoc();
-        doc.setProductId(productEntity.getProductId());
-        doc.setTitle(productEntity.getTitle());
-        doc.setDescription(productEntity.getDescription());
-        doc.setTradeLocation(productEntity.getTradeLocation());
-        doc.setCategory(productEntity.getCategory().name());
-        doc.setStatus(productEntity.getStatus().name());
-        doc.setCreatedAt(productEntity.getCreatedAt());
-        return doc;
+        ProductSearchDoc productSearchDoc = new ProductSearchDoc();
+        productSearchDoc.setProductId(productEntity.getProductId());
+        productSearchDoc.setTitle(productEntity.getTitle());
+        productSearchDoc.setDescription(productEntity.getDescription());
+        productSearchDoc.setTradeLocation(productEntity.getTradeLocation());
+        productSearchDoc.setCategory(productEntity.getCategory().name());
+        productSearchDoc.setStatus(productEntity.getStatus().name());
+        productSearchDoc.setCreatedAt(productEntity.getCreatedAt());
+        return productSearchDoc;
     }
 
     // ---------- 计数合并器的落库方法：商品浏览（UV 口径，market-feed-uv 票 02） ----------
@@ -644,7 +664,7 @@ public class IdleRepository implements IIdleRepository {
      * <p><b>不再写主表列</b>：{@code product.view_count} 旧 PV 列随本票停写（读路径已换源
      * {@code product_view_count}），删列随收口票 06。
      */
-    public List<LikeState> flushViewGroup(String productId, List<CountEvent> countEventList) {
+    public List<LikeStateEnum> flushViewGroup(String productId, List<CountEvent> countEventList) {
         // 合并器键即商品业务 ID 字符串（UUID，uuid-biz-id 票 05 起直传，过渡期的 parseLong 缝合已拆）
         return transactionTemplate.execute(status -> {
             List<String> userIdList = distinctUserIds(countEventList);
@@ -655,7 +675,7 @@ public class IdleRepository implements IIdleRepository {
                 // 热度排序键旁路 ±N（market-feed-uv 票 03）：索引行 view_count 同事务跟上
                 syncFeedIndexViewCount(productId, inserted);
             }
-            return Collections.nCopies(countEventList.size(), LikeState.APPLIED);
+            return Collections.nCopies(countEventList.size(), LikeStateEnum.APPLIED);
         });
     }
 
@@ -664,8 +684,8 @@ public class IdleRepository implements IIdleRepository {
      * 纯 UPDATE 不 upsert——行不存在的常态（从未通过审的待审/驳回/草稿/草稿软删）0 行静默，
      * 不在写路径凭空补行
      */
-    private void syncFeedIndexState(String productId, ProductStatusVO state) {
-        productFeedIndexDao.updateFeedIndexState(productId, state.name());
+    private void syncFeedIndexState(String productId, ProductStatusEnum productStatusVO) {
+        productFeedIndexDao.updateFeedIndexState(productId, productStatusVO.name());
     }
 
     /**
@@ -686,21 +706,21 @@ public class IdleRepository implements IIdleRepository {
     // ---------- 商品托管订单 ----------
 
     @Override
-    public void saveOrder(ProductOrderEntity orderEntity) {
+    public void saveOrder(ProductOrderEntity productOrderEntity) {
         // 业务 ID 落库前发号（uuid-biz-id 票 05）：随行一次写入，不再自增同值回写
-        orderEntity.setOrderId(UUID.randomUUID().toString());
-        ProductOrder order = toPO(orderEntity);
-        productOrderDao.insert(order);
+        productOrderEntity.setOrderId(UUID.randomUUID().toString());
+        ProductOrder productOrder = toPO(productOrderEntity);
+        productOrderDao.insert(productOrder);
         // 创建事件：from_state 为 NULL（sql.md 口径），操作方恒买家
-        saveEvent(order.getProductOrderId(), "CREATED", null, order.getState(),
-                order.getBuyerId(), "BUYER");
+        saveEvent(productOrder.getProductOrderId(), "CREATED", null, productOrder.getState(),
+                productOrder.getBuyerId(), "BUYER");
     }
 
     @Override
     public ProductOrderEntity findOrderById(String orderId) {
-        ProductOrder row = productOrderDao.selectById(orderId);
-        fillOrderUserExtras(row == null ? List.of() : List.of(row));
-        return toOrderEntity(row);
+        ProductOrder productOrder = productOrderDao.selectById(orderId);
+        fillOrderUserExtras(productOrder == null ? List.of() : List.of(productOrder));
+        return toOrderEntity(productOrder);
     }
 
     @Override
@@ -733,8 +753,8 @@ public class IdleRepository implements IIdleRepository {
     @Override
     public boolean cancelOrderById(String orderId, String buyerId) {
         // 取消允许 PENDING_PAYMENT/PAID 两个前态，前态要落事件必须在 UPDATE 之前读（更新后该行已是新态）
-        ProductOrder prior = productOrderDao.selectById(orderId);
-        String fromState = prior == null ? null : prior.getState();
+        ProductOrder productOrder = productOrderDao.selectById(orderId);
+        String fromState = productOrder == null ? null : productOrder.getState();
         boolean updated = productOrderDao.cancelById(orderId, buyerId) > 0;
         if (updated) {
             saveEvent(orderId, "CANCELLED", fromState, "CANCELLED", buyerId, "BUYER", "BUYER_CANCEL");
@@ -787,57 +807,68 @@ public class IdleRepository implements IIdleRepository {
     // ---------- 跨商品、库存与订单的原子用例 ----------
 
     @Override
-    public String createOrderWithInventory(ProductOrderEntity orderEntity, String productId, int payTimeoutMinutes) {
+    public String createOrderWithInventory(ProductOrderEntity productOrderEntity, String productId, int payTimeoutMinutes) {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
         transactionTemplate.execute(status -> {
-            saveOrder(orderEntity);
+            saveOrder(productOrderEntity);
             // 台账条件 UPDATE 扣减（multi-quantity-listing）：remaining >= 扣减量才生效，
             // 并发下单在台账行锁上排队、条件不过即 0 行——防超卖唯一闸门，0 行即抛并回滚整单
-            int quantity = orderEntity.getQuantity() == null ? 1 : orderEntity.getQuantity();
+            int quantity = productOrderEntity.getQuantity() == null ? 1 : productOrderEntity.getQuantity();
             if (productInventoryDao.deduct(productId, quantity) == 0) {
-                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "库存不足，快去逛逛别的吧");
+                throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "库存不足，快去逛逛别的吧");
             }
-            ProductInventory inventory = productInventoryDao.selectByProductId(productId);
-            saveStockEvent(productId, "DEDUCT", -quantity, inventory.getRemaining(),
-                    orderEntity.getOrderId(), orderEntity.getBuyerId(), "BUYER");
-            if (inventory.getRemaining() == 0 && productDao.markSold(productId) > 0) {
+            ProductInventory productInventory = productInventoryDao.selectByProductId(productId);
+            saveStockEvent(productId, "DEDUCT", -quantity, productInventory.getRemaining(),
+                    productOrderEntity.getOrderId(), productOrderEntity.getBuyerId(), "BUYER");
+            if (productInventory.getRemaining() == 0 && productDao.markSold(productId) > 0) {
                 // 售罄：商品退出可见态，索引行同事务翻 SOLD + 搜索同步消息（消费方删文档）
-                syncFeedIndexState(productId, ProductStatusVO.SOLD);
-                saveSearchSyncMessage(productId);
+                syncFeedIndexState(productId, ProductStatusEnum.SOLD);
+                pendingOutboxList.add(saveSearchSyncMessage(productId));
             }
             // "15 分钟未支付"超时任务与下单同事务直插 timeout_task（内嵌超时中心）：
             // Java 只传时长，到期时刻由 SQL 侧 TIMESTAMPADD 按数据库时钟落库
-            schedulePayTimeout(orderEntity.getOrderId(), payTimeoutMinutes * 60L);
+            schedulePayTimeout(productOrderEntity.getOrderId(), payTimeoutMinutes * 60L);
             return null;
         });
-        return orderEntity.getOrderId();
+        // 事务已提交：事务外同步发送并更新 outbox 状态
+        sendOutboxes(pendingOutboxList);
+        return productOrderEntity.getOrderId();
     }
 
     @Override
     public boolean cancelOrderWithSearchSync(String orderId, String buyerId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
+        boolean cancelled = Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (!cancelOrderById(orderId, buyerId)) {
                 return false;
             }
-            ProductOrder order = productOrderDao.selectById(orderId);
+            ProductOrder productOrder = productOrderDao.selectById(orderId);
             // 台账回补（按订单 quantity），回补后 remaining > 0 且商品 SOLD 时翻回 ON_SALE
-            restoreStockWithEvent(order.getProductId(), order.getQuantity(), orderId, buyerId, "BUYER");
+            restoreStockWithEvent(productOrder.getProductId(), productOrder.getQuantity(), orderId, buyerId, "BUYER");
             // 搜索同步消息幂等（消费方按状态 upsert）：翻回在售则重新可搜，未翻则无副作用
-            saveSearchSyncMessage(order.getProductId());
+            pendingOutboxList.add(saveSearchSyncMessage(productOrder.getProductId()));
             return true;
         }));
+        // 事务已提交：事务外同步发送并更新 outbox 状态
+        sendOutboxes(pendingOutboxList);
+        return cancelled;
     }
 
     @Override
     public boolean cancelPendingPaymentWithSearchSync(String orderId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
+        boolean cancelled = Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (!cancelPendingPaymentOrder(orderId)) {
                 return false;
             }
-            ProductOrder order = productOrderDao.selectById(orderId);
-            restoreStockWithEvent(order.getProductId(), order.getQuantity(), orderId, null, "SYSTEM");
-            saveSearchSyncMessage(order.getProductId());
+            ProductOrder productOrder = productOrderDao.selectById(orderId);
+            restoreStockWithEvent(productOrder.getProductId(), productOrder.getQuantity(), orderId, null, "SYSTEM");
+            pendingOutboxList.add(saveSearchSyncMessage(productOrder.getProductId()));
             return true;
         }));
+        // 事务已提交：事务外同步发送并更新 outbox 状态
+        sendOutboxes(pendingOutboxList);
+        return cancelled;
     }
 
     /** 孤儿扫描输入（ADR-0016 两段式）：只读，无事务 */
@@ -849,8 +880,8 @@ public class IdleRepository implements IIdleRepository {
     /** 订单最新一条状态流转事件（只读，无事务） */
     @Override
     public ProductOrderEventVO latestEventOf(String orderId) {
-        ProductOrderEvent latest = productOrderEventDao.selectLatestEvent(orderId);
-        return latest == null ? null : new ProductOrderEventVO(latest.getEventType(), latest.getFromState());
+        ProductOrderEvent productOrderEvent = productOrderEventDao.selectLatestEvent(orderId);
+        return productOrderEvent == null ? null : new ProductOrderEventVO(productOrderEvent.getEventType(), productOrderEvent.getFromState());
     }
 
     /**
@@ -870,7 +901,7 @@ public class IdleRepository implements IIdleRepository {
         int delta = after.getRemaining() - (before == null ? 0 : before.getRemaining());
         saveStockEvent(productId, "RELEASE", delta, after.getRemaining(), orderId, actorId, actorRole);
         if (delta > 0 && productDao.restoreFromSold(productId) > 0) {
-            syncFeedIndexState(productId, ProductStatusVO.ON_SALE);
+            syncFeedIndexState(productId, ProductStatusEnum.ON_SALE);
         }
     }
 
@@ -878,48 +909,58 @@ public class IdleRepository implements IIdleRepository {
 
     @Override
     public boolean takeDownWithSearchSync(String productId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
+        boolean takenDown = Boolean.TRUE.equals(transactionTemplate.execute(status -> {
             if (!takeDown(productId)) {
                 return false;
             }
-            saveSearchSyncMessage(productId);
+            pendingOutboxList.add(saveSearchSyncMessage(productId));
             return true;
         }));
+        // 事务已提交：事务外同步发送并更新 outbox 状态
+        sendOutboxes(pendingOutboxList);
+        return takenDown;
     }
 
     @Override
     public void editOnSaleContentWithSearchSync(ProductEntity productEntity) {
-        transactionTemplate.execute(status -> {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
+        transactionTemplate.executeWithoutResult(status -> {
             if (!editOnSaleContent(productEntity)) {
                 // 0 行即抛，在事务内回滚（异常点与改造前一致，不在域内抛）
-                throw new BusinessException(ResponseCode.BUSINESS_ERROR, "商品状态已变化，请刷新后重试");
+                throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "商品状态已变化，请刷新后重试");
             }
             // 改内容立即生效，同事务落搜索同步消息（消费方按状态 upsert）
-            saveSearchSyncMessage(productEntity.getProductId());
-            return null;
+            pendingOutboxList.add(saveSearchSyncMessage(productEntity.getProductId()));
         });
+        // 事务已提交：事务外同步发送并更新 outbox 状态
+        sendOutboxes(pendingOutboxList);
     }
 
     @Override
     public void deleteWithSearchSync(String productId, boolean publiclyVisible) {
-        transactionTemplate.execute(status -> {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
+        transactionTemplate.executeWithoutResult(status -> {
             deleteById(productId);
             // 在售商品对外可见过，软删后需同步删除搜索文档；草稿从未对外可见，无需同步
             if (publiclyVisible) {
-                saveSearchSyncMessage(productId);
+                pendingOutboxList.add(saveSearchSyncMessage(productId));
             }
-            return null;
         });
+        // 事务已提交：事务外同步发送并更新 outbox 状态
+        sendOutboxes(pendingOutboxList);
     }
 
     @Override
     public void markSoldWithSearchSync(String productId) {
-        transactionTemplate.execute(status -> {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
+        transactionTemplate.executeWithoutResult(status -> {
             markSold(productId);
             // 售出后商品退出搜索结果，落搜索同步消息（消费方删除 ES 文档）
-            saveSearchSyncMessage(productId);
-            return null;
+            pendingOutboxList.add(saveSearchSyncMessage(productId));
         });
+        // 事务已提交：事务外同步发送并更新 outbox 状态
+        sendOutboxes(pendingOutboxList);
     }
 
     // ---------- 拼装辅助：浏览窄表 / 卖家信息（SQL 层零 JOIN 的 Java 收口点） ----------
@@ -943,14 +984,14 @@ public class IdleRepository implements IIdleRepository {
         List<String> userIdList = productList.stream().map(Product::getUserId).filter(Objects::nonNull).distinct().toList();
         Map<String, User> users = userIdList.isEmpty() ? Map.of() : userDao.selectByIds(userIdList).stream()
                 .collect(Collectors.toMap(User::getUserId, user -> user, (a, b) -> a));
-        for (Product row : productList) {
-            row.setViewCount(viewCountOf(viewRows, row.getProductId()));
-            ProductInventory inventory = inventoryRows.get(row.getProductId());
-            row.setRemainingQuantity(inventory == null ? null : inventory.getRemaining());
-            User user = users.get(row.getUserId());
+        for (Product product : productList) {
+            product.setViewCount(viewCountOf(viewRows, product.getProductId()));
+            ProductInventory productInventory = inventoryRows.get(product.getProductId());
+            product.setRemainingQuantity(productInventory == null ? null : productInventory.getRemaining());
+            User user = users.get(product.getUserId());
             if (user != null) {
-                row.setSellerNickname(user.getNickname());
-                row.setSellerAvatar(user.getAvatar());
+                product.setSellerNickname(user.getNickname());
+                product.setSellerAvatar(user.getAvatar());
             }
         }
     }
@@ -962,8 +1003,8 @@ public class IdleRepository implements IIdleRepository {
 
     /** 窄表缺行 = 计数 0（与原 LEFT JOIN IFNULL(x, 0) 同口径） */
     private static Integer viewCountOf(Map<String, Product> viewRows, String productId) {
-        Product row = viewRows.get(productId);
-        return row == null ? 0 : row.getViewCount();
+        Product product = viewRows.get(productId);
+        return product == null ? 0 : product.getViewCount();
     }
 
     /**
@@ -975,20 +1016,20 @@ public class IdleRepository implements IIdleRepository {
             return;
         }
         List<String> userIdList = new ArrayList<>(productOrderList.size() * 2);
-        for (ProductOrder row : productOrderList) {
-            userIdList.add(row.getBuyerId());
-            userIdList.add(row.getSellerId());
+        for (ProductOrder productOrder : productOrderList) {
+            userIdList.add(productOrder.getBuyerId());
+            userIdList.add(productOrder.getSellerId());
         }
         Map<String, User> users = userDao.selectByIds(
                 userIdList.stream().filter(Objects::nonNull).distinct().toList()).stream()
                 .collect(Collectors.toMap(User::getUserId, user -> user, (a, b) -> a));
-        for (ProductOrder row : productOrderList) {
-            User buyer = users.get(row.getBuyerId());
-            User seller = users.get(row.getSellerId());
-            row.setBuyerNickname(buyer == null ? null : buyer.getNickname());
-            row.setBuyerAvatar(buyer == null ? null : buyer.getAvatar());
-            row.setSellerNickname(seller == null ? null : seller.getNickname());
-            row.setSellerAvatar(seller == null ? null : seller.getAvatar());
+        for (ProductOrder productOrder : productOrderList) {
+            User buyer = users.get(productOrder.getBuyerId());
+            User seller = users.get(productOrder.getSellerId());
+            productOrder.setBuyerNickname(buyer == null ? null : buyer.getNickname());
+            productOrder.setBuyerAvatar(buyer == null ? null : buyer.getAvatar());
+            productOrder.setSellerNickname(seller == null ? null : seller.getNickname());
+            productOrder.setSellerAvatar(seller == null ? null : seller.getAvatar());
         }
     }
 
@@ -1022,8 +1063,8 @@ public class IdleRepository implements IIdleRepository {
         productEntity.setImages(toImagesList(product.getImages()));
         productEntity.setPrice(product.getPrice());
         productEntity.setTradeLocation(product.getTradeLocation());
-        productEntity.setCategory(product.getCategory() == null ? null : ProductCategoryVO.valueOf(product.getCategory()));
-        productEntity.setStatus(ProductStatusVO.valueOf(product.getState()));
+        productEntity.setCategory(product.getCategory() == null ? null : ProductCategoryEnum.valueOf(product.getCategory()));
+        productEntity.setStatus(ProductStatusEnum.valueOf(product.getState()));
         productEntity.setViewCount(product.getViewCount());
         productEntity.setRemainingQuantity(product.getRemainingQuantity());
         productEntity.setCreatedAt(product.getCreateTime());
@@ -1032,47 +1073,47 @@ public class IdleRepository implements IIdleRepository {
         return productEntity;
     }
 
-    private ProductOrder toPO(ProductOrderEntity orderEntity) {
-        ProductOrder order = new ProductOrder();
-        order.setProductOrderId(orderEntity.getOrderId());
-        order.setBuyerId(orderEntity.getBuyerId());
-        order.setSellerId(orderEntity.getSellerId());
-        order.setProductId(orderEntity.getProductId());
-        order.setPrice(orderEntity.getPrice());
-        order.setQuantity(orderEntity.getQuantity());
-        order.setProductTitle(orderEntity.getProductTitle());
-        order.setProductDescription(orderEntity.getProductDescription());
-        order.setProductImages(toOrderImagesJson(orderEntity.getProductImages()));
-        order.setProductTradeLocation(orderEntity.getProductTradeLocation());
-        order.setProductCategory(orderEntity.getProductCategory() == null ? null : orderEntity.getProductCategory().name());
-        order.setState(orderEntity.getStatus().name());
-        return order;
+    private ProductOrder toPO(ProductOrderEntity productOrderEntity) {
+        ProductOrder productOrder = new ProductOrder();
+        productOrder.setProductOrderId(productOrderEntity.getOrderId());
+        productOrder.setBuyerId(productOrderEntity.getBuyerId());
+        productOrder.setSellerId(productOrderEntity.getSellerId());
+        productOrder.setProductId(productOrderEntity.getProductId());
+        productOrder.setPrice(productOrderEntity.getPrice());
+        productOrder.setQuantity(productOrderEntity.getQuantity());
+        productOrder.setProductTitle(productOrderEntity.getProductTitle());
+        productOrder.setProductDescription(productOrderEntity.getProductDescription());
+        productOrder.setProductImages(toOrderImagesJson(productOrderEntity.getProductImages()));
+        productOrder.setProductTradeLocation(productOrderEntity.getProductTradeLocation());
+        productOrder.setProductCategory(productOrderEntity.getProductCategory() == null ? null : productOrderEntity.getProductCategory().name());
+        productOrder.setState(productOrderEntity.getStatus().name());
+        return productOrder;
     }
 
-    private ProductOrderEntity toOrderEntity(ProductOrder order) {
-        if (order == null) {
+    private ProductOrderEntity toOrderEntity(ProductOrder productOrder) {
+        if (productOrder == null) {
             return null;
         }
-        ProductOrderEntity orderEntity = new ProductOrderEntity();
-        orderEntity.setOrderId(order.getProductOrderId());
-        orderEntity.setBuyerId(order.getBuyerId());
-        orderEntity.setSellerId(order.getSellerId());
-        orderEntity.setProductId(order.getProductId());
-        orderEntity.setPrice(order.getPrice());
-        orderEntity.setQuantity(order.getQuantity());
-        orderEntity.setProductTitle(order.getProductTitle());
-        orderEntity.setProductDescription(order.getProductDescription());
-        orderEntity.setProductImages(toOrderImagesList(order.getProductImages()));
-        orderEntity.setProductTradeLocation(order.getProductTradeLocation());
-        orderEntity.setProductCategory(order.getProductCategory() == null ? null : ProductCategoryVO.valueOf(order.getProductCategory()));
-        orderEntity.setStatus(ProductOrderStatusVO.valueOf(order.getState()));
-        orderEntity.setCreatedAt(order.getCreateTime());
-        orderEntity.setBuyerNickname(order.getBuyerNickname());
-        orderEntity.setBuyerAvatar(order.getBuyerAvatar());
-        orderEntity.setSellerNickname(order.getSellerNickname());
-        orderEntity.setSellerAvatar(order.getSellerAvatar());
-        orderEntity.setProductImage(order.getProductImage());
-        return orderEntity;
+        ProductOrderEntity productOrderEntity = new ProductOrderEntity();
+        productOrderEntity.setOrderId(productOrder.getProductOrderId());
+        productOrderEntity.setBuyerId(productOrder.getBuyerId());
+        productOrderEntity.setSellerId(productOrder.getSellerId());
+        productOrderEntity.setProductId(productOrder.getProductId());
+        productOrderEntity.setPrice(productOrder.getPrice());
+        productOrderEntity.setQuantity(productOrder.getQuantity());
+        productOrderEntity.setProductTitle(productOrder.getProductTitle());
+        productOrderEntity.setProductDescription(productOrder.getProductDescription());
+        productOrderEntity.setProductImages(toOrderImagesList(productOrder.getProductImages()));
+        productOrderEntity.setProductTradeLocation(productOrder.getProductTradeLocation());
+        productOrderEntity.setProductCategory(productOrder.getProductCategory() == null ? null : ProductCategoryEnum.valueOf(productOrder.getProductCategory()));
+        productOrderEntity.setStatus(ProductOrderStatusEnum.valueOf(productOrder.getState()));
+        productOrderEntity.setCreatedAt(productOrder.getCreateTime());
+        productOrderEntity.setBuyerNickname(productOrder.getBuyerNickname());
+        productOrderEntity.setBuyerAvatar(productOrder.getBuyerAvatar());
+        productOrderEntity.setSellerNickname(productOrder.getSellerNickname());
+        productOrderEntity.setSellerAvatar(productOrder.getSellerAvatar());
+        productOrderEntity.setProductImage(productOrder.getProductImage());
+        return productOrderEntity;
     }
 
     private String toImagesJson(List<String> imageList) {
@@ -1130,28 +1171,28 @@ public class IdleRepository implements IIdleRepository {
 
     private void saveEvent(String orderId, String eventType, String fromState, String toState,
                            String actorId, String actorRole, String reasonType) {
-        ProductOrderEvent event = new ProductOrderEvent();
-        event.setOrderId(orderId);
-        event.setEventType(eventType);
-        event.setFromState(fromState);
-        event.setToState(toState);
-        event.setActorId(actorId);
-        event.setActorRole(actorRole);
-        event.setReasonType(reasonType);
-        productOrderEventDao.insertOrderEvent(event);
+        ProductOrderEvent productOrderEvent = new ProductOrderEvent();
+        productOrderEvent.setOrderId(orderId);
+        productOrderEvent.setEventType(eventType);
+        productOrderEvent.setFromState(fromState);
+        productOrderEvent.setToState(toState);
+        productOrderEvent.setActorId(actorId);
+        productOrderEvent.setActorRole(actorRole);
+        productOrderEvent.setReasonType(reasonType);
+        productOrderEventDao.insertOrderEvent(productOrderEvent);
     }
 
     /** 库存流水落表（multi-quantity-listing：与台账变更同事务双写，只插入；after_remaining 是对账锚点） */
     private void saveStockEvent(String productId, String eventType, int delta, int afterRemaining,
                                 String orderId, String actorId, String actorRole) {
-        ProductStockEvent event = new ProductStockEvent();
-        event.setProductId(productId);
-        event.setEventType(eventType);
-        event.setDelta(delta);
-        event.setAfterRemaining(afterRemaining);
-        event.setOrderId(orderId);
-        event.setActorId(actorId);
-        event.setActorRole(actorRole);
-        productStockEventDao.insertStockEvent(event);
+        ProductStockEvent productStockEvent = new ProductStockEvent();
+        productStockEvent.setProductId(productId);
+        productStockEvent.setEventType(eventType);
+        productStockEvent.setDelta(delta);
+        productStockEvent.setAfterRemaining(afterRemaining);
+        productStockEvent.setOrderId(orderId);
+        productStockEvent.setActorId(actorId);
+        productStockEvent.setActorRole(actorRole);
+        productStockEventDao.insertStockEvent(productStockEvent);
     }
 }

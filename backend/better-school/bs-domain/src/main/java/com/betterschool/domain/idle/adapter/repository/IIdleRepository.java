@@ -2,7 +2,7 @@ package com.betterschool.domain.idle.adapter.repository;
 
 import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
-import com.betterschool.domain.idle.model.valobj.ProductCategoryVO;
+import com.betterschool.domain.idle.model.valobj.ProductCategoryEnum;
 import com.betterschool.domain.idle.model.valobj.ProductFeedCursorVO;
 import com.betterschool.domain.idle.model.valobj.ProductFeedIndexItemVO;
 import com.betterschool.domain.idle.model.valobj.ProductOrderEventVO;
@@ -67,10 +67,10 @@ public interface IIdleRepository {
     /** 卖家加货：台账 quantity/remaining 同涨 + RESTOCK 流水，同一事务；仅 ON_SALE 可加货（0 行/状态不符抛错） */
     void restock(String productId, int quantity, String actorId);
 
-    List<ProductEntity> pageList(ProductCategoryVO category, BigDecimal minPrice, BigDecimal maxPrice,
+    List<ProductEntity> pageList(ProductCategoryEnum productCategoryVO, BigDecimal minPrice, BigDecimal maxPrice,
                                  String sort, int offset, int limit);
 
-    long count(ProductCategoryVO category, BigDecimal minPrice, BigDecimal maxPrice);
+    long count(ProductCategoryEnum productCategoryVO, BigDecimal minPrice, BigDecimal maxPrice);
 
     /**
      * 闲置推荐页索引序扫描（market-feed-uv 票 04）：product_feed_index 只取 ON_SALE，按
@@ -79,7 +79,7 @@ public interface IIdleRepository {
      * {@code WHERE (排序键, product_id) < / > (?, ?)} 续页。排序键随行带出（游标锚点用）；
      * 查询异常向上抛，由调用方降级直查
      */
-    List<ProductFeedIndexItemVO> scanFeedIndex(String sortType, ProductFeedCursorVO cursor, int limit);
+    List<ProductFeedIndexItemVO> scanFeedIndex(String sortType, ProductFeedCursorVO productFeedCursorVO, int limit);
 
     /**
      * feed 索引全量重建（market-feed-uv 票 06）：清空重灌 product_feed_index（数据源 = product +
@@ -116,9 +116,6 @@ public interface IIdleRepository {
     /** 搜索索引全量重建的游标页：业务 ID 字典序，product_id > lastProductId 升序取 limit 条（无界结果集一律游标化；uuid-biz-id 票 05） */
     List<String> listIdsAfter(String lastProductId, int limit);
 
-    /** 落一条"搜索索引同步"待发送消息（必须与商品状态变更同事务调用，实现层写 outbox 表） */
-    void saveSearchSyncMessage(String productId);
-
     // ---------- 搜索索引（技术能力，落本域仓储：backend/CLAUDE.md §1） ----------
 
     /** 商品检索：ES 命中只回 id（相关度倒序）与近似总数，展示字段由领域服务回库组装 */
@@ -133,7 +130,7 @@ public interface IIdleRepository {
     // ---------- 商品托管订单 ----------
 
     /** 落一行订单（uuid-biz-id 票 05：发号在实现内落库前完成，业务 id 随行写入并回填入参实体），并落 CREATED 状态流转事件 */
-    void saveOrder(ProductOrderEntity orderEntity);
+    void saveOrder(ProductOrderEntity productOrderEntity);
 
     ProductOrderEntity findOrderById(String orderId);
 
@@ -174,7 +171,7 @@ public interface IIdleRepository {
      * + DEDUCT 库存流水 + 扣到 0 时商品 ON_SALE → SOLD（索引行翻 SOLD + 搜索同步消息随行）
      * + 支付超时注册。全部一个事务，返回订单 id
      */
-    String createOrderWithInventory(ProductOrderEntity orderEntity, String productId, int payTimeoutMinutes);
+    String createOrderWithInventory(ProductOrderEntity productOrderEntity, String productId, int payTimeoutMinutes);
 
     /**
      * 买家取消：订单条件 UPDATE（PENDING_PAYMENT/PAID → CANCELLED）+ 台账回补（按订单 quantity）

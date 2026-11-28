@@ -165,7 +165,7 @@
   `delay_level = 1` 合并消息（撞唯一键当成功回放、不再发消息）」；仓储的 `confirmIssued` 换成
   `queryDeductBucketId` + `insertClaimDetail`，明细 VO / 聚合成 `InventoryDetailVO` / `InventoryDetailAggregate`
   （预扣与确认同形状、`type` 由写入方法决定）；`mergeCell` 补 ⑥ `waiting -s2 / issued +s2`
-  （0 行 → `log.error` + 整格回滚、不续命；`type = 2` 不进桶递减）；`ResponseCode` 删 `4312`，
+  （0 行 → `log.error` + 整格回滚、不续命；`type = 2` 不进桶递减）；`ResponseCodeEnum` 删 `4312`，
   抽奖侧六处注释去掉「4312 / 同步转移」口径。全量 **114 tests 绿**（111 + 4 新 − 1 改写）。
   文档仍留 12。
 - 2026-10-18 **票 12 已落地**（[票 12](issues/12-docs-and-full-regression.md) resolved；**07 仍未落地**）——

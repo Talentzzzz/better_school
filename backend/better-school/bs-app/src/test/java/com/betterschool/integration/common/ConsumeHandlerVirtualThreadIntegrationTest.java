@@ -1,6 +1,6 @@
 package com.betterschool.integration.common;
 
-import com.betterschool.integration.support.RaffleApiTestBase;
+import com.betterschool.integration.support.DrawApiTestBase;
 import com.betterschool.integration.support.VtConsumeThreadProbe;
 import org.apache.rocketmq.client.consumer.DefaultMQPushConsumer;
 import org.apache.rocketmq.client.impl.consumer.DefaultMQPushConsumerImpl;
@@ -27,11 +27,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * </ul>
  * 断言对象是线程模型，不看业务结果——探针消费者订阅独立 topic，测试直接投递给它的消费服务。
  * <p>
- * 父类是 {@link RaffleApiTestBase}：它拉起的完整上下文（全部消费者容器 + 域服务）才是
+ * 父类是 {@link DrawApiTestBase}：它拉起的完整上下文（全部消费者容器 + 域服务）才是
  * 「每个容器都换上了 VT 服务」这条断言要看的对象；PointsApiTestBase 保留，但 VT 两个类只跑一次。
  */
 @DisplayName("消费 seam：消费者的工作线程为虚拟线程 + 流控旋钮已设值")
-class ConsumeHandlerVirtualThreadIntegrationTest extends RaffleApiTestBase {
+class ConsumeHandlerVirtualThreadIntegrationTest extends DrawApiTestBase {
 
     @Autowired
     private ApplicationContext applicationContext;

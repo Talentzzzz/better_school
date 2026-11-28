@@ -5,6 +5,7 @@
 |表名|说明|
 |----|----|
 |post|帖子主表（内容 + 状态机）|
+|post_rebate_claim_task|发帖返利领取任务（域内最终一致任务表，订单兼 outbox；不走 MQ）|
 |post_like|帖子点赞关系（明细，uk_post_user 幂等）|
 |post_like_count|帖子点赞计数窄表（点赞计数真源，进程内合并同步落库）|
 
@@ -45,9 +46,38 @@
 - 匿名字段已移除：所有内容实名展示
 - 删除是软删（`state='DELETED'`，条件 UPDATE），列表/详情查询均排除
 - 写状态一律条件 UPDATE（`WHERE post_id = ? AND state = ?`），不要无条件 UPDATE
-- 发布即对外可见：发布落库即 NORMAL 并同事务落搜索同步消息，同时落一条 `PENDING` 领取任务 outbox（msgId `post-rebate-claim:{postId}`，仓储不发送）；同步领取成功后由 case 把该任务标记为已处理（`SENT`）
+- 发布即对外可见：发布落库即 NORMAL 并同事务落搜索同步消息，同时落一条 `PENDING` 领取任务（`post_rebate_claim_task`，与帖子行同事务）；同步领取成功后由 case 把该任务置 `DONE`，领取异常才留 `PENDING` 交 `postRebateClaimScan` 重放
 - 草稿箱：DRAFT 仅作者可见（「我的发帖」含草稿态）；提交条件 UPDATE（DRAFT→NORMAL）并刷新 `expire_at`
 - 封面 `cover` 独立列：发布/草稿可指定（不传存 NULL）；列表与详情展示走「独立封面 ?? 相册第一张」，编辑清空 cover 后自动跟随相册
+
+# post_rebate_claim_task
+
+> 业务：发帖返利领取任务（域内最终一致任务表，订单兼 outbox）；归属模块：post（ADR-0017）
+
+**不是 MQ outbox**：本表与 `mq_outbox` 是两张不同的表。`mq_outbox` 负责跨进程投递；本表负责「这条帖子的返利领取还没做完」，由 post 域自己的 `postRebateClaimScan` 进程内重放，不经过 broker。形态对齐 `draw_count_purchase_order` / `timeout_task`。
+
+|字段|类型|约束|说明|
+|----|----|----|----|
+|id|bigint|PK, AUTO_INCREMENT|物理自增（扫描抢占 / 死信按 id 条件更新）|
+|post_id|varchar(36)|UNIQUE(uk_post_id), NOT NULL|帖子业务 ID：同一帖子只落一条任务|
+|user_id|varchar(36)|NOT NULL|发帖用户 ID|
+|period_key|varchar(16)|NOT NULL|返利周期键（`yyyyMMdd`，Asia/Shanghai）：发帖事务内按数据库 `update_time` 定死，重放沿用，避免跨零点串天|
+|state|tinyint|NOT NULL, DEFAULT 0|0 待领取 / 1 已完成（领取成功、明确拒绝或无返利）/ 2 死信（重试耗尽）|
+|retry_count|int|NOT NULL, DEFAULT 0|重试次数（扫描抢占时递增）|
+|next_retry_at|datetime|NULL|下次重试时间（指数退避 1/2/4/8/16 分钟）；NULL = 立即可扫|
+|finish_time|datetime|NULL|领取完成时间|
+|create_time|datetime|NOT NULL|创建时间|
+|update_time|datetime|NOT NULL|更新时间|
+
+## 索引
+- `uk_post_id (post_id)`：同一帖子只落一条，重放插行幂等
+- `idx_state_next_retry (state, next_retry_at)`：扫描 `WHERE state=0 AND (next_retry_at IS NULL OR next_retry_at <= NOW())`
+
+## 流程
+1. **发帖 / 提交草稿事务**：post 仓储插入本行（`PENDING`，与帖子行同生同死），不发送任何消息
+2. **同步领取**：事务提交后请求线程调 rebate 域领取；正常返回（`CLAIMED` / `DENIED` / `NO_REBATE`）后置 `DONE`，异常则留 `PENDING`，接口返回「发放中」
+3. **扫描收敛**：`postRebateClaimScan`（cron `0/30`）捞到点的 `PENDING` 行，抢占后进程内调 `replayClaim`；成功置 `DONE`，失败按 `next_retry_at` 退避，`retry_count` 达 5 置 `DEAD`
+4. **幂等**：领取按 `(user_id, action_type, ref_type, ref_id)` 唯一键幂等，重复重放零副作用
 
 # post_like
 

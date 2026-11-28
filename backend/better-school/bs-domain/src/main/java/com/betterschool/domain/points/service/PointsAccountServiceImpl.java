@@ -1,12 +1,11 @@
 package com.betterschool.domain.points.service;
 
-import com.betterschool.domain.points.adapter.port.rebate.IPointsRebatePort;
 import com.betterschool.domain.points.adapter.repository.IPointsRepository;
 import com.betterschool.domain.points.model.valobj.PointsDeductResultVO;
 import com.betterschool.domain.points.model.valobj.PointsTransactionVO;
 import com.betterschool.types.common.AppException;
-import com.betterschool.types.enums.ResponseCode;
-import com.betterschool.types.points.PointsReasonType;
+import com.betterschool.types.enums.ResponseCodeEnum;
+import com.betterschool.types.points.PointsReasonTypeEnum;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -22,7 +21,7 @@ import java.util.List;
  * 事务：一次入账 / 一次消费的原子边界在仓储方法里（{@code insertBucketWithChanged} / {@code deduct}），
  * 本类只做入参校验与业务口径判断，不注入 {@code TransactionTemplate}。
  * 有效期是**本域自己的表**（points_validity_config，入账算 expire_at 的那次读在仓储事务内）；
- * 行为返利规则归返利域（action_rebate_config），经 {@link IPointsRebatePort} 只读。
+ * 行为返利规则归返利域（action_rebate_config），由 case 层读取后把金额传进来。
  */
 @Slf4j
 @Service
@@ -30,7 +29,6 @@ import java.util.List;
 public class PointsAccountServiceImpl implements IPointsAccountService {
 
     private final IPointsRepository pointsRepository;
-    private final IPointsRebatePort pointsRebatePort;
 
     @Override
     public void addForLotteryWin(String userId, String recordId, int pointsAmount) {
@@ -38,38 +36,21 @@ public class PointsAccountServiceImpl implements IPointsAccountService {
             // 非积分档（实物 / 谢谢参与）不该走到这里；真收到了也只是不加分，不抛异常打断 MQ 消费
             return;
         }
-        if (!pointsRepository.insertBucketWithChanged(userId, pointsAmount, PointsReasonType.LOTTERY_WIN, recordId)) {
+        if (!pointsRepository.insertBucketWithChanged(userId, pointsAmount, PointsReasonTypeEnum.LOTTERY_WIN, recordId)) {
             // 撞 uk = 这条中奖已入过账（MQ 重投）：不重复加分，也不重复发变动事件
             log.info("[PointsAccount] 中奖入账已存在，幂等跳过 userId={}, recordId={}", userId, recordId);
         }
     }
 
     @Override
-    public boolean creditForRebate(String actionType, String userId, String refId) {
-        if (actionType == null || actionType.isBlank() || userId == null || refId == null) {
-            throw new AppException(ResponseCode.POINTS_PARAM_ERROR);
-        }
-        Integer rebateValue = pointsRebatePort.findOpenRebateValue(actionType);
-        if (rebateValue == null) {
-            return false;
-        }
-        if (!pointsRepository.insertBucketWithChanged(userId, rebateValue, PointsReasonType.REBATE, refId)) {
-            // 撞 uk = 这笔发放已记过（重试 / 重投）：不重复加分，也不重复发变动事件
-            log.info("[PointsAccount] 返利入账已存在，幂等跳过 userId={}, actionType={}, refId={}",
-                    userId, actionType, refId);
-        }
-        return true;
-    }
-
-    @Override
-    public boolean creditRebate(String userId, int amount, String refId) {
+    public boolean addForRebate(String userId, String refId, int amount) {
         if (userId == null || refId == null) {
-            throw new AppException(ResponseCode.POINTS_PARAM_ERROR);
+            throw new AppException(ResponseCodeEnum.POINTS_PARAM_ERROR);
         }
         if (amount <= 0) {
             return false;
         }
-        if (!pointsRepository.insertBucketWithChanged(userId, amount, PointsReasonType.REBATE, refId)) {
+        if (!pointsRepository.insertBucketWithChanged(userId, amount, PointsReasonTypeEnum.REBATE, refId)) {
             // 撞 uk = 这笔发放已记过（重试 / 重投）：不重复加分，也不重复发变动事件
             log.info("[PointsAccount] 返利入账已存在，幂等跳过 userId={}, refId={}", userId, refId);
         }
@@ -77,14 +58,14 @@ public class PointsAccountServiceImpl implements IPointsAccountService {
     }
 
     @Override
-    public PointsDeductResultVO deduct(String userId, int amount, PointsReasonType reasonType, String refId) {
+    public PointsDeductResultVO deduct(String userId, int amount, PointsReasonTypeEnum pointsReasonType, String refId) {
         if (amount <= 0 || refId == null) {
-            throw new AppException(ResponseCode.POINTS_PARAM_ERROR);
+            throw new AppException(ResponseCodeEnum.POINTS_PARAM_ERROR);
         }
-        if (reasonType != PointsReasonType.REDEEM_DRAW_COUNT && reasonType != PointsReasonType.REDEEM_PRIZE) {
-            throw new AppException(ResponseCode.POINTS_PARAM_ERROR, "不支持的积分消费原因");
+        if (pointsReasonType != PointsReasonTypeEnum.REDEEM_DRAW_COUNT && pointsReasonType != PointsReasonTypeEnum.REDEEM_PRIZE) {
+            throw new AppException(ResponseCodeEnum.POINTS_PARAM_ERROR, "不支持的积分消费原因");
         }
-        return pointsRepository.deduct(userId, amount, reasonType, refId);
+        return pointsRepository.deduct(userId, amount, pointsReasonType, refId);
     }
 
     @Override
@@ -116,7 +97,7 @@ public class PointsAccountServiceImpl implements IPointsAccountService {
     @Override
     public void updateValidDays(int days) {
         if (days <= 0) {
-            throw new AppException(ResponseCode.CONFIG_PARAM_ERROR, "有效期天数必须为正");
+            throw new AppException(ResponseCodeEnum.CONFIG_PARAM_ERROR, "有效期天数必须为正");
         }
         pointsRepository.updateValidDays(days);
     }

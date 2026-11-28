@@ -41,23 +41,23 @@ public class UserController implements IUserService {
 
     @Override
     @PostMapping("/send-code")
-    public Response<Void> sendCode(@Valid @RequestBody SendCodeRequestDTO request) {
-        userAuthService.sendCode(request.getPhone());
+    public Response<Void> sendCode(@Valid @RequestBody SendCodeRequestDTO sendCodeRequestDTO) {
+        userAuthService.sendCode(sendCodeRequestDTO.getPhone());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/register")
-    public Response<UserAuthResponseDTO> register(@Valid @RequestBody UserRegisterRequestDTO request) {
-        UserAuthResult authResult = userRegisterCase.register(request.getPhone(), request.getCode(), request.getNickname());
-        return Response.ok(toAuthResponseDTO(authResult));
+    public Response<UserAuthResponseDTO> register(@Valid @RequestBody UserRegisterRequestDTO userRegisterRequestDTO) {
+        UserAuthResult userAuthResult = userRegisterCase.register(userRegisterRequestDTO.getPhone(), userRegisterRequestDTO.getCode(), userRegisterRequestDTO.getNickname());
+        return Response.ok(toAuthResponseDTO(userAuthResult));
     }
 
     @Override
     @PostMapping("/login")
-    public Response<UserAuthResponseDTO> login(@Valid @RequestBody UserLoginRequestDTO request) {
-        UserAuthResult authResult = userAuthService.login(request.getPhone(), request.getCode());
-        return Response.ok(toAuthResponseDTO(authResult));
+    public Response<UserAuthResponseDTO> login(@Valid @RequestBody UserLoginRequestDTO userLoginRequestDTO) {
+        UserAuthResult userAuthResult = userAuthService.login(userLoginRequestDTO.getPhone(), userLoginRequestDTO.getCode());
+        return Response.ok(toAuthResponseDTO(userAuthResult));
     }
 
     @Override
@@ -68,53 +68,53 @@ public class UserController implements IUserService {
 
     @Override
     @PutMapping("/profile")
-    public Response<PublicUserProfileResponseDTO> updateProfile(@Valid @RequestBody UserProfileUpdateRequestDTO request) {
+    public Response<PublicUserProfileResponseDTO> updateProfile(@Valid @RequestBody UserProfileUpdateRequestDTO userProfileUpdateRequestDTO) {
         UserEntity userEntity = userProfileService.updateProfile(SecurityUtils.currentUserId(),
-                request.getSignature(), request.getGender());
+                userProfileUpdateRequestDTO.getSignature(), userProfileUpdateRequestDTO.getGender());
         return Response.ok(toPublicProfileDTO(userEntity));
     }
 
     @Override
     @PutMapping("/privacy")
-    public Response<UserPrivacyResponseDTO> updatePrivacy(@Valid @RequestBody UserPrivacyUpdateRequestDTO request) {
+    public Response<UserPrivacyResponseDTO> updatePrivacy(@Valid @RequestBody UserPrivacyUpdateRequestDTO userPrivacyUpdateRequestDTO) {
         UserEntity userEntity = userProfileService.updatePrivacy(SecurityUtils.currentUserId(),
-                request.getShowLiked(), request.getShowComments());
-        UserPrivacyResponseDTO dto = new UserPrivacyResponseDTO();
-        dto.setShowLiked(Boolean.TRUE.equals(userEntity.getShowLiked()));
-        dto.setShowComments(Boolean.TRUE.equals(userEntity.getShowComments()));
-        return Response.ok(dto);
+                userPrivacyUpdateRequestDTO.getShowLiked(), userPrivacyUpdateRequestDTO.getShowComments());
+        UserPrivacyResponseDTO userPrivacyResponseDTO = new UserPrivacyResponseDTO();
+        userPrivacyResponseDTO.setShowLiked(Boolean.TRUE.equals(userEntity.getShowLiked()));
+        userPrivacyResponseDTO.setShowComments(Boolean.TRUE.equals(userEntity.getShowComments()));
+        return Response.ok(userPrivacyResponseDTO);
     }
 
     private PublicUserProfileResponseDTO toPublicProfileDTO(UserEntity userEntity) {
-        PublicUserProfileResponseDTO dto = new PublicUserProfileResponseDTO();
-        dto.setUserId(userEntity.getUserId());
-        dto.setNickname(userEntity.getNickname());
-        dto.setAvatar(userEntity.getAvatar());
-        dto.setSignature(userEntity.getSignature());
-        dto.setGender(userEntity.getGender() == null ? null : userEntity.getGender().name());
-        dto.setReceivedLikeCount(userProfileService.countReceivedLikes(userEntity.getUserId()));
-        dto.setShowLiked(!Boolean.FALSE.equals(userEntity.getShowLiked()));
-        dto.setShowComments(!Boolean.FALSE.equals(userEntity.getShowComments()));
-        return dto;
+        PublicUserProfileResponseDTO publicUserProfileResponseDTO = new PublicUserProfileResponseDTO();
+        publicUserProfileResponseDTO.setUserId(userEntity.getUserId());
+        publicUserProfileResponseDTO.setNickname(userEntity.getNickname());
+        publicUserProfileResponseDTO.setAvatar(userEntity.getAvatar());
+        publicUserProfileResponseDTO.setSignature(userEntity.getSignature());
+        publicUserProfileResponseDTO.setGender(userEntity.getGender() == null ? null : userEntity.getGender().name());
+        publicUserProfileResponseDTO.setReceivedLikeCount(userProfileService.countReceivedLikes(userEntity.getUserId()));
+        publicUserProfileResponseDTO.setShowLiked(!Boolean.FALSE.equals(userEntity.getShowLiked()));
+        publicUserProfileResponseDTO.setShowComments(!Boolean.FALSE.equals(userEntity.getShowComments()));
+        return publicUserProfileResponseDTO;
     }
 
-    private UserAuthResponseDTO toAuthResponseDTO(UserAuthResult authResult) {
-        UserAuthResponseDTO dto = new UserAuthResponseDTO();
-        dto.setToken(authResult.getToken());
-        dto.setUserInfo(toResponseDTO(authResult.getUserEntity()));
-        return dto;
+    private UserAuthResponseDTO toAuthResponseDTO(UserAuthResult userAuthResult) {
+        UserAuthResponseDTO userAuthResponseDTO = new UserAuthResponseDTO();
+        userAuthResponseDTO.setToken(userAuthResult.getToken());
+        userAuthResponseDTO.setUserInfo(toResponseDTO(userAuthResult.getUserEntity()));
+        return userAuthResponseDTO;
     }
 
     private UserResponseDTO toResponseDTO(UserEntity userEntity) {
-        UserResponseDTO dto = new UserResponseDTO();
-        dto.setUserId(userEntity.getUserId());
-        dto.setPhone(userEntity.getPhone());
-        dto.setNickname(userEntity.getNickname());
-        dto.setAvatar(userEntity.getAvatar());
-        dto.setRole(userEntity.getRole().name());
-        dto.setStatus(userEntity.getStatus().name());
-        dto.setCreditScore(userEntity.getCreditScore());
-        dto.setLastLoginAt(userEntity.getLastLoginAt());
-        return dto;
+        UserResponseDTO userResponseDTO = new UserResponseDTO();
+        userResponseDTO.setUserId(userEntity.getUserId());
+        userResponseDTO.setPhone(userEntity.getPhone());
+        userResponseDTO.setNickname(userEntity.getNickname());
+        userResponseDTO.setAvatar(userEntity.getAvatar());
+        userResponseDTO.setRole(userEntity.getRole().name());
+        userResponseDTO.setStatus(userEntity.getStatus().name());
+        userResponseDTO.setCreditScore(userEntity.getCreditScore());
+        userResponseDTO.setLastLoginAt(userEntity.getLastLoginAt());
+        return userResponseDTO;
     }
 }

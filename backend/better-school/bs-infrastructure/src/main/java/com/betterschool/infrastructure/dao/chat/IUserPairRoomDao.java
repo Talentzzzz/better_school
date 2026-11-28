@@ -12,7 +12,7 @@ import org.apache.ibatis.annotations.Param;
 public interface IUserPairRoomDao {
 
     /** 建会话事务的收尾闸门：撞 uk_pair 即 DuplicateKeyException，整个事务回滚 */
-    int insertUserPairRoom(UserPairRoom pair);
+    int insertUserPairRoom(UserPairRoom userPairRoom);
 
     String selectUserPairRoomId(@Param("userMin") String userMin, @Param("userMax") String userMax);
 }

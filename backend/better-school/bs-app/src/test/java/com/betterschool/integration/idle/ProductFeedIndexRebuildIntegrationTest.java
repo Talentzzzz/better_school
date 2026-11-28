@@ -1,7 +1,7 @@
 package com.betterschool.integration.idle;
 
 import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
-import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountActionEnum;
 import com.betterschool.infrastructure.adapter.repository.CountEvent;
 import com.betterschool.infrastructure.adapter.repository.idle.IdleRepository;
 import com.betterschool.integration.support.PostApiTestBase;
@@ -171,7 +171,7 @@ class ProductFeedIndexRebuildIntegrationTest extends PostApiTestBase {
     /** 一组浏览落库（同步合并，即一组一个事务的三步 + 索引旁路；没有收集窗口要等） */
     private void flushViews(String productId, String... userIds) {
         List<CountEvent> events = java.util.Arrays.stream(userIds)
-                .map(userId -> new CountEvent(CountAction.PRODUCT_VIEW, productId, userId))
+                .map(userId -> new CountEvent(CountActionEnum.PRODUCT_VIEW, productId, userId))
                 .toList();
         flushHandler.flushViewGroup(productId, events);
     }

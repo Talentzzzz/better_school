@@ -83,12 +83,12 @@ public class MergeEngine<T, R> {
     /** 是否接收新件：停机第一步置 false，入口立刻开始拒绝 */
     private volatile boolean accepting = true;
 
-    public MergeEngine(MergeConfig config, MergeStrategy<T, R> strategy) {
-        this.config = Objects.requireNonNull(config, "MergeEngine.config 不能为 null");
+    public MergeEngine(MergeConfig mergeConfig, MergeStrategy<T, R> strategy) {
+        this.config = Objects.requireNonNull(mergeConfig, "MergeEngine.config 不能为 null");
         this.strategy = Objects.requireNonNull(strategy, "MergeEngine.strategy 不能为 null");
         log.info("合并引擎启动（per-invId leader 模型）：strategy={}, 发车条件=队列非空即发（无收集窗口）, "
                         + "maxBatch={}, groupCapacity={}, drainTimeoutMs={}",
-                strategy.getName(), config.maxBatch(), config.shardCapacity(), config.drainTimeoutMs());
+                strategy.getName(), mergeConfig.maxBatch(), mergeConfig.shardCapacity(), mergeConfig.drainTimeoutMs());
     }
 
     /**
@@ -119,9 +119,9 @@ public class MergeEngine<T, R> {
         String key = strategy.getShardKey(item);
         MergeItem<T, R> mine = new MergeItem<>(item, key);
         MergeGroup<T, R> group = groups.computeIfAbsent(key, k -> new MergeGroup<>(k, config));
-        MergeGroup.EnqueueOutcome outcome = group.enqueue(mine, accepting);
+        MergeGroup.EnqueueOutcomeEnum outcome = group.enqueue(mine, accepting);
         // 乐观删除竞态自愈：撞上刚被摘除的组就换组重建（同 key 永远收敛到同一个活组）
-        while (outcome == MergeGroup.EnqueueOutcome.GROUP_REMOVED) {
+        while (outcome == MergeGroup.EnqueueOutcomeEnum.GROUP_REMOVED) {
             group = groups.computeIfAbsent(key, k -> new MergeGroup<>(k, config));
             outcome = group.enqueue(mine, accepting);
         }

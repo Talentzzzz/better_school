@@ -1,0 +1,25 @@
+package com.betterschool.infrastructure.dao.draw.po;
+
+import lombok.Data;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+/** 抽奖策略奖品位行（draw_strategy_award） */
+@Data
+public class DrawStrategyAwardPO {
+
+    private Long id;
+    private String strategyId;
+    private String awardId;
+    private String awardName;
+    private String awardDesc;
+    private String awardType;
+    private BigDecimal awardRate;
+    private Integer level;
+    private String invId;
+    private String type;
+    private Integer sort;
+    private LocalDateTime createTime;
+    private LocalDateTime updateTime;
+}

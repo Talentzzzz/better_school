@@ -25,7 +25,7 @@
 编辑草稿（全量覆盖：title/content/images/cover 均可改，Body 同上；不传 `cover` 即清空独立封面，展示回退相册第一张，票 05）。仅 DRAFT 可编辑；非作者 403。
 
 ### POST /posts/{postId}/submit
-提交草稿发布。与直接发布同门槛：① 完整性校验（正文必填，标题/配图/封面可空，缺项报「草稿内容不完整…」停留 DRAFT）② 信用分门槛。通过 → NORMAL（发布即对外可见）并刷新 30 天过期时间。
+提交草稿发布。与直接发布同门槛：① 完整性校验（post 域 `PostEntity.ensurePublishable`：正文必填，标题/配图/封面可空，缺项报「草稿内容不完整…」停留 DRAFT；仓储条件 UPDATE 用同一条件兜底并发竞态）② 信用分门槛（case 跨域前置）。通过 → NORMAL（发布即对外可见）并刷新 30 天过期时间。
 
 ### GET /posts/{postId}
 详情。草稿帖仅作者可见；浏览量仅作者返回；`viewCount` 是浏览 UV（feed-index-uv 票 02：按用户去重，一人一帖只计一次，重复进详情只刷 `viewed_at` 不加数，匿名访问不计入；落库走异步合并，允许丢）。返回 `cover` 展示封面（独立封面 ?? 相册第一张，票 05）。
@@ -34,10 +34,10 @@
 作者软删自己帖子。
 
 ### POST / DELETE /posts/{postId}/like
-点赞 / 取消点赞（幂等校验：重复赞/未赞报业务错误）。点赞经 PostLikeCase 编排：post 域点赞事务提交后，尽力而为给帖主发互动通知 `POST_LIKED`（自赞不发；同一人赞→取消→再赞只发一条；取消不撤回已发通知）。
+点赞 / 取消点赞（幂等校验：重复赞/未赞报业务错误）。点赞经 PostCase.likePost 编排：post 域点赞事务提交后落「谁赞了谁的帖子」的事实事件（`bs-post-liked`，自赞在发 MQ 前拦截），`PostLikedConsumer` 消费后翻成互动通知 `POST_LIKED` 幂等落库并投递（同一人赞→取消→再赞只发一条；取消不撤回已发通知）。
 
 ### POST / DELETE /comments/{commentId}/like
-点赞 / 取消点赞评论（v2-06，根评论与楼内子回复通用）。仅可见评论可赞（已删评论一律 404 或业务错误）；重复赞/未赞报业务错误。点赞记录（`post_comment_like` 唯一键幂等）与 `like_count` ±1 同事务，计数落 `post_comment_like_count` 窄表，根评论另同事务旁带 `post_comment_feed_index` 排序快照（子回复只动窄表），参与"最热"排序。点赞经 CommentLikeCase 编排：点赞事务提交后尽力而为给评论作者发互动通知 `COMMENT_LIKED`（自赞不发；同一触发者对同一评论去重；取消不撤回已发通知）。
+点赞 / 取消点赞评论（v2-06，根评论与楼内子回复通用）。仅可见评论可赞（已删评论一律 404 或业务错误）；重复赞/未赞报业务错误。点赞记录（`post_comment_like` 唯一键幂等）与 `like_count` ±1 同事务，计数落 `post_comment_like_count` 窄表，根评论另同事务旁带 `post_comment_feed_index` 排序快照（子回复只动窄表），参与"最热"排序。点赞经 PostCase.likeComment 编排：点赞事务提交后落「谁赞了哪条评论」的事实事件（`bs-comment-liked`，自赞在发 MQ 前拦截），`CommentLikedConsumer` 消费后翻成互动通知 `COMMENT_LIKED` 幂等落库并投递（同一触发者对同一评论去重；取消不撤回已发通知）。
 
 ## 评论（楼中楼 v2：票 03-06 已合入，07 待做）
 
@@ -68,11 +68,11 @@
 
 ## 链路（发帖/评论/点赞）
 
-发帖：Controller → PostPublishCase（信用分门槛）→ domain service（同事务：落库 NORMAL + outbox 搜索同步消息）。
-草稿箱（迁移 012）：保存/编辑 Controller → PostPublishCase → post 域（无门槛）；提交 Controller → PostPublishCase（完整性 + 信用分，缺项停留 DRAFT）→ 域 submitDraft 条件 UPDATE（DRAFT→NORMAL）。DRAFT 进 `post` 状态机（迁移 012 放开 content 可空；分类 feed-index-uv 票 06 起退役）。
-评论：Controller → CommentPublishCase → domain service（同事务：落库 NORMAL + 评论计数 + outbox 搜索同步消息）。
-帖子点赞：Controller → PostLikeCase → post 域 likePost（事务：点赞流水 + outbox 计数消息）→ 事务提交后尽力而为 POST_LIKED 通知（chat 域，dedup_key 去重，失败吞日志不回滚）。
-评论点赞：Controller → CommentLikeCase → post 域 likeComment（事务：post_comment_like 流水唯一键幂等 + like_count 同事务 ±1 落计数窄表 `post_comment_like_count`，根评论旁带 `post_comment_feed_index` 快照）→ 事务提交后尽力而为 COMMENT_LIKED 通知（同上）。列表明细的 `likeCount` 由页内 id 集批量回查窄表填充（缺行按 0，存量语义），「最热」档的**顺序**来自排序快照——两者不同源，快照刷偏只动顺序不动数字。点赞类互动通知落 `notification` 表带 `sender_id` + `dedup_key`（唯一键，同一触发者对同一目标只发一条）；评论/回复类互动通知（POST_COMMENTED/COMMENT_REPLIED，05 票）暂不带这两列。
+发帖：Controller → PostCase（信用分门槛）→ domain service（同事务：落库 NORMAL + outbox 搜索同步消息）。
+草稿箱（迁移 012）：保存/编辑 Controller → PostCase → post 域（无门槛）；提交 Controller → PostCase（信用分跨域门槛）→ post 域（归属/状态守卫 + 正文必填不变式 + 条件 UPDATE DRAFT→NORMAL，内容条件进 SQL 兜底并发竞态）。DRAFT 进 `post` 状态机（迁移 012 放开 content 可空；分类 feed-index-uv 票 06 起退役）。
+评论：Controller → PostCase → domain service（同事务：落库 NORMAL + 评论计数 + outbox 搜索同步消息）。
+帖子点赞：Controller → PostCase.likePost → post 域 likePost（事务：点赞流水 + outbox 计数消息）→ 事务提交后落 `bs-post-liked` 事实 outbox → PostLikedConsumer → 通知域幂等落库并投递（dedup_key 去重；发送失败不回滚点赞）。
+评论点赞：Controller → PostCase.likeComment → post 域 likeComment（事务：post_comment_like 流水唯一键幂等 + like_count 同事务 ±1 落计数窄表 `post_comment_like_count`，根评论旁带 `post_comment_feed_index` 快照）→ 事务提交后落 `bs-comment-liked` 事实 outbox（自赞在发 MQ 前拦截）→ CommentLikedConsumer → 通知域幂等落库并投递（同上）。列表明细的 `likeCount` 由页内 id 集批量回查窄表填充（缺行按 0，存量语义），「最热」档的**顺序**来自排序快照——两者不同源，快照刷偏只动顺序不动数字。点赞类互动通知落 `notification` 表带 `sender_id` + `dedup_key`（唯一键，同一触发者对同一目标只发一条）；评论/回复类互动通知（POST_COMMENTED/COMMENT_REPLIED，05 票）暂不带这两列。
 
 ## 按用户查询（作者主页，票 06）
 

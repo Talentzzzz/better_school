@@ -20,7 +20,7 @@ public interface IProductFeedIndexDao {
      * 走 (state, 排序键, product_id) 索引的 range scan。部分列直映域 VO（游标锚点要排序键随行带出）
      */
     List<ProductFeedIndexItemVO> selectFeedIndex(@Param("sort") String sort,
-                                                 @Param("cursor") ProductFeedCursorVO cursor,
+                                                 @Param("cursor") ProductFeedCursorVO productFeedCursorVO,
                                                  @Param("limit") int limit);
 
     /** 审核通过：行诞生 / 翻回 ON_SALE（INSERT...SELECT 取 price 快照；ODKU 刷新 state/feed_time/price） */

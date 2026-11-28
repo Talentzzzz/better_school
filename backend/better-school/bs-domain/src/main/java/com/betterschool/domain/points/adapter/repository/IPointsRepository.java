@@ -2,7 +2,7 @@ package com.betterschool.domain.points.adapter.repository;
 
 import com.betterschool.domain.points.model.valobj.PointsDeductResultVO;
 import com.betterschool.domain.points.model.valobj.PointsTransactionVO;
-import com.betterschool.types.points.PointsReasonType;
+import com.betterschool.types.points.PointsReasonTypeEnum;
 
 import java.util.List;
 
@@ -28,7 +28,7 @@ public interface IPointsRepository {
      *
      * @return true = 本次真的入了账；false = 这笔入账已记过（幂等跳过）
      */
-    boolean insertBucketWithChanged(String userId, int amount, PointsReasonType reasonType, String refId);
+    boolean insertBucketWithChanged(String userId, int amount, PointsReasonTypeEnum pointsReasonType, String refId);
 
     /**
      * 一次消费（兑抽奖次数 / 兑奖品），**同一事务**内完成：幂等预检（已扣过即按成功返回）→
@@ -39,7 +39,7 @@ public interface IPointsRepository {
      * 并发重复兑换在明细撞唯一键（表现为批量写明细的影响行数偏少）时整事务回滚，
      * 由本方法在事务外重读真实余额按幂等成功返回。
      */
-    PointsDeductResultVO deduct(String userId, int amount, PointsReasonType reasonType, String refId);
+    PointsDeductResultVO deduct(String userId, int amount, PointsReasonTypeEnum pointsReasonType, String refId);
 
     /**
      * 余额 = 未过期且未扣完的桶 remain 之和（没有余额列）。

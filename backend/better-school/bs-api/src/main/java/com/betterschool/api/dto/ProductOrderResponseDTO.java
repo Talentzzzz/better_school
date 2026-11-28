@@ -30,5 +30,9 @@ public class ProductOrderResponseDTO {
 
     /** PENDING_PAYMENT/PAID/DELIVERED/COMPLETED/CANCELLED */
     private String status;
+
+    /** 支付单号（仅买家 + 待支付时有值；收银台支付凭据） */
+    private String payNo;
+
     private LocalDateTime createdAt;
 }

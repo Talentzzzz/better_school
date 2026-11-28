@@ -6,7 +6,7 @@ import com.betterschool.infrastructure.timeout.SettleOutcome;
 import com.betterschool.infrastructure.timeout.TaskKey;
 import com.betterschool.infrastructure.timeout.TimeoutSettler;
 import com.betterschool.infrastructure.timeout.TimeoutTaskEntity;
-import com.betterschool.infrastructure.timeout.TimeoutTaskStatus;
+import com.betterschool.infrastructure.timeout.TimeoutTaskStatusEnum;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -54,11 +54,11 @@ class TimeoutSettlerTest {
             }
         }
 
-        SettleOutcome outcome = settler.settle(batch, CallbackReport.of(Set.copyOf(successKeys)));
+        SettleOutcome settleOutcome = settler.settle(batch, CallbackReport.of(Set.copyOf(successKeys)));
 
-        assertThat(outcome.getSuccessCount()).isEqualTo(150);
-        assertThat(outcome.getRetryCount()).isEqualTo(50);
-        assertThat(outcome.getDeadCount()).isZero();
+        assertThat(settleOutcome.getSuccessCount()).isEqualTo(150);
+        assertThat(settleOutcome.getRetryCount()).isEqualTo(50);
+        assertThat(settleOutcome.getDeadCount()).isZero();
         // 关键断言：一次调用 = 一个非空桶一次写。逐行实现下这个数会是 200。
         assertThat(writer.writeCalls).isEqualTo(2);
         assertThat(writer.successBatchSizes).containsExactly(150);
@@ -75,10 +75,10 @@ class TimeoutSettlerTest {
             batch.add(task("order-" + i, i % 2 == 0 ? 0 : 15));
         }
 
-        SettleOutcome outcome = settler.settle(batch, CallbackReport.none());
+        SettleOutcome settleOutcome = settler.settle(batch, CallbackReport.none());
 
-        assertThat(outcome.getRetryCount()).isEqualTo(100);
-        assertThat(outcome.getDeadCount()).isEqualTo(100);
+        assertThat(settleOutcome.getRetryCount()).isEqualTo(100);
+        assertThat(settleOutcome.getDeadCount()).isEqualTo(100);
         assertThat(writer.writeCalls).isEqualTo(2);
         assertThat(writer.deadBatchSizes).containsExactly(100);
         assertThat(writer.retryBatchSizes).containsExactly(100);
@@ -95,11 +95,11 @@ class TimeoutSettlerTest {
                 task(TASK_TYPE_SECOND, "biz-1", 0));
 
         // 只有前两行回调成功；另一任务类型的项没有回报（按失败进重试）
-        SettleOutcome outcome = settler.settle(batch, CallbackReport.of(Set.of(
+        SettleOutcome settleOutcome = settler.settle(batch, CallbackReport.of(Set.of(
                 TaskKey.of(TASK_TYPE, "order-1"), TaskKey.of(TASK_TYPE, "order-2"))));
 
-        assertThat(outcome.getSuccessCount()).isEqualTo(2);
-        assertThat(outcome.getRetryCount()).isEqualTo(1);
+        assertThat(settleOutcome.getSuccessCount()).isEqualTo(2);
+        assertThat(settleOutcome.getRetryCount()).isEqualTo(1);
         // 两个 taskType 各一个非空桶 = 两次写（各 taskType 的另外两个桶都空，不发）
         assertThat(writer.writeCalls).isEqualTo(2);
         assertThat(writer.successTaskTypes).containsExactly(TASK_TYPE);
@@ -147,10 +147,10 @@ class TimeoutSettlerTest {
 
     @Test
     void 批上没带槽位时立刻报错_不留到没塞hint的批量语句上() {
-        TimeoutTaskEntity taskEntity = task("order-1", 0);
-        taskEntity.setShardSlot(null);
+        TimeoutTaskEntity timeoutTaskEntity = task("order-1", 0);
+        timeoutTaskEntity.setShardSlot(null);
 
-        assertThatThrownBy(() -> settler.settle(List.of(taskEntity), CallbackReport.none()))
+        assertThatThrownBy(() -> settler.settle(List.of(timeoutTaskEntity), CallbackReport.none()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("shardSlot");
     }
@@ -178,11 +178,11 @@ class TimeoutSettlerTest {
     }
 
     private static TimeoutTaskEntity task(String taskType, String bizId, int retryCount) {
-        TimeoutTaskEntity taskEntity = TimeoutTaskEntity.newWaiting(taskType, bizId, 60L);
-        taskEntity.setStatus(TimeoutTaskStatus.RETRYING);
-        taskEntity.setRetryCount(retryCount);
-        taskEntity.setShardSlot(SLOT);
-        return taskEntity;
+        TimeoutTaskEntity timeoutTaskEntity = TimeoutTaskEntity.newWaiting(taskType, bizId, 60L);
+        timeoutTaskEntity.setStatus(TimeoutTaskStatusEnum.RETRYING);
+        timeoutTaskEntity.setRetryCount(retryCount);
+        timeoutTaskEntity.setShardSlot(SLOT);
+        return timeoutTaskEntity;
     }
 
     /** 退避与死信上限取 application(-test).yml 的口径，这里显式摆进结算器（组件用 @Value 默认值兜底） */

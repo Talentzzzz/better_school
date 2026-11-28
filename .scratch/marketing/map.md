@@ -17,7 +17,7 @@ Label: wayfinder:map
 - 事实底座：
   - **市集现状**：`front/src/views/MarketView.vue` = 三 tab（跑腿/闲置/求购，绑 `stores/uiState.ts` 的 `marketTab`）+ 搜索**图标**（跳 `/search?scope=market`）+ `filter-bar` + 瀑布流；**中间没有任何入口行**（草图的「我的订单/收藏/消息/活动」行不存在）
   - **底部消息现状**：`front/src/views/MessagesView.vue` = `.entry-row`（赞 / 评论两入口）+ `.notice-row`（「活动消息」横幅，跳 `/notifications?tab=system`，副标题写死）+ 私信会话列表；系统 tab 由 `front/src/views/msg/NotificationsView.vue` 的 `TYPE_TEXT` / `INTERACTION_TYPES` 推导
-  - **通知枚举**：`NotificationTypeVO` 10 值（ANNOUNCEMENT / AUDIT_RESULT / AUDIT_PENDING / REPORT_RESULT / ORDER_EVENT / CREDIT_CHANGE / POST_COMMENTED / COMMENT_REPLIED / POST_LIKED / COMMENT_LIKED），**无营销类**；`notification` 表有 `ref_type` / `ref_id` / `dedup_key`
+  - **通知枚举**：`NotificationTypeEnum` 10 值（ANNOUNCEMENT / AUDIT_RESULT / AUDIT_PENDING / REPORT_RESULT / ORDER_EVENT / CREDIT_CHANGE / POST_COMMENTED / COMMENT_REPLIED / POST_LIKED / COMMENT_LIKED），**无营销类**；`notification` 表有 `ref_type` / `ref_id` / `dedup_key`
   - **`ORDER_EVENT` 的全部生产者**（票 07 核实）：跑腿已支付入审（**发发布者**）、跑腿散团（**发在团接单者**）、求购已支付入审（**发作者**）、待审超 24h 提醒（**发 ADMIN/AUDITOR**，覆盖 PRODUCT / WANT_TO_BUY / ERRAND / POST 四类）；**商品订单生命周期（支付/交付/确认）当前不发任何通知** ⇒ **`PRODUCT` 侧没有任何发给买/卖家的交易动态**；且同一 `refType=ERRAND` 既有发**给用户**的动态、也有发**给审核员**的提醒 ⇒ 归属**不能按 `refType` 推导**，必须由生产点显式标 `scope`（票 07 §0.5/§4）
   - `bs_user` 有 `created_at` / `last_login_at` 可用；**全库无任何 address / 收货相关表**（商品订单没有地址环节）
   - Redis 走 Redisson 自动装配（无 `RedisTemplate`），既有 key 前缀 `bs:verify-code:` / `bs:chat:ws-ticket:` / `bs:post:detail:*`，**无 INCR 先例**（只有 RBucket / RLock / RBloomFilter）

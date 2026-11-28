@@ -20,13 +20,13 @@ public interface ICreditService {
     Response<PageResult<CreditLogResponseDTO>> myLogs(int page, int pageSize);
 
     /** 管理员调分（±1~±50，负分联动封禁） */
-    Response<Void> adminAdjust(AdminAdjustRequestDTO request);
+    Response<Void> adminAdjust(AdminAdjustRequestDTO adminAdjustRequestDTO);
 
     /** 管理员封禁 */
-    Response<Void> adminBan(AdminBanRequestDTO request);
+    Response<Void> adminBan(AdminBanRequestDTO adminBanRequestDTO);
 
     /** 管理员解封 */
-    Response<Void> adminUnban(AdminUnbanRequestDTO request);
+    Response<Void> adminUnban(AdminUnbanRequestDTO adminUnbanRequestDTO);
 
     /** 管理员查指定用户信用分流水 */
     Response<PageResult<CreditLogResponseDTO>> adminLogs(String userId, int page, int pageSize);

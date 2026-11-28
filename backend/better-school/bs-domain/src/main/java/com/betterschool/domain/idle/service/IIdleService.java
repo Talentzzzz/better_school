@@ -5,7 +5,7 @@ import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
 import com.betterschool.domain.idle.model.valobj.ProductCancelResult;
 import com.betterschool.domain.idle.model.valobj.ProductConfirmResult;
 import com.betterschool.domain.idle.model.valobj.ProductFeedPageVO;
-import com.betterschool.domain.idle.model.valobj.ProductPayResult;
+import com.betterschool.domain.idle.model.valobj.ProductOrderEventVO;
 import com.betterschool.types.common.SearchPageVO;
 
 import java.math.BigDecimal;
@@ -38,10 +38,10 @@ public interface IIdleService {
     void updateProductDraft(String userId, String productId, String title, String description, List<String> images,
                             BigDecimal price, String tradeLocation, String category, Integer quantity);
 
-    /** 取本人的草稿（供用例层做完整性校验与初筛） */
+    /** 取本人的草稿（归属/状态守卫） */
     ProductEntity getOwnedProductDraft(String userId, String productId);
 
-    /** 提交草稿：DRAFT → ON_SALE（完整性由用例层前置） */
+    /** 提交草稿：DRAFT → ON_SALE（域内做归属/状态守卫与完整性校验） */
     void submitProductDraft(String userId, String productId);
 
     /** 上架后主动下架进草稿箱：ON_SALE → DRAFT，同事务落搜索同步消息（退出对外可见态） */
@@ -53,14 +53,15 @@ public interface IIdleService {
     /** 到期扫描：ON_SALE 且 expire_at 已过的商品 id 列表 */
     List<String> listExpiredProductIds();
 
-    /** 取本人可编辑的在售商品（用例层编辑守卫用） */
+    /** 取本人可编辑的在售商品（编辑/加货守卫用） */
     ProductEntity getOwnedOnSaleProduct(String userId, String productId);
 
     /**
-     * 上架后编辑（编辑语义）：全部变更立即生效（状态不变），同事务落搜索同步消息（消费方按状态更文档）。
-     * 归属与状态守卫由 getOwnedOnSaleProduct 前置，此处靠条件 UPDATE 兜底竞态
+     * 上架后编辑（编辑语义）：域内先做归属与在售守卫，全部变更立即生效（状态不变），
+     * 同事务落搜索同步消息（消费方按状态更文档）；守卫与落库之间的竞态由条件 UPDATE 兜底
      */
-    void editOnSaleProduct(String productId, String title, String description, List<String> images, BigDecimal price);
+    void editOnSaleProduct(String userId, String productId, String title, String description, List<String> images,
+                           BigDecimal price);
 
     /**
      * 闲置推荐页（market-feed-uv 票 04）：无筛选走 product_feed_index 索引序扫描 + keyset 游标分页，
@@ -84,6 +85,9 @@ public interface IIdleService {
      * 一页一次批量回查，未登录或集合为空返回空集
      */
     List<String> listViewedProductIds(String userId, List<String> productIds);
+
+    /** 读单条商品（无副作用不计数，任何状态可读；跨域只读场景用） */
+    ProductEntity getProductEntity(String productId);
 
     /** 详情：浏览计数 +1，登录时返回是否已收藏 */
     ProductEntity productDetail(String productId, String currentUserId);
@@ -125,16 +129,17 @@ public interface IIdleService {
     String createOrder(String buyerId, String productId, int quantity);
 
     /**
-     * 支付确认准备（两段式 ADR-0016 第一段，纯校验无副作用）：买家校验 + 幂等判定
-     * （已越过待支付视为上次支付已提交成功，alreadyPaid=true 零副作用），返回需冻结金额（单价 × 件数）；
-     * 资金冻结由 case 层在 prepare 与 confirm 之间顺序执行
+     * 支付确认准备（两段式 ADR-0016 第一段，纯校验无副作用）：买家校验 + 可支付态判定
+     * （待支付，或已支付及其后态的重试回放），通过则返回订单实体；
+     * 冻结金额由实体 {@code totalAmount()} 给出，资金冻结由 case 层在 prepare 与 confirm 之间顺序执行
      */
-    ProductPayResult preparePayOrder(String orderId, String buyerId);
+    ProductOrderEntity preparePayOrder(String orderId, String buyerId);
 
     /**
      * 支付确认翻转（两段式 ADR-0016 第二段）：「待支付 → 已支付」条件翻转（守卫买家 + 前态，
-     * PAID 事件随行落表，单仓储事务）；翻转未命中抛业务异常——此刻货款可能已冻结
-     * （订单留待支付的长款中间态），孤儿由 {@code productFundOrphanScan} 扫描解冻收敛
+     * PAID 事件随行落表，单仓储事务）；未命中且订单已是已支付及其后态 = 重试回放，幂等返回；
+     * 其余未命中抛业务异常——此刻货款可能已冻结（订单留待支付的长款中间态），
+     * 孤儿由 {@code productFundOrphanScan} 扫描解冻收敛
      */
     void confirmPayOrder(String orderId, String buyerId);
 
@@ -156,6 +161,17 @@ public interface IIdleService {
     List<ProductOrderEntity> listMineOrders(String role, String userId, int page, int pageSize);
 
     long countMineOrders(String role, String userId);
+
+    // ==================== 资金补偿扫描读口（支付回调重放 / 孤儿扫描的跨域编排取数） ====================
+
+    /** 按 id 读订单（补偿扫描 / 支付回调重放用，无权限守卫）；不存在返回 null */
+    ProductOrderEntity getOrderEntity(String orderId);
+
+    /** 近窗口终态订单（资金孤儿扫描第二段输入：窗口分钟数 + 单轮上限） */
+    List<ProductOrderEntity> listRecentSettled(int windowMinutes, int limit);
+
+    /** 订单最新事件行（资金补偿判据）；无事件返回 null */
+    ProductOrderEventVO latestEventOf(String orderId);
 
     /** 待支付超时（超时中心回调触发）：PENDING_PAYMENT → CANCELLED + 商品回 ON_SALE（幂等忽略） */
     void handlePayTimeout(String orderId);

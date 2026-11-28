@@ -96,7 +96,7 @@ class PointsBucketCompactionIntegrationTest extends PointsApiTestBase {
 
         // 扣 20：按 FIFO 先扣最早过期的大桶（恰好扣光），合并桶（最晚过期）不动
         var result = pointsAccountService.deduct(USER_ID, 20,
-                com.betterschool.types.points.PointsReasonType.REDEEM_PRIZE, "order-c0401");
+                com.betterschool.types.points.PointsReasonTypeEnum.REDEEM_PRIZE, "order-c0401");
         assertThat(result.isSuccess()).isTrue();
 
         assertThat(bucketRemainOf(earlyBigBucketId)).as("FIFO 先扣最早过期的桶").isZero();

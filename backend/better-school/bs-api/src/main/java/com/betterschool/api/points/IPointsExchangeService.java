@@ -14,5 +14,5 @@ import com.betterschool.api.points.dto.PointsDeductResponseDTO;
  */
 public interface IPointsExchangeService {
 
-    PointsDeductResponseDTO deduct(PointsDeductRequestDTO request);
+    PointsDeductResponseDTO deduct(PointsDeductRequestDTO pointsDeductRequestDTO);
 }

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.draw.IDrawOrphanPrereserveOrderDao">
+
+    <!-- 种单：INSERT IGNORE 撞 uk_record_id 静默跳过（同一孤儿多周期 / 多实例重复种出是常态） -->
+    <insert id="insertIgnoreOrder" parameterType="com.betterschool.infrastructure.dao.draw.po.DrawOrphanPrereserveOrderPO">
+        INSERT IGNORE INTO draw_orphan_prereserve_order (record_id, award_id, user_id, quantity, state,
+                                                         retry_count, next_retry_at, finish_time, create_time, update_time)
+        VALUES (#{recordId}, #{awardId}, #{userId}, #{quantity}, #{state},
+                #{retryCount}, #{nextRetryAt}, #{finishTime}, #{createTime}, #{updateTime})
+    </insert>
+
+    <!-- 到期待收敛单：ORPHAN 且未到退避时点，FIFO -->
+    <select id="listDue" resultType="com.betterschool.infrastructure.dao.draw.po.DrawOrphanPrereserveOrderPO">
+        SELECT id, record_id, award_id, user_id, quantity, state,
+               retry_count, next_retry_at, finish_time, create_time, update_time
+        FROM draw_orphan_prereserve_order
+        WHERE state = 0 AND (next_retry_at IS NULL OR next_retry_at &lt;= NOW())
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 抢占式认领：条件更新递增 retry_count + 写退避时点；0 行 = 被抢/状态漂移 -->
+    <update id="claim">
+        UPDATE draw_orphan_prereserve_order
+        SET retry_count = retry_count + 1, next_retry_at = #{nextRetryAt}, update_time = NOW()
+        WHERE id = #{id} AND state = 0 AND (next_retry_at IS NULL OR next_retry_at &lt;= NOW())
+    </update>
+
+    <!-- 置 DONE：state &lt;&gt; 1 才生效（ORPHAN 与人工重置回的 DEAD 都可达） -->
+    <update id="finish">
+        UPDATE draw_orphan_prereserve_order
+        SET state = 1, finish_time = NOW(), update_time = NOW()
+        WHERE record_id = #{recordId} AND state &lt;&gt; 1
+    </update>
+
+    <!-- 置 DEAD：state=0 才生效 -->
+    <update id="markDead">
+        UPDATE draw_orphan_prereserve_order
+        SET state = 2, update_time = NOW()
+        WHERE id = #{id} AND state = 0
+    </update>
+
+    <!-- 按抽奖记录业务 ID 查对账单（uk_record_id 保证至多一行；对账轮正向配对分流判据用，只读） -->
+    <select id="selectByRecordId" resultType="com.betterschool.marketing.infrastructure.draw.dao.po.DrawOrphanPrereserveOrderPO">
+        SELECT id, record_id, award_id, user_id, quantity, state,
+               retry_count, next_retry_at, finish_time, create_time, update_time
+        FROM draw_orphan_prereserve_order
+        WHERE record_id = #{recordId}
+    </select>
+
+    <!-- 死信单点名扫描：DEAD（重试耗尽待人工）按 id 升序，上限 limit（对账轮周期性点名读入口，只读） -->
+    <select id="listDead" resultType="com.betterschool.marketing.infrastructure.draw.dao.po.DrawOrphanPrereserveOrderPO">
+        SELECT id, record_id, award_id, user_id, quantity, state,
+               retry_count, next_retry_at, finish_time, create_time, update_time
+        FROM draw_orphan_prereserve_order
+        WHERE state = 2
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

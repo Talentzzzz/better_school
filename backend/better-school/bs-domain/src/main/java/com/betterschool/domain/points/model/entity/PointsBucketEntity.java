@@ -1,6 +1,6 @@
 package com.betterschool.domain.points.model.entity;
 
-import com.betterschool.types.points.PointsReasonType;
+import com.betterschool.types.points.PointsReasonTypeEnum;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -24,7 +24,7 @@ public class PointsBucketEntity {
     /** 该桶剩余可用（消费按 FIFO 递减；过期桶不计入读数，由 expire_at 懒判） */
     private Integer remain;
     private LocalDateTime expireAt;
-    private PointsReasonType reasonType;
+    private PointsReasonTypeEnum reasonType;
     /** 来源业务 id：LOTTERY_WIN = 抽奖记录 id；REBATE = 发放幂等键 */
     private String refId;
     private LocalDateTime createTime;

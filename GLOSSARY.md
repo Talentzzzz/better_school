@@ -1,6 +1,6 @@
 # 营销域 Glossary
 
-better-school 单体中营销四域（points / rebate / raffle / inventory；monolith-restructure 票 05/07 起并入 `com.betterschool` 平级领域包、单库 `better_school`）的统一领域语言。本表只收领域词，不收实现细节。
+better-school 单体中营销四域（points / rebate / draw / award；monolith-restructure 票 05/07 起并入 `com.betterschool` 平级领域包、单库 `better_school`）的统一领域语言。本表只收领域词，不收实现细节。
 
 ## Language
 
@@ -46,13 +46,13 @@ ADR-0015 曾以基础设施编排组件（`CompositeTxExecutor`）把多域仓�
 _Avoid_: 在新代码里复活该模式、分布式事务（不引入框架）、Saga/TCC（无反向补偿需求）
 
 **孤儿预扣收敛（Orphan Pre-reserve Reconciliation）**:
-抽奖「预扣→落库」跨库存合并器窗口产生的孤儿（预扣已提交、`draw_record` 未落库）由对账 job（`orphanPrereserveScan`，cron `0/30`、条件更新抢占、指数退避）在一个扫描周期内收敛：决策可重放→以原幂等键重放落库后半段（奖品可能漂移，接受）；决策不可重放→库存回补 + 抽奖次数退还。重试耗尽进死信。
+抽奖「预扣→落库」跨奖品库存合并器窗口产生的孤儿（预扣已提交、`draw_record` 未落库）由对账 job（`orphanPrereserveScan`，cron `0/30`、条件更新抢占、指数退避）在一个扫描周期内收敛：决策可重放→以原幂等键重放落库后半段（奖品可能漂移，接受）；决策不可重放→库存回补 + 抽奖次数退还。重试耗尽进死信。
 _Avoid_: 人工 SQL 巡检（已被 job 取代，只剩死信处置）、自动补抽（不重放决策之外的任何东西）
 
 ### 库存对账兜底（draw-recon-round）
 
 **对账轮（Reconciliation Round）**:
-每日全量兜底对账 job（`drawReconScan`，xxl cron `0 0 3 * * ?`）：轧账四条不变量（两条台账守恒 + 正反双向配对）逐条登记差错，DEAD 孤儿单点名，二次核对后按分流表平账（正向漏结复用孤儿种单补收，守恒破坏/反向缺失告警人工）。纯旁路——业务表只读，写面仅差错表与轮次表；与逐笔孤儿预扣收敛 job 完全独立（互不依赖代码路径，只读其产物表）。
+每日全量兜底对账 job（`drawReconScan`，xxl cron `0 0 3 * * ?`）：轧账三条不变量（预扣守恒 B3 + 正反双向配对）逐条登记差错，DEAD 孤儿单点名，二次核对后按分流表平账（正向漏结复用孤儿种单补收，守恒破坏/反向缺失告警人工）。纯旁路——业务表只读，写面仅差错表与轮次表；与逐笔孤儿预扣收敛 job 完全独立（互不依赖代码路径，只读其产物表）。
 _Avoid_: 与孤儿预扣收敛共享代码路径（两层机制必须互不共享同一个 bug）、自动修守恒破坏/反向缺失（数据破坏级只告警人工）
 
 **差错表（Variance Table）**:

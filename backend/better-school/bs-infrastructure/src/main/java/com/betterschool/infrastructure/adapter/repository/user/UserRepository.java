@@ -2,10 +2,10 @@ package com.betterschool.infrastructure.adapter.repository.user;
 
 import com.betterschool.domain.user.adapter.repository.IUserRepository;
 import com.betterschool.domain.user.model.entity.UserEntity;
-import com.betterschool.domain.user.model.valobj.GenderVO;
+import com.betterschool.domain.user.model.valobj.GenderEnum;
 import com.betterschool.domain.user.model.valobj.UserBriefVO;
-import com.betterschool.domain.user.model.valobj.UserRoleVO;
-import com.betterschool.domain.user.model.valobj.UserStatusVO;
+import com.betterschool.domain.user.model.valobj.UserRoleEnum;
+import com.betterschool.domain.user.model.valobj.UserStatusEnum;
 import com.betterschool.infrastructure.dao.credit.IUserCreditAccountDao;
 import com.betterschool.infrastructure.dao.credit.po.UserCredit;
 import com.betterschool.infrastructure.dao.post.IPostDao;
@@ -21,7 +21,7 @@ import com.betterschool.infrastructure.search.SearchIndexName;
 import com.betterschool.infrastructure.search.UserSearchDoc;
 import com.betterschool.infrastructure.security.JwtService;
 import com.betterschool.types.common.Constants;
-import com.betterschool.types.common.SearchEntityType;
+import com.betterschool.types.common.SearchEntityTypeEnum;
 import com.betterschool.types.common.SearchPageVO;
 import com.betterschool.types.common.SearchSyncMessage;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,10 +33,10 @@ import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.redisson.api.RBucket;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -93,26 +93,42 @@ public class UserRepository implements IUserRepository {
         // 业务 ID 应用层发号、insert 前一次写入（物理自增 id 只作内部键，不再同值回写）
         userEntity.setUserId(UUID.randomUUID().toString());
         User user = toPO(userEntity);
-        return transactionTemplate.execute(status -> {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(2);
+        transactionTemplate.executeWithoutResult(status -> {
             userDao.insert(user);
-            saveOutbox(Constants.USER_REGISTER_TOPIC, userEntity);
+            pendingOutboxList.add(saveOutbox(Constants.USER_REGISTER_TOPIC, userEntity));
             // 注册后昵称参与用户搜索，落搜索同步消息（与入库同事务）
-            saveOutbox(Constants.SEARCH_SYNC_TOPIC,
-                    new SearchSyncMessage(SearchEntityType.USER.name().toLowerCase(), userEntity.getUserId()));
-            return userEntity;
+            pendingOutboxList.add(saveOutbox(Constants.SEARCH_SYNC_TOPIC,
+                    new SearchSyncMessage(SearchEntityTypeEnum.USER.name().toLowerCase(), userEntity.getUserId())));
         });
+        // 事务已提交：事务外同步发送并更新 outbox 状态，失败留 PENDING 交 outboxScan 兜底
+        sendOutboxes(pendingOutboxList);
+        return userEntity;
     }
 
-    /** 事务内落一行 outbox，提交后同步发送并标记 SENT；失败留 PENDING 交 outboxScan 兜底 */
-    private void saveOutbox(String destination, Object payload) {
+    /** 事务内只做 DAO 写：落一行 PENDING outbox，发送交给事务提交后的调用点 */
+    private MqOutbox saveOutbox(String destination, Object payload) {
         MqOutbox mqOutbox = MqOutbox.pending(destination, payload, objectMapper);
         mqOutboxDao.insert(mqOutbox);
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                sendOutbox(mqOutbox);
-            }
-        });
+        return mqOutbox;
+    }
+
+    /**
+     * 事务外逐条同步发送并更新 outbox 状态。仓储事务是 REQUIRED——若并入调用方事务（执行后事务仍活跃），
+     * 不在提交前发送，留给 outboxScan 兜底，避免「消息已发、外层事务回滚」。
+     */
+    private void sendOutboxes(List<MqOutbox> outboxList) {
+        if (outboxList.isEmpty()) {
+            return;
+        }
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            log.debug("[UserRepository] outbox 并入调用方事务，留给 outboxScan 兜底 msgIds={}",
+                    outboxList.stream().map(MqOutbox::getMsgId).toList());
+            return;
+        }
+        for (MqOutbox mqOutbox : outboxList) {
+            sendOutbox(mqOutbox);
+        }
     }
 
     private void sendOutbox(MqOutbox mqOutbox) {
@@ -161,8 +177,8 @@ public class UserRepository implements IUserRepository {
             return 0;
         }
         long total = 0;
-        for (Post countRow : postLikeCountDao.selectLikeCountsByPostIds(postIdList)) {
-            total += countRow.getLikeCount() == null ? 0 : countRow.getLikeCount();
+        for (Post post : postLikeCountDao.selectLikeCountsByPostIds(postIdList)) {
+            total += post.getLikeCount() == null ? 0 : post.getLikeCount();
         }
         return total;
     }
@@ -182,8 +198,8 @@ public class UserRepository implements IUserRepository {
         if (viewerId != null && viewerId.equals(ownerId)) {
             return true;
         }
-        UserEntity ownerEntity = findById(ownerId);
-        return ownerEntity == null || !Boolean.FALSE.equals(switchGetter.apply(ownerEntity));
+        UserEntity userEntity = findById(ownerId);
+        return userEntity == null || !Boolean.FALSE.equals(switchGetter.apply(userEntity));
     }
 
     @Override
@@ -219,13 +235,13 @@ public class UserRepository implements IUserRepository {
     public SearchPageVO<String> searchUserIds(String keyword, int page, int pageSize) {
         // ES 侧 status 过滤只是冗余兜底（索引可能短暂滞后），最终公开判定在领域服务回库后做
         return searchIndex.search(SearchIndexName.USER, SearchIndexName.USER_SEARCH_FIELDS,
-                List.of(UserStatusVO.NORMAL.name()), keyword, page, pageSize);
+                List.of(UserStatusEnum.NORMAL.name()), keyword, page, pageSize);
     }
 
     @Override
     public void syncUserSearchDoc(String userId) {
         UserEntity userEntity = findById(userId);
-        if (userEntity != null && userEntity.getStatus() == UserStatusVO.NORMAL) {
+        if (userEntity != null && userEntity.getStatus() == UserStatusEnum.NORMAL) {
             searchIndex.bulkUpsert(SearchIndexName.USER, List.of(toUserSearchDoc(userEntity)),
                     UserSearchDoc::getUserId);
         } else {
@@ -245,7 +261,7 @@ public class UserRepository implements IUserRepository {
             }
             // 批内一次 IN 回查 + Java 侧过滤，游标推进到空批是唯一终止条件
             List<UserSearchDoc> docList = listByIds(idList).stream()
-                    .filter(user -> user.getStatus() == UserStatusVO.NORMAL)
+                    .filter(user -> user.getStatus() == UserStatusEnum.NORMAL)
                     .map(this::toUserSearchDoc)
                     .toList();
             searchIndex.bulkUpsert(SearchIndexName.USER, docList, UserSearchDoc::getUserId);
@@ -257,16 +273,16 @@ public class UserRepository implements IUserRepository {
 
     /** 实体 → 索引文档：用户只有昵称可搜，头像/简介等展示字段不进索引 */
     private UserSearchDoc toUserSearchDoc(UserEntity userEntity) {
-        UserSearchDoc doc = new UserSearchDoc();
-        doc.setUserId(userEntity.getUserId());
-        doc.setNickname(userEntity.getNickname());
-        doc.setStatus(userEntity.getStatus().name());
-        return doc;
+        UserSearchDoc userSearchDoc = new UserSearchDoc();
+        userSearchDoc.setUserId(userEntity.getUserId());
+        userSearchDoc.setNickname(userEntity.getNickname());
+        userSearchDoc.setStatus(userEntity.getStatus().name());
+        return userSearchDoc;
     }
 
     @Override
-    public List<String> listUserIdsByRole(UserRoleVO role) {
-        return userDao.selectIdsByRole(role.name());
+    public List<String> listUserIdsByRole(UserRoleEnum userRoleVO) {
+        return userDao.selectIdsByRole(userRoleVO.name());
     }
 
     @Override
@@ -304,21 +320,21 @@ public class UserRepository implements IUserRepository {
                 .collect(Collectors.toMap(UserCredit::getUserId, Function.identity()));
     }
 
-    private UserEntity toEntity(User user, UserCredit credit) {
+    private UserEntity toEntity(User user, UserCredit userCredit) {
         UserEntity userEntity = new UserEntity();
         userEntity.setUserId(user.getUserId());
         userEntity.setPhone(user.getPhone());
         userEntity.setNickname(user.getNickname());
         userEntity.setAvatar(user.getAvatar());
         userEntity.setSignature(user.getSignature());
-        userEntity.setGender(user.getGender() == null ? null : GenderVO.valueOf(user.getGender()));
+        userEntity.setGender(user.getGender() == null ? null : GenderEnum.valueOf(user.getGender()));
         userEntity.setShowLiked(user.getShowLiked());
         userEntity.setShowComments(user.getShowComments());
-        userEntity.setRole(UserRoleVO.valueOf(user.getRole()));
-        userEntity.setStatus(UserStatusVO.valueOf(credit == null || credit.getState() == null
-                ? DEFAULT_STATE : credit.getState()));
-        userEntity.setCreditScore(credit == null || credit.getCreditScore() == null
-                ? DEFAULT_CREDIT_SCORE : credit.getCreditScore());
+        userEntity.setRole(UserRoleEnum.valueOf(user.getRole()));
+        userEntity.setStatus(UserStatusEnum.valueOf(userCredit == null || userCredit.getState() == null
+                ? DEFAULT_STATE : userCredit.getState()));
+        userEntity.setCreditScore(userCredit == null || userCredit.getCreditScore() == null
+                ? DEFAULT_CREDIT_SCORE : userCredit.getCreditScore());
         userEntity.setLastLoginAt(user.getLastLoginAt());
         userEntity.setCreatedAt(user.getCreateTime());
         return userEntity;

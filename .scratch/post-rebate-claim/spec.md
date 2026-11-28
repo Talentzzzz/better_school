@@ -67,58 +67,63 @@ Status: resolved
 ### 两段式流程
 
 1. **发帖事务**（post 仓储）：写 post + feed 索引 + **领取任务 outbox**（PENDING，msgId `post-rebate-claim:{postId}`，载荷含 postId、userId、periodKey）。search-sync outbox 仍按现有方式在提交后同步发送；领取任务不在发帖仓储内发送。
-2. **同步领取**：发帖事务提交后，case 层调用返利域 `claimActionRebate(actionType=post, userId, refId=postId, periodKey)`。
+2. **同步领取**：发帖事务提交后，case 层调用返利域 `claimActionRebate(actionType=post, userId, refType=post, refId=postId, periodKey)`。
 3. **标记任务**：同步领取正常返回（无论 CLAIMED / DENIED / NO_REBATE）后，case 通过 post 域把领取任务标记已处理；领取抛异常时任务保持 PENDING，响应状态为 PENDING。
-4. **生成入账任务**：领取事务内若为 CLAIMED，再插一条 credit outbox（msgId `post-rebate-credit:{postId}`，载荷含 claimId、userId、postId、pointsValue、drawCountValue），提交后同步发送到 credit topic；发送失败留 PENDING 交 outboxScan。
-5. **异步入账**：credit 消费者 → case → 积分/抽奖域按快照金额入账 → 返利域把 claim 标记 GRANTED。
+4. **生成入账任务**：领取事务内按返利类型插订单行；`rebate_value > 0` 的每一行再插一条 credit outbox（msgId `post-rebate-credit:{orderId}`，载荷含 orderId、userId、postId、rebateType、rebateValue），提交后逐行同步发送到 credit topic；发送失败留 PENDING 交 outboxScan。
+5. **异步入账**：credit 消费者 → case → 按 `rebateType` 给积分桶 / 抽奖次数桶按快照金额入账 → 返利域把该订单行标记 GRANTED。
 
 ### 领取状态与 API 响应
 
-- 持久化状态：`CLAIMED`（已占名额、快照已定）→ `GRANTED`（积分与抽奖次数入账完成）。
-- API 状态：`CLAIMED` / `DENIED`（当天名额已被其他帖子领取）/ `NO_REBATE`（无开放规则或金额为 0）/ `PENDING`（同步领取异常，等待重放）。
-- 发帖响应改为 `{postId, rebateState, pointsRebate, drawCountRebate}`；`DENIED`、`NO_REBATE`、`PENDING` 的两个金额均为 0。
+- 状态由同一个枚举 `RebateClaimStateEnum` 承载，共五个取值，分两类：
+  - 落库状态（`persisted()` 为 `true`）：`CLAIMED`（已占名额、快照已定）→ `GRANTED`（该行返利入账完成；快照为 0 的占位行落库即 `GRANTED`）。
+  - 仅 API 结果（不建行、不占名额）：`DENIED`（当天名额已被其他帖子领取）/ `NO_REBATE`（无开放规则或金额为 0）/ `PENDING`（同步领取异常，等待重放）。
+- 落库按返利类型拆行：`POINTS` 一行、`DRAW_COUNT` 一行，各自一个 `order_id`，入账也逐行进行。
+- 发帖响应改为 `{postId, rebateState, pointsRebate, drawCountRebate}`；`rebateState` 取 `state.apiState()`，`GRANTED` 折叠成 `CLAIMED`，响应恒为四个值之一；`DENIED`、`NO_REBATE`、`PENDING` 的项列表为空（两个金额均为 0）。域内结果 `RebateClaimResultVO` 用 `List<RebateClaimItemVO>`（`rebateType` + `rebateValue`）承载，controller 摊平成 DTO 的两个固定字段。
 - 直接发布与草稿提交两个接口都返回该结构；保存、编辑草稿不变。
 
 ### 数据模型
 
-新增返利域表 `action_rebate_claim`：
+新增返利域表 `action_rebate_order`（一次领取按返利类型拆行）：
 
 ```sql
-CREATE TABLE IF NOT EXISTS action_rebate_claim (
-    id               BIGINT      NOT NULL AUTO_INCREMENT,
-    claim_id         VARCHAR(36) NOT NULL COMMENT '业务 ID（UUID）',
-    user_id          VARCHAR(36) NOT NULL COMMENT '用户 ID',
-    action_type      VARCHAR(16) NOT NULL COMMENT '行为类型 sign / pay / post',
-    period_key       VARCHAR(16) NOT NULL COMMENT '限次周期键，日限=yyyyMMdd，发帖事务里定死',
-    ref_id           VARCHAR(36) NOT NULL COMMENT '本次行为 ID（postId）',
-    points_value     INT         NOT NULL DEFAULT 0 COMMENT '领取时快照的积分值',
-    draw_count_value INT         NOT NULL DEFAULT 0 COMMENT '领取时快照的抽奖次数',
-    state            VARCHAR(16) NOT NULL COMMENT 'CLAIMED / GRANTED',
-    create_time      DATETIME    NOT NULL,
-    update_time      DATETIME    NOT NULL,
+CREATE TABLE IF NOT EXISTS action_rebate_order (
+    id           BIGINT      NOT NULL AUTO_INCREMENT,
+    order_id     VARCHAR(36) NOT NULL COMMENT '业务 ID（UUID）',
+    user_id      VARCHAR(36) NOT NULL COMMENT '用户 ID',
+    action_type  VARCHAR(16) NOT NULL COMMENT '行为类型 sign / pay / post',
+    period_key   VARCHAR(16) NOT NULL COMMENT '限次周期键，日限=yyyyMMdd，发帖事务里定死',
+    ref_type     VARCHAR(16) NOT NULL COMMENT '行为对象类型：post 等',
+    ref_id       VARCHAR(36) NOT NULL COMMENT '行为对象 ID（ref_type=post 时为 postId）',
+    rebate_type  VARCHAR(16) NOT NULL COMMENT '返利类型 POINTS / DRAW_COUNT',
+    rebate_value INT         NOT NULL DEFAULT 0 COMMENT '领取时快照的返利值',
+    state        VARCHAR(16) NOT NULL COMMENT 'CLAIMED / GRANTED',
+    create_time  DATETIME    NOT NULL,
+    update_time  DATETIME    NOT NULL,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_claim_id (claim_id),
-    UNIQUE KEY uk_user_action_period (user_id, action_type, period_key) COMMENT '日限：同人同行为同周期一次',
-    UNIQUE KEY uk_user_action_ref (user_id, action_type, ref_id) COMMENT '同一次行为只领取一次，重放幂等',
+    UNIQUE KEY uk_order_id (order_id),
+    UNIQUE KEY uk_user_action_period (user_id, action_type, period_key, rebate_type) COMMENT '日限：同人同行为同周期同返利类型一次',
+    UNIQUE KEY uk_user_action_ref (user_id, action_type, ref_type, ref_id, rebate_type) COMMENT '同一次行为同返利类型只领取一次，重放幂等',
     KEY idx_state_time (state, update_time)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '行为返利领取记录（限次 + 快照）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '行为返利订单（按返利类型拆行，含日限 + 快照）';
 ```
 
 - `period_key`：日限口径 `yyyyMMdd`，时区固定 `Asia/Shanghai`；在发帖或提交时定死并随领取任务落库，重放使用任务里的值，不使用重放当天日期，避免跨零点串天。
-- `points_value` / `draw_count_value`：领取时的规则快照。两者都为 0 时不插入 claim 行（不占名额），返回 `NO_REBATE`。
-- 同一 ref 冲突视为幂等：返回已有 claim；同周期不同 ref 冲突返回 `DENIED`。
+- `ref_type` + `ref_id`：明确 `ref_id` 是谁的 ID（本期 `ref_type=post`）；唯一键带上 `ref_type`，避免不同对象类型下 ID 撞车。
+- `rebate_type` + `rebate_value`：一行只承载一种返利。两条规则都为 0 时不插任何行（不占名额），返回 `NO_REBATE`；只有一种为 0 时该类型落一行 `rebate_value=0` 占住日限名额。
+- 同一 ref 冲突视为幂等：返回已有订单行快照；同周期不同 ref 冲突返回 `DENIED`。
 
 ### 幂等设计
 
-- 领取：`uk_user_action_ref` 保证同一帖子只领取一次；`uk_user_action_period` 保证同人同行为同周期只领取一次。
-- 入账消息：确定性 msgId `post-rebate-credit:{postId}` 撞 `mq_outbox.uk_msg_id`，不产生第二条。
-- 入账：积分桶和抽奖次数桶既有 `uk (user_id, reason_type, ref_id)` 吸收重复；两个域独立重试，单边成功另一边重试不会重复。
+- 领取：`uk_user_action_ref` 保证同一帖子同一返利类型只领取一次；`uk_user_action_period` 保证同人同行为同周期同返利类型只领取一次。
+- 入账消息：一个订单行一条，确定性 msgId `post-rebate-credit:{orderId}` 撞 `mq_outbox.uk_msg_id`，不产生第二条。
+- 入账：积分桶和抽奖次数桶既有 `uk (user_id, reason_type, ref_id)` 吸收重复；按 `rebate_type` 单边入账，重试不会重复发放。
 - 领取任务重放：任务 msgId 确定、领取按 ref 幂等，重复投递零副作用。
+- 并发撞唯一键：一次领取要插两行，异常上抛让整组回滚，再由仓储另起事务加锁重查，避免只回滚半组。
 
 ### 模块与接口
 
-- **types**：新增 claim/credit topic 常量、`PostRebateClaimTaskMessage`（由现有 `PostRebateTaskMessage` 演进，增加 `periodKey`）、`PostRebateCreditMessage`、`RebateClaimState` 枚举、领取任务 msgId 构造器。
-- **domain/rebate**：新增 `RebateClaimEntity`、`RebateClaimResultVO`；`IRebateRepository` 增加领取原子方法、按 ref/claimId 查询、标记 GRANTED；`IRebateService` 增加 `claimActionRebate`，负责读 open 规则、构建快照、调用仓储一次并返回结果。仓储实现负责领取事务与 credit outbox。
+- **types**：新增 claim/credit topic 常量、`PostRebateClaimTaskMessage`（由现有 `PostRebateTaskMessage` 演进，增加 `periodKey`）、`PostRebateCreditMessage`、`RebateClaimStateEnum` 枚举（五个取值，含 `persisted()` 落库子集与 `apiState()` 对外折叠）、领取任务 msgId 构造器。
+- **domain/rebate**：新增 `RebateOrderEntity`、`RebateClaimResultVO`；`IRebateRepository` 增加领取原子方法、按 ref/orderId 查询、标记 GRANTED；`IRebateService` 增加 `claimActionRebate`，负责读 open 规则、按返利类型建订单行、调用仓储一次并返回汇总结果。仓储实现负责领取事务与逐行 credit outbox。
 - **domain/post**：发帖和草稿提交返回「postId + 发布时间」结果对象；仓储写领取任务 outbox，不再发送旧返利消息；新增按确定性 msgId 标记领取任务已处理的方法。`IPostService.publishPost` 与 `submitPostDraft` 返回该结果对象。
 - **domain/points、domain/raffle**：增加按显式金额入账的返利方法（`reason_type=REBATE`，refId=postId），供 credit 消费者使用；现有按 actionType 读配置的方法保留给其他行为。
 - **case**：新增 `PostRebateCase`（同步领取、领取重放、入账编排）；`PostPublishCase` 改为「发布 → 领取 → 返回结果」；旧 `grantPostRebate` 退役。
@@ -130,6 +135,8 @@ CREATE TABLE IF NOT EXISTS action_rebate_claim (
 ### 兼容与部署
 
 - 旧 topic `bs-post-rebate` 与旧消费者退役。上线前尽量排空在途消息；若无法排空，领取消费者对缺少 `periodKey` 的旧载荷按「消费当天」兜底，避免丢消息。
+- `bs-post-rebate-credit` 载荷结构变了（`claimId + pointsValue + drawCountValue` → 一行一条的 `orderId + rebateType + rebateValue`）：上线前必须排空该 topic 的在途消息，新消费者对缺 `orderId` / `rebateType` 的旧载荷会直接丢弃（该行为只发生在跨版本窗口内）。
+- `action_rebate_claim` 改名 `action_rebate_order` 并调整列：功能未上线、无存量数据，按项目惯例删库重建，不写迁移脚本。
 - 老前端忽略新增字段仍可发布（HTTP 200 与 postId 语义不变）。
 
 ### 通知
@@ -140,7 +147,7 @@ CREATE TABLE IF NOT EXISTS action_rebate_claim (
 ### 产品口径（本 spec 默认）
 
 - 每天 = `Asia/Shanghai` 自然日 0 点。
-- 积分与抽奖次数共用一次领取名额（按行为一次，而不是每种返利各一次）。
+- 积分与抽奖次数在**同一次领取**里一起判定、一起落行（`POINTS` / `DRAW_COUNT` 各一行）；当天该行为已经领过时，两种类型都判 `DENIED`。某类型规则为 0 时落一行 `rebate_value=0` 占住它当天的名额，避免当天第二次发帖再补领这一种。
 - 规则全关或金额为 0 不占名额。
 - 领取后删帖不回收返利、不释放名额（防刷）。
 - 当前发帖无审核门槛；若以后引入先审后发，领取时机另行调整。
@@ -174,3 +181,4 @@ CREATE TABLE IF NOT EXISTS action_rebate_claim (
 - 领取表会随发帖量增长；`idx_state_time` 供后续对账扫描（CLAIMED 超时未 GRANTED）使用，本期不实现扫描。
 - 时区：`period_key` 生成必须显式使用 `Asia/Shanghai`，不要依赖 JVM 默认时区。
 - 若未来需要「提示 = 最终到账」而不是「提示 = 已领取」，可把入账改为同步，或增加到账后的通知确认；本 spec 不覆盖。
+- 状态枚举已合并并统一命名：最初拆分 `RebateClaimState`（落库 2 值）与 `RebateClaimApiState`（API 4 值），现统一为单个 `RebateClaimStateEnum`（5 值）——落库子集由 `persisted()` 界定，对外取值由 `apiState()` 折叠（`GRANTED` → `CLAIMED`）。历史 issue 文档仍按旧的两枚举描述，以本 spec 与代码为准。

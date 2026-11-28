@@ -6,14 +6,14 @@ import com.betterschool.api.config.dto.PointsValidityResponseDTO;
 import com.betterschool.api.config.dto.RebateConfigResponseDTO;
 import com.betterschool.api.config.dto.RebateConfigUpsertRequestDTO;
 import com.betterschool.api.response.Response;
-import com.betterschool.domain.raffle.service.drawcount.IDrawCountAccountService;
+import com.betterschool.domain.draw.service.drawcount.IDrawCountAccountService;
 import com.betterschool.domain.points.service.IPointsAccountService;
 import com.betterschool.domain.rebate.model.entity.RebateConfigEntity;
-import com.betterschool.domain.rebate.model.valobj.RebateTypeVO;
+import com.betterschool.domain.rebate.model.valobj.RebateTypeEnum;
 import com.betterschool.domain.rebate.service.IRebateService;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import com.betterschool.types.common.AppException;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,7 +28,7 @@ import java.util.List;
 /**
  * 营销配置后台 HTTP 入口（桶模型配套，票 10）：有效期配置、次数配置、行为返利配置的读写。
  * <p>
- * 一个后台面、两个域各管自己那份：积分有效期归 points 域、次数有效期归 raffle 域（抽奖次数与抽奖同域）、
+ * 一个后台面、两个域各管自己那份：积分有效期归 points 域、次数有效期归 draw 域（抽奖次数与抽奖同域）、
  * 行为返利规则归 rebate 域——没有「配置域」这一层。每个端点只碰一个域，不构成跨域编排，
  * 因此直接调域服务、不经 case。
  * <p>
@@ -79,61 +79,61 @@ public class MarketingConfigController implements IMarketingConfigService {
 
     @Override
     @PostMapping("/rebates")
-    public Response<RebateConfigResponseDTO> upsertRebate(@RequestBody RebateConfigUpsertRequestDTO request) {
+    public Response<RebateConfigResponseDTO> upsertRebate(@RequestBody RebateConfigUpsertRequestDTO rebateConfigUpsertRequestDTO) {
         requireAdmin();
-        if (request == null) {
-            throw new AppException(ResponseCode.CONFIG_PARAM_ERROR);
+        if (rebateConfigUpsertRequestDTO == null) {
+            throw new AppException(ResponseCodeEnum.CONFIG_PARAM_ERROR);
         }
-        RebateConfigEntity rebate = new RebateConfigEntity();
-        rebate.setActionType(request.getActionType());
-        rebate.setRebateType(parseRebateType(request.getRebateType()));
-        rebate.setRebateName(request.getRebateName());
-        rebate.setRebateDesc(request.getRebateDesc());
-        rebate.setRebateValue(request.getRebateValue());
-        rebate.setConfigId(request.getConfigId());
-        rebate.setState(request.getState());
-        return Response.ok(toResponseDTO(rebateService.upsertRebate(rebate)));
+        RebateConfigEntity rebateConfigEntity = new RebateConfigEntity();
+        rebateConfigEntity.setActionType(rebateConfigUpsertRequestDTO.getActionType());
+        rebateConfigEntity.setRebateType(parseRebateType(rebateConfigUpsertRequestDTO.getRebateType()));
+        rebateConfigEntity.setRebateName(rebateConfigUpsertRequestDTO.getRebateName());
+        rebateConfigEntity.setRebateDesc(rebateConfigUpsertRequestDTO.getRebateDesc());
+        rebateConfigEntity.setRebateValue(rebateConfigUpsertRequestDTO.getRebateValue());
+        rebateConfigEntity.setConfigId(rebateConfigUpsertRequestDTO.getConfigId());
+        rebateConfigEntity.setState(rebateConfigUpsertRequestDTO.getState());
+        return Response.ok(toResponseDTO(rebateService.upsertRebateConfig(rebateConfigEntity)));
     }
 
     private static void requireAdmin() {
         if (!"ADMIN".equals(SecurityUtils.currentRole())) {
-            throw new AppException(ResponseCode.FORBIDDEN, "无权限，仅管理员可改营销配置");
+            throw new AppException(ResponseCodeEnum.FORBIDDEN, "无权限，仅管理员可改营销配置");
         }
     }
 
     /** DTO 字符串 → 枚举：转换失败按参数错误处理（与域服务的校验共同兜住非法取值） */
-    private static RebateTypeVO parseRebateType(String rebateType) {
+    private static RebateTypeEnum parseRebateType(String rebateType) {
         try {
-            return RebateTypeVO.valueOf(rebateType);
+            return RebateTypeEnum.valueOf(rebateType);
         } catch (IllegalArgumentException | NullPointerException e) {
-            throw new AppException(ResponseCode.CONFIG_PARAM_ERROR, "不支持的返利类型");
+            throw new AppException(ResponseCodeEnum.CONFIG_PARAM_ERROR, "不支持的返利类型");
         }
     }
 
     private static PointsValidityResponseDTO toPointsValidityDTO(int pointsValidDays) {
-        PointsValidityResponseDTO dto = new PointsValidityResponseDTO();
-        dto.setPointsValidDays(pointsValidDays);
-        return dto;
+        PointsValidityResponseDTO pointsValidityResponseDTO = new PointsValidityResponseDTO();
+        pointsValidityResponseDTO.setPointsValidDays(pointsValidDays);
+        return pointsValidityResponseDTO;
     }
 
     private static DrawCountValidityResponseDTO toDrawCountValidityDTO(int drawCountValidDays) {
-        DrawCountValidityResponseDTO dto = new DrawCountValidityResponseDTO();
-        dto.setDrawCountValidDays(drawCountValidDays);
-        return dto;
+        DrawCountValidityResponseDTO drawCountValidityResponseDTO = new DrawCountValidityResponseDTO();
+        drawCountValidityResponseDTO.setDrawCountValidDays(drawCountValidDays);
+        return drawCountValidityResponseDTO;
     }
 
-    private RebateConfigResponseDTO toResponseDTO(RebateConfigEntity rebate) {
-        RebateConfigResponseDTO dto = new RebateConfigResponseDTO();
-        dto.setId(rebate.getId());
-        dto.setActionType(rebate.getActionType());
-        dto.setRebateType(rebate.getRebateType().name());
-        dto.setRebateName(rebate.getRebateName());
-        dto.setRebateDesc(rebate.getRebateDesc());
-        dto.setRebateValue(rebate.getRebateValue());
-        dto.setConfigId(rebate.getConfigId());
-        dto.setState(rebate.getState());
-        dto.setCreateTime(rebate.getCreateTime());
-        dto.setUpdateTime(rebate.getUpdateTime());
-        return dto;
+    private RebateConfigResponseDTO toResponseDTO(RebateConfigEntity rebateConfigEntity) {
+        RebateConfigResponseDTO rebateConfigResponseDTO = new RebateConfigResponseDTO();
+        rebateConfigResponseDTO.setId(rebateConfigEntity.getId());
+        rebateConfigResponseDTO.setActionType(rebateConfigEntity.getActionType());
+        rebateConfigResponseDTO.setRebateType(rebateConfigEntity.getRebateType().name());
+        rebateConfigResponseDTO.setRebateName(rebateConfigEntity.getRebateName());
+        rebateConfigResponseDTO.setRebateDesc(rebateConfigEntity.getRebateDesc());
+        rebateConfigResponseDTO.setRebateValue(rebateConfigEntity.getRebateValue());
+        rebateConfigResponseDTO.setConfigId(rebateConfigEntity.getConfigId());
+        rebateConfigResponseDTO.setState(rebateConfigEntity.getState());
+        rebateConfigResponseDTO.setCreateTime(rebateConfigEntity.getCreateTime());
+        rebateConfigResponseDTO.setUpdateTime(rebateConfigEntity.getUpdateTime());
+        return rebateConfigResponseDTO;
     }
 }

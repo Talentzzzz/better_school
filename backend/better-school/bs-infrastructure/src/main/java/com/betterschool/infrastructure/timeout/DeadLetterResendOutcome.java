@@ -19,12 +19,12 @@ public class DeadLetterResendOutcome {
     private final List<TaskKey> failList = new ArrayList<>();
 
     /** 记一项成功（确有 FAILED 行被重开） */
-    public void success(TaskKey key) {
-        successList.add(key);
+    public void success(TaskKey taskKey) {
+        successList.add(taskKey);
     }
 
     /** 记一项失败（该键当前不是 FAILED，无副作用） */
-    public void fail(TaskKey key) {
-        failList.add(key);
+    public void fail(TaskKey taskKey) {
+        failList.add(taskKey);
     }
 }

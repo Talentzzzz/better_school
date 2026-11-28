@@ -1,6 +1,6 @@
 package com.betterschool.domain.wallet.model.entity;
 
-import com.betterschool.domain.wallet.model.valobj.WalletDetailTypeVO;
+import com.betterschool.domain.wallet.model.valobj.WalletDetailTypeEnum;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -13,7 +13,7 @@ public class WalletDetailEntity {
     /** 钱包业务 ID（UUID 字符串，uuid-biz-id 票 06） */
     private String walletId;
     private String userId;
-    private WalletDetailTypeVO type;
+    private WalletDetailTypeEnum type;
     private BigDecimal amount;
     /** 订单业务 id 是 UUID 字符串（uuid-biz-id 票 05） */
     private String orderId;

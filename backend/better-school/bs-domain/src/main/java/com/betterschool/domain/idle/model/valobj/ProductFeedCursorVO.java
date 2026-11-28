@@ -1,6 +1,6 @@
 package com.betterschool.domain.idle.model.valobj;
 
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 
 import java.math.BigDecimal;
@@ -73,13 +73,13 @@ public final class ProductFeedCursorVO {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof ProductFeedCursorVO other)) return false;
-        return Objects.equals(sortType, other.sortType)
-                && Objects.equals(feedTime, other.feedTime)
-                && Objects.equals(price, other.price)
-                && Objects.equals(viewCount, other.viewCount)
-                && Objects.equals(createTime, other.createTime)
-                && Objects.equals(productId, other.productId);
+        if (!(o instanceof ProductFeedCursorVO productFeedCursorVO)) return false;
+        return Objects.equals(sortType, productFeedCursorVO.sortType)
+                && Objects.equals(feedTime, productFeedCursorVO.feedTime)
+                && Objects.equals(price, productFeedCursorVO.price)
+                && Objects.equals(viewCount, productFeedCursorVO.viewCount)
+                && Objects.equals(createTime, productFeedCursorVO.createTime)
+                && Objects.equals(productId, productFeedCursorVO.productId);
     }
 
     @Override
@@ -129,13 +129,13 @@ public final class ProductFeedCursorVO {
     }
 
     /** 从索引扫描行取续页锚点：排序键随 sort 而异，热度档另带 create_time 收敛键，product_id 收并列 */
-    public static ProductFeedCursorVO anchorOf(String sortType, ProductFeedIndexItemVO row) {
+    public static ProductFeedCursorVO anchorOf(String sortType, ProductFeedIndexItemVO productFeedIndexItemVO) {
         return switch (sortType) {
-            case SORT_HOT -> new ProductFeedCursorVO(sortType, null, null, (long) row.getViewCount(),
-                    row.getCreateTime(), row.getProductId());
-            case SORT_PRICE_ASC, SORT_PRICE_DESC -> new ProductFeedCursorVO(sortType, null, row.getPrice(), null,
-                    null, row.getProductId());
-            default -> new ProductFeedCursorVO(sortType, row.getFeedTime(), null, null, null, row.getProductId());
+            case SORT_HOT -> new ProductFeedCursorVO(sortType, null, null, (long) productFeedIndexItemVO.getViewCount(),
+                    productFeedIndexItemVO.getCreateTime(), productFeedIndexItemVO.getProductId());
+            case SORT_PRICE_ASC, SORT_PRICE_DESC -> new ProductFeedCursorVO(sortType, null, productFeedIndexItemVO.getPrice(), null,
+                    null, productFeedIndexItemVO.getProductId());
+            default -> new ProductFeedCursorVO(sortType, productFeedIndexItemVO.getFeedTime(), null, null, null, productFeedIndexItemVO.getProductId());
         };
     }
 
@@ -162,12 +162,12 @@ public final class ProductFeedCursorVO {
         try {
             raw = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
         } catch (IllegalArgumentException e) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "无效的游标");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "无效的游标");
         }
         String[] parts = raw.split("\\|", -1);
         if (parts.length != PARTS || !DOMAIN.equals(parts[0]) || !parts[1].equals(expectedSort)
                 || parts[2].isEmpty() || (SORT_HOT.equals(expectedSort) && parts[3].isEmpty())) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "无效的游标");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "无效的游标");
         }
         try {
             String productId = parts[4];
@@ -180,7 +180,7 @@ public final class ProductFeedCursorVO {
                         LocalDateTime.parse(parts[2], FEED_TIME_FORMAT), null, null, null, productId);
             };
         } catch (NumberFormatException | DateTimeParseException e) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "无效的游标");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "无效的游标");
         }
     }
 }

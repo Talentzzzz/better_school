@@ -1,23 +1,24 @@
 package com.betterschool.domain.post.service.post;
 
-import com.betterschool.domain.post.adapter.port.IUserQueryPort;
 import com.betterschool.domain.post.adapter.repository.IPostRepository;
 import com.betterschool.domain.post.model.entity.PostCommentEntity;
 import com.betterschool.domain.post.model.entity.PostEntity;
-import com.betterschool.domain.post.model.valobj.PostUserVO;
+import com.betterschool.domain.post.model.entity.PostRebateClaimTaskEntity;
 import com.betterschool.domain.post.model.valobj.FeedCursorVO;
 import com.betterschool.domain.post.model.valobj.FeedIndexItemVO;
 import com.betterschool.domain.post.model.valobj.FeedPageVO;
-import com.betterschool.domain.post.model.valobj.LikeStateVO;
+import com.betterschool.domain.post.model.valobj.PostLikeStateEnum;
 import com.betterschool.domain.post.model.valobj.PostPublishResultVO;
-import com.betterschool.domain.post.model.valobj.PostStatusVO;
+import com.betterschool.domain.post.model.valobj.PostStatusEnum;
 import com.betterschool.types.common.SearchPageVO;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,13 +33,17 @@ public class PostServiceImpl implements IPostService {
 
     private static final int MAX_PAGE_SIZE = 50;
 
+    /** 领取任务重放退避档：第 retryCount+1 次尝试的等待时长（封顶最后一档） */
+    private static final List<Duration> REBATE_CLAIM_BACKOFF = List.of(
+            Duration.ofMinutes(1), Duration.ofMinutes(2), Duration.ofMinutes(4),
+            Duration.ofMinutes(8), Duration.ofMinutes(16));
+
     private final IPostRepository postRepository;
-    private final IUserQueryPort userQueryPort;
 
     @Override
     public PostPublishResultVO publishPost(String userId, String title, String content, List<String> images,
                                            String cover) {
-        // 信用分门槛由 case 层前置校验；落库即可见。事务内落领取任务 outbox（不发送），
+        // 信用分门槛由 case 层前置校验；落库即可见。事务内落领取任务行（PENDING，不发送），
         // 提交后只同步发送搜索同步消息；返回的发布时间是数据库时钟的落库时刻，供返利领取定周期
         PostEntity postEntity = PostEntity.create(userId, title, content, images, cover);
         return postRepository.savePublished(postEntity);
@@ -63,38 +68,39 @@ public class PostServiceImpl implements IPostService {
 
     @Override
     public PostEntity getOwnedPostDraft(String userId, String postId) {
-        PostEntity postEntity = postRepository.findPostById(postId);
+        PostEntity postEntity = postRepository.getPostEntityById(postId);
         if (postEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "草稿不存在");
+            throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "草稿不存在");
         }
         if (!postEntity.isOwner(userId)) {
-            throw new BusinessException(ResponseCode.FORBIDDEN, "只能操作自己发布的帖子");
+            throw new BusinessException(ResponseCodeEnum.FORBIDDEN, "只能操作自己发布的帖子");
         }
-        if (postEntity.getStatus() != PostStatusVO.DRAFT) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "仅草稿可编辑");
+        if (postEntity.getStatus() != PostStatusEnum.DRAFT) {
+            throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "仅草稿可编辑");
         }
         return postEntity;
     }
 
     @Override
     public PostPublishResultVO submitPostDraft(String userId, String postId) {
-        // 完整性校验由 case 层前置；仓储返回 null = 条件 UPDATE 未命中（状态已变化）
-        getOwnedPostDraft(userId, postId);
-        PostPublishResultVO resultVO = postRepository.submitDraftAsPublished(userId, postId);
-        if (resultVO == null) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "草稿状态已变化，请刷新后重试");
+        // 归属/状态守卫 + 发布不变式（正文必填）都在域内裁决；仓储的条件 UPDATE 按同一不变式兜底并发竞态
+        PostEntity postEntity = getOwnedPostDraft(userId, postId);
+        postEntity.ensurePublishable();
+        PostPublishResultVO postPublishResultVO = postRepository.submitDraftAsPublished(userId, postId);
+        if (postPublishResultVO == null) {
+            throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "草稿状态已变化，请刷新后重试");
         }
-        return resultVO;
+        return postPublishResultVO;
     }
 
     @Override
     public FeedPageVO listPosts(String sort, String cursor, int page, int pageSize) {
         String sortType = "hot".equals(sort) ? "hot" : "time";
-        FeedCursorVO cursorVO = cursor == null
+        FeedCursorVO feedCursorVO = cursor == null
                 ? FeedCursorVO.firstPage(sortType)
                 : FeedCursorVO.decode(cursor, sortType);
         try {
-            return pageByFeedIndex(sortType, cursorVO, page, pageSize);
+            return pageByFeedIndex(sortType, feedCursorVO, page, pageSize);
         } catch (BusinessException e) {
             throw e; // 游标非法是调用方错误，不是降级信号
         } catch (Exception e) {
@@ -108,8 +114,8 @@ public class PostServiceImpl implements IPostService {
      * 再 {@code listByIds} 批量回查组装、按扫描序重排。下一页游标 = 本页最后一行的排序键锚点，
      * 只在确认有下一页（探到多一行）时发放；扫描为空 = 游标已越过末尾，返回空页（不发游标）
      */
-    private FeedPageVO pageByFeedIndex(String sortType, FeedCursorVO cursorVO, int page, int pageSize) {
-        List<FeedIndexItemVO> rows = postRepository.scanFeedIndex(sortType, cursorVO, pageSize + 1);
+    private FeedPageVO pageByFeedIndex(String sortType, FeedCursorVO feedCursorVO, int page, int pageSize) {
+        List<FeedIndexItemVO> rows = postRepository.scanFeedIndex(sortType, feedCursorVO, pageSize + 1);
         if (rows.isEmpty()) {
             return new FeedPageVO(List.of(), null, true);
         }
@@ -185,20 +191,17 @@ public class PostServiceImpl implements IPostService {
 
     @Override
     public List<PostEntity> listUserLikedPosts(String userId, String viewerId, int page, int pageSize) {
-        if (!isLikedVisibleTo(userId, viewerId)) {
-            return List.of();
-        }
         return postRepository.pagePublicLikedByUser(userId, (page - 1) * pageSize, pageSize);
     }
 
     @Override
     public long countUserLikedPosts(String userId, String viewerId) {
-        return isLikedVisibleTo(userId, viewerId) ? postRepository.countPublicLikedByUser(userId) : 0;
+        return postRepository.countPublicLikedByUser(userId);
     }
 
     @Override
     public PostEntity postDetail(String postId, String currentUserId) {
-        PostEntity postEntity = getVisiblePost(postId, currentUserId);
+        PostEntity postEntity = getVisiblePostEntity(postId, currentUserId);
         // 浏览计数（UV 口径）：fire-and-forget，入队即返回（窗口过后一组一个事务落明细表 + 加速列）。
         // 允许丢、不影响本次请求结果，详情页读到的仍是库里的当前值；
         // 匿名访问（未登录）落不了明细行，按 UV 口径不计入
@@ -210,23 +213,56 @@ public class PostServiceImpl implements IPostService {
     }
 
     @Override
-    public PostEntity getPost(String postId) {
-        return postRepository.findPostById(postId);
+    public PostEntity getPostEntity(String postId) {
+        return postRepository.getPostEntityById(postId);
     }
 
     @Override
-    public void deletePost(String postId, String currentUserId) {
-        PostEntity postEntity = getVisiblePost(postId, currentUserId);
+    public void deletePostEntity(String postId, String currentUserId) {
+        PostEntity postEntity = getVisiblePostEntity(postId, currentUserId);
         if (!postEntity.isOwner(currentUserId)) {
-            throw new BusinessException(ResponseCode.FORBIDDEN, "只能删除自己发布的帖子");
+            throw new BusinessException(ResponseCodeEnum.FORBIDDEN, "只能删除自己发布的帖子");
         }
-        postRepository.deleteWithSearchSync(postId);
+        postRepository.deletePostEntityWithSearchSync(postId);
     }
 
     @Override
-    public void rebuildFeedIndex() {
-        postRepository.rebuildFeedIndex();
+    public void rebuildCommentFeedIndex() {
+        postRepository.rebuildCommentFeedIndex();
     }
+
+    @Override
+    public void markRebateClaimTaskDone(String postId) {
+        // 尽力而为：失败只告警，任务留 PENDING 由 postRebateClaimScan 重放（重放按 ref 幂等，不会重复发）
+        try {
+            postRepository.markRebateClaimTaskDone(postId);
+        } catch (Exception e) {
+            log.warn("标记发帖返利领取任务完成失败，留待 postRebateClaimScan 重放，postId={}", postId, e);
+        }
+    }
+
+    @Override
+    public List<PostRebateClaimTaskEntity> listDueRebateClaimTasks(int limit) {
+        return postRepository.listDueRebateClaimTasks(limit);
+    }
+
+    @Override
+    public boolean claimRebateClaimTask(PostRebateClaimTaskEntity postRebateClaimTaskEntity) {
+        return postRepository.claimRebateClaimTask(postRebateClaimTaskEntity.getId(),
+                nextRebateClaimBackoffAt(postRebateClaimTaskEntity.getRetryCount()));
+    }
+
+    @Override
+    public void markRebateClaimTaskDead(Long id) {
+        postRepository.markRebateClaimTaskDead(id);
+    }
+
+    /** 第 retryCount+1 次尝试的退避时点（封顶最后一档 16 分钟） */
+    private LocalDateTime nextRebateClaimBackoffAt(Integer retryCount) {
+        int index = Math.min(retryCount == null ? 0 : retryCount, REBATE_CLAIM_BACKOFF.size() - 1);
+        return LocalDateTime.now().plus(REBATE_CLAIM_BACKOFF.get(Math.max(index, 0)));
+    }
+
 
     @Override
     public List<PostEntity> listViewHistory(String userId, int page, int pageSize) {
@@ -240,20 +276,32 @@ public class PostServiceImpl implements IPostService {
 
     @Override
     public void likePost(String postId, String userId) {
-        getNormalPost(postId);
-        // 合并写：窗口合并成一组一事务（唯一键裁决重复 + 计数同事务推进），返回时计数已精确
-        LikeStateVO state = postRepository.likePostWithMergedCount(postId, userId);
-        if (state == LikeStateVO.DUPLICATE) {
-            // 重复赞是业务结果不是异常：唯一键裁决出来的「已经赞过」，对外语义与改造前一致
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "请勿重复点赞");
+        PostEntity postEntity = postRepository.getPostEntityById(postId);
+        if (postEntity == null || postEntity.getStatus() != PostStatusEnum.NORMAL) {
+            throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "帖子不存在");
         }
+        // 合并写：窗口合并成一组一事务（唯一键裁决重复 + 计数同事务推进），返回时计数已精确
+        PostLikeStateEnum likeStateVO = postRepository.likePostWithMergedCount(postId, userId);
+        if (likeStateVO == PostLikeStateEnum.DUPLICATE) {
+            // 重复赞是业务结果不是异常：唯一键裁决出来的「已经赞过」，对外语义与改造前一致
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "请勿重复点赞");
+        }
+        // 自赞不产生互动通知：发 MQ 前就拦掉，不落 outbox、不占 broker 消息
+        if (postEntity.isOwner(userId)) {
+            return;
+        }
+        // 只发「谁赞了谁」的事实；通知内容由消费端（PostCase#notifyPostLiked）决定
+        postRepository.publishPostLiked(postId, userId, postEntity.getUserId());
     }
 
     @Override
     public void unlikePost(String postId, String userId) {
-        getNormalPost(postId);
-        if (postRepository.unlikePostWithMergedCount(postId, userId) == LikeStateVO.NOT_FOUND) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "尚未点赞");
+        PostEntity postEntity = postRepository.getPostEntityById(postId);
+        if (postEntity == null || postEntity.getStatus() != PostStatusEnum.NORMAL) {
+            throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "帖子不存在");
+        }
+        if (postRepository.unlikePostWithMergedCount(postId, userId) == PostLikeStateEnum.NOT_FOUND) {
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "尚未点赞");
         }
     }
 
@@ -276,7 +324,7 @@ public class PostServiceImpl implements IPostService {
             return new SearchPageVO<>(idPage.getTotal(), List.of());
         }
         Map<String, PostEntity> byId = postRepository.listByIds(idPage.getItems()).stream()
-                .filter(post -> post.getStatus() == PostStatusVO.NORMAL)
+                .filter(post -> post.getStatus() == PostStatusEnum.NORMAL)
                 .collect(Collectors.toMap(PostEntity::getPostId, Function.identity()));
         return new SearchPageVO<>(idPage.getTotal(), idPage.getItems().stream()
                 .map(byId::get)
@@ -294,38 +342,18 @@ public class PostServiceImpl implements IPostService {
         return postRepository.rebuildPostSearchIndex();
     }
 
-    private PostEntity getNormalPost(String postId) {
-        PostEntity postEntity = postRepository.findPostById(postId);
-        if (postEntity == null || postEntity.getStatus() != PostStatusVO.NORMAL) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
-        }
-        return postEntity;
-    }
-
     /** 可见性：NORMAL 全员可见；草稿帖仅作者本人可见（不公开） */
-    private PostEntity getVisiblePost(String postId, String currentUserId) {
-        PostEntity postEntity = postRepository.findPostById(postId);
+    private PostEntity getVisiblePostEntity(String postId, String currentUserId) {
+        PostEntity postEntity = postRepository.getPostEntityById(postId);
         if (postEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
+            throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "帖子不存在");
         }
-        if (postEntity.getStatus() == PostStatusVO.NORMAL || postEntity.isOwner(currentUserId)) {
+        if (postEntity.getStatus() == PostStatusEnum.NORMAL || postEntity.isOwner(currentUserId)) {
             return postEntity;
         }
-        throw new BusinessException(ResponseCode.NOT_FOUND, "帖子不存在");
+        throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "帖子不存在");
     }
 
-    /**
-     * 隐私开关「公开我的赞过」对他视是否可见：开关关闭且 viewer ≠ owner 时为 false；
-     * viewer = owner（本人看自己）恒 true；profile 读不到（用户不存在）按可见处理（列表本就为空）。
-     * 开关原始值由 user 只读 port 取回，判据留在本域
-     */
-    private boolean isLikedVisibleTo(String ownerId, String viewerId) {
-        if (viewerId != null && viewerId.equals(ownerId)) {
-            return true;
-        }
-        PostUserVO owner = userQueryPort.findById(ownerId);
-        return owner == null || !Boolean.FALSE.equals(owner.getShowLiked());
-    }
     @Override
     public List<PostCommentEntity> listComments(String postId, String viewerId, String sort, int page, int pageSize) {
         String sortType = "new".equals(sort) ? "new" : "hot";
@@ -337,49 +365,43 @@ public class PostServiceImpl implements IPostService {
     }
     @Override
     public List<PostCommentEntity> listCommentsByUser(String userId, String viewerId, int page, int pageSize) {
-        if (!isCommentsVisibleTo(userId, viewerId)) {
-            return List.of();
-        }
         return postRepository.pageCommentsByUser(userId, (page - 1) * pageSize, pageSize);
     }
     @Override
     public long countCommentsByUser(String userId, String viewerId) {
-        return isCommentsVisibleTo(userId, viewerId) ? postRepository.countCommentsByUser(userId) : 0;
+        return postRepository.countCommentsByUser(userId);
     }
     @Override
-    public PostCommentEntity addComment(String postId, String userId, String content) {
-        getNormalPost(postId);
-        PostCommentEntity commentEntity = PostCommentEntity.create(postId, userId, content, PostStatusVO.NORMAL);
-        publishVisible(commentEntity);
-        commentEntity.setAuthorNickname(nicknameOf(userId));
-        commentEntity.setReplyCount(0L);
-        return commentEntity;
+    public PostCommentEntity publishRootComment(String postId, String userId, String content) {
+        PostEntity postEntity = postRepository.getPostEntityById(postId);
+        if (postEntity == null || postEntity.getStatus() != PostStatusEnum.NORMAL) {
+            throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "帖子不存在");
+        }
+        PostCommentEntity postCommentEntity = PostCommentEntity.create(postId, userId, content, PostStatusEnum.NORMAL);
+        postRepository.publishCommentAndPush(postCommentEntity);
+        postCommentEntity.setReplyCount(0L);
+        return postCommentEntity;
     }
     @Override
-    public PostCommentEntity addReply(String targetCommentId, String userId, String content) {
-        PostCommentEntity targetEntity = postRepository.findCommentById(targetCommentId);
+    public PostCommentEntity publishReplyComment(String targetCommentId, String userId, String content) {
+        PostCommentEntity targetEntity = postRepository.getCommentEntityById(targetCommentId);
         // 下架评论对所有人不可见，视同不存在
-        if (targetEntity == null || targetEntity.getStatus() == PostStatusVO.DELETED) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "评论不存在");
+        if (targetEntity == null || targetEntity.getStatus() == PostStatusEnum.DELETED) {
+            throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "评论不存在");
         }
         // 树模型（ADR-0001）：回复根评论 root=parent=根评论 id；回复子回复 root=楼根、parent=被回复子回复。
         // 归属一律由服务端推导，客户端无从伪造
         String rootId = targetEntity.isRoot() ? targetEntity.getCommentId() : targetEntity.getRootId();
         PostCommentEntity replyEntity = PostCommentEntity.createReply(targetEntity.getPostId(), rootId,
-                targetEntity.getCommentId(), userId, content, PostStatusVO.NORMAL);
-        publishVisible(replyEntity);
-        replyEntity.setAuthorNickname(nicknameOf(userId));
+                targetEntity.getCommentId(), userId, content, PostStatusEnum.NORMAL);
+        postRepository.publishCommentAndPush(replyEntity);
         replyEntity.setReplyToUserId(targetEntity.getUserId());
         replyEntity.setReplyToNickname(targetEntity.getAuthorNickname());
         return replyEntity;
     }
-    /** 落库即可见：评论行 + 评论数 +1 + 楼根 reply_count +1 + 计数窄表行 + 热评索引行（根评论）同一事务 */
-    private void publishVisible(PostCommentEntity commentEntity) {
-        postRepository.saveVisibleCommentWithCount(commentEntity);
-    }
     @Override
-    public PostCommentEntity getComment(String commentId) {
-        return postRepository.findCommentById(commentId);
+    public PostCommentEntity getCommentEntity(String commentId) {
+        return postRepository.getCommentEntityById(commentId);
     }
     @Override
     public List<PostCommentEntity> listReplies(String rootId, String viewerId, int offset, int limit) {
@@ -397,30 +419,30 @@ public class PostServiceImpl implements IPostService {
     }
     /** 删根整楼消失（票 07）：楼根被软删后，楼内子回复随楼一起不可达；其余状态维持原行为 */
     private boolean threadVisible(String rootId) {
-        PostCommentEntity rootEntity = postRepository.findCommentById(rootId);
-        return rootEntity != null && rootEntity.getStatus() != PostStatusVO.DELETED;
+        PostCommentEntity postCommentEntity = postRepository.getCommentEntityById(rootId);
+        return postCommentEntity != null && postCommentEntity.getStatus() != PostStatusEnum.DELETED;
     }
     @Override
-    public void deleteComment(String commentId, String currentUserId) {
-        PostCommentEntity commentEntity = postRepository.findCommentById(commentId);
-        if (commentEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "评论不存在");
+    public void deleteCommentEntity(String commentId, String currentUserId) {
+        PostCommentEntity postCommentEntity = postRepository.getCommentEntityById(commentId);
+        if (postCommentEntity == null) {
+            throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "评论不存在");
         }
-        boolean isCommentOwner = commentEntity.getUserId().equals(currentUserId);
-        PostEntity postEntity = postRepository.findPostById(commentEntity.getPostId());
+        boolean isCommentOwner = postCommentEntity.getUserId().equals(currentUserId);
+        PostEntity postEntity = postRepository.getPostEntityById(postCommentEntity.getPostId());
         boolean isPostOwner = postEntity != null && postEntity.isOwner(currentUserId);
         if (!isCommentOwner && !isPostOwner) {
-            throw new BusinessException(ResponseCode.FORBIDDEN, "只能删除自己的评论或自己帖子下的评论");
+            throw new BusinessException(ResponseCodeEnum.FORBIDDEN, "只能删除自己的评论或自己帖子下的评论");
         }
-        softDelete(commentEntity);
+        softDelete(postCommentEntity);
     }
     @Override
     public void markDeleted(String commentId) {
-        PostCommentEntity commentEntity = postRepository.findCommentById(commentId);
-        if (commentEntity == null) {
+        PostCommentEntity postCommentEntity = postRepository.getCommentEntityById(commentId);
+        if (postCommentEntity == null) {
             return; // 幂等：不存在
         }
-        softDelete(commentEntity);
+        softDelete(postCommentEntity);
     }
     @Override
     public void rebuildCommentFeedIndex() {
@@ -431,54 +453,42 @@ public class PostServiceImpl implements IPostService {
      * 扣减与否由条件 UPDATE 实际命中的前置状态决定（读到的旧态仅用于定位，防并发漂移）；
      * 状态翻转与计数增减在仓储内同一事务
      */
-    private void softDelete(PostCommentEntity commentEntity) {
+    private void softDelete(PostCommentEntity postCommentEntity) {
         postRepository.softDeleteCommentWithCount(
-                commentEntity.getCommentId(), commentEntity.getPostId(), commentEntity.getRootId());
+                postCommentEntity.getCommentId(), postCommentEntity.getPostId(), postCommentEntity.getRootId());
     }
     @Override
     public PostCommentEntity likeComment(String commentId, String userId) {
         // 仅对可见评论有效：下架一律拒绝
-        PostCommentEntity commentEntity = getNormalComment(commentId);
+        PostCommentEntity postCommentEntity = getNormalCommentEntity(commentId);
         // 合并写：评论点赞计数落窄表 post_comment_like_count（真源），不是主表列；
         // 返回的是点赞前读到的评论快照（前置检查用），计数由合并器在同一事务推进。
         // 最热档的排序键是根评论索引的 like_count 快照（同一事务旁带推进），同样不是这次返回的实体字段
-        LikeStateVO state = postRepository.likeCommentWithMergedCount(commentId, userId);
-        if (state == LikeStateVO.DUPLICATE) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "请勿重复点赞");
+        PostLikeStateEnum likeStateVO = postRepository.likeCommentWithMergedCount(commentId, userId);
+        if (likeStateVO == PostLikeStateEnum.DUPLICATE) {
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "请勿重复点赞");
         }
-        return commentEntity;
+        // 自赞不产生互动通知：发 MQ 前就拦掉，不落 outbox、不占 broker 消息（与帖子点赞一致）
+        if (!postCommentEntity.getUserId().equals(userId)) {
+            // 只发「谁赞了谁」的事实；通知内容由消费端（PostCase#notifyCommentLiked）决定
+            postRepository.publishCommentLiked(commentId, userId, postCommentEntity.getUserId());
+        }
+        return postCommentEntity;
     }
     @Override
     public void unlikeComment(String commentId, String userId) {
-        getNormalComment(commentId);
+        getNormalCommentEntity(commentId);
         postRepository.unlikeCommentWithCount(commentId, userId);
     }
     @Override
     public List<String> listLikedCommentIds(String userId, List<String> commentIds) {
         return postRepository.selectLikedCommentIds(userId, commentIds);
     }
-    private PostCommentEntity getNormalComment(String commentId) {
-        PostCommentEntity commentEntity = postRepository.findCommentById(commentId);
-        if (commentEntity == null || commentEntity.getStatus() != PostStatusVO.NORMAL) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "评论不存在");
+    private PostCommentEntity getNormalCommentEntity(String commentId) {
+        PostCommentEntity postCommentEntity = postRepository.getCommentEntityById(commentId);
+        if (postCommentEntity == null || postCommentEntity.getStatus() != PostStatusEnum.NORMAL) {
+            throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "评论不存在");
         }
-        return commentEntity;
-    }
-    /** 发布响应 DTO 需作者昵称：写入路径无 JOIN，按 id 读用户补齐（只读跨域 port） */
-    private String nicknameOf(String userId) {
-        PostUserVO user = userQueryPort.findById(userId);
-        return user == null ? null : user.getNickname();
-    }
-    /**
-     * 隐私开关「公开我的评论」对他视是否可见：开关关闭且 viewer ≠ owner 时为 false；
-     * viewer = owner（本人看自己）恒 true；profile 读不到（用户不存在）按可见处理（列表本就为空）。
-     * 开关原始值由 user 只读 port 取回，判据留在本域
-     */
-    private boolean isCommentsVisibleTo(String ownerId, String viewerId) {
-        if (viewerId != null && viewerId.equals(ownerId)) {
-            return true;
-        }
-        PostUserVO owner = userQueryPort.findById(ownerId);
-        return owner == null || !Boolean.FALSE.equals(owner.getShowComments());
+        return postCommentEntity;
     }
 }

@@ -68,7 +68,7 @@ Scope: `backend/better-school/`（社区计数）+ `backend/marketing/`（库存
 | 组件 | `CountMerger`（`@Component`，计数侧唯一实例） | `QuotaMergeBuffer`（`@Component`） |
 | 包内 | `ShardBuffer`（非 `public`）、`Pending` | 同左 |
 | 入口 | `submitAndWait`（点赞类）+ `submitAsync`（浏览） | 只有 `submitAndWait` |
-| 落库方法 | `@Transactional flushGroup(CountAction, long key, List<CountEvent>)` | `@Transactional flushDeductGroup(...)` / `flushClaimGroup(...)` |
+| 落库方法 | `@Transactional flushGroup(CountActionEnum, long key, List<CountEvent>)` | `@Transactional flushDeductGroup(...)` / `flushClaimGroup(...)` |
 | 停机 | `@PreDestroy close()`（停收 → 排空 → 关池） | 同左 |
 
 ### 2.2 API 形状
@@ -79,7 +79,7 @@ Scope: `backend/better-school/`（社区计数）+ `backend/marketing/`（库存
 // ── better-school：计数侧
 @Component
 public class CountMerger {
-    MergeOutcome<LikeState> submitAndWait(long shardKey, CountEvent event); // 点赞 / 取消赞 / 评论赞
+    MergeOutcome<LikeStateEnum> submitAndWait(long shardKey, CountEvent event); // 点赞 / 取消赞 / 评论赞
     SubmitOutcome submitAsync(long shardKey, CountEvent event);             // 浏览
     int pending();
     boolean awaitIdle(long timeoutMs);
@@ -87,8 +87,8 @@ public class CountMerger {
     @PreDestroy void close();
 }
 
-public enum CountAction { POST_LIKE, POST_UNLIKE, COMMENT_LIKE, POST_VIEW, PRODUCT_VIEW }
-public record CountEvent(CountAction action, long targetId, long userId) { }
+public enum CountActionEnum { POST_LIKE, POST_UNLIKE, COMMENT_LIKE, POST_VIEW, PRODUCT_VIEW }
+public record CountEvent(CountActionEnum action, long targetId, long userId) { }
 public enum SubmitOutcome { ACCEPTED, BUFFER_FULL, CLOSED }
 public enum MergeState { COMPLETED, TIMEOUT, BUFFER_FULL, CLOSED, FAILED }
 public record MergeOutcome<T>(MergeState state, T result) { }
@@ -101,8 +101,8 @@ public record MergeMetrics(int pending, long accepted, long flushed, long batche
 // ── marketing：库存侧（没有 fire-and-forget 的调用方，不为对称造方法）
 @Component
 public class QuotaMergeBuffer {
-    DeductResult submitAndWait(long invId, InventoryDeductRequestVO request); // 枚举名沿用票 05 的三出口
-    ClaimOutcome submitAndWait(long invId, ClaimItem item);                    // 兑换确认（票 07）
+    DeductResultEnum submitAndWait(long invId, InventoryDeductRequestVO request); // 枚举名沿用票 05 的三出口
+    ClaimOutcomeEnum submitAndWait(long invId, ClaimItem item);                    // 兑换确认（票 07）
     int pending();
     boolean awaitIdle(long timeoutMs);
     MergeMetrics metrics();

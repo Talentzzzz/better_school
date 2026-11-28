@@ -4,7 +4,9 @@
 -- 全应用收敛为单库（better_school / better_school_test），营销域独立 init/schema 文件退役。
 -- 表结构与根目录 sql.md 第 1 节逐表一致（唯一事实源）：主键恒为无业务含义的物理自增 id，
 -- 业务标识单独成列并配 uk；业务 ID 是应用层发号的 UUID 字符串（VARCHAR(36)），与物理 id 永不同值、
--- 永不对外暴露物理 id（uuid-biz-id 改造；存量数据不迁移，删库重建）。（**主键口径例外**：各域 feed 索引表 post/product_feed_index 与
+-- 永不对外暴露物理 id（uuid-biz-id 改造；存量数据不迁移，删库重建）。标识符列（*_id / user_min /
+-- user_max / dedup_key）一律 COLLATE utf8mb4_bin：代码侧配对规范序（String.compareTo 字典序）
+-- 与库内唯一键比较必须同一套规则，*_ai_ci 的大小写折叠不参与标识符判等。（**主键口径例外**：各域 feed 索引表 post/product_feed_index 与
 -- 评论热评索引 post_comment_feed_index 都是投影表、不设独立业务列，主键直接取业务键）；每表
 -- create_time/update_time 收尾（不带默认值，由应用写入），全库无 created_at/updated_at
 -- （例外共两处：timeout_task_00..15 的 created_at/updated_at——按原样自原独立超时库迁入，见该节注释；
@@ -15,7 +17,7 @@ SET NAMES utf8mb4;
 
 CREATE TABLE IF NOT EXISTS bs_user (
     id            BIGINT       NOT NULL AUTO_INCREMENT,
-    user_id       VARCHAR(36)       NOT NULL COMMENT '业务 ID（对外唯一标识）',
+    user_id       VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL COMMENT '业务 ID（对外唯一标识）',
     phone         VARCHAR(20)  NOT NULL COMMENT '手机号，登录凭证',
     nickname      VARCHAR(50)  NOT NULL COMMENT '昵称',
     avatar        VARCHAR(255) NULL COMMENT '头像 URL（MinIO）',
@@ -41,8 +43,8 @@ WHERE NOT EXISTS (SELECT 1 FROM bs_user WHERE user_id = '00000000-0000-0000-0000
 
 CREATE TABLE IF NOT EXISTS post (
     id            BIGINT        NOT NULL AUTO_INCREMENT,
-    post_id       VARCHAR(36)   NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串；物理自增 id 只作内部键）',
-    user_id       VARCHAR(36)        NOT NULL COMMENT '发布者用户 ID',
+    post_id       VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串；物理自增 id 只作内部键）',
+    user_id       VARCHAR(36) COLLATE utf8mb4_bin        NOT NULL COMMENT '发布者用户 ID',
     title         VARCHAR(100)  NULL COMMENT '标题（可选）',
     content       TEXT          NULL COMMENT '正文（草稿可空，提交时校验必填）',
     images        VARCHAR(1000) NULL COMMENT '图片 URL 列表（JSON 数组，MinIO 后置）',
@@ -62,14 +64,14 @@ CREATE TABLE IF NOT EXISTS post (
 
 CREATE TABLE IF NOT EXISTS post_comment (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
-    comment_id  VARCHAR(36)  NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串）',
-    post_id     VARCHAR(36)  NOT NULL COMMENT '帖子业务 ID',
-    user_id     VARCHAR(36)       NOT NULL COMMENT '评论者用户 ID',
+    comment_id  VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串）',
+    post_id     VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL COMMENT '帖子业务 ID',
+    user_id     VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL COMMENT '评论者用户 ID',
     content     VARCHAR(500)  NULL COMMENT '评论文字（可空：纯图评论时为空，与 images 至少有一个非空）',
     images      VARCHAR(1000) NULL COMMENT '图片 URL 列表（JSON 数组，最多 6 张，MinIO）',
     state       VARCHAR(20)  NOT NULL DEFAULT 'NORMAL' COMMENT '状态 NORMAL/DELETED（发布即 NORMAL；列表只查 NORMAL）',
-    root_id     VARCHAR(36)  NOT NULL DEFAULT '0' COMMENT '所在楼根评论业务 ID（''0''=根评论；回复根评论时=根评论 id；回复子回复时=楼根 id）',
-    parent_id   VARCHAR(36)  NOT NULL DEFAULT '0' COMMENT '被回复评论业务 ID（根评论为 ''0''；回复根评论时=根评论 id；回复子回复时=该子回复 id）',
+    root_id     VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL DEFAULT '0' COMMENT '所在楼根评论业务 ID（''0''=根评论；回复根评论时=根评论 id；回复子回复时=楼根 id）',
+    parent_id   VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL DEFAULT '0' COMMENT '被回复评论业务 ID（根评论为 ''0''；回复根评论时=根评论 id；回复子回复时=该子回复 id）',
     reply_count INT          NOT NULL DEFAULT 0 COMMENT '楼内可见子回复数（仅根评论有意义，仅 NORMAL 计入，同事务维护）',
     create_time DATETIME     NOT NULL COMMENT '创建时间',
     update_time DATETIME     NOT NULL COMMENT '更新时间',
@@ -87,8 +89,8 @@ CREATE TABLE IF NOT EXISTS post_comment (
 
 CREATE TABLE IF NOT EXISTS product (
     id             BIGINT         NOT NULL AUTO_INCREMENT,
-    product_id     VARCHAR(36)    NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串）',
-    user_id        VARCHAR(36)         NOT NULL COMMENT '卖家用户 ID',
+    product_id     VARCHAR(36) COLLATE utf8mb4_bin    NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串）',
+    user_id        VARCHAR(36) COLLATE utf8mb4_bin         NOT NULL COMMENT '卖家用户 ID',
     title          VARCHAR(30)    NULL COMMENT '标题（草稿允许为空，提交时必填）',
     description    VARCHAR(500)   NULL COMMENT '描述',
     images         VARCHAR(1000)  NULL COMMENT '图片 URL 列表（JSON 数组，MinIO 后置）',
@@ -113,7 +115,7 @@ CREATE TABLE IF NOT EXISTS product (
 -- 取消/支付超时关单回补，回补后 remaining > 0 且 state = SOLD 时同事务翻回 ON_SALE。
 -- 订单流不再使用 LOCKED（一件挂单的"交易中"表达不了"3 件锁了 1 件"），旧态保留仅兼容存量行。
 CREATE TABLE IF NOT EXISTS product_inventory (
-    product_id  VARCHAR(36) NOT NULL COMMENT '商品业务 ID（product.product_id，1:1 行随发布/存草稿诞生）',
+    product_id  VARCHAR(36) COLLATE utf8mb4_bin NOT NULL COMMENT '商品业务 ID（product.product_id，1:1 行随发布/存草稿诞生）',
     quantity    INT         NOT NULL DEFAULT 1 COMMENT '挂单总件数（发布时定，草稿可改，上架后仅能经加货上调）',
     remaining   INT         NOT NULL DEFAULT 1 COMMENT '剩余可售件数（下单扣减、关单回补；恒 <= quantity）',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
@@ -125,12 +127,12 @@ CREATE TABLE IF NOT EXISTS product_inventory (
 -- 漂移时按流水重建 remaining（同 view_count 重建 job 套路）。订单驱动的扣减/回补带 order_id，加货/校正为 NULL。
 CREATE TABLE IF NOT EXISTS product_stock_event (
     id              BIGINT       NOT NULL AUTO_INCREMENT,
-    product_id      VARCHAR(36)  NOT NULL COMMENT '商品业务 ID',
+    product_id      VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL COMMENT '商品业务 ID',
     event_type      VARCHAR(20)  NOT NULL COMMENT 'INIT 发布建账 / DEDUCT 下单占用 / RELEASE 关单回补 / RESTOCK 卖家加货 / ADJUST 校正（含标记已出清零）',
     delta           INT          NOT NULL COMMENT 'remaining 变动量（扣减为负、回补/加货为正、清零为负）',
     after_remaining INT          NOT NULL COMMENT '事件后 remaining 快照（对账锚点）',
-    order_id        VARCHAR(36)  NULL     COMMENT '关联订单业务 ID（DEDUCT/RELEASE 必填，其余 NULL）',
-    actor_id        VARCHAR(36)  NULL     COMMENT '操作人用户 ID（SYSTEM 事件可 NULL）',
+    order_id        VARCHAR(36) COLLATE utf8mb4_bin  NULL     COMMENT '关联订单业务 ID（DEDUCT/RELEASE 必填，其余 NULL）',
+    actor_id        VARCHAR(36) COLLATE utf8mb4_bin  NULL     COMMENT '操作人用户 ID（SYSTEM 事件可 NULL）',
     actor_role      VARCHAR(20)  NOT NULL COMMENT '操作方 BUYER/SELLER/SYSTEM/ADMIN',
     create_time     DATETIME     NOT NULL COMMENT '创建时间',
     update_time     DATETIME     NOT NULL COMMENT '更新时间',
@@ -140,8 +142,8 @@ CREATE TABLE IF NOT EXISTS product_stock_event (
 
 CREATE TABLE IF NOT EXISTS product_favorite (
     id         BIGINT   NOT NULL AUTO_INCREMENT,
-    user_id    VARCHAR(36)   NOT NULL COMMENT '收藏用户 ID',
-    product_id VARCHAR(36)   NOT NULL COMMENT '商品业务 ID',
+    user_id    VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '收藏用户 ID',
+    product_id VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '商品业务 ID',
     create_time DATETIME NOT NULL COMMENT '创建时间',
     update_time DATETIME NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -151,8 +153,8 @@ CREATE TABLE IF NOT EXISTS product_favorite (
 
 CREATE TABLE IF NOT EXISTS post_like (
     id         BIGINT   NOT NULL AUTO_INCREMENT,
-    post_id    VARCHAR(36)   NOT NULL COMMENT '帖子业务 ID',
-    user_id    VARCHAR(36)   NOT NULL COMMENT '点赞用户 ID',
+    post_id    VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '帖子业务 ID',
+    user_id    VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '点赞用户 ID',
     create_time DATETIME NOT NULL COMMENT '创建时间',
     update_time DATETIME NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -166,7 +168,7 @@ CREATE TABLE IF NOT EXISTS post_like (
 -- 按关系键去重会把第三次点赞误判为重投而丢增量。
 CREATE TABLE IF NOT EXISTS post_like_count (
     id          BIGINT   NOT NULL AUTO_INCREMENT,
-    post_id     VARCHAR(36)   NOT NULL COMMENT '帖子业务 ID（唯一）',
+    post_id     VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '帖子业务 ID（唯一）',
     like_count  INT      NOT NULL DEFAULT 0 COMMENT '点赞数（MQ 异步合并刷盘落此表；点赞/取消的明细关系在 post_like）',
     create_time DATETIME NOT NULL COMMENT '创建时间',
     update_time DATETIME NOT NULL COMMENT '更新时间',
@@ -176,7 +178,7 @@ CREATE TABLE IF NOT EXISTS post_like_count (
 
 CREATE TABLE IF NOT EXISTS post_comment_count (
     id            BIGINT   NOT NULL AUTO_INCREMENT,
-    post_id       VARCHAR(36)   NOT NULL COMMENT '帖子业务 ID（唯一）',
+    post_id       VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '帖子业务 ID（唯一）',
     comment_count INT      NOT NULL DEFAULT 0 COMMENT '评论数（评论落库同事务 +1、删评 -1，只计 NORMAL 态）',
     create_time   DATETIME NOT NULL COMMENT '创建时间',
     update_time   DATETIME NOT NULL COMMENT '更新时间',
@@ -191,7 +193,7 @@ CREATE TABLE IF NOT EXISTS post_comment_count (
 -- 给不出「单帖内按赞数排序」要的全站序，票 02 拍板不建）。
 CREATE TABLE IF NOT EXISTS post_comment_like_count (
     id          BIGINT   NOT NULL AUTO_INCREMENT,
-    comment_id  VARCHAR(36)   NOT NULL COMMENT '评论业务 ID（唯一；根评论与子回复都入表）',
+    comment_id  VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '评论业务 ID（唯一；根评论与子回复都入表）',
     like_count  INT      NOT NULL DEFAULT 0 COMMENT '评论点赞数（点赞合并事务/取消赞同事务直写；GREATEST(0,±N) clamp；真源 = post_comment_like 条数）',
     create_time DATETIME NOT NULL COMMENT '创建时间',
     update_time DATETIME NOT NULL COMMENT '更新时间',
@@ -201,8 +203,8 @@ CREATE TABLE IF NOT EXISTS post_comment_like_count (
 
 CREATE TABLE IF NOT EXISTS post_comment_like (
     id         BIGINT   NOT NULL AUTO_INCREMENT,
-    comment_id VARCHAR(36)   NOT NULL COMMENT '评论业务 ID（根评论或子回复）',
-    user_id    VARCHAR(36)   NOT NULL COMMENT '点赞用户 ID',
+    comment_id VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '评论业务 ID（根评论或子回复）',
+    user_id    VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '点赞用户 ID',
     create_time DATETIME NOT NULL COMMENT '创建时间',
     update_time DATETIME NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -215,8 +217,8 @@ CREATE TABLE IF NOT EXISTS post_comment_like (
 -- 所以不像帖子那样「行常驻 + state 快照镜像」（那列在评论这里只有 NORMAL，没有维护价值）。
 -- 子回复不入索引（楼内不按赞排，只展示赞数）。主键口径照 feed 索引先例（见文件头的主键例外）。
 CREATE TABLE IF NOT EXISTS post_comment_feed_index (
-    comment_id  VARCHAR(36)   NOT NULL COMMENT '根评论业务 ID（唯一；子回复不入索引）',
-    post_id     VARCHAR(36)   NOT NULL COMMENT '所属帖子业务 ID（「最热」按此前缀把扫描锁在单帖）',
+    comment_id  VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '根评论业务 ID（唯一；子回复不入索引）',
+    post_id     VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '所属帖子业务 ID（「最热」按此前缀把扫描锁在单帖）',
     like_count  INT      NOT NULL DEFAULT 0 COMMENT '点赞数快照（点赞/取消赞同事务旁带 ±N，真源 post_comment_like_count——票 02 前为主列 post_comment.like_count；UPDATE 落 0 行落日志交重建 job；「最热」排序键）',
     create_time DATETIME NOT NULL COMMENT '创建时间（= 评论发布时刻）：点赞数同值时按它升序收敛成确定序（发布先后；UUID 无序，不能再拿业务 ID 当时间代理）',
     update_time DATETIME NOT NULL COMMENT '更新时间（技术时间戳，禁止当排序键）',
@@ -235,7 +237,7 @@ CREATE TABLE IF NOT EXISTS post_comment_feed_index (
 -- feed 只取 state = NORMAL 行；排序键永远不用 update_time（技术时间戳，会被浏览回写等无关写污染）。
 -- 索引尾列 post_id 做游标分页：WHERE state = ? AND (feed_time, post_id) < (?, ?)，弃 offset。
 CREATE TABLE IF NOT EXISTS post_feed_index (
-    post_id     VARCHAR(36) NOT NULL COMMENT '帖子业务 ID（post.post_id，1:1 投影）',
+    post_id     VARCHAR(36) COLLATE utf8mb4_bin NOT NULL COMMENT '帖子业务 ID（post.post_id，1:1 投影）',
     state       VARCHAR(20) NOT NULL DEFAULT 'NORMAL' COMMENT '帖子状态快照（与 post.state 同域，状态流转事务同步；feed 只查 NORMAL）',
     feed_time   DATETIME    NOT NULL COMMENT '进入当前对外可见轮的通过时刻（approve 事务写入：行诞生落第一次、重提再通过刷新；其余写路径不碰；「最新」排序键）',
     like_count  INT         NOT NULL DEFAULT 0 COMMENT '点赞数快照（赞合并事务旁路 ±N；真源 post_like_count，UPDATE 落 0 行落日志交重建 job；「热榜」排序键）',
@@ -248,8 +250,8 @@ CREATE TABLE IF NOT EXISTS post_feed_index (
 -- UV 明细即事实源（一人一帖一行）：INSERT IGNORE 成功（affected = 1）才算一次新浏览，重复进详情只刷 viewed_at 不加数；
 -- 同时是浏览历史与 feed 已读灰显的数据源，用户维度，将来按 user_id 分片友好。
 CREATE TABLE IF NOT EXISTS user_view_history (
-    user_id   VARCHAR(36)   NOT NULL COMMENT '浏览者用户 ID',
-    post_id   VARCHAR(36)   NOT NULL COMMENT '帖子业务 ID',
+    user_id   VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '浏览者用户 ID',
+    post_id   VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '帖子业务 ID',
     viewed_at DATETIME NOT NULL COMMENT '最近浏览时刻（合并事务内 INSERT IGNORE 后对全组键 UPDATE 刷新；浏览历史排序键）',
     PRIMARY KEY (user_id, post_id),
     KEY idx_user_viewed (user_id, viewed_at) COMMENT '浏览历史：user_id 过滤 + viewed_at 倒序游标分页'
@@ -258,7 +260,7 @@ CREATE TABLE IF NOT EXISTS user_view_history (
 -- 浏览 UV 加速列：精确值 = user_view_history 行数，本表不是真相源。与点赞计数的不对称：浏览没有取消语义，
 -- 计数只增不减，合并事务按 INSERT IGNORE 受影响行数累加，不用 upsert 计数（affected rows 会被同秒重复刷 viewed_at 打乱）。
 CREATE TABLE IF NOT EXISTS post_view_count (
-    post_id     VARCHAR(36)   NOT NULL COMMENT '帖子业务 ID（唯一）',
+    post_id     VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '帖子业务 ID（唯一）',
     view_count  INT      NOT NULL DEFAULT 0 COMMENT '浏览 UV 数（= user_view_history 行数；详情读路径 selectCountsByPostId 的 view 段换源到本表）',
     create_time DATETIME NOT NULL COMMENT '创建时间',
     update_time DATETIME NOT NULL COMMENT '更新时间',
@@ -274,7 +276,7 @@ CREATE TABLE IF NOT EXISTS post_view_count (
 -- 索引尾列业务 ID 做游标分页，弃 offset；时间升序用 idx_state_feed 反向扫描，不单设索引。
 -- 价格进索引表是帖子没有的新排序键：商品在售改价立即生效，改价事务必须同事务旁路同步（票 03）。
 CREATE TABLE IF NOT EXISTS product_feed_index (
-    product_id  VARCHAR(36)   NOT NULL COMMENT '商品业务 ID（product.product_id，1:1 投影）',
+    product_id  VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '商品业务 ID（product.product_id，1:1 投影）',
     state       VARCHAR(20)   NOT NULL DEFAULT 'ON_SALE' COMMENT '商品状态快照（与 product.state 同域，状态流转事务同步；feed 只查 ON_SALE）',
     feed_time   DATETIME      NOT NULL COMMENT '进入当前对外可见轮的时刻（上架事务写入：行诞生落第一次、relist 重提刷新；其余写路径不碰；「最新」排序键）',
     create_time DATETIME      NOT NULL COMMENT '商品发布时刻快照（product.create_time，上架事务随行写入；「热度」同值收敛键：view_count 同值时按 create_time DESC 收敛成确定序——UUID 无序，不能再拿 product_id 当时间代理）',
@@ -290,8 +292,8 @@ CREATE TABLE IF NOT EXISTS product_feed_index (
 -- 市集 UV 明细即事实源（一人一对象一行）：INSERT IGNORE 成功（affected = 1）才算一次新浏览，
 -- 重复进详情只刷 viewed_at 不加数；同时是市集页已读灰显的数据源。匿名不计入（商品语义变更：现状匿名也计）。
 CREATE TABLE IF NOT EXISTS product_view_history (
-    user_id    VARCHAR(36)   NOT NULL COMMENT '浏览者用户 ID',
-    product_id VARCHAR(36)   NOT NULL COMMENT '商品业务 ID',
+    user_id    VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '浏览者用户 ID',
+    product_id VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '商品业务 ID',
     viewed_at  DATETIME NOT NULL COMMENT '最近浏览时刻（合并事务内 INSERT IGNORE 后对全组键 UPDATE 刷新）',
     PRIMARY KEY (user_id, product_id),
     KEY idx_user_viewed (user_id, viewed_at) COMMENT '按人浏览明细倒序（市集页浏览痕迹/灰显）'
@@ -300,16 +302,38 @@ CREATE TABLE IF NOT EXISTS product_view_history (
 -- 市集浏览 UV 加速列：精确值 = 各域明细表行数，本表不是真相源。浏览没有取消语义，计数只增不减，
 -- 合并事务按 INSERT IGNORE 受影响行数累加，不用 upsert 计数（affected rows 会被同秒重复刷 viewed_at 打乱）。
 CREATE TABLE IF NOT EXISTS product_view_count (
-    product_id  VARCHAR(36)   NOT NULL COMMENT '商品业务 ID（唯一）',
+    product_id  VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '商品业务 ID（唯一）',
     view_count  INT      NOT NULL DEFAULT 0 COMMENT '浏览 UV 数（= product_view_history 行数；商品详情读路径 view 段换源到本表）',
     create_time DATETIME NOT NULL COMMENT '创建时间',
     update_time DATETIME NOT NULL COMMENT '更新时间',
     PRIMARY KEY (product_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '商品浏览计数表（UV 加速列，事实源在 product_view_history）';
 
+-- 域内最终一致任务表（与 mq_outbox 是两张不同的表）：outbox 有两种：
+--   1) 跨进程投递（mq_outbox）——行的职责是把字节送到 broker 的 topic；
+--   2) 域内收敛任务（本表及其它域同类表）——行的职责是「这个本地动作还没做完」，
+--      由域自己的扫描 job 在进程内幂等重放，不经过 broker。
+-- 发帖返利领取属于第 2 种：发帖事务内插行（与 post 行同生同死），请求线程同步领取，
+-- 失败留 0 交 postRebateClaimScan 重放；领取按 (userId, actionType, refId) 幂等。
+CREATE TABLE IF NOT EXISTS post_rebate_claim_task (
+    id            BIGINT      NOT NULL AUTO_INCREMENT,
+    post_id       VARCHAR(36) COLLATE utf8mb4_bin NOT NULL COMMENT '帖子业务 ID（插行幂等键）',
+    user_id       VARCHAR(36) COLLATE utf8mb4_bin NOT NULL COMMENT '发帖用户 ID',
+    period_key    VARCHAR(16) NOT NULL COMMENT '返利周期键：发帖事务内按数据库 update_time 定死（yyyyMMdd, Asia/Shanghai），重放沿用',
+    state         TINYINT     NOT NULL DEFAULT 0 COMMENT '0待领取 1已完成(领取成功/明确拒绝/无返利) 2死信(重试耗尽)',
+    retry_count   INT         NOT NULL DEFAULT 0 COMMENT '重试次数（扫描抢占时递增）',
+    next_retry_at DATETIME    NULL COMMENT '下次重试时间（指数退避 1/2/4/8/16 分钟）；NULL = 立即可扫',
+    finish_time   DATETIME    NULL COMMENT '领取完成时间',
+    create_time   DATETIME    NOT NULL COMMENT '创建时间',
+    update_time   DATETIME    NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_post_id (post_id) COMMENT '同一帖子只落一条领取任务（重放幂等的插行锚点）',
+    KEY idx_state_next_retry (state, next_retry_at) COMMENT '扫描：WHERE state=0 AND (next_retry_at IS NULL OR next_retry_at <= NOW())'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '发帖返利领取任务（域内最终一致任务表：订单兼 outbox，同步领取失败由 postRebateClaimScan 重放）';
+
 CREATE TABLE IF NOT EXISTS mq_outbox (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
-    msg_id      VARCHAR(64) NOT NULL COMMENT '消息ID（幂等/去重）',
+    msg_id      VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '消息ID（幂等/去重）',
     destination VARCHAR(64) NOT NULL COMMENT '消息目的地（destination 语法：topic 或 topic:tag，由业务端自行解析）',
     payload     TEXT        NOT NULL COMMENT '消息内容 JSON',
     delay_level TINYINT     NOT NULL DEFAULT 0 COMMENT 'RocketMQ 延迟等级；0=不延迟，1=1 秒（约 1.0–1.1s）',
@@ -342,7 +366,7 @@ SET NAMES utf8mb4;
 CREATE TABLE IF NOT EXISTS timeout_task_00 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -357,7 +381,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_00 (
 CREATE TABLE IF NOT EXISTS timeout_task_01 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -372,7 +396,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_01 (
 CREATE TABLE IF NOT EXISTS timeout_task_02 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -387,7 +411,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_02 (
 CREATE TABLE IF NOT EXISTS timeout_task_03 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -402,7 +426,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_03 (
 CREATE TABLE IF NOT EXISTS timeout_task_04 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -417,7 +441,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_04 (
 CREATE TABLE IF NOT EXISTS timeout_task_05 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -432,7 +456,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_05 (
 CREATE TABLE IF NOT EXISTS timeout_task_06 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -447,7 +471,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_06 (
 CREATE TABLE IF NOT EXISTS timeout_task_07 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -462,7 +486,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_07 (
 CREATE TABLE IF NOT EXISTS timeout_task_08 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -477,7 +501,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_08 (
 CREATE TABLE IF NOT EXISTS timeout_task_09 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -492,7 +516,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_09 (
 CREATE TABLE IF NOT EXISTS timeout_task_10 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -507,7 +531,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_10 (
 CREATE TABLE IF NOT EXISTS timeout_task_11 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -522,7 +546,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_11 (
 CREATE TABLE IF NOT EXISTS timeout_task_12 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -537,7 +561,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_12 (
 CREATE TABLE IF NOT EXISTS timeout_task_13 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -552,7 +576,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_13 (
 CREATE TABLE IF NOT EXISTS timeout_task_14 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -567,7 +591,7 @@ CREATE TABLE IF NOT EXISTS timeout_task_14 (
 CREATE TABLE IF NOT EXISTS timeout_task_15 (
     id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '物理主键（无业务含义）',
     task_type       VARCHAR(64)  NOT NULL COMMENT '任务类型（业务对象上的一种超时动作，如 PAY_TIMEOUT）',
-    biz_id          VARCHAR(64)  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
+    biz_id          VARCHAR(64) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务引用 id（不带快照；复合引用编码进此列；分片 hash 输入）',
     action_time     DATETIME     NOT NULL COMMENT '理论到期时刻（单轮内不可变；终态复活=重开一轮时刷新；回调时携带，供业务监控精度）',
     next_fire_time  DATETIME     NOT NULL COMMENT '下次可触发时刻（注册时=action_time；失败重试后=now+退避）',
     status          VARCHAR(16)  NOT NULL COMMENT 'WAITING/RETRYING/SUCCESS/FAILED/CANCELED（5 态，无 PROCESSING）',
@@ -581,9 +605,9 @@ CREATE TABLE IF NOT EXISTS timeout_task_15 (
 
 CREATE TABLE IF NOT EXISTS room (
     id               BIGINT       NOT NULL AUTO_INCREMENT,
-    room_id          VARCHAR(36)  NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串，应用层 insert 前由 IdGenerator 生成一次写入）',
+    room_id          VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串，应用层 insert 前由 IdGenerator 生成一次写入）',
     source           VARCHAR(20)  NULL COMMENT '会话来源（首次由市集「私信联系」入口建会话时写入、首来源钉死不覆盖；首页/主页入口建的为 NULL）：PRODUCT',
-    creator_id     VARCHAR(36)       NULL COMMENT '会话创建人 user_id，首建落定不覆盖（对家角色标签的相对视角锚点；来源为 NULL 时也为 NULL）',
+    creator_id     VARCHAR(36) COLLATE utf8mb4_bin       NULL COMMENT '会话创建人 user_id，首建落定不覆盖（对家角色标签的相对视角锚点；来源为 NULL 时也为 NULL）',
     last_seq         BIGINT       NOT NULL DEFAULT 0 COMMENT '消息序号水位（取号器）：发消息事务内 UPDATE last_seq=last_seq+1 原子取号，回滚无空洞',
     state            VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE' COMMENT '与取号器同行：一把行锁完成取号+终态判定；ACTIVE/SEALED（封盘即宿主业务终态，禁发言禁成员变更，历史只读；当前恒 1v1，SEALED 不再产生，列随口径保留）',
     create_time      DATETIME     NOT NULL COMMENT '创建时间',
@@ -599,9 +623,9 @@ CREATE TABLE IF NOT EXISTS room (
 
 CREATE TABLE IF NOT EXISTS user_pair_room (
     id          BIGINT   NOT NULL AUTO_INCREMENT,
-    user_min    VARCHAR(36)   NOT NULL COMMENT '1v1 双方 user_id 的规范序在前方（字符串字典序，uk_pair 首列）',
-    user_max    VARCHAR(36)   NOT NULL COMMENT '1v1 双方 user_id 的规范序在后方（字符串字典序）',
-    room_id     VARCHAR(36)   NOT NULL COMMENT '指向 room.room_id（UUID 字符串）',
+    user_min    VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '1v1 双方 user_id 的规范序在前方（字符串字典序，uk_pair 首列）',
+    user_max    VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '1v1 双方 user_id 的规范序在后方（字符串字典序）',
+    room_id     VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '指向 room.room_id（UUID 字符串）',
     create_time DATETIME NOT NULL COMMENT '创建时间',
     update_time DATETIME NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -619,11 +643,11 @@ CREATE TABLE IF NOT EXISTS user_pair_room (
 
 CREATE TABLE IF NOT EXISTS user_room (
     id               BIGINT       NOT NULL AUTO_INCREMENT,
-    room_id          VARCHAR(36)  NOT NULL COMMENT '会话业务键（room.room_id，UUID 字符串）',
-    user_id          VARCHAR(36)       NOT NULL COMMENT '成员 user_id（用户维度行主：分库片键语义贴 user_id）',
-    last_msg_time    DATETIME     NULL COMMENT '最后消息时间副本（会话列表排序键；预览不落副本，读时按 message 真相现算）',
+    room_id          VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL COMMENT '会话业务键（room.room_id，UUID 字符串）',
+    user_id          VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL COMMENT '成员 user_id（用户维度行主：分库片键语义贴 user_id）',
+    last_msg_time    DATETIME     NULL COMMENT '最后消息时间副本（会话列表排序键；预览不落副本，读时按 message 真相现算）。建会话行诞生时为 NULL 且行同时隐藏不出列表，首条消息写入时同事务赋值——NULL 永不出现在列表排序面',
     read_seq         BIGINT       NOT NULL DEFAULT 0 COMMENT '已读水位线：未读数 = room.last_seq − 此列（服务端多一次查询取真源现算）；打开会话即推到 room.last_seq',
-    hidden_at        DATETIME     NULL COMMENT '会话隐藏时间（用户侧删除会话，软删）；新消息清空弹回',
+    hidden_at        DATETIME     NULL COMMENT '会话隐藏位（非 NULL 即列表不可见）：建会话时初始化为建行时刻——只有发过消息，会话才出现在双方列表，首条消息清空弹回；用户侧移除会话（软删）复用同列，新消息同样弹回',
     create_time      DATETIME     NOT NULL COMMENT '创建时间',
     update_time      DATETIME     NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -633,8 +657,8 @@ CREATE TABLE IF NOT EXISTS user_room (
 
 CREATE TABLE IF NOT EXISTS room_member (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
-    room_id     VARCHAR(36)  NOT NULL COMMENT '会话业务键（room.room_id，UUID 字符串；名册分库片键语义贴 room_id，uk 首列）',
-    user_id     VARCHAR(36)  NOT NULL COMMENT '成员 user_id',
+    room_id     VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL COMMENT '会话业务键（room.room_id，UUID 字符串；名册分库片键语义贴 room_id，uk 首列）',
+    user_id     VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL COMMENT '成员 user_id',
     join_seq    BIGINT       NOT NULL DEFAULT 0 COMMENT '入群水位：1v1 建会话时为 0；群聊上线即「新成员从哪条 seq 起收消息」',
     create_time DATETIME     NOT NULL COMMENT '创建时间',
     update_time DATETIME     NOT NULL COMMENT '更新时间',
@@ -644,15 +668,15 @@ CREATE TABLE IF NOT EXISTS room_member (
 
 CREATE TABLE IF NOT EXISTS message (
     id            BIGINT        NOT NULL AUTO_INCREMENT,
-    msg_id        VARCHAR(36)   NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串，应用层 insert 前由 IdGenerator 生成一次写入）：跨表引用与对外暴露用它',
-    room_id       VARCHAR(36)   NOT NULL COMMENT '会话业务键（room.room_id，UUID 字符串）',
+    msg_id        VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串，应用层 insert 前由 IdGenerator 生成一次写入）：跨表引用与对外暴露用它',
+    room_id       VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '会话业务键（room.room_id，UUID 字符串）',
     seq           BIGINT        NOT NULL COMMENT '消息序号（room.last_seq 取号；会话内从 1 起）',
-    from_user_id  VARCHAR(36)        NOT NULL COMMENT '发送者 user_id（1v1 无系统消息，恒非空）',
+    from_user_id  VARCHAR(36) COLLATE utf8mb4_bin        NOT NULL COMMENT '发送者 user_id（1v1 无系统消息，恒非空）',
     msg_type      VARCHAR(20)   NOT NULL DEFAULT 'TEXT' COMMENT 'TEXT/IMAGE/CARD 三类',
     content       VARCHAR(1024) NULL COMMENT 'TEXT=裸文本（上限 500 由代码常量收敛） / IMAGE=JSON{url,width,height} / CARD=恒空',
-    client_msg_id VARCHAR(36)   NULL COMMENT '客户端幂等键（UUID）：重发复用同键',
+    client_msg_id VARCHAR(36) COLLATE utf8mb4_bin   NULL COMMENT '客户端幂等键（UUID）：重发复用同键',
     ref_type      VARCHAR(20)   NULL COMMENT 'CARD 引用类型 PRODUCT/POST（仅 CARD 非空）',
-    ref_id        VARCHAR(36)   NULL COMMENT 'CARD 引用对象业务 ID（POST/PRODUCT 均为 UUID 字符串，票 03/05；渲染时实时查，失效显示「内容已失效」）',
+    ref_id        VARCHAR(36) COLLATE utf8mb4_bin   NULL COMMENT 'CARD 引用对象业务 ID（POST/PRODUCT 均为 UUID 字符串，票 03/05；渲染时实时查，失效显示「内容已失效」）',
     state         VARCHAR(20)   NOT NULL DEFAULT 'NORMAL' COMMENT 'NORMAL/RECALLED：撤回占 seq 不回退、计入未读',
     recalled_at   DATETIME      NULL COMMENT '撤回时间',
     recalled_by   VARCHAR(20)   NULL COMMENT 'USER=发送者限时窗口内自撤',
@@ -666,20 +690,21 @@ CREATE TABLE IF NOT EXISTS message (
 
 CREATE TABLE IF NOT EXISTS timeline (
     id           BIGINT   NOT NULL AUTO_INCREMENT,
-    user_id      VARCHAR(36)   NOT NULL COMMENT '收件人 user_id',
-    room_id      VARCHAR(36)   NOT NULL COMMENT '会话业务键（冗余：判重键与消息定位，免回查；UUID 字符串）',
+    user_id      VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '收件人 user_id',
+    room_id      VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '会话业务键（冗余：判重键与消息定位，免回查；UUID 字符串）',
     seq          BIGINT   NOT NULL COMMENT '消息序号副本',
-    msg_id       VARCHAR(36)   NOT NULL COMMENT '消息业务 ID（外联 message.msg_id，UUID 字符串）',
+    msg_id       VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '消息业务 ID（外联 message.msg_id，UUID 字符串）',
     delivery_seq BIGINT   NOT NULL COMMENT 'per-user 投递序号：单调且 = 提交序，增量补拉游标（禁用 id 当游标——分配序 ≠ 提交序，并发下漏拉）',
     create_time  DATETIME NOT NULL COMMENT '创建时间',
     update_time  DATETIME NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_user_delivery (user_id, delivery_seq)
+    UNIQUE KEY uk_user_delivery (user_id, delivery_seq),
+    UNIQUE KEY uk_user_room_seq (user_id, room_id, seq) COMMENT '扇出幂等锚点：(user, room, seq) 唯一——分库异步扇出重试撞键即视为已投递，重复投递无害化'
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '时间线（写扩散收件箱，只插不改）';
 
 CREATE TABLE IF NOT EXISTS user_seq (
     id          BIGINT   NOT NULL AUTO_INCREMENT,
-    user_id     VARCHAR(36)   NOT NULL COMMENT '用户 ID',
+    user_id     VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '用户 ID',
     seq         BIGINT   NOT NULL DEFAULT 0 COMMENT '投递序号计数器（0 基）',
     create_time DATETIME NOT NULL COMMENT '创建时间',
     update_time DATETIME NOT NULL COMMENT '更新时间',
@@ -689,18 +714,18 @@ CREATE TABLE IF NOT EXISTS user_seq (
 
 CREATE TABLE IF NOT EXISTS notification (
     id               BIGINT       NOT NULL AUTO_INCREMENT,
-    notification_id  VARCHAR(36)  NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入，物理自增 id 保留纯内部键）',
-    user_id          VARCHAR(36)       NOT NULL COMMENT '接收用户',
+    notification_id  VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入，物理自增 id 保留纯内部键）',
+    user_id          VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL COMMENT '接收用户',
     scope            VARCHAR(20)  NOT NULL COMMENT '收件范围（写入时由生产点显式标注，禁止从 (type,refType) 推导——发用户与发全站系统位只能靠生产意图区分）：MARKET_PRODUCT(预留,当前无生产方)/BOTTOM_SYSTEM/INTERACTION_LIKE/INTERACTION_COMMENT',
     seq              BIGINT       NOT NULL COMMENT 'per-(user,scope) 收件序号（notification_seq 计数器写入事务内取号，从 1 起递增）：已读态 = seq ≤ 该范围水位；水位只用本列，禁用 id——分配序≠提交序',
-    sender_id        VARCHAR(36)       NULL COMMENT '触发者用户 ID（互动通知：谁评/回/赞了你；广播类为空）',
+    sender_id        VARCHAR(36) COLLATE utf8mb4_bin       NULL COMMENT '触发者用户 ID（互动通知：谁评/回/赞了你；广播类为空）',
     type             VARCHAR(20)  NOT NULL COMMENT '类型 ANNOUNCEMENT/CREDIT_CHANGE/POST_COMMENTED/COMMENT_REPLIED/POST_LIKED/COMMENT_LIKED',
     title            VARCHAR(100) NOT NULL COMMENT '标题',
     content          VARCHAR(500) NOT NULL COMMENT '内容',
     ref_type         VARCHAR(20)  NULL COMMENT '关联类型',
-    ref_id           VARCHAR(36)  NULL COMMENT '关联业务 ID（POST/COMMENT/PRODUCT 订单均为 UUID 字符串，票 03/05；REPORT=report_id UUID，票 06）',
-    broadcast_msg_id VARCHAR(64)  NULL COMMENT '广播消息 msg_id（公告落库幂等键）',
-    dedup_key        VARCHAR(100) NULL COMMENT '互动通知幂等键（type+目标+sender）；同一触发者对同一目标只发一条，取消动作不撤回',
+    ref_id           VARCHAR(36) COLLATE utf8mb4_bin  NULL COMMENT '关联业务 ID（POST/COMMENT/PRODUCT 订单均为 UUID 字符串，票 03/05；REPORT=report_id UUID，票 06）',
+    broadcast_msg_id VARCHAR(64) COLLATE utf8mb4_bin  NULL COMMENT '广播消息 msg_id（公告落库幂等键）',
+    dedup_key        VARCHAR(100) COLLATE utf8mb4_bin NULL COMMENT '互动通知幂等键（type+目标+sender）；同一触发者对同一目标只发一条，取消动作不撤回',
     create_time      DATETIME     NOT NULL COMMENT '创建时间',
     update_time      DATETIME     NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -712,7 +737,7 @@ CREATE TABLE IF NOT EXISTS notification (
 
 CREATE TABLE IF NOT EXISTS notification_seq (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
-    user_id     VARCHAR(36)      NOT NULL COMMENT '接收用户 ID',
+    user_id     VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '接收用户 ID',
     scope       VARCHAR(20) NOT NULL COMMENT '收件范围（与 notification.scope 同域）',
     seq         BIGINT      NOT NULL DEFAULT 0 COMMENT '序号计数器：首次取号建行 seq=1，之后写入事务内 UPDATE seq=seq+1 读回，行锁到提交',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
@@ -723,7 +748,7 @@ CREATE TABLE IF NOT EXISTS notification_seq (
 
 CREATE TABLE IF NOT EXISTS notification_read (
     id            BIGINT      NOT NULL AUTO_INCREMENT,
-    user_id       VARCHAR(36)      NOT NULL COMMENT '接收用户 ID',
+    user_id       VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '接收用户 ID',
     scope         VARCHAR(20) NOT NULL COMMENT '收件范围（每个范围各推各的水位，互不误清）',
     last_read_seq BIGINT      NOT NULL DEFAULT 0 COMMENT '已读水位线：以下（seq≤）全已读以上全未读；推水位=取当前 notification_seq.seq（dedup 幂等忽略的空号一并越过）',
     create_time   DATETIME    NOT NULL COMMENT '创建时间',
@@ -734,10 +759,10 @@ CREATE TABLE IF NOT EXISTS notification_read (
 
 CREATE TABLE IF NOT EXISTS product_order (
     id                     BIGINT        NOT NULL AUTO_INCREMENT,
-    product_order_id       VARCHAR(36)   NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串）',
-    buyer_id               VARCHAR(36)        NOT NULL COMMENT '买家用户 ID',
-    seller_id              VARCHAR(36)        NOT NULL COMMENT '卖家用户 ID',
-    product_id             VARCHAR(36)   NOT NULL COMMENT '商品业务 ID（引用：跳转/反查/对账用）',
+    product_order_id       VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串）',
+    buyer_id               VARCHAR(36) COLLATE utf8mb4_bin        NOT NULL COMMENT '买家用户 ID',
+    seller_id              VARCHAR(36) COLLATE utf8mb4_bin        NOT NULL COMMENT '卖家用户 ID',
+    product_id             VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '商品业务 ID（引用：跳转/反查/对账用）',
     price                  DECIMAL(10,2) NOT NULL COMMENT '成交单价快照（订单总金额 = price × quantity）',
     quantity               INT           NOT NULL DEFAULT 1 COMMENT '成交件数（1..N，下单时原子扣减台账 remaining；回补按此列）',
     product_title          VARCHAR(30)   NULL COMMENT '商品标题快照（下单时写入，此后不可变）',
@@ -758,11 +783,11 @@ CREATE TABLE IF NOT EXISTS product_order (
 
 CREATE TABLE IF NOT EXISTS product_order_event (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
-    order_id    VARCHAR(36)  NOT NULL COMMENT '商品订单业务 ID',
+    order_id    VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL COMMENT '商品订单业务 ID',
     event_type  VARCHAR(30)  NOT NULL COMMENT '事件类型 CREATED/PAID/DELIVERED/COMPLETED/CANCELLED',
     from_state  VARCHAR(20)  NULL     COMMENT '变更前状态（NULL 仅限创建事件）',
     to_state    VARCHAR(20)  NOT NULL COMMENT '变更后状态',
-    actor_id    VARCHAR(36)       NULL     COMMENT '操作人用户 ID（仅 SYSTEM 允许 NULL）',
+    actor_id    VARCHAR(36) COLLATE utf8mb4_bin       NULL     COMMENT '操作人用户 ID（仅 SYSTEM 允许 NULL）',
     actor_role  VARCHAR(20)  NOT NULL COMMENT '操作方 BUYER/SELLER/SYSTEM/ADMIN',
     reason_type VARCHAR(50)  NULL     COMMENT '原因类型（仅取消/退出/争议/仲裁类事件写入）',
     reason      VARCHAR(200) NULL     COMMENT '原因补充说明（用户输入，提交时先过同步初筛；SYSTEM 事件恒 NULL）',
@@ -775,8 +800,8 @@ CREATE TABLE IF NOT EXISTS product_order_event (
 
 CREATE TABLE IF NOT EXISTS virtual_wallet (
     id            BIGINT        NOT NULL AUTO_INCREMENT,
-    wallet_id     VARCHAR(36)   NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入）',
-    user_id       VARCHAR(36)        NOT NULL COMMENT '用户 ID',
+    wallet_id     VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '业务 ID（对外唯一标识，UUID 字符串；uuid-biz-id 票 06：应用层 IIdGenerator 随 insert 一次写入）',
+    user_id       VARCHAR(36) COLLATE utf8mb4_bin        NOT NULL COMMENT '用户 ID',
     balance       DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '余额',
     frozen_amount DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '冻结金额（托管中）',
     create_time   DATETIME      NOT NULL COMMENT '创建时间',
@@ -788,11 +813,11 @@ CREATE TABLE IF NOT EXISTS virtual_wallet (
 
 CREATE TABLE IF NOT EXISTS wallet_detail (
     id          BIGINT        NOT NULL AUTO_INCREMENT,
-    wallet_id   VARCHAR(36)   NOT NULL COMMENT '钱包业务 ID（引用 virtual_wallet.wallet_id，UUID 字符串）',
-    user_id     VARCHAR(36)        NOT NULL COMMENT '用户 ID（钱包所有者；INCOME 为收款方）',
+    wallet_id   VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '钱包业务 ID（引用 virtual_wallet.wallet_id，UUID 字符串）',
+    user_id     VARCHAR(36) COLLATE utf8mb4_bin        NOT NULL COMMENT '用户 ID（钱包所有者；INCOME 为收款方）',
     type        VARCHAR(20)   NOT NULL COMMENT '类型 RECHARGE/FROZEN/UNFROZEN/INCOME/PRODUCT_FROZEN/PRODUCT_UNFROZEN/PRODUCT_INCOME',
     amount      DECIMAL(10,2) NOT NULL COMMENT '变动金额',
-    order_id    VARCHAR(36)   NULL COMMENT '关联订单业务 ID（RECHARGE 为空；uk_order_type 按 type 区分商品订单）',
+    order_id    VARCHAR(36) COLLATE utf8mb4_bin   NULL COMMENT '关联订单业务 ID（RECHARGE 为空；uk_order_type 按 type 区分商品订单）',
     biz_round   INT           NOT NULL DEFAULT 0 COMMENT '业务轮次：同一订单同类型多轮资金操作的去重维度（预留，当前恒 0）',
     create_time DATETIME      NOT NULL COMMENT '创建时间',
     update_time DATETIME      NOT NULL COMMENT '更新时间',
@@ -801,6 +826,43 @@ CREATE TABLE IF NOT EXISTS wallet_detail (
     KEY idx_user (user_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '钱包流水表';
 
+-- 支付单（钱包域，模拟微信支付的「统一下单」产物）：商户下单时预下单拿支付单号，
+-- 用户拿支付单号进收银台支付；支付成功由钱包扣冻并回调商户。一单一支付单（uk_biz_order_id）。
+CREATE TABLE IF NOT EXISTS payment_order (
+    id           BIGINT        NOT NULL AUTO_INCREMENT,
+    pay_no       VARCHAR(36)   NOT NULL COMMENT '支付单号（业务 ID，UUID 字符串；对外支付凭据）',
+    biz_order_id VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '商户订单业务 ID（product_order_id；一单一支付单）',
+    user_id      VARCHAR(36) COLLATE utf8mb4_bin   NOT NULL COMMENT '付款人用户 ID',
+    amount       DECIMAL(10,2) NOT NULL COMMENT '支付金额（商户订单总额快照）',
+    subject      VARCHAR(100)  NOT NULL COMMENT '收银台展示标题（商品标题快照）',
+    state        VARCHAR(20)   NOT NULL DEFAULT 'WAIT_PAY' COMMENT 'WAIT_PAY 待支付/PAID 已支付/CLOSED 已关闭',
+    pay_time     DATETIME      NULL COMMENT '支付完成时间',
+    create_time  DATETIME      NOT NULL COMMENT '创建时间',
+    update_time  DATETIME      NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_pay_no (pay_no),
+    UNIQUE KEY uk_biz_order_id (biz_order_id),
+    KEY idx_user (user_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '支付单表（钱包域；模拟微信支付的统一下单/支付/关闭）';
+
+-- 支付回调任务（钱包域，域内最终一致任务表，ADR-0017 同形）：支付事务内与
+-- 支付单 PAID、PRODUCT_FROZEN 流水、余额条件扣减一起 INSERT，本行就是回调的 outbox——
+-- 一起提交则「钱已冻 + 支付单已 PAID + 回调待确认」，回滚则一起消失。
+-- 商户回调失败 / 进程崩溃留下的 PENDING 行由 productPayTaskScan 进程内重放（回调幂等）。
+CREATE TABLE IF NOT EXISTS wallet_pay_task (
+    id            BIGINT      NOT NULL AUTO_INCREMENT,
+    order_id      VARCHAR(36) COLLATE utf8mb4_bin NOT NULL COMMENT '商品订单业务 ID（插行幂等键）',
+    state         TINYINT     NOT NULL DEFAULT 0 COMMENT '0待收敛 1已完成 2死信(重试耗尽)',
+    retry_count   INT         NOT NULL DEFAULT 0 COMMENT '重试次数（扫描抢占时递增）',
+    next_retry_at DATETIME    NULL COMMENT '下次重试时间（指数退避 1/2/4/8/16 分钟）；NULL = 立即可扫',
+    finish_time   DATETIME    NULL COMMENT '收敛完成时间',
+    create_time   DATETIME    NOT NULL COMMENT '创建时间',
+    update_time   DATETIME    NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_order_id (order_id) COMMENT '同一订单只落一条回调任务（重放幂等的插行锚点）',
+    KEY idx_state_next_retry (state, next_retry_at) COMMENT '扫描：WHERE state=0 AND (next_retry_at IS NULL OR next_retry_at <= NOW())'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '支付回调任务（域内最终一致任务表：支付事务内落行，与支付单 PAID/冻结同生同死；未收敛由 productPayTaskScan 重放）';
+
 -- 信用账户表：credit 域独占读写（表所有权原则：一张表只归一个领域写）。
 -- score/state 原寄生在 bs_user 列上，为满足所有权原则迁出为独立表；
 -- user/search 域只读本表（读跨域，拆库后走 credit 域 API）。
@@ -808,7 +870,7 @@ CREATE TABLE IF NOT EXISTS wallet_detail (
 -- 无行 = 默认分 100 / 状态 NORMAL（与原列 DEFAULT 语义一致）。
 CREATE TABLE IF NOT EXISTS user_credit (
     id           BIGINT      NOT NULL AUTO_INCREMENT,
-    user_id      VARCHAR(36)      NOT NULL COMMENT '用户 ID',
+    user_id      VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '用户 ID',
     credit_score INT         NOT NULL DEFAULT 100 COMMENT '信用分 0~100',
     state        VARCHAR(20) NOT NULL DEFAULT 'NORMAL' COMMENT '状态 NORMAL/BANNED',
     update_time  DATETIME    NOT NULL COMMENT '更新时间',
@@ -818,10 +880,10 @@ CREATE TABLE IF NOT EXISTS user_credit (
 
 CREATE TABLE IF NOT EXISTS user_credit_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
-    user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID',
+    user_id     VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '用户 ID',
     `change`    INT         NOT NULL COMMENT '信用分变化（可为负）',
-    reason_type VARCHAR(30) NOT NULL COMMENT '原因类型 TRADE_COMPLAINT/ADMIN_ADJUST/ADMIN_BAN/ADMIN_UNBAN（取值见 CreditReasonTypeVO）',
-    ref_id      VARCHAR(36) NULL COMMENT '关联业务 ID（内容类=被罚内容；ADMIN 类为空，不依赖幂等键）',
+    reason_type VARCHAR(30) NOT NULL COMMENT '原因类型 TRADE_COMPLAINT/ADMIN_ADJUST/ADMIN_BAN/ADMIN_UNBAN（取值见 CreditReasonTypeEnum）',
+    ref_id      VARCHAR(36) COLLATE utf8mb4_bin NULL COMMENT '关联业务 ID（内容类=被罚内容；ADMIN 类为空，不依赖幂等键）',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -831,7 +893,7 @@ CREATE TABLE IF NOT EXISTS user_credit_detail (
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 营销域（monolith-restructure 票 07 合库：原 bs_marketing 库的 22 张表并入本库）
--- 原文件头要点随行迁入：points / raffle（抽奖+次数）/ rebate / inventory 四段同库；
+-- 原文件头要点随行迁入：points / draw（抽奖+次数）/ rebate / inventory 四段同库；
 -- hot-row-merge-l2w256 票 09 起为最终形态（无两张库存桶表、明细表无 bucket_id / state）；
 -- uuid-biz-id 票 07：营销自有业务键全改 VARCHAR(36) 应用层发号，物理自增 id 保留纯内部键；
 -- draw_strategy_award.inv_id 的「不限量」哨兵为字符串 '0'。
@@ -841,13 +903,13 @@ SET NAMES utf8mb4;
 
 CREATE TABLE IF NOT EXISTS points_bucket (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
-    bucket_id   VARCHAR(36)      NOT NULL COMMENT '业务 ID（对外唯一标识）',
-    user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID（合库后与用户域同库，仍只存 id 不跨域 join）',
+    bucket_id   VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '业务 ID（对外唯一标识）',
+    user_id     VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '用户 ID（合库后与用户域同库，仍只存 id 不跨域 join）',
     amount      INT         NOT NULL COMMENT '入账积分数（恒正；方向由「在哪张表 + 哪个 reason_type」表达）',
     remain      INT         NOT NULL COMMENT '该桶剩余可用积分（消费按 FIFO 递减；过期桶不计入读数，由 expire_at 懒判）',
     expire_at   DATETIME    NOT NULL COMMENT '过期时间 = 入账时点 + points_validity_config.points_valid_days',
     reason_type VARCHAR(30) NOT NULL COMMENT '积分来源 LOTTERY_WIN(抽奖中奖) / REBATE(行为返利：签到/支付等，规则见 action_rebate_config，ref_id=发放幂等键)',
-    ref_id      VARCHAR(36)      NOT NULL COMMENT '来源业务 ID（LOTTERY_WIN = 抽奖记录 id）',
+    ref_id      VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '来源业务 ID（LOTTERY_WIN = 抽奖记录 id）',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -858,11 +920,11 @@ CREATE TABLE IF NOT EXISTS points_bucket (
 
 CREATE TABLE IF NOT EXISTS points_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
-    user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID',
-    bucket_id   VARCHAR(36)      NOT NULL COMMENT '被扣的桶业务 ID（FIFO 顺序）',
+    user_id     VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '用户 ID',
+    bucket_id   VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '被扣的桶业务 ID（FIFO 顺序）',
     amount      INT         NOT NULL COMMENT '本次从该桶扣掉的积分数（恒正）',
     reason_type VARCHAR(30) NOT NULL COMMENT '消费原因 REDEEM_DRAW_COUNT(兑换抽奖次数) / REDEEM_PRIZE(兑换奖品)',
-    ref_id      VARCHAR(36)      NOT NULL COMMENT '来源业务 ID（REDEEM_DRAW_COUNT = 兑换单 id，与 draw_count_bucket.ref_id 同值同事务；REDEEM_PRIZE = 抽奖记录 id，draw_record.record_id）',
+    ref_id      VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '来源业务 ID（REDEEM_DRAW_COUNT = 兑换单 id，与 draw_count_bucket.ref_id 同值同事务；REDEEM_PRIZE = 抽奖记录 id，draw_record.record_id）',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -873,13 +935,13 @@ CREATE TABLE IF NOT EXISTS points_detail (
 
 CREATE TABLE IF NOT EXISTS draw_count_bucket (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
-    bucket_id   VARCHAR(36)      NOT NULL COMMENT '业务 ID（对外唯一标识）',
-    user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID',
+    bucket_id   VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '业务 ID（对外唯一标识）',
+    user_id     VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '用户 ID',
     amount      INT         NOT NULL COMMENT '入账次数（恒正）',
     remain      INT         NOT NULL COMMENT '该桶剩余可用次数（消费按 FIFO 递减；过期桶不计入读数，由 expire_at 懒判）',
     expire_at   DATETIME    NOT NULL COMMENT '过期时间 = 入账时点 + draw_count_config.draw_count_valid_days',
     reason_type VARCHAR(20) NOT NULL COMMENT '次数来源 PURCHASE(积分购买) / REBATE(行为返利：签到/支付等，规则见 action_rebate_config，ref_id=发放幂等键)',
-    ref_id      VARCHAR(36)      NOT NULL COMMENT '来源业务 ID（PURCHASE = 购买单 id，与 points_detail.ref_id 的 REDEEM_DRAW_COUNT 同值、同事务写入）',
+    ref_id      VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '来源业务 ID（PURCHASE = 购买单 id，与 points_detail.ref_id 的 REDEEM_DRAW_COUNT 同值、同事务写入）',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -890,9 +952,9 @@ CREATE TABLE IF NOT EXISTS draw_count_bucket (
 
 CREATE TABLE IF NOT EXISTS draw_count_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
-    user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID',
-    bucket_id   VARCHAR(36)      NOT NULL COMMENT '被扣的桶业务 ID（FIFO 顺序）',
-    ref_id      VARCHAR(36)      NOT NULL COMMENT '抽奖记录业务 ID（draw_record.record_id，消费幂等键；每次抽奖扣 1 次）',
+    user_id     VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '用户 ID',
+    bucket_id   VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '被扣的桶业务 ID（FIFO 顺序）',
+    ref_id      VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '抽奖记录业务 ID（draw_record.record_id，消费幂等键；每次抽奖扣 1 次）',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -902,8 +964,8 @@ CREATE TABLE IF NOT EXISTS draw_count_detail (
 
 CREATE TABLE IF NOT EXISTS draw_count_purchase_order (
     id                BIGINT       NOT NULL AUTO_INCREMENT,
-    purchase_order_id VARCHAR(36)      NOT NULL COMMENT '购买单业务 ID（= hash(userId, token) 幂等键，贯穿 points_detail.ref_id 与 draw_count_bucket.ref_id）',
-    user_id           VARCHAR(36)      NOT NULL COMMENT '用户 ID',
+    purchase_order_id VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '购买单业务 ID（= hash(userId, token) 幂等键，贯穿 points_detail.ref_id 与 draw_count_bucket.ref_id）',
+    user_id           VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '用户 ID',
     quantity          INT          NOT NULL COMMENT '购买次数份数',
     points_cost       INT          NOT NULL COMMENT '本次扣减积分 = 份数 × 单价（Constants.DRAW_COUNT_PURCHASE_PRICE）',
     state             TINYINT      NOT NULL DEFAULT 0 COMMENT '0已落单待收敛(CREATED,扣分结果未知) 1已完成(DONE) 2死信(DEAD,重试耗尽或积分不足,人工介入/原token重放自愈)',
@@ -920,9 +982,9 @@ CREATE TABLE IF NOT EXISTS draw_count_purchase_order (
 
 CREATE TABLE IF NOT EXISTS draw_orphan_prereserve_order (
     id            BIGINT       NOT NULL AUTO_INCREMENT,
-    record_id     VARCHAR(36)      NOT NULL COMMENT '孤儿抽奖记录业务 ID（= 库存预扣明细 biz_id = hash(userId, token) 幂等键，对账幂等键）',
-    award_id      VARCHAR(36)      NOT NULL COMMENT '预扣奖品位 id 快照（种单时自孤儿预扣明细行）',
-    user_id       VARCHAR(36)      NOT NULL COMMENT '用户 ID 快照（种单时自 draw_count_detail.idx_ref 反查；孤儿口径下扣次必然已发生）',
+    record_id     VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '孤儿抽奖记录业务 ID（= 库存预扣明细 biz_id = hash(userId, token) 幂等键，对账幂等键）',
+    award_id      VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '预扣奖品位 id 快照（种单时自孤儿预扣明细行）',
+    user_id       VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '用户 ID 快照（种单时自 draw_count_detail.idx_ref 反查；孤儿口径下扣次必然已发生）',
     quantity      BIGINT           NOT NULL COMMENT '预扣份数快照（种单时自孤儿预扣明细行）',
     state         TINYINT          NOT NULL DEFAULT 0 COMMENT '0待收敛(ORPHAN) 1已收敛(DONE) 2死信(DEAD,重试耗尽，人工介入)',
     retry_count   INT          NOT NULL DEFAULT 0 COMMENT '补偿重试次数（抢占时递增）',
@@ -967,30 +1029,31 @@ CREATE TABLE IF NOT EXISTS action_rebate_config (
     KEY idx_config (config_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '行为返利配置表（签到/支付等行为发放抽奖次数/积分，入账落对应桶表）';
 
-CREATE TABLE IF NOT EXISTS action_rebate_claim (
-    id               BIGINT      NOT NULL AUTO_INCREMENT,
-    claim_id         VARCHAR(36) NOT NULL COMMENT '业务 ID（UUID）',
-    user_id          VARCHAR(36) NOT NULL COMMENT '用户 ID',
-    action_type      VARCHAR(16) NOT NULL COMMENT '行为类型 sign / pay / post',
-    period_key       VARCHAR(16) NOT NULL COMMENT '限次周期键，日限=yyyyMMdd，发帖事务里定死',
-    ref_id           VARCHAR(36) NOT NULL COMMENT '本次行为 ID（postId）',
-    points_value     INT         NOT NULL DEFAULT 0 COMMENT '领取时快照的积分值',
-    draw_count_value INT         NOT NULL DEFAULT 0 COMMENT '领取时快照的抽奖次数',
-    state            VARCHAR(16) NOT NULL COMMENT 'CLAIMED / GRANTED',
-    create_time      DATETIME    NOT NULL COMMENT '创建时间',
-    update_time      DATETIME    NOT NULL COMMENT '更新时间',
+CREATE TABLE IF NOT EXISTS action_rebate_order (
+    id           BIGINT      NOT NULL AUTO_INCREMENT,
+    order_id     VARCHAR(36) COLLATE utf8mb4_bin NOT NULL COMMENT '业务 ID（UUID）',
+    user_id      VARCHAR(36) COLLATE utf8mb4_bin NOT NULL COMMENT '用户 ID',
+    action_type  VARCHAR(16) NOT NULL COMMENT '行为类型 sign / pay / post',
+    period_key   VARCHAR(16) NOT NULL COMMENT '限次周期键，日限=yyyyMMdd，发帖事务里定死',
+    ref_type     VARCHAR(16) NOT NULL COMMENT '行为对象类型：post(帖子) 等',
+    ref_id       VARCHAR(36) COLLATE utf8mb4_bin NOT NULL COMMENT '行为对象 ID（ref_type=post 时为 postId）',
+    rebate_type  VARCHAR(16) NOT NULL COMMENT '返利类型 POINTS / DRAW_COUNT',
+    rebate_value INT         NOT NULL DEFAULT 0 COMMENT '领取时快照的返利值（积分值 / 抽奖次数）',
+    state        VARCHAR(16) NOT NULL COMMENT 'CLAIMED / GRANTED',
+    create_time  DATETIME    NOT NULL COMMENT '创建时间',
+    update_time  DATETIME    NOT NULL COMMENT '更新时间',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_claim_id (claim_id),
-    UNIQUE KEY uk_user_action_period (user_id, action_type, period_key) COMMENT '日限：同人同行为同周期一次',
-    UNIQUE KEY uk_user_action_ref (user_id, action_type, ref_id) COMMENT '同一次行为只领取一次，重放幂等',
+    UNIQUE KEY uk_order_id (order_id),
+    UNIQUE KEY uk_user_action_period (user_id, action_type, period_key, rebate_type) COMMENT '日限：同人同行为同周期同返利类型一次',
+    UNIQUE KEY uk_user_action_ref (user_id, action_type, ref_type, ref_id, rebate_type) COMMENT '同一次行为同返利类型只领取一次，重放幂等',
     KEY idx_state_time (state, update_time)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '行为返利领取记录（限次 + 快照）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '行为返利订单（一次领取按返利类型拆行，含日限 + 快照）';
 
 CREATE TABLE IF NOT EXISTS draw_activity (
     id              BIGINT      NOT NULL AUTO_INCREMENT,
-    activity_id     VARCHAR(36)      NOT NULL COMMENT '业务 ID（对外唯一标识）',
+    activity_id     VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '业务 ID（对外唯一标识）',
     activity_name   VARCHAR(64) NOT NULL COMMENT '活动名称',
-    strategy_id     VARCHAR(36)      NOT NULL COMMENT '抽奖策略 ID',
+    strategy_id     VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '抽奖策略 ID',
     begin_date_time DATETIME    NOT NULL COMMENT '开始时间',
     end_date_time   DATETIME    NOT NULL COMMENT '结束时间',
     state           VARCHAR(16) NOT NULL DEFAULT 'create' COMMENT '活动状态 create/open/close',
@@ -1003,7 +1066,7 @@ CREATE TABLE IF NOT EXISTS draw_activity (
 
 CREATE TABLE IF NOT EXISTS draw_strategy (
     id            BIGINT       NOT NULL AUTO_INCREMENT,
-    strategy_id   VARCHAR(36)       NOT NULL COMMENT '业务 ID（对外唯一标识）',
+    strategy_id   VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL COMMENT '业务 ID（对外唯一标识）',
     strategy_desc VARCHAR(128) NULL COMMENT '抽奖策略描述',
     rule          VARCHAR(256) NULL COMMENT '规则模型（逗号分隔的规则链，如 rule_blacklist,rule_weight）',
     create_time   DATETIME     NOT NULL COMMENT '创建时间',
@@ -1014,14 +1077,14 @@ CREATE TABLE IF NOT EXISTS draw_strategy (
 
 CREATE TABLE IF NOT EXISTS draw_strategy_award (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
-    strategy_id VARCHAR(36)       NOT NULL COMMENT '所属抽奖策略 ID',
-    award_id    VARCHAR(36)       NOT NULL COMMENT '奖品 ID（策略内唯一）',
+    strategy_id VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL COMMENT '所属抽奖策略 ID',
+    award_id    VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL COMMENT '奖品 ID（策略内唯一）',
     award_name  VARCHAR(128) NOT NULL COMMENT '奖品名称',
     award_desc  VARCHAR(255) NULL     COMMENT '奖品描述',
     award_type  VARCHAR(20)  NOT NULL COMMENT '奖品类型 VIRTUAL(虚拟资产：积分、抽奖次数) / PHYSICAL(实物资产) / THANKS(谢谢参与占位：award_rate 计入概率池、type=normal、inv_id=''0'' 无库存)',
     award_rate  DECIMAL(6,4) NOT NULL COMMENT '中奖概率（如 0.0500 = 5%；同一策略内各奖品位概率合计 = 1.0000）',
     level       INT          NOT NULL COMMENT '奖项层级（1 等奖 = 1，越大越低）',
-    inv_id      VARCHAR(36)       NOT NULL DEFAULT '0' COMMENT '关联库存业务 ID（''0'' = 无库存/不限量）',
+    inv_id      VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL DEFAULT '0' COMMENT '关联奖品库存账户的 award_id（''0'' = 无库存/不限量）',
     type        VARCHAR(20)  NOT NULL DEFAULT 'normal' COMMENT '奖品位类型 normal(正常) / fallback(兜底) / blacklist(黑名单)',
     sort        INT          NOT NULL DEFAULT 0 COMMENT '排序值',
     create_time DATETIME     NOT NULL COMMENT '创建时间',
@@ -1034,7 +1097,7 @@ CREATE TABLE IF NOT EXISTS draw_strategy_award (
 -- 原 strategy_weight 设计稿已随票 11 按本库口径规范化（表名并入 draw_* 家族，时间列应用写入）。
 CREATE TABLE IF NOT EXISTS draw_strategy_weight (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
-    strategy_id VARCHAR(36)       NOT NULL COMMENT '所属抽奖策略 ID',
+    strategy_id VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL COMMENT '所属抽奖策略 ID',
     count       INT          NOT NULL COMMENT '权重档的抽数阈值：用户在该策略下累计抽数 ≥ count 时此档生效，多档取满足阈值中 count 最大的一档（累计抽数 = draw_record 中该 user_id + strategy_id 的行数）',
     weights     VARCHAR(512) NOT NULL COMMENT '该档保底奖品池（逗号分隔的 award_id 列表，指向 draw_strategy_award.award_id；命中档位后在池内按 award_rate 归一化概率出奖）',
     create_time DATETIME     NOT NULL COMMENT '创建时间',
@@ -1046,16 +1109,16 @@ CREATE TABLE IF NOT EXISTS draw_strategy_weight (
 
 CREATE TABLE IF NOT EXISTS draw_record (
     id          BIGINT       NOT NULL AUTO_INCREMENT,
-    record_id   VARCHAR(36)       NOT NULL COMMENT '业务 ID（对外唯一标识；points_bucket.ref_id 的 LOTTERY_WIN 指向它）',
-    user_id     VARCHAR(36)       NOT NULL COMMENT '用户 ID',
-    activity_id VARCHAR(36)       NOT NULL COMMENT '抽奖活动 ID',
-    strategy_id VARCHAR(36)       NOT NULL COMMENT '抽奖策略 ID',
-    award_id    VARCHAR(36)       NOT NULL COMMENT '命中的奖品 ID（策略内唯一）',
+    record_id   VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL COMMENT '业务 ID（对外唯一标识；points_bucket.ref_id 的 LOTTERY_WIN 指向它）',
+    user_id     VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL COMMENT '用户 ID',
+    activity_id VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL COMMENT '抽奖活动 ID',
+    strategy_id VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL COMMENT '抽奖策略 ID',
+    award_id    VARCHAR(36) COLLATE utf8mb4_bin       NOT NULL COMMENT '命中的奖品 ID（策略内唯一）',
     award_name  VARCHAR(128) NOT NULL COMMENT '奖品名称快照（抽中时写入，此后不可变）',
     award_desc  VARCHAR(255) NULL COMMENT '奖品描述快照（抽中时写入，此后不可变）',
     award_type  VARCHAR(20)  NOT NULL COMMENT '奖品类型快照 VIRTUAL(虚拟资产) / PHYSICAL(实物资产) / THANKS(谢谢参与)',
     level       INT          NOT NULL COMMENT '奖项层级快照（1 等奖 = 1，越大越低）',
-    inv_id      VARCHAR(36)       NULL COMMENT '发放来源库存/配额业务 ID（快照；无库存来源为 NULL）',
+    inv_id      VARCHAR(36) COLLATE utf8mb4_bin       NULL COMMENT '发放来源奖品库存账户的 award_id（快照；无库存来源为 NULL）',
     state       VARCHAR(16)  NOT NULL DEFAULT '待兑换' COMMENT '奖品状态 待兑换/已兑换/已发货/已完成（THANKS 行落库即已完成，不走兑换/发货）',
     create_time DATETIME     NOT NULL COMMENT '创建时间',
     update_time DATETIME     NOT NULL COMMENT '更新时间',
@@ -1067,8 +1130,8 @@ CREATE TABLE IF NOT EXISTS draw_record (
 
 CREATE TABLE IF NOT EXISTS draw_record_detail (
     id          BIGINT      NOT NULL AUTO_INCREMENT,
-    user_id     VARCHAR(36)      NOT NULL COMMENT '用户 ID（冗余自 draw_record，按人查询/鉴权用）',
-    record_id   VARCHAR(36)      NOT NULL COMMENT '抽奖记录业务 ID（draw_record.record_id）',
+    user_id     VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '用户 ID（冗余自 draw_record，按人查询/鉴权用）',
+    record_id   VARCHAR(36) COLLATE utf8mb4_bin      NOT NULL COMMENT '抽奖记录业务 ID（draw_record.record_id）',
     type        VARCHAR(20) NOT NULL COMMENT '动作类型 DRAW(抽中落库，对应 state=待兑换) / EXCHANGE(兑换，→已兑换) / SHIP(发货，→已发货) / COMPLETE(完成，→已完成)：落库与 state 每推进一步各落一条',
     create_time DATETIME    NOT NULL COMMENT '创建时间',
     update_time DATETIME    NOT NULL COMMENT '更新时间',
@@ -1077,113 +1140,37 @@ CREATE TABLE IF NOT EXISTS draw_record_detail (
     KEY idx_user_created (user_id, create_time) COMMENT '按人查动作历史'
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '抽奖记录动作明细（只插入：创建 draw_record 时同事务落 DRAW，此后 state 每推进一步落一条）';
 
-CREATE TABLE IF NOT EXISTS virtual_inventory_quota (
-    id          BIGINT       NOT NULL AUTO_INCREMENT,
-    inv_id      VARCHAR(36)       NOT NULL COMMENT '业务 ID（库存全局唯一标识）',
-    name        VARCHAR(128) NOT NULL COMMENT '库存/权益名称，如「暑期签到积分池」',
-    type        VARCHAR(20)  NOT NULL COMMENT '虚拟资产类型 POINTS(积分) / DRAW_COUNT(抽奖次数)',
-    value       INT          NOT NULL DEFAULT 0 COMMENT '单次发放面额，如 50 积分、1 次抽奖机会',
-    surplus_qty BIGINT       NOT NULL DEFAULT -1 COMMENT '剩余可发份数，-1=不限量',
-    issued_qty  BIGINT       NOT NULL DEFAULT 0 COMMENT '累计已发放份数，用于对账/预算',
-    state       VARCHAR(12)  NOT NULL DEFAULT 'open' COMMENT 'open/closed/exhausted',
-    create_time DATETIME     NOT NULL COMMENT '创建时间',
-    update_time DATETIME     NOT NULL COMMENT '更新时间',
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_inv_id (inv_id),
-    KEY idx_state (state),
-    CONSTRAINT chk_virtual_inventory_quota CHECK (surplus_qty >= -1 AND value >= 0)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '外界投放配额池（虚拟）：只被「分配」操作转出 surplus（award-inventory 两层模型，见 draw_strategy_award_inventory），抽奖不再直接扣减';
+-- ─────────────────────────── 奖品库存（运营直接投放，抽奖预扣/确认唯一扣减） ───────────────────────────
 
-CREATE TABLE IF NOT EXISTS virtual_inventory_quota_detail (
-    id          BIGINT      NOT NULL AUTO_INCREMENT,
-    inv_id      VARCHAR(36)      NOT NULL COMMENT '配额业务 ID',
-    quantity    BIGINT      NOT NULL DEFAULT 0 COMMENT '本次预扣数量',
-    biz_type    VARCHAR(32) NOT NULL COMMENT '业务类型：LOTTERY_DRAW（抽奖预扣）',
-    biz_id      VARCHAR(36)      NOT NULL COMMENT '业务 ID（抽奖 = draw_record.record_id）',
-    create_time DATETIME    NOT NULL COMMENT '插入时间（DB NOW()）',
-    update_time DATETIME    NOT NULL COMMENT '更新时间',
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_biz (biz_type, biz_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '虚拟库存配额扣减明细（进程内合并的台账；撞 uk = 已落过，按成功回放）';
-
-CREATE TABLE IF NOT EXISTS physical_marketing_quota (
-    id          BIGINT       NOT NULL AUTO_INCREMENT,
-    inv_id      VARCHAR(36)       NOT NULL COMMENT '业务 ID（配额全局唯一标识）',
-    name        VARCHAR(128) NOT NULL COMMENT '配额名称，如「暑期实物营销配额」',
-    decr        VARCHAR(255) NULL     COMMENT '配额说明',
-    surplus_qty BIGINT       NOT NULL DEFAULT -1 COMMENT '剩余可发份数，-1=不限量',
-    waiting_qty BIGINT       NOT NULL DEFAULT 0 COMMENT '预扣数量（预扣已提交、用户尚未兑换的部分）',
-    issued_qty  BIGINT       NOT NULL DEFAULT 0 COMMENT '已占用数量（用户已兑换、正式出库的部分）',
-    state       VARCHAR(12)  NOT NULL DEFAULT 'open' COMMENT 'open/closed/exhausted',
-    create_time DATETIME     NOT NULL COMMENT '创建时间',
-    update_time DATETIME     NOT NULL COMMENT '更新时间',
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_inv_id (inv_id),
-    KEY idx_state (state),
-    CONSTRAINT chk_quota_surplus CHECK (surplus_qty >= -1)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '外界投放配额池（实物）：只被「分配」操作转出 surplus（award-inventory 两层模型，见 draw_strategy_award_inventory），抽奖不再直接扣减';
-
-CREATE TABLE IF NOT EXISTS physical_marketing_quota_detail (
-    id          BIGINT      NOT NULL AUTO_INCREMENT,
-    inv_id      VARCHAR(36)      NOT NULL COMMENT '配额业务 ID',
-    quantity    BIGINT      NOT NULL DEFAULT 0 COMMENT '本次流转数量',
-    type        TINYINT     NOT NULL COMMENT '1-预扣结转（进 waiting）2-兑换确认（waiting → issued）',
-    biz_type    VARCHAR(32) NOT NULL COMMENT '业务类型：LOTTERY_DRAW（预扣）/ LOTTERY_CLAIM（兑换确认）',
-    biz_id      VARCHAR(36)      NOT NULL COMMENT '业务 ID（抽奖与兑换确认都用 draw_record.record_id）',
-    create_time DATETIME    NOT NULL COMMENT '插入时间（DB NOW()）',
-    update_time DATETIME    NOT NULL COMMENT '更新时间',
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_biz_type (type, biz_type, biz_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '实物营销配额流转明细（预扣结转 / 兑换确认两类，进程内合并的台账；uk_biz_type 是唯一幂等裁决者）';
-
--- ─────────────────────────────── award-inventory 两层模型（抽奖只扣奖品库存账户） ───────────────────────────────
--- 两层模型：上层「配额池」（上面两张 *_quota 台账，外界投放）只被「分配」转移；
--- 下层「奖品库存账户」（本表，按奖品位 1:1）是抽奖预扣/确认唯一扣减的台账。
-
-CREATE TABLE IF NOT EXISTS draw_strategy_award_inventory (
+CREATE TABLE IF NOT EXISTS award_inventory (
     id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
-    award_id    VARCHAR(36)  NOT NULL COMMENT '奖品位 id（draw_strategy_award.award_id），1 奖品位 1 库存账户',
+    award_id    VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL COMMENT '奖品位 id（draw_strategy_award.award_id），1 奖品位 1 库存账户',
     type        VARCHAR(16)  NOT NULL COMMENT 'PHYSICAL 实物（两段式）/ VIRTUAL 虚拟（waiting 恒 0）',
-    surplus_qty BIGINT       NOT NULL DEFAULT 0 COMMENT '可扣余量；-1 = 不限量（虚拟档沿用）',
+    surplus_qty BIGINT       NOT NULL DEFAULT 0 COMMENT '可扣余量；-1 = 不限量',
     waiting_qty BIGINT       NOT NULL DEFAULT 0 COMMENT '已预占未确认（仅 PHYSICAL 使用，VIRTUAL 恒 0）',
     issued_qty  BIGINT       NOT NULL DEFAULT 0 COMMENT '已发放',
-    value_qty   BIGINT       NULL COMMENT '单次发放面额（仅 VIRTUAL：POINTS 积分 / DRAW_COUNT 次数；实物 NULL）',
-    state       TINYINT      NOT NULL DEFAULT 0 COMMENT '0 open / 1 exhausted / 2 closed（沿用原台账语义）',
+    value_qty   BIGINT       NULL COMMENT '单次发放面额（仅 VIRTUAL：积分 / 抽奖次数；实物 NULL）',
+    state       TINYINT      NOT NULL DEFAULT 0 COMMENT '0 open / 1 exhausted / 2 closed',
     create_time DATETIME     NOT NULL COMMENT '由应用写入',
     update_time DATETIME     NOT NULL COMMENT '由应用写入',
     PRIMARY KEY (id),
     UNIQUE KEY uk_award_id (award_id),
     KEY idx_type (type)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '奖品库存统一台账（抽奖直接扣减的账户，由配额池分配而来）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '奖品库存台账（运营直接投放；抽奖预扣/确认唯一扣减的账户）';
 
-CREATE TABLE IF NOT EXISTS draw_strategy_award_inventory_detail (
+CREATE TABLE IF NOT EXISTS award_inventory_detail (
     id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
-    award_id    VARCHAR(36)  NOT NULL COMMENT '奖品位 id（= 台账行），幂等键前缀',
-    flow_type   TINYINT      NOT NULL COMMENT '0 分配转入 / 1 预扣（PHYSICAL 进 waiting，VIRTUAL 直接发放）/ 2 兑换确认（仅 PHYSICAL）',
+    award_id    VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL COMMENT '奖品位 id（= 台账行），幂等键前缀',
+    flow_type   TINYINT      NOT NULL COMMENT '1 预扣（PHYSICAL 进 waiting，VIRTUAL 直接发放）/ 2 兑换确认（仅 PHYSICAL）',
     quantity    BIGINT       NOT NULL COMMENT '本行份数',
-    biz_type    VARCHAR(30)  NOT NULL COMMENT '业务身份：LOTTERY_DRAW / LOTTERY_CLAIM / AWARD_ALLOCATE',
-    biz_id      VARCHAR(36)  NOT NULL COMMENT '幂等锚点：抽奖记录 id / 抽奖记录 id / 分配单号',
+    biz_type    VARCHAR(30)  NOT NULL COMMENT '业务身份：LOTTERY_DRAW / LOTTERY_CLAIM',
+    biz_id      VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL COMMENT '幂等锚点：抽奖记录 id',
     create_time DATETIME     NOT NULL COMMENT '插入时间（DB NOW()）',
     update_time DATETIME     NOT NULL COMMENT '更新时间（DB NOW()）',
     PRIMARY KEY (id),
     UNIQUE KEY uk_award_biz (award_id, biz_type, biz_id),
     KEY idx_award (award_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '奖品库存统一流转明细（预扣/确认/分配转入；INSERT IGNORE + 唯一键裁决幂等）';
-
-CREATE TABLE IF NOT EXISTS inventory_allocation_flow (
-    id           BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
-    pool_segment VARCHAR(16) NOT NULL COMMENT '来源池段：QUOTA(实物营销配额) / VIRTUAL(虚拟库存配额)',
-    pool_inv_id  VARCHAR(36) NOT NULL COMMENT '来源池台账业务 ID（physical_marketing_quota / virtual_inventory_quota.inv_id）',
-    award_id     VARCHAR(36) NOT NULL COMMENT '目标奖品位 id（draw_strategy_award_inventory.award_id）',
-    quantity     BIGINT      NOT NULL COMMENT '本次分配份数',
-    alloc_biz_id VARCHAR(36) NOT NULL COMMENT '分配单号（幂等锚点：撞 uk_alloc_biz = 本单已执行，按成功回放）',
-    create_time  DATETIME    NOT NULL COMMENT '插入时间（DB NOW()）',
-    update_time  DATETIME    NOT NULL COMMENT '更新时间（DB NOW()）',
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_alloc_biz (alloc_biz_id),
-    KEY idx_pool (pool_inv_id),
-    KEY idx_award (award_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '配额池分配流水（池侧转出流水：池 surplus 转出量 = SUM(quantity)；不限量池 surplus 不减、流水照记）';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '奖品库存流转明细（预扣/确认；INSERT IGNORE + 唯一键裁决幂等）';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 对账轮两张旁路表（draw-recon-round 并入 master）：每日全量对账轮（xxl drawReconScan，03:00）
@@ -1193,9 +1180,9 @@ CREATE TABLE IF NOT EXISTS inventory_allocation_flow (
 CREATE TABLE IF NOT EXISTS draw_recon_variance (
     id              BIGINT       NOT NULL AUTO_INCREMENT,
     round_no        VARCHAR(32)  NOT NULL COMMENT '对账轮次号（= draw_recon_round.round_no，本轮扫描开始时刻文本）',
-    check_type      VARCHAR(32)  NOT NULL COMMENT '检查类型 B1_CONSERVATION(B1 台账守恒) / B3_CONSERVATION(B3 预扣守恒) / FORWARD_PAIRING(正向配对) / REVERSE_PAIRING(反向配对) / DEAD_ORPHAN_PATROL(DEAD 孤儿单点名)',
+    check_type      VARCHAR(32)  NOT NULL COMMENT '检查类型 B3_CONSERVATION(B3 预扣守恒) / FORWARD_PAIRING(正向配对) / REVERSE_PAIRING(反向配对) / DEAD_ORPHAN_PATROL(DEAD 孤儿单点名)',
     scope_key       VARCHAR(36)  NOT NULL COMMENT '定位键：award_id（守恒类，按奖品位账户定位）/ record_id（配对类与点名，按抽奖记录/对账单定位）',
-    biz_id          VARCHAR(36)  NOT NULL COMMENT '业务单号（守恒类 = award_id；配对/点名类 = record_id）',
+    biz_id          VARCHAR(36) COLLATE utf8mb4_bin  NOT NULL COMMENT '业务单号（守恒类 = award_id；配对/点名类 = record_id）',
     expect_snapshot VARCHAR(255) NOT NULL COMMENT '期望值快照（不变量期望侧读数文本）',
     actual_snapshot VARCHAR(255) NOT NULL COMMENT '实际值快照（不变量实际侧读数文本）',
     state           TINYINT      NOT NULL DEFAULT 0 COMMENT '0 待复查(PENDING) / 1 已确认(CONFIRMED) / 2 已自动修复(AUTO_FIXED) / 3 已人工处理(RESOLVED_MANUAL) / 4 假差错(FALSE_ALARM)',

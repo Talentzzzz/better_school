@@ -12,7 +12,7 @@
 |---|---|
 | `InventoryMerger` 的入口是 `submitDeduct(InventoryDeductRequestVO)` / `submitClaim(InventoryClaimRequestVO)` | 引擎 `import` 了 4 个库存域类型，换个用途就得复制整包 |
 | 落库出口是 `IInventoryFlushHandler`（接口 + 实现 bean） | 每加一种用途就多一个接口、多一个实现类 |
-| 分组键写死「动作 × `AwardInventoryType` × `awardId`」 | 非库存用途没有 `type` 这一维 |
+| 分组键写死「动作 × `AwardInventoryTypeEnum` × `awardId`」 | 非库存用途没有 `type` 这一维 |
 | 业务翻译（`DEDUCTED/INSUFFICIENT/RETRY_LATER`）与降级混在 `InventoryMergeWriter` | 翻译是业务口径、降级是通用能力，混在一起导致每加用途都要重写降级 |
 
 真正有价值、可复用的只有三件事：**分片路由、攒批窗口、单飞落库 + 五态回填**。其余都是业务方自己的事。
@@ -61,12 +61,12 @@ this.deductWriter = new MergeWriter<>(engine, MergeSpec.of(
                 group.get(0).type(), group.get(0).awardId(), group)));
 
 // ② 用时只提交一件
-MergeOutcome<DeductResult> outcome = deductWriter.write(request);
+MergeOutcome<DeductResultEnum> outcome = deductWriter.write(request);
 
 // ③ 写入组件把引擎终态翻成域的出口
 return switch (outcome.state()) {
     case COMPLETED -> outcome.result();
-    case TIMEOUT, FAILED -> DeductResult.RETRY_LATER;   // 结果未知 / 确定没落 —— 域侧动作相同
+    case TIMEOUT, FAILED -> DeductResultEnum.RETRY_LATER;   // 结果未知 / 确定没落 —— 域侧动作相同
     case BUFFER_FULL, CLOSED -> throw new IllegalStateException("MergeWriter 已降级，不该冒到这里");
 };
 ```
@@ -112,7 +112,7 @@ public <T, R> MergeOutcome<R> submitAndWait(MergeSpec<T, R> spec, T item)
 | `InventoryMerger`（构造注入落库接口） | `MergeEngine`（构造只吃 `MergeConfig`） |
 | `IInventoryFlushHandler`（2 方法的接口 + 实现 bean） | `MergeFlush<T,R>`（1 方法的函数，调用点传 lambda） |
 | `submitDeduct` / `submitClaim` | `submitAndWait(spec, item)` |
-| `GroupKey(action, AwardInventoryType, awardId)` | `GroupKey(spec 身份, shardKey)` |
+| `GroupKey(action, AwardInventoryTypeEnum, awardId)` | `GroupKey(spec 身份, shardKey)` |
 | `InventoryMergeWriter`（翻译 + 降级） | `MergeWriter`（只降级）+ `InventoryQuotaMergeWriter`（只翻译） |
 | `merge.inventory.*` | `merge.batch.*` |
 | 引擎 `close()` 由 `@Bean` destroyMethod 推断 | `@PreDestroy`（引擎自注册为 `@Component`） |
@@ -124,19 +124,19 @@ public <T, R> MergeOutcome<R> submitAndWait(MergeSpec<T, R> spec, T item)
 // ② 写一个写入组件
 @Component
 public class PostLikeMergeWriter {
-    private final MergeWriter<PostLikeEvent, LikeState> writer;
+    private final MergeWriter<PostLikeEvent, LikeStateEnum> writer;
 
     public PostLikeMergeWriter(MergeEngine engine, CommunityRepository repository) {
         this.writer = new MergeWriter<>(engine, MergeSpec.of(
                 "post-like", PostLikeEvent::postId, repository::flushGroup));
     }
 
-    public LikeState like(PostLikeEvent event) { /* 五态 → 业务出口 */ }
+    public LikeStateEnum like(PostLikeEvent event) { /* 五态 → 业务出口 */ }
 }
 
 // ③ 仓储里一行转发
 @Override
-public LikeState like(String postId, String userId) {
+public LikeStateEnum like(String postId, String userId) {
     return postLikeMergeWriter.like(new PostLikeEvent(postId, userId));
 }
 ```

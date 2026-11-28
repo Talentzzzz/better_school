@@ -1,6 +1,6 @@
 package com.betterschool.domain.points.model.valobj;
 
-import com.betterschool.types.points.PointsReasonType;
+import com.betterschool.types.points.PointsReasonTypeEnum;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -14,9 +14,9 @@ import java.time.LocalDateTime;
 public class PointsTransactionVO {
 
     private Long id;
-    private PointsTransactionDirectionVO direction;
+    private PointsTransactionDirectionEnum direction;
     private Integer amount;
-    private PointsReasonType reasonType;
+    private PointsReasonTypeEnum reasonType;
     private String refId;
     private LocalDateTime createdAt;
     /** 该桶的过期时间（仅 IN 行有） */

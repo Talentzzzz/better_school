@@ -33,21 +33,21 @@ public class LotteryDrawnConsumer implements RocketMQListener<String> {
 
     @Override
     public void onMessage(String payload) {
-        LotteryDrawnMessage message;
+        LotteryDrawnMessage lotteryDrawnMessage;
         try {
-            message = objectMapper.readValue(payload, LotteryDrawnMessage.class);
+            lotteryDrawnMessage = objectMapper.readValue(payload, LotteryDrawnMessage.class);
         } catch (Exception e) {
             // 载荷残缺重试也不会成功：记日志丢弃，不触发 broker 重投
             log.error("[LotteryDrawnConsumer] 消息载荷解析失败，丢弃 payload={}", payload, e);
             return;
         }
-        if (!PRIZE_TYPE_VIRTUAL.equals(message.getPrizeType()) || message.getPointsAmount() == null) {
+        if (!PRIZE_TYPE_VIRTUAL.equals(lotteryDrawnMessage.getPrizeType()) || lotteryDrawnMessage.getPointsAmount() == null) {
             log.info("[LotteryDrawnConsumer] 非积分档，忽略 recordId={}, prizeType={}",
-                    message.getRecordId(), message.getPrizeType());
+                    lotteryDrawnMessage.getRecordId(), lotteryDrawnMessage.getPrizeType());
             return;
         }
-        pointsAccountService.addForLotteryWin(message.getUserId(), message.getRecordId(), message.getPointsAmount());
+        pointsAccountService.addForLotteryWin(lotteryDrawnMessage.getUserId(), lotteryDrawnMessage.getRecordId(), lotteryDrawnMessage.getPointsAmount());
         log.info("[LotteryDrawnConsumer] 中奖加积分完成 userId={}, recordId={}, pointsAmount={}",
-                message.getUserId(), message.getRecordId(), message.getPointsAmount());
+                lotteryDrawnMessage.getUserId(), lotteryDrawnMessage.getRecordId(), lotteryDrawnMessage.getPointsAmount());
     }
 }

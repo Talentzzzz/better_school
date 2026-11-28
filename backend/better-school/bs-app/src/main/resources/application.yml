@@ -157,7 +157,7 @@ lottery:
     degrade-cooldown-millis: 10000
 
 mybatis:
-  # 营销域 mapper 分域子目录（points/raffle/inventory/rebate），必须 ** 递归；
+  # 营销域 mapper 分域子目录（points/draw/award/rebate），必须 ** 递归；
   # ** 对单体平铺目录向后兼容
   mapper-locations: classpath:/mybatis/mapper/**/*.xml
   configuration:

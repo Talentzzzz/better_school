@@ -5,7 +5,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * 通知 BANNER 通道推送消息（outbox → 消费 → WS NOTIF 帧，只推在线者）：
+ * 通知 BANNER 通道推送消息（NotifyEventConsumer 落库后直接调 NotificationCase.push → WS NOTIF 帧，只推在线者）：
  * 载荷即前端横幅展示所需的全量字段；离线漏推由前端按 (scope, seq) 水位补拉重放
  */
 @Data

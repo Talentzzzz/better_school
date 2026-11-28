@@ -94,7 +94,7 @@ public class OrphanPrereserveScanJob {
   - 列：`id, record_id(VARCHAR36, uk_record_id), award_id, user_id, quantity, state TINYINT, retry_count INT, next_retry_at DATETIME, finish_time, create_time, update_time`
   - `state`：`0 待收敛(ORPHAN) / 1 已收敛(DONE) / 2 死信(DEAD,重试耗尽，人工介入)`
   - `UNIQUE KEY uk_record_id (record_id)` + `KEY idx_state_next_retry (state, next_retry_at)`
-- 状态枚举：`Z:/better_school/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/raffle/DrawOrphanPrereserveState.java`（ORPHAN(0)/DONE(1)/DEAD(2)，三态刻意无 FAILED/PROCESSING）。
+- 状态枚举：`Z:/better_school/backend/marketing/marketing-types/src/main/java/com/betterschool/marketing/types/raffle/DrawOrphanPrereserveStateEnum.java`（ORPHAN(0)/DONE(1)/DEAD(2)，三态刻意无 FAILED/PROCESSING）。
 - 实体：`marketing-domain/.../raffle/model/entity/DrawOrphanPrereserveOrderEntity.java`
 - PO：`marketing-infrastructure/.../raffle/dao/po/DrawOrphanPrereserveOrderPO.java`
 - DAO：`marketing-infrastructure/.../raffle/dao/IDrawOrphanPrereserveOrderDao.java`（`insertIgnoreOrder / listDue / claim / finish / markDead`）
@@ -188,9 +188,9 @@ public class OrphanPrereserveScanJob {
    - 既有事件示例：`LotteryDrawnMessage`（topic `bs-lottery-drawn`，`marketing-types/.../common/LotteryDrawnMessage.java`、topic 常量 `Constants.LOTTERY_DRAWN_TOPIC`）、`PointsChangedMessage`（topic `bs-points-changed`）。中奖事件由 `RaffleRepository` 与业务写同事务落 outbox（L370：THANKS 档不发事件）。
 2. **单体消费**：`Z:/better_school/backend/better-school/bs-trigger/src/main/java/com/betterschool/trigger/listener/LotteryDrawnConsumer.java`（`consumerGroup = "bs-monolith-lottery-drawn-group"`）→ `MarketingNoticeCase.notifyLotteryDrawn(message)`。
 3. **落通知**：`Z:/better_school/backend/better-school/bs-case/src/main/java/com/betterschool/usecase/marketing/MarketingNoticeCase.java`
-   - `notificationService.publish(NotificationEventMessage.builder()...dedupKey("MARKETING:...").build())`；通知落库由 `NotifyEventConsumer` 消费 `bs-notify-event` 完成；幂等 = `notification.dedup_key`；scope 恒 `BOTTOM_SYSTEM`、`ref_type = MARKETING`、type 用 `NotificationTypeVO` 营销枚举（`bs-domain/.../notification/model/valobj/NotificationTypeVO.java` L22：LOTTERY_WON 等，"谢谢参与不发事件不落通知"）。
+   - `notificationService.publish(NotificationEventMessage.builder()...dedupKey("MARKETING:...").build())`；通知落库由 `NotifyEventConsumer` 消费 `bs-notify-event` 完成；幂等 = `notification.dedup_key`；scope 恒 `BOTTOM_SYSTEM`、`ref_type = MARKETING`、type 用 `NotificationTypeEnum` 营销枚举（`bs-domain/.../notification/model/valobj/NotificationTypeEnum.java` L22：LOTTERY_WON 等，"谢谢参与不发事件不落通知"）。
 
-对账轮告警的落点（spec Implementation Decisions）："复用现有营销通知链路（对账轮发现 CONFIRMED 差错 / DEAD 孤儿单时发通知），消息内容带轮次、类型、定位键、快照"。实现方向：营销侧新增事件消息类型 + 同事务写 outbox（或差错登记事务内写），单体加对应 consumer 方法落通知（在 `MarketingNoticeCase` 或新 case 类扩展 `NotificationTypeVO` 枚举值）。注意：孤儿收敛 job 现状是"死信只 ERROR 日志 + 人工 SQL 重置，不建告警通路"（`IRaffleOrphanPrereserveService.java` L14、`OrphanPrereserveScanJob.java` L14 明确声明），这是本次要打通的既有缺口。
+对账轮告警的落点（spec Implementation Decisions）："复用现有营销通知链路（对账轮发现 CONFIRMED 差错 / DEAD 孤儿单时发通知），消息内容带轮次、类型、定位键、快照"。实现方向：营销侧新增事件消息类型 + 同事务写 outbox（或差错登记事务内写），单体加对应 consumer 方法落通知（在 `MarketingNoticeCase` 或新 case 类扩展 `NotificationTypeEnum` 枚举值）。注意：孤儿收敛 job 现状是"死信只 ERROR 日志 + 人工 SQL 重置，不建告警通路"（`IRaffleOrphanPrereserveService.java` L14、`OrphanPrereserveScanJob.java` L14 明确声明），这是本次要打通的既有缺口。
 
 ---
 
@@ -216,7 +216,7 @@ public class OrphanPrereserveScanJob {
 - **端口（domain 层声明）**：`Z:/better_school/backend/marketing/marketing-domain/src/main/java/com/betterschool/marketing/domain/raffle/adapter/port/inventory/IInventoryDeductPort.java`
   - 跨域写组合不在域服务间直接注入（CLAUDE.md §1）；端口把库存域值对象翻译成自己形状（`record OrphanPrereserveRef(String awardId, String recordId, long quantity)`；`enum Outcome`）。
 - **实现（infrastructure 层）**：`Z:/better_school/backend/marketing/marketing-infrastructure/src/main/java/com/betterschool/marketing/infrastructure/raffle/adapter/port/inventory/InventoryDeductPort.java`
-  - 纯透传委托 `IInventoryQuotaService`，在这里填 `AwardInventoryType` 与 `InventoryBizTypes.LOTTERY_DRAW`（抽奖域不认识库存表列）。
+  - 纯透传委托 `IInventoryQuotaService`，在这里填 `AwardInventoryTypeEnum` 与 `InventoryBizTypes.LOTTERY_DRAW`（抽奖域不认识库存表列）。
 - **仓储（domain 接口）**：`marketing-domain/.../raffle/adapter/repository/IRaffleRepository.java`
   - 孤儿对账相关方法（L207-236）：`insertOrphanPrereserveOrder / listDueOrphanPrereserveOrders / claimOrphanPrereserveOrder / finishOrphanPrereserveOrder / markOrphanPrereserveOrderDead / queryUserIdByDrawCountRef`，另有 `queryRecordByRecordId`（L88）。
 - **仓储实现**：`marketing-infrastructure/.../raffle/adapter/repository/raffle/RaffleRepository.java`（L517-580 孤儿段：Entity↔PO 手工映射，INSERT IGNORE 结果 `> 0` 判布尔）。

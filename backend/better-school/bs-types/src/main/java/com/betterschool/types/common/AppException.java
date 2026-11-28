@@ -1,7 +1,7 @@
 package com.betterschool.types.common;
 
 import lombok.Getter;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 
 /**
  * 积分服务业务异常：业务规则不满足时抛出，由 GlobalExceptionHandler 转成统一 Response 信封。
@@ -19,11 +19,11 @@ public class AppException extends RuntimeException {
         this.info = info;
     }
 
-    public AppException(ResponseCode responseCode) {
+    public AppException(ResponseCodeEnum responseCode) {
         this(responseCode.getCode(), responseCode.getInfo());
     }
 
-    public AppException(ResponseCode responseCode, String info) {
+    public AppException(ResponseCodeEnum responseCode, String info) {
         this(responseCode.getCode(), info);
     }
 }

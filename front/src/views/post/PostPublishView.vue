@@ -184,8 +184,8 @@ function rebateText(result: PostPublishResult): string {
     }
     case 'DENIED':
       return '今日发帖返利已领过'
-    case 'PENDING':
-      return '返利发放中'
+    case 'CLAIM_ERROR':
+      return '返利发放异常，稍后自动重试'
     default:
       return '发布成功'
   }

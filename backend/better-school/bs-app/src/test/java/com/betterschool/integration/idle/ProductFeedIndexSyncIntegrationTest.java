@@ -3,12 +3,12 @@ package com.betterschool.integration.idle;
 import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
 import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
-import com.betterschool.domain.idle.model.valobj.ProductCategoryVO;
-import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
-import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.domain.idle.model.valobj.ProductCategoryEnum;
+import com.betterschool.domain.idle.model.valobj.ProductStatusEnum;
+import com.betterschool.infrastructure.adapter.repository.CountActionEnum;
 import com.betterschool.infrastructure.adapter.repository.CountEvent;
 import com.betterschool.infrastructure.adapter.repository.idle.IdleRepository;
-import com.betterschool.infrastructure.adapter.repository.LikeState;
+import com.betterschool.infrastructure.adapter.repository.LikeStateEnum;
 import com.betterschool.integration.support.PostApiTestBase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -66,15 +66,15 @@ class ProductFeedIndexSyncIntegrationTest extends PostApiTestBase {
         assertThat(feedState(productId)).as("下架期间索引行不可见（state 快照 DRAFT）")
                 .isEqualTo("DRAFT");
 
-        ProductEntity editEntity = new ProductEntity();
-        editEntity.setProductId(productId);
-        editEntity.setTitle("索引同步夹具");
-        editEntity.setDescription("夹具描述");
-        editEntity.setPrice(new BigDecimal("20.00"));
-        editEntity.setTradeLocation("驿站");
-        editEntity.setCategory(ProductCategoryVO.BOOKS);
-        editEntity.setStatus(ProductStatusVO.DRAFT);
-        idleRepository.updateDraft(editEntity);
+        ProductEntity productEntity = new ProductEntity();
+        productEntity.setProductId(productId);
+        productEntity.setTitle("索引同步夹具");
+        productEntity.setDescription("夹具描述");
+        productEntity.setPrice(new BigDecimal("20.00"));
+        productEntity.setTradeLocation("驿站");
+        productEntity.setCategory(ProductCategoryEnum.BOOKS);
+        productEntity.setStatus(ProductStatusEnum.DRAFT);
+        idleRepository.updateDraft(productEntity);
 
         assertThat(idleRepository.submitDraft(productId)).as("重提再上架").isTrue();
         Map<String, Object> resubmitted = feedRow(productId);
@@ -154,9 +154,9 @@ class ProductFeedIndexSyncIntegrationTest extends PostApiTestBase {
     void 浏览旁路推进热度键_未上架不补行() {
         String onSaleId = insertProduct("ON_SALE", "10.00");
 
-        List<LikeState> results = flushHandler.flushViewGroup(onSaleId,
+        List<LikeStateEnum> results = flushHandler.flushViewGroup(onSaleId,
                 List.of(viewEvent(onSaleId, "u101"), viewEvent(onSaleId, "u101"), viewEvent(onSaleId, "u102")));
-        assertThat(results).hasSize(3).containsOnly(LikeState.APPLIED);
+        assertThat(results).hasSize(3).containsOnly(LikeStateEnum.APPLIED);
         assertThat(indexViewCount(onSaleId)).as("索引热度键按新增 UV 数 +N").isEqualTo(2);
         assertThat(acceleratedCountOf(onSaleId)).as("窄表真源同步推进").isEqualTo(2);
 
@@ -175,7 +175,7 @@ class ProductFeedIndexSyncIntegrationTest extends PostApiTestBase {
     // ---------- 夹具与可观察状态 ----------
 
     private static CountEvent viewEvent(String productId, String userId) {
-        return new CountEvent(CountAction.PRODUCT_VIEW, productId, userId);
+        return new CountEvent(CountActionEnum.PRODUCT_VIEW, productId, userId);
     }
 
     /** 直插一行指定态商品（存量形态；uuid-biz-id 票 05 起业务 id 直插 UUID，应用侧发号），返回业务 ID。
@@ -202,9 +202,9 @@ class ProductFeedIndexSyncIntegrationTest extends PostApiTestBase {
 
     /** 真实仓储链路下一件单（下单原子：订单 + 台账扣减 + 流水 + 售罄翻态 + 超时注册） */
     private String placeOrder(String productId, String buyerId) {
-        ProductEntity product = idleRepository.findById(productId);
-        ProductOrderEntity order = ProductOrderEntity.create(buyerId, product, 1);
-        return idleRepository.createOrderWithInventory(order, productId, 15);
+        ProductEntity productEntity = idleRepository.findById(productId);
+        ProductOrderEntity productOrderEntity = ProductOrderEntity.create(buyerId, productEntity, 1);
+        return idleRepository.createOrderWithInventory(productOrderEntity, productId, 15);
     }
 
     /** 索引行整行（无行 = null） */

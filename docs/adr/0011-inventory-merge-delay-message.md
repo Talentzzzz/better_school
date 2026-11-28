@@ -7,6 +7,11 @@ status: partially superseded by ADR-0012
 > **「合并触发」与「续命」两部分已被 [ADR-0012](0012-inventory-merge-cell-bound.md) 取代（superseded，2026-10-20）**：
 > 唤醒改由「消息带责任起点秒 `cellTime` + 定时消息（相对 2000ms）+ 固定合两格」承担，续命整段删除。
 > 时间格、按格翻转判重、两段分叉、兑换确认异步化仍以本文为准；原文保留作为决策史。
+>
+> **表名与模型已变（2026-11，award 域重构）**：本文引用的 `virtual_inventory_quota*` /
+> `physical_marketing_quota*` / `inventory_allocation_flow` 等配额池与分配表已整条删除，库存收窄为
+> 单一 `award_inventory`(+detail) 台账、运营直接投放。本文只作为合并机制演进史保留；
+> 现行表口径见 `backend/docs/marketing/db/award.md` 与 `better-school/sql/schema.sql`。
 
 库存合并（把 Redis 桶已扣、台账未动的预扣明细翻进台账）原先由**每秒一次的 xxl 任务**驱动：`inventoryMerge`
 全表扫 `state = 0`，聚合 SQL 产出 `(inv_id, bucket_id)` 工作清单，分片广播并行执行（[ADR-0005](0005-inventory-merge-aggregate-scan.md)）。

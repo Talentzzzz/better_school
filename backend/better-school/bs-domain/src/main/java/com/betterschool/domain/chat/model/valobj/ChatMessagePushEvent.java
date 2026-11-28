@@ -30,11 +30,11 @@ public class ChatMessagePushEvent {
 
     private String fromAvatar;
 
-    private MsgTypeVO msgType;
+    private MsgTypeEnum msgType;
 
     private String content;
 
-    private CardRefTypeVO refType;
+    private CardRefTypeEnum refType;
 
     private String refId;
 

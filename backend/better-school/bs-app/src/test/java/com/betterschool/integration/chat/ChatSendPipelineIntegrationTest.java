@@ -3,9 +3,8 @@ package com.betterschool.integration.chat;
 import com.betterschool.domain.chat.adapter.repository.IChatRepository;
 import com.betterschool.domain.chat.model.entity.MessageEntity;
 import com.betterschool.domain.chat.model.entity.TimelineEntity;
-import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
+import com.betterschool.domain.chat.model.valobj.MsgTypeEnum;
 import com.betterschool.integration.support.PostApiTestBase;
-import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.Test;
@@ -71,7 +70,7 @@ public class ChatSendPipelineIntegrationTest extends PostApiTestBase {
     }
 
     @Test
-    void sendMessagePersistsFiveTablesAndOutbox() {
+    void sendMessagePersistsBusinessTables() {
         String roomId = createDirectRoomViaApi();
 
         JsonNode response = send(roomId, Map.of(
@@ -99,10 +98,7 @@ public class ChatSendPipelineIntegrationTest extends PostApiTestBase {
         assertThat(queryLong("SELECT delivery_seq FROM timeline WHERE room_id = '" + roomId + "' AND user_id = '" + sessionA.userId() + "'" )).isEqualTo(1);
         assertThat(queryLong("SELECT delivery_seq FROM timeline WHERE room_id = '" + roomId + "' AND user_id = '" + sessionB.userId() + "'" )).isEqualTo(1);
 
-        // outbox：MSG 事件与业务同事务落库，载荷含判重键与发送者信息
-        assertThat(queryLong("SELECT COUNT(1) FROM mq_outbox WHERE destination = '" + Constants.CHAT_PUSH_TOPIC + "'")).isEqualTo(1);
-        String payload = queryString("SELECT payload FROM mq_outbox WHERE destination = '" + Constants.CHAT_PUSH_TOPIC + "'");
-        assertThat(payload).contains("\"roomId\":\"" + roomId + "\"").contains("\"seq\":1").contains("会话用户A");
+        // 实时推送不再落 outbox：帧投递由 WsIntegrationTest 以真 WS 客户端断言
     }
 
     @Test
@@ -124,7 +120,6 @@ public class ChatSendPipelineIntegrationTest extends PostApiTestBase {
         assertThat(queryLong("SELECT COUNT(1) FROM message WHERE room_id = '" + roomId + "'")).isEqualTo(1);
         assertThat(queryLong("SELECT COUNT(1) FROM timeline WHERE room_id = '" + roomId + "'")).as("不重复扇出").isEqualTo(2);
         assertThat(queryLong("SELECT last_seq FROM room WHERE room_id = '" + roomId + "'")).as("seq 无空洞").isEqualTo(1);
-        assertThat(queryLong("SELECT COUNT(1) FROM mq_outbox WHERE destination = '" + Constants.CHAT_PUSH_TOPIC + "'")).as("不重复写推送事件").isEqualTo(1);
     }
 
     @Test
@@ -141,7 +136,7 @@ public class ChatSendPipelineIntegrationTest extends PostApiTestBase {
             messageEntity.setRoomId(roomId);
             messageEntity.setSeq(seq);
             messageEntity.setFromUserId(sessionA.userId());
-            messageEntity.setMsgType(MsgTypeVO.TEXT);
+            messageEntity.setMsgType(MsgTypeEnum.TEXT);
             messageEntity.setContent("并发先行者");
             messageEntity.setClientMsgId("cmid-race");
             chatRepository.insertMessage(messageEntity);

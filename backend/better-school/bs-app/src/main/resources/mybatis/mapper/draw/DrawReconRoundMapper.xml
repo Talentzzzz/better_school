@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.draw.IDrawReconRoundDao">
+
+    <!-- 起轮：撞 uk_round_no 返回 0 = 本轮已起过（调度重复触发按幂等跳过） -->
+    <insert id="insertIgnoreRound"
+            parameterType="com.betterschool.infrastructure.dao.draw.po.DrawReconRoundPO">
+        INSERT IGNORE INTO draw_recon_round
+            (round_no, scan_start_time, scan_end_time, variance_total, confirmed_total, auto_fixed_total,
+             create_time, update_time)
+        VALUES
+            (#{roundNo}, #{scanStartTime}, #{scanEndTime}, #{varianceTotal}, #{confirmedTotal}, #{autoFixedTotal},
+             #{createTime}, #{updateTime})
+    </insert>
+
+    <!-- 终轮：回填结束时间与三项计数 -->
+    <update id="finishRound">
+        UPDATE draw_recon_round
+        SET scan_end_time = #{scanEndTime},
+            variance_total = #{varianceTotal},
+            confirmed_total = #{confirmedTotal},
+            auto_fixed_total = #{autoFixedTotal},
+            update_time = NOW()
+        WHERE round_no = #{roundNo}
+    </update>
+
+</mapper>

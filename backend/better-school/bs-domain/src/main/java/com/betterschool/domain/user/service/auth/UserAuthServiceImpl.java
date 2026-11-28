@@ -3,7 +3,7 @@ package com.betterschool.domain.user.service.auth;
 import com.betterschool.domain.user.adapter.repository.IUserRepository;
 import com.betterschool.domain.user.model.entity.UserEntity;
 import com.betterschool.domain.user.model.valobj.UserAuthResult;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,11 +31,11 @@ public class UserAuthServiceImpl implements IUserAuthService {
     @Override
     public UserEntity register(String phone, String code, String nickname) {
         if (!userRepository.verifyVerifyCode(phone, code)) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "验证码错误或已过期");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "验证码错误或已过期");
         }
         // 保存用户 + 落注册消息 + 搜索同步消息是一个仓储原子用例（同事务写 outbox）；验证码校验（Redis）在事务外
         if (userRepository.findByPhone(phone) != null) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "该手机号已注册");
+            throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "该手机号已注册");
         }
         return userRepository.saveRegistered(UserEntity.create(phone, nickname));
     }
@@ -43,15 +43,20 @@ public class UserAuthServiceImpl implements IUserAuthService {
     @Override
     public UserAuthResult login(String phone, String code) {
         if (!userRepository.verifyVerifyCode(phone, code)) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "验证码错误或已过期");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "验证码错误或已过期");
         }
         UserEntity userEntity = userRepository.findByPhone(phone);
         if (userEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "用户不存在，请先注册");
+            throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "用户不存在，请先注册");
         }
         userRepository.update(userEntity);
         // last_login_at 由 SQL NOW() 落库（时刻一律数据库时钟），回读补齐登录响应字段
         userEntity.setLastLoginAt(userRepository.findByPhone(phone).getLastLoginAt());
         return new UserAuthResult(userEntity, userRepository.generateToken(userEntity.getUserId(), userEntity.getRole().name()));
+    }
+
+    @Override
+    public String issueToken(UserEntity userEntity) {
+        return userRepository.generateToken(userEntity.getUserId(), userEntity.getRole().name());
     }
 }

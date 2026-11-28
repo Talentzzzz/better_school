@@ -43,7 +43,7 @@
 ## 文件并发提示（非阻塞边，但建议串行）
 
 - ~~**03 / 04 都改 `MarketView.vue`**（入口行插在三 tab 与 `filter-bar` 之间）→ 04 在 03 之后，无并发。~~ 03 最终**没动 `MarketView.vue`**（只新建 `/market/messages` 路由与页面，入口行整条归 04），04 可径直动 `MarketView.vue`。
-- ~~**02 / 09 都改 `NoticeService` 的调用点**（02 给现有生产点补 `scope`，09 加营销三类）→ 建议 02 先落，09 再动。~~ 02 已 resolved，09 随时可动（新增营销三类生产点照票 02 的 `NotificationScopeVO.BOTTOM_SYSTEM` 显式标注）。
+- ~~**02 / 09 都改 `NoticeService` 的调用点**（02 给现有生产点补 `scope`，09 加营销三类）→ 建议 02 先落，09 再动。~~ 02 已 resolved，09 随时可动（新增营销三类生产点照票 02 的 `NotificationScopeEnum.BOTTOM_SYSTEM` 显式标注）。
 - ~~**10 / 11 都改前端消息与通知相关件**（`NotificationsView.vue` 被 10 改按 scope 取数）~~ **10 已 resolved**：实际只动了 `MessagesView.vue`（系统消息行 + 「私信」分区头）与 `NotificationsView.vue` 的 `TYPE_TEXT`（scope 取数 02 已落，无需再改）——11 只新增 `/marketing`，不碰它们。
 - ~~**06 / 07 都要动共享 SQL 文件**~~ **已解决且 07 已按此落地**：建库语句统一在
   `sql/init-marketing-{dev,test}.sql`（**只建三个库、不切库**），`scripts/test-env.sh` 的

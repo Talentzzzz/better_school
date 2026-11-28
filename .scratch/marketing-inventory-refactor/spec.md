@@ -405,7 +405,7 @@ id 清单翻转（要把几百行拉回应用）、不带秒边界的 `WHERE sta
 - **不走 SETNX，每条都发**：兑换低频，走去重会被窗口吞掉、押到 60s 兜底（票 01 §4）。
   幂等靠明细表的 `UNIQUE (type, biz_type, biz_id)`：同一条记录重复确认 → 撞键 → 当成功回放，**不再发消息**。
 - **`4312 INVENTORY_WAITING_SHORTAGE` 退休**：同步确认没了，这个码再没有调用方（前端也从未见过它）。
-  落地时从 `ResponseCode` 删除，并同步 `docs/api/lottery.md` 的错误码表与「发货消费的重投口径」一节。
+  落地时从 `ResponseCodeEnum` 删除，并同步 `docs/api/lottery.md` 的错误码表与「发货消费的重投口径」一节。
 - **`RaffleShippingCase` 的三步顺序保留**（先确认库存、再推进状态）：确认已变成一次本地写，
   顺序不再承重，但保留它没有代价，且「记录仍在待兑换」仍是抽奖域自己的幂等判据。
 - 消费侧不再有「确认失败 → 重投 → 10s 后成功」的剧情；真正的失败只在合并侧表现为
@@ -436,7 +436,7 @@ id 清单翻转（要把几百行拉回应用）、不带秒边界的 `WHERE sta
 boolean preDeduct(InventorySegmentVO segment, long invId, long quantity, String bizType, long bizId);
 
 /** 主档扣不出 → 换个 inv_id（可换段）再扣；两段都扣不出 = FAILED */
-DeductOutcomeVO preDeductWithFallback(InventoryDeductRequestVO primary, InventoryDeductRequestVO fallback);
+DeductOutcomeEnum preDeductWithFallback(InventoryDeductRequestVO primary, InventoryDeductRequestVO fallback);
 
 /** 兑换确认（仅 quota 段）：落 type=2 明细 + 每条都发合并消息；转移由合并做 */
 void confirmIssued(long invId, String bizType, long bizId, long quantity);
@@ -586,7 +586,7 @@ ledger.issued_qty                      == SUM(quantity) WHERE state = 1         
 - **抽奖侧接口签名变更**：`IInventoryDeductPort` 的两个方法加 `recordId`（破坏性）；`IQuotaConfirmPort` 的
   `redeemOrderId` 正名为 `recordId`（它一直是抽奖记录 id，不是兑换单号）；`RaffleDrawServiceImpl` /
   `RaffleShippingCase` / 两个端口实现同步改；抽奖域不引入库存域的 VO。
-- **`4312` 退休**：`ResponseCode.INVENTORY_WAITING_SHORTAGE` 删除；它不是前端契约（只在发货消费内部抛）。
+- **`4312` 退休**：`ResponseCodeEnum.INVENTORY_WAITING_SHORTAGE` 删除；它不是前端契约（只在发货消费内部抛）。
 - **key 前缀变更**：dev 环境的旧 key 变成孤儿（无害）；上线/联调前重跑 `inventoryBucketWarmup`。
 - **非目标**（同 §1）：分布式锁 / 认领态 / `FOR UPDATE` / DB 唯一键做消息去重 / 出入库流水表 /
   多桶分摊 / 关桶 / Redis 重建看门狗 / 前端改动（零改动）。

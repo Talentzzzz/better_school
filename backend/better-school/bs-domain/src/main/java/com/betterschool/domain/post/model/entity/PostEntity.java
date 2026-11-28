@@ -1,6 +1,8 @@
 package com.betterschool.domain.post.model.entity;
 
-import com.betterschool.domain.post.model.valobj.PostStatusVO;
+import com.betterschool.domain.post.model.valobj.PostStatusEnum;
+import com.betterschool.types.enums.ResponseCodeEnum;
+import com.betterschool.types.exception.BusinessException;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -16,7 +18,7 @@ public class PostEntity {
     private List<String> images;
     /** 独立封面 URL（可空，可传相册外的独立上传图；展示口径见 displayCover） */
     private String cover;
-    private PostStatusVO status;
+    private PostStatusEnum status;
     private long likeCount;
     private long commentCount;
     private long viewCount;
@@ -38,7 +40,7 @@ public class PostEntity {
         postEntity.content = content;
         postEntity.images = images == null ? List.of() : images;
         postEntity.cover = normalizedCover(cover);
-        postEntity.status = PostStatusVO.NORMAL;
+        postEntity.status = PostStatusEnum.NORMAL;
         postEntity.likeCount = 0;
         postEntity.commentCount = 0;
         postEntity.viewCount = 0;
@@ -54,7 +56,7 @@ public class PostEntity {
         postEntity.content = content;
         postEntity.images = images == null ? List.of() : images;
         postEntity.cover = normalizedCover(cover);
-        postEntity.status = PostStatusVO.DRAFT;
+        postEntity.status = PostStatusEnum.DRAFT;
         postEntity.likeCount = 0;
         postEntity.commentCount = 0;
         postEntity.viewCount = 0;
@@ -68,6 +70,18 @@ public class PostEntity {
         this.content = content;
         this.images = images == null ? List.of() : images;
         this.cover = normalizedCover(cover);
+    }
+
+    /**
+     * 发布不变式：正文必填（草稿允许空正文停靠，提交转发布时必须校验；标题/配图/封面可空）。
+     * <p>
+     * 与 {@code submitDraft} 的 SQL 条件互为双保险：这里是普通路径的领域裁决，
+     * SQL 条件挡「校验通过后并发编辑清空正文」的竞态。
+     */
+    public void ensurePublishable() {
+        if (content == null || content.isBlank()) {
+            throw new BusinessException(ResponseCodeEnum.BUSINESS_ERROR, "草稿内容不完整，请补全正文后再提交");
+        }
     }
 
     /**

@@ -33,9 +33,9 @@ public class PointsController implements IPointsService {
     @Override
     @GetMapping("/balance")
     public Response<PointsBalanceResponseDTO> getBalance() {
-        PointsBalanceResponseDTO dto = new PointsBalanceResponseDTO();
-        dto.setBalance(pointsAccountService.getBalance(SecurityUtils.currentUserId()));
-        return Response.ok(dto);
+        PointsBalanceResponseDTO pointsBalanceResponseDTO = new PointsBalanceResponseDTO();
+        pointsBalanceResponseDTO.setBalance(pointsAccountService.getBalance(SecurityUtils.currentUserId()));
+        return Response.ok(pointsBalanceResponseDTO);
     }
 
     @Override
@@ -52,15 +52,15 @@ public class PointsController implements IPointsService {
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
 
-    private PointsTransactionResponseDTO toTransactionResponseDTO(PointsTransactionVO transactionVO) {
-        PointsTransactionResponseDTO dto = new PointsTransactionResponseDTO();
-        dto.setId(transactionVO.getId());
-        dto.setDirection(transactionVO.getDirection().name());
-        dto.setAmount(transactionVO.getAmount());
-        dto.setReasonType(transactionVO.getReasonType().name());
-        dto.setRefId(transactionVO.getRefId());
-        dto.setCreatedAt(transactionVO.getCreatedAt());
-        dto.setExpireAt(transactionVO.getExpireAt());
-        return dto;
+    private PointsTransactionResponseDTO toTransactionResponseDTO(PointsTransactionVO pointsTransactionVO) {
+        PointsTransactionResponseDTO pointsTransactionResponseDTO = new PointsTransactionResponseDTO();
+        pointsTransactionResponseDTO.setId(pointsTransactionVO.getId());
+        pointsTransactionResponseDTO.setDirection(pointsTransactionVO.getDirection().name());
+        pointsTransactionResponseDTO.setAmount(pointsTransactionVO.getAmount());
+        pointsTransactionResponseDTO.setReasonType(pointsTransactionVO.getReasonType().name());
+        pointsTransactionResponseDTO.setRefId(pointsTransactionVO.getRefId());
+        pointsTransactionResponseDTO.setCreatedAt(pointsTransactionVO.getCreatedAt());
+        pointsTransactionResponseDTO.setExpireAt(pointsTransactionVO.getExpireAt());
+        return pointsTransactionResponseDTO;
     }
 }

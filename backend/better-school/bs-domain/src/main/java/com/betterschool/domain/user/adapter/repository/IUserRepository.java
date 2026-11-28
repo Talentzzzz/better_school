@@ -2,7 +2,7 @@ package com.betterschool.domain.user.adapter.repository;
 
 import com.betterschool.domain.user.model.entity.UserEntity;
 import com.betterschool.domain.user.model.valobj.UserBriefVO;
-import com.betterschool.domain.user.model.valobj.UserRoleVO;
+import com.betterschool.domain.user.model.valobj.UserRoleEnum;
 import com.betterschool.types.common.SearchPageVO;
 
 import java.util.List;
@@ -53,7 +53,7 @@ public interface IUserRepository {
     List<String> listUserIdsAfter(String lastUserId, int limit);
 
     /** 指定角色全部用户 ID（审核超时提醒收件人等） */
-    List<String> listUserIdsByRole(UserRoleVO role);
+    List<String> listUserIdsByRole(UserRoleEnum userRoleVO);
 
     /** 按 id 列表查询（搜索同步/搜索命中反查用；返回顺序与入参无关，调用方按 id 重排） */
     List<UserEntity> listByIds(List<String> userIdList);

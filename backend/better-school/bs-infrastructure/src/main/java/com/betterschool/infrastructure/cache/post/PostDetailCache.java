@@ -1,7 +1,7 @@
 package com.betterschool.infrastructure.cache.post;
 
 import com.betterschool.domain.post.model.entity.PostEntity;
-import com.betterschool.domain.post.model.valobj.PostStatusVO;
+import com.betterschool.domain.post.model.valobj.PostStatusEnum;
 import com.betterschool.infrastructure.dao.post.IPostDao;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
@@ -165,7 +165,7 @@ public class PostDetailCache {
                         return againEntity;
                     }
                     PostEntity loadedEntity = loader.get();
-                    if (loadedEntity != null && loadedEntity.getStatus() == PostStatusVO.NORMAL) {
+                    if (loadedEntity != null && loadedEntity.getStatus() == PostStatusEnum.NORMAL) {
                         put(postId, loadedEntity);
                     }
                     return loadedEntity;

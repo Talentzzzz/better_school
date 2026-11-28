@@ -1,7 +1,7 @@
 package com.betterschool.domain.idle.model.entity;
 
-import com.betterschool.domain.idle.model.valobj.ProductCategoryVO;
-import com.betterschool.domain.idle.model.valobj.ProductOrderStatusVO;
+import com.betterschool.domain.idle.model.valobj.ProductCategoryEnum;
+import com.betterschool.domain.idle.model.valobj.ProductOrderStatusEnum;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -25,8 +25,8 @@ public class ProductOrderEntity {
     private String productDescription;
     private List<String> productImages;
     private String productTradeLocation;
-    private ProductCategoryVO productCategory;
-    private ProductOrderStatusVO status;
+    private ProductCategoryEnum productCategory;
+    private ProductOrderStatusEnum status;
     private LocalDateTime createdAt;
 
     /** 查询冗余字段：买卖双方昵称头像（列表 JOIN 填充） */
@@ -36,20 +36,20 @@ public class ProductOrderEntity {
     private String sellerAvatar;
     private String productImage;
 
-    public static ProductOrderEntity create(String buyerId, ProductEntity product, int quantity) {
-        ProductOrderEntity orderEntity = new ProductOrderEntity();
-        orderEntity.buyerId = buyerId;
-        orderEntity.sellerId = product.getUserId();
-        orderEntity.productId = product.getProductId();
-        orderEntity.price = product.getPrice();
-        orderEntity.quantity = quantity;
-        orderEntity.productTitle = product.getTitle();
-        orderEntity.productDescription = product.getDescription();
-        orderEntity.productImages = product.getImages();
-        orderEntity.productTradeLocation = product.getTradeLocation();
-        orderEntity.productCategory = product.getCategory();
-        orderEntity.status = ProductOrderStatusVO.PENDING_PAYMENT;
-        return orderEntity;
+    public static ProductOrderEntity create(String buyerId, ProductEntity productEntity, int quantity) {
+        ProductOrderEntity productOrderEntity = new ProductOrderEntity();
+        productOrderEntity.buyerId = buyerId;
+        productOrderEntity.sellerId = productEntity.getUserId();
+        productOrderEntity.productId = productEntity.getProductId();
+        productOrderEntity.price = productEntity.getPrice();
+        productOrderEntity.quantity = quantity;
+        productOrderEntity.productTitle = productEntity.getTitle();
+        productOrderEntity.productDescription = productEntity.getDescription();
+        productOrderEntity.productImages = productEntity.getImages();
+        productOrderEntity.productTradeLocation = productEntity.getTradeLocation();
+        productOrderEntity.productCategory = productEntity.getCategory();
+        productOrderEntity.status = ProductOrderStatusEnum.PENDING_PAYMENT;
+        return productOrderEntity;
     }
 
     public boolean isBuyer(String userId) {
@@ -58,5 +58,11 @@ public class ProductOrderEntity {
 
     public boolean isSeller(String userId) {
         return sellerId != null && sellerId.equals(userId);
+    }
+
+    /** 订单总金额 = 成交单价快照 × 成交件数（钱包冻结/解冻/入账统一按总额走） */
+    public BigDecimal totalAmount() {
+        int quantity = this.quantity == null ? 1 : this.quantity;
+        return this.price.multiply(BigDecimal.valueOf(quantity));
     }
 }

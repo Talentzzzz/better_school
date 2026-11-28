@@ -13,7 +13,7 @@ import java.math.BigDecimal;
 @Mapper
 public interface IWalletDao {
 
-    int insertIgnore(VirtualWallet wallet);
+    int insertIgnore(VirtualWallet virtualWallet);
 
     VirtualWallet selectByUserId(@Param("userId") String userId);
 

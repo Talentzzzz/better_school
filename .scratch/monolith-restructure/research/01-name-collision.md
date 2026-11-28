@@ -70,11 +70,11 @@
 | 12 | `MergeResult` | `com.betterschool.marketing.infrastructure.merge.MergeResult`（marketing-infrastructure） | `com.betterschool.infrastructure.adapter.merge.MergeResult`（bs-infrastructure） | 同 #10 |
 | 13 | `OutboxMessageSender` | `com.betterschool.marketing.infrastructure.common.outbox.OutboxMessageSender`（marketing-infrastructure） | `com.betterschool.infrastructure.mq.OutboxMessageSender`（bs-infrastructure） | 同职责 outbox 发送器，建议合并 |
 | 14 | `OutboxMessageStore` | `com.betterschool.marketing.infrastructure.common.outbox.OutboxMessageStore`（marketing-infrastructure） | `com.betterschool.infrastructure.outbox.OutboxMessageStore`（bs-infrastructure） | 同职责 outbox 存储，建议合并 |
-| 15 | `OutboxStatus` | `com.betterschool.marketing.types.common.OutboxStatus`（marketing-types） | `com.betterschool.types.enums.OutboxStatus`（bs-types） | 枚举两份，合并进 bs-types |
+| 15 | `OutboxStatusEnum` | `com.betterschool.marketing.types.common.OutboxStatusEnum`（marketing-types） | `com.betterschool.types.enums.OutboxStatusEnum`（bs-types） | 枚举两份，合并进 bs-types |
 | 16 | `PageResult` | `com.betterschool.marketing.api.common.response.PageResult`（marketing-api） | `com.betterschool.api.response.PageResult`（bs-api） | API 分页包装类两份，合并进 bs-api |
 | 17 | `PointsChangedMessage` | `com.betterschool.marketing.domain.points.model.valobj.PointsChangedMessage`（marketing-domain） | `com.betterschool.usecase.marketing.PointsChangedMessage`（bs-case） | 消息体两份；注意 bs-case 已有 marketing 相关用例类 |
 | 18 | `Response` | `com.betterschool.marketing.api.common.response.Response`（marketing-api） | `com.betterschool.api.response.Response`（bs-api） | API 统一响应包装，合并进 bs-api |
-| 19 | `ResponseCode` | `com.betterschool.marketing.types.common.ResponseCode`（marketing-types） | `com.betterschool.types.enums.ResponseCode`（bs-types） | 响应码枚举两份，需合并去重 |
+| 19 | `ResponseCodeEnum` | `com.betterschool.marketing.types.common.ResponseCodeEnum`（marketing-types） | `com.betterschool.types.enums.ResponseCodeEnum`（bs-types） | 响应码枚举两份，需合并去重 |
 | 20 | `SecurityUtils` | `com.betterschool.marketing.trigger.common.http.security.SecurityUtils`（marketing-trigger） | `com.betterschool.trigger.http.security.SecurityUtils`（bs-trigger） | 鉴权工具类，建议合并 |
 
 ### 2.3 marketing 内部重名（平级化后不撞 FQN，但撞 bean 名/混淆）

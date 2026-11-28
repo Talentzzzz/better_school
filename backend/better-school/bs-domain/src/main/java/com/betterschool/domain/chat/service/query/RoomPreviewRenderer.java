@@ -1,6 +1,6 @@
 package com.betterschool.domain.chat.service.query;
 
-import com.betterschool.domain.chat.model.valobj.CardRefTypeVO;
+import com.betterschool.domain.chat.model.valobj.CardRefTypeEnum;
 import com.betterschool.domain.chat.model.valobj.MessagePreviewVO;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
 
@@ -29,29 +29,29 @@ public final class RoomPreviewRenderer {
      * @param room    待装配的列表项
      * @param preview 会话最新一条消息的预览投影（room.last_seq 点查所得；null = 会话尚无消息，预览为空）
      */
-    public static void renderInto(RoomListItemVO room, MessagePreviewVO preview) {
-        room.setLastMsgType(preview == null ? null : preview.getMsgType());
-        room.setLastMsgPreview(render(preview));
+    public static void renderInto(RoomListItemVO roomListItemVO, MessagePreviewVO messagePreviewVO) {
+        roomListItemVO.setLastMsgType(messagePreviewVO == null ? null : messagePreviewVO.getMsgType());
+        roomListItemVO.setLastMsgPreview(render(messagePreviewVO));
     }
 
     /** 按 message 真相渲染预览文案（null → null 预览） */
-    public static String render(MessagePreviewVO preview) {
-        if (preview == null) {
+    public static String render(MessagePreviewVO messagePreviewVO) {
+        if (messagePreviewVO == null) {
             return null;
         }
-        if (preview.isRecalled()) {
+        if (messagePreviewVO.isRecalled()) {
             return PREVIEW_RECALLED;
         }
-        return switch (preview.getMsgType()) {
-            case TEXT -> truncate(preview.getContent());
+        return switch (messagePreviewVO.getMsgType()) {
+            case TEXT -> truncate(messagePreviewVO.getContent());
             case IMAGE -> PREVIEW_IMAGE;
-            case CARD -> renderCard(preview.getRefType());
+            case CARD -> renderCard(messagePreviewVO.getRefType());
             case SYSTEM -> PREVIEW_SYSTEM;
         };
     }
 
-    private static String renderCard(CardRefTypeVO refType) {
-        return switch (refType) {
+    private static String renderCard(CardRefTypeEnum cardRefTypeVO) {
+        return switch (cardRefTypeVO) {
             case PRODUCT -> PREVIEW_PRODUCT;
             case POST -> PREVIEW_POST;
         };

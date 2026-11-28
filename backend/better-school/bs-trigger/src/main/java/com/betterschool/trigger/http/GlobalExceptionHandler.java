@@ -2,7 +2,7 @@ package com.betterschool.trigger.http;
 
 import com.betterschool.api.response.Response;
 import com.betterschool.types.common.AppException;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import com.betterschool.types.exception.FrameworkException;
 import lombok.extern.slf4j.Slf4j;
@@ -30,14 +30,14 @@ public class GlobalExceptionHandler {
     /** multipart 容器上限（6MB）超限在进 Controller 前抛出，返回业务提示而非系统错误 */
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public Response<Void> handleMaxUploadSize(MaxUploadSizeExceededException e) {
-        return Response.fail(ResponseCode.PARAM_ERROR.getCode(), "单张图片不能超过 5MB");
+        return Response.fail(ResponseCodeEnum.PARAM_ERROR.getCode(), "单张图片不能超过 5MB");
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public Response<Void> handleMethodArgumentNotValid(MethodArgumentNotValidException e) {
         FieldError fieldError = e.getBindingResult().getFieldError();
-        String info = fieldError == null ? ResponseCode.PARAM_ERROR.getInfo() : fieldError.getDefaultMessage();
-        return Response.fail(ResponseCode.PARAM_ERROR.getCode(), info);
+        String info = fieldError == null ? ResponseCodeEnum.PARAM_ERROR.getInfo() : fieldError.getDefaultMessage();
+        return Response.fail(ResponseCodeEnum.PARAM_ERROR.getCode(), info);
     }
 
     @ExceptionHandler(FrameworkException.class)
@@ -49,6 +49,6 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public Response<Void> handleException(Exception e) {
         log.error("system error", e);
-        return Response.fail(ResponseCode.SYSTEM_ERROR.getCode(), ResponseCode.SYSTEM_ERROR.getInfo());
+        return Response.fail(ResponseCodeEnum.SYSTEM_ERROR.getCode(), ResponseCodeEnum.SYSTEM_ERROR.getInfo());
     }
 }

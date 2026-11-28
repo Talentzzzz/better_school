@@ -1,7 +1,14 @@
-# 奖品库存两层模型重构计划（执行 handoff）
+# 奖品库存两层模型重构计划（执行 handoff）—— **已废弃**
 
-> 目标：抽奖不再直接扣"外界给的配额池"（`virtual_inventory_quota` / `physical_marketing_quota`），
-> 而是把配额**分配**给奖品位，抽奖只扣 `draw_strategy_award_inventory`（统一台账，`type` 区分实物/虚拟）。
+> **状态：已废弃（2026-11，award 域重构）**：本文记录的是「配额池保留 + 分配链路」的两层模型计划；
+> 后续重构把它进一步收窄为**单一奖品库存台账**——池表（`virtual_inventory_quota*` /
+> `physical_marketing_quota*`）、分配流水 `inventory_allocation_flow`、分配 case/controller 全部删除，
+> 运营改为直接 `POST /api/marketing/award/inventory` upsert `award_inventory`，
+> 对账轮移除 B1。**现行口径以 [db/award.md](db/award.md) 与 `better-school/sql/schema.sql` 为准**；
+> 原文保留作决策史，不要再按本文落地。
+>
+> 原目标：抽奖不再直接扣"外界给的配额池"（`virtual_inventory_quota` / `physical_marketing_quota`），
+> 而是把配额**分配**给奖品位，抽奖只扣 `award_inventory`（统一台账，`type` 区分实物/虚拟）。
 > 本文档是唯一执行依据；按顺序做，每节末尾有自检。
 >
 > 已拍板的三个决策：
@@ -18,11 +25,11 @@
       │                                │
       ▼ 分配（即转移，一事务）           ▼ 预扣/确认（合并器，只打奖品库存）
 ┌─────────────────────────┐   ┌──────────────────────────────────┐
-│ 配额池（保留，不再被抽奖扣）│   │ draw_strategy_award_inventory     │
+│ 配额池（保留，不再被抽奖扣）│   │ award_inventory     │
 │ virtual_inventory_quota  │──▶│   type = VIRTUAL：surplus→issued  │
 │ physical_marketing_quota │   │   type = PHYSICAL：两段式          │
 │ + 各自 detail 表          │   │   surplus / waiting / issued      │
-└─────────────────────────┘   │ draw_strategy_award_inventory_    │
+└─────────────────────────┘   │ award_inventory_    │
                               │   detail（统一明细，flow_type 区分）│
                               └──────────────────────────────────┘
 ```
@@ -31,7 +38,7 @@
 
 | 旧 | 新 |
 |---|---|
-| `InventorySegmentVO`（VIRTUAL/QUOTA）选两张台账表 | `AwardInventoryType`（VIRTUAL/PHYSICAL）是统一台账里的一列 |
+| `InventorySegmentVO`（VIRTUAL/QUOTA）选两张台账表 | `AwardInventoryTypeEnum`（VIRTUAL/PHYSICAL）是统一台账里的一列 |
 | 抽奖 `invId` = 池台账行主键 | 抽奖 `invId` = 奖品库存账户（按 `award_id` 1:1） |
 | 池台账被预扣直接 UPDATE | 池台账只被"分配"转移；预扣/确认全部打奖品库存表 |
 | 实物/虚拟 = 两套 DAO/PO/明细表 | 一套 DAO/PO/明细表，`type`（台账）/ `flow_type`（明细）分支 |
@@ -47,10 +54,10 @@
 
 ## 1. DDL（`sql/schema.sql`）
 
-### 1.1 新增 `draw_strategy_award_inventory`
+### 1.1 新增 `award_inventory`
 
 ```sql
-CREATE TABLE IF NOT EXISTS draw_strategy_award_inventory (
+CREATE TABLE IF NOT EXISTS award_inventory (
     id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
     award_id    VARCHAR(36)  NOT NULL COMMENT '奖品位 id（draw_strategy_award.id），1 奖品位 1 库存账户',
     type        VARCHAR(16)  NOT NULL COMMENT 'PHYSICAL 实物（两段式）/ VIRTUAL 虚拟（waiting 恒 0）',
@@ -74,10 +81,10 @@ CREATE TABLE IF NOT EXISTS draw_strategy_award_inventory (
 - `value_qty` 从虚拟池台账的 `value` 列迁移而来（虚拟奖品"每次抽发多少积分/次数"是奖品属性，跟着奖品库存走）；
 - `state` 沿用原台账 state 语义（open/exhausted/closed），域服务"非 open 走重放预检"的口径不变。
 
-### 1.2 新增 `draw_strategy_award_inventory_detail`
+### 1.2 新增 `award_inventory_detail`
 
 ```sql
-CREATE TABLE IF NOT EXISTS draw_strategy_award_inventory_detail (
+CREATE TABLE IF NOT EXISTS award_inventory_detail (
     id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
     award_id    VARCHAR(36)  NOT NULL COMMENT '奖品位 id（= 台账行），幂等键前缀',
     flow_type   TINYINT      NOT NULL COMMENT '0 分配转入 / 1 预扣（PHYSICAL 进 waiting，VIRTUAL 直接发放）/ 2 兑换确认（仅 PHYSICAL）',
@@ -119,19 +126,19 @@ CREATE TABLE IF NOT EXISTS draw_strategy_award_inventory_detail (
 
 ```sql
 -- 预扣（PHYSICAL 行；合并器一组一事务的第一条）
-UPDATE draw_strategy_award_inventory
+UPDATE award_inventory
    SET surplus_qty = surplus_qty - N, waiting_qty = waiting_qty + N
  WHERE award_id = ? AND type = 'PHYSICAL'
    AND (surplus_qty < 0 OR surplus_qty >= N);
 
 -- 预扣（VIRTUAL 行；直接发放，无 waiting）
-UPDATE draw_strategy_award_inventory
+UPDATE award_inventory
    SET surplus_qty = surplus_qty - N, issued_qty = issued_qty + N
  WHERE award_id = ? AND type = 'VIRTUAL'
    AND (surplus_qty < 0 OR surplus_qty >= N);
 
 -- 兑换确认（仅 PHYSICAL；waiting → issued，c = 本次新增明细行数）
-UPDATE draw_strategy_award_inventory
+UPDATE award_inventory
    SET waiting_qty = waiting_qty - c, issued_qty = issued_qty + c
  WHERE award_id = ? AND type = 'PHYSICAL' AND waiting_qty >= c;
 
@@ -139,7 +146,7 @@ UPDATE draw_strategy_award_inventory
 UPDATE physical_marketing_quota      -- 或 virtual_inventory_quota，按池段
    SET surplus_qty = surplus_qty - N
  WHERE inv_id = ? AND surplus_qty >= N;
-UPDATE draw_strategy_award_inventory
+UPDATE award_inventory
    SET surplus_qty = surplus_qty + N
  WHERE award_id = ?;
 ```
@@ -184,16 +191,16 @@ UPDATE draw_strategy_award_inventory
 
 ### 3.1 marketing-types
 
-- **新增** `AwardInventoryType`（`PHYSICAL` / `VIRTUAL`）：奖品库存层的类型枚举；
+- **新增** `AwardInventoryTypeEnum`（`PHYSICAL` / `VIRTUAL`）：奖品库存层的类型枚举；
 - `InventorySegmentVO` **保留**，但语义收窄为"配额池段"（只被池查询/分配/运营侧使用）。
 
 ### 3.2 marketing-domain
 
 | 文件 | 改动 |
 |---|---|
-| `IInventoryRepository` | `flushDeductGroup(segment, invId, requests)` → `flushDeductGroup(AwardInventoryType, awardId, requests)`；`flushClaimGroup(invId, items)` 参数语义变为 awardId（签名不变）；`existsDeductDetail(segment, …)` → 按 `(awardId, bizType, bizId)` 查统一明细（segment 参数删除）；**新增** `allocate(segment, poolInvId, awardId, qty, allocBizId)`（分配，同步一事务）；池台账查询方法（`queryLedger`/`listOpenLedgers`）语义收窄为"池台账"，奖品库存台账新增查询方法 |
-| `IInventoryQuotaService` / `InventoryQuotaServiceImpl` | `preDeduct`/`confirmIssued` 的 `invId` 参数语义变为奖品库存账户（awardId）；javadoc 全部按两层模型重写；`alreadyDeducted` 的重放预检走新明细 |
-| 合并器三个 Pending 类 | `segment()` 访问者 → `type()`（返回 `AwardInventoryType`）；`DeductPending.segment()` 从 `request.segment()` 改为请求携带的 `type`；`ClaimPending` 仍恒 null（确认仅实物）。**分组键三维不变**：动作 × type × awardId |
+| `IAwardRepository` | `flushDeductGroup(segment, invId, requests)` → `flushDeductGroup(AwardInventoryTypeEnum, awardId, requests)`；`flushClaimGroup(invId, items)` 参数语义变为 awardId（签名不变）；`existsDeductDetail(segment, …)` → 按 `(awardId, bizType, bizId)` 查统一明细（segment 参数删除）；**新增** `allocate(segment, poolInvId, awardId, qty, allocBizId)`（分配，同步一事务）；池台账查询方法（`queryLedger`/`listOpenLedgers`）语义收窄为"池台账"，奖品库存台账新增查询方法 |
+| `IAwardInventoryService` / `AwardInventoryServiceImpl` | `preDeduct`/`confirmIssued` 的 `invId` 参数语义变为奖品库存账户（awardId）；javadoc 全部按两层模型重写；`alreadyDeducted` 的重放预检走新明细 |
+| 合并器三个 Pending 类 | `segment()` 访问者 → `type()`（返回 `AwardInventoryTypeEnum`）；`DeductPending.segment()` 从 `request.segment()` 改为请求携带的 `type`；`ClaimPending` 仍恒 null（确认仅实物）。**分组键三维不变**：动作 × type × awardId |
 | `QuotaMergeBuffer` / `ShardBuffer` / `MergeConfig` | 分组键第二维换枚举类型，其余（单飞、攒批、双缓冲、停机）**零改动** |
 | 新增 `IInventoryAllocationService`（或并入 quota service） | 分配的域服务：校验池 open + 奖品位存在 → `repository.allocate(...)`；同步事务，不进合并器 |
 
@@ -202,15 +209,15 @@ UPDATE draw_strategy_award_inventory
 | 文件 | 改动 |
 |---|---|
 | **新增** `IAwardInventoryDao` / `IAwardInventoryDetailDao` + PO + mapper XML | 统一台账/明细的 CRUD：`selectByAwardId`、`deductPhysical(...)`、`deductVirtual(...)`、`transferWaitingToIssued(...)`、`allocateIn(...)`、明细 `batchInsertIgnoreDeductDetails` / `insertIgnoreClaimDetail` / `insertIgnoreAllocateDetail` / `listExisting...`（全部带 `award_id` 前缀的 uk） |
-| `InventoryQuotaFlushService` | 重写：两组 flush 方法的目标表换统一台账；`flushDeductGroup` 内按 type 分支两条 UPDATE（§2 的形状）；撞键快照/探一次再切逻辑原样搬移，只是查明细改为新表 |
-| `InventoryRepository` | 双段 switch 大部分退役；保留池台账查询（运营/分配用）；flush/exists 委托改新 DAO；新增 `allocate` 实现（一个事务：池 surplus 守卫扣减 + 奖品库存 surplus 增加 + 奖品明细 AWARD_ALLOCATE 行 `INSERT IGNORE`，撞分配单号=幂等回放） |
+| `AwardInventoryFlushService` | 重写：两组 flush 方法的目标表换统一台账；`flushDeductGroup` 内按 type 分支两条 UPDATE（§2 的形状）；撞键快照/探一次再切逻辑原样搬移，只是查明细改为新表 |
+| `AwardRepository` | 双段 switch 大部分退役；保留池台账查询（运营/分配用）；flush/exists 委托改新 DAO；新增 `allocate` 实现（一个事务：池 surplus 守卫扣减 + 奖品库存 surplus 增加 + 奖品明细 AWARD_ALLOCATE 行 `INSERT IGNORE`，撞分配单号=幂等回放） |
 | 池侧 DAO（`IVirtualInventoryQuotaDao` / `IPhysicalQuotaDao`） | 保留台账查询与**分配扣减**；`deductLedger` 等预扣入口若已无调用方则删除 |
 
 ### 3.4 marketing-case / marketing-app
 
 | 文件 | 改动 |
 |---|---|
-| `RaffleShippingCase` / `RaffleShippingServiceImpl` / `QuotaConfirmPort` | `confirmIssued(invId, …)` 的 invId 语义换为 awardId（签名大概率不变，javadoc + 取值来源改） |
+| `DrawCase` / `DrawShippingServiceImpl` / `QuotaConfirmPort` | `confirmIssued(invId, …)` 的 invId 语义换为 awardId（签名大概率不变，javadoc + 取值来源改） |
 | 抽奖主链路（票 13 usecase） | `preDeduct` 的 invId 来源从"奖品配置的池 invId"改为"奖品位对应的奖品库存账户"；`draw_record.inv_id` 落库值按开放点 ① |
 | 分配入口（新增） | 管理/投放侧 usecase：调 `IInventoryAllocationService.allocate`；票号待定 |
 | `QuotaMergeConfig` / `QuotaMergeBufferTest` 等引擎测试 | **零改动**（分组键维度不变，仅类型换枚举）；`RecordingQuotaFlushHandler` 的 `Group.segment` 字段改名 `type` |
@@ -221,7 +228,7 @@ UPDATE draw_strategy_award_inventory
 | 文件 | 改动 |
 |---|---|
 | `docs/db/inventory.md` | 重写模型图（两层）、守恒口径、表清单补两张新表、删除"旧表已删"段落里过时内容 |
-| `docs/db/draw.md` | `draw_strategy_award` 行补一句"库存账户 1:1 见 draw_strategy_award_inventory"；`draw_record.inv_id` 注释按开放点 ① |
+| `docs/db/draw.md` | `draw_strategy_award` 行补一句"库存账户 1:1 见 award_inventory"；`draw_record.inv_id` 注释按开放点 ① |
 | `docs/architecture/*` | 检索 `SegmentVO` / 池台账 的描述，同步两层模型说法 |
 
 ---
@@ -229,9 +236,9 @@ UPDATE draw_strategy_award_inventory
 ## 4. 执行顺序（建议 6 步，每步可独立编译）
 
 1. **DDL + PO + DAO + mapper**：新表两个 PO/DAO/XML 落地，`schema.sql` 更新（含池表注释）——纯新增，可编译；
-2. **types + domain 端口**：`AwardInventoryType`、`IInventoryRepository` 签名调整（此步会让 infrastructure 编译红，紧接第 3 步）；
-3. **infrastructure 重写**：`InventoryQuotaFlushService` / `InventoryRepository` / `allocate` 实现；
-4. **domain 引擎与服务**：Pending 三类访问者改名、`InventoryQuotaServiceImpl` 语义、分配域服务；
+2. **types + domain 端口**：`AwardInventoryTypeEnum`、`IAwardRepository` 签名调整（此步会让 infrastructure 编译红，紧接第 3 步）；
+3. **infrastructure 重写**：`AwardInventoryFlushService` / `AwardRepository` / `allocate` 实现；
+4. **domain 引擎与服务**：Pending 三类访问者改名、`AwardInventoryServiceImpl` 语义、分配域服务；
 5. **case + app**：抽奖链路 invId 来源、发货确认链路、分配 usecase；
 6. **测试与文档**：引擎单测改名收尾、集成测试重写、docs 更新。
 

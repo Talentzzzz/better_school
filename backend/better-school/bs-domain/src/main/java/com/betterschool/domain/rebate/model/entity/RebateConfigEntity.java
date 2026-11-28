@@ -1,6 +1,6 @@
 package com.betterschool.domain.rebate.model.entity;
 
-import com.betterschool.domain.rebate.model.valobj.RebateTypeVO;
+import com.betterschool.domain.rebate.model.valobj.RebateTypeEnum;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -15,7 +15,7 @@ public class RebateConfigEntity {
     private Long id;
     /** 行为类型：sign(签到) / pay(支付) / post(发帖) */
     private String actionType;
-    private RebateTypeVO rebateType;
+    private RebateTypeEnum rebateType;
     private String rebateName;
     /** 返利描述（可空） */
     private String rebateDesc;

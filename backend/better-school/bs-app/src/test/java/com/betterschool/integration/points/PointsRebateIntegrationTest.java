@@ -22,10 +22,10 @@ class PointsRebateIntegrationTest extends PointsApiTestBase {
 
     @Test
     @DisplayName("签到返利（POINTS 规则开启）：落 REBATE 桶 + 变动事件")
-    void creditForRebate_withOpenRule_creditsRebateBucket() {
+    void addForRebate_withOpenRule_addsRebateBucket() {
         insertRebateRule("sign", "POINTS", 20, POINTS_CONFIG_ID, "open");
 
-        boolean granted = pointsAccountService.creditForRebate("sign", USER_ID, REF_ID);
+        boolean granted = pointsAccountService.addForRebate(USER_ID, REF_ID, 20);
 
         assertThat(granted).isTrue();
         var bucket = jdbcTemplate.queryForMap(
@@ -50,11 +50,11 @@ class PointsRebateIntegrationTest extends PointsApiTestBase {
 
     @Test
     @DisplayName("同一发放幂等键重放：不重复入账、不重复发事件")
-    void creditForRebate_sameRefId_isIdempotent() {
+    void addForRebate_sameRefId_isIdempotent() {
         insertRebateRule("sign", "POINTS", 20, POINTS_CONFIG_ID, "open");
 
-        pointsAccountService.creditForRebate("sign", USER_ID, REF_ID);
-        pointsAccountService.creditForRebate("sign", USER_ID, REF_ID);
+        pointsAccountService.addForRebate(USER_ID, REF_ID, 20);
+        pointsAccountService.addForRebate(USER_ID, REF_ID, 20);
 
         assertThat(bucketCountOf(USER_ID)).as("uk(user_id, reason_type, ref_id) 兜住重放").isEqualTo(1);
         assertThat(pointsAccountService.getBalance(USER_ID)).isEqualTo(20);
@@ -63,12 +63,12 @@ class PointsRebateIntegrationTest extends PointsApiTestBase {
 
     @Test
     @DisplayName("规则未配置或已关闭：返回 false 且什么都不做")
-    void creditForRebate_withoutOpenRule_isNoOp() {
-        assertThat(pointsAccountService.creditForRebate("sign", USER_ID, REF_ID))
-                .as("没配 sign/POINTS 规则").isFalse();
+    void addForRebate_withoutOpenRule_isNoOp() {
+        assertThat(pointsAccountService.addForRebate(USER_ID, REF_ID, 0))
+                .as("没有可发金额 = 不发放").isFalse();
 
         insertRebateRule("sign", "POINTS", 20, POINTS_CONFIG_ID, "close");
-        assertThat(pointsAccountService.creditForRebate("sign", USER_ID, REF_ID))
+        assertThat(pointsAccountService.addForRebate(USER_ID, REF_ID, 0))
                 .as("规则关闭 = 该行为暂不发放").isFalse();
 
         assertThat(bucketCountOf(USER_ID)).isZero();
@@ -78,10 +78,10 @@ class PointsRebateIntegrationTest extends PointsApiTestBase {
 
     @Test
     @DisplayName("只认 POINTS 规则：次数规则（DRAW_COUNT）不给积分域用")
-    void creditForRebate_ignoresDrawCountRules() {
+    void addForRebate_ignoresDrawCountRules() {
         insertRebateRule("sign", "DRAW_COUNT", 1, 2L, "open");
 
-        assertThat(pointsAccountService.creditForRebate("sign", USER_ID, REF_ID)).isFalse();
+        assertThat(pointsAccountService.addForRebate(USER_ID, REF_ID, 0)).isFalse();
         assertThat(bucketCountOf(USER_ID)).isZero();
     }
 }

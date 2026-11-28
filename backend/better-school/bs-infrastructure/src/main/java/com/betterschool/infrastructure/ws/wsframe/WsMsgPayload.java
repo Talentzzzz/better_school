@@ -1,7 +1,7 @@
 package com.betterschool.infrastructure.ws.wsframe;
 
-import com.betterschool.domain.chat.model.valobj.CardRefTypeVO;
-import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
+import com.betterschool.domain.chat.model.valobj.CardRefTypeEnum;
+import com.betterschool.domain.chat.model.valobj.MsgTypeEnum;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
@@ -29,11 +29,11 @@ public class WsMsgPayload {
 
     private final String fromAvatar;
 
-    private final MsgTypeVO msgType;
+    private final MsgTypeEnum msgType;
 
     private final String content;
 
-    private final CardRefTypeVO refType;
+    private final CardRefTypeEnum refType;
 
     private final String refId;
 

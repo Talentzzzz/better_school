@@ -1,9 +1,9 @@
 package com.betterschool.integration.idle;
 
-import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountActionEnum;
 import com.betterschool.infrastructure.adapter.repository.CountEvent;
 import com.betterschool.infrastructure.adapter.repository.idle.IdleRepository;
-import com.betterschool.infrastructure.adapter.repository.LikeState;
+import com.betterschool.infrastructure.adapter.repository.LikeStateEnum;
 import com.betterschool.integration.support.PostApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
@@ -93,12 +93,12 @@ class ProductViewMergeIntegrationTest extends PostApiTestBase {
         Session viewerA = registerAndLogin("13700006003", "浏览者甲");
         Session viewerB = registerAndLogin("13700006004", "浏览者乙");
 
-        List<LikeState> results = flushHandler.flushViewGroup(productId,
+        List<LikeStateEnum> results = flushHandler.flushViewGroup(productId,
                 List.of(viewEvent(productId, viewerA.userId()), viewEvent(productId, viewerA.userId()),
                         viewEvent(productId, viewerB.userId())));
 
         assertThat(results).as("必须等长回填，否则引擎会把这些件记成 failed")
-                .hasSize(3).doesNotContainNull().containsOnly(LikeState.APPLIED);
+                .hasSize(3).doesNotContainNull().containsOnly(LikeStateEnum.APPLIED);
         assertThat(historyCountOf(productId)).as("同组同人只落一行明细").isEqualTo(2);
         assertThat(acceleratedCountOf(productId)).as("加速列按新增 UV 数增量 = 明细行数").isEqualTo(2);
 
@@ -112,7 +112,7 @@ class ProductViewMergeIntegrationTest extends PostApiTestBase {
     // ---------- 工具 ----------
 
     private static CountEvent viewEvent(String productId, String userId) {
-        return new CountEvent(CountAction.PRODUCT_VIEW, productId, userId);
+        return new CountEvent(CountActionEnum.PRODUCT_VIEW, productId, userId);
     }
 
     /** 直插一条在售商品（对外可见 ⇒ 登录/匿名详情均可用）（uuid-biz-id 票 05） */

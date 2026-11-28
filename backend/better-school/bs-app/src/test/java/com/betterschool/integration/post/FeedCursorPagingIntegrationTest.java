@@ -1,6 +1,5 @@
 package com.betterschool.integration.post;
 
-import com.betterschool.domain.post.adapter.port.IUserQueryPort;
 import com.betterschool.domain.post.adapter.repository.IPostRepository;
 import com.betterschool.domain.post.service.post.IPostService;
 import com.betterschool.domain.post.service.post.PostServiceImpl;
@@ -42,9 +41,6 @@ class FeedCursorPagingIntegrationTest extends PostApiTestBase {
 
     @Autowired
     private IPostRepository postRepository;
-    @Autowired
-    private IUserQueryPort userQueryPort;
-
     @Test
     void 最新排序游标翻页不重不漏且total降口径() {
         Session author = registerAndLogin("13900002401", "游标作者");
@@ -194,13 +190,13 @@ class FeedCursorPagingIntegrationTest extends PostApiTestBase {
                         org.mockito.ArgumentMatchers.any(),
                         org.mockito.ArgumentMatchers.anyInt());
 
-        FeedPageVO page = new PostServiceImpl(failingIndexRepo, userQueryPort)
+        FeedPageVO feedPageVO = new PostServiceImpl(failingIndexRepo)
                 .listPosts("time", null, 1, PAGE_SIZE);
-        assertThat(page.isIndexPath()).as("降级后 indexPath=false").isFalse();
-        assertThat(page.getNextCursor()).as("降级路径不发游标").isNull();
-        assertThat(page.getPosts()).as("降级路径仍出全量首页数据").hasSize(PAGE_SIZE);
+        assertThat(feedPageVO.isIndexPath()).as("降级后 indexPath=false").isFalse();
+        assertThat(feedPageVO.getNextCursor()).as("降级路径不发游标").isNull();
+        assertThat(feedPageVO.getPosts()).as("降级路径仍出全量首页数据").hasSize(PAGE_SIZE);
         // 旧直查按 create_time DESC, id DESC：首页 = 最新发出的 PAGE_SIZE 条（夹具顺序发布 → 尾段）
-        assertThat(page.getPosts()).extracting("postId")
+        assertThat(feedPageVO.getPosts()).extracting("postId")
                 .containsAll(seeded.subList(POST_COUNT - PAGE_SIZE, POST_COUNT));
     }
 

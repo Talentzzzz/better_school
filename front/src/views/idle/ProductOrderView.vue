@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import {
   getProductOrder,
-  payProductOrder,
   markDeliveredProduct,
   confirmProductOrder,
   cancelProductOrder
@@ -67,12 +66,15 @@ async function doAction(fn: () => Promise<unknown>, successMsg: string, needConf
 }
 
 const ACTION_HANDLERS: Record<OrderAction['key'], () => void> = {
-  pay: () =>
-    doAction(
-      () => payProductOrder(orderId),
-      '支付成功，资金已托管冻结',
-      '确认支付？支付后资金将托管冻结，卖家交付后确认收货'
-    ),
+  pay: () => {
+    if (!requireLogin()) return
+    const payNo = order.value?.payNo
+    if (!payNo) {
+      toast('支付单生成中，请稍后刷新重试')
+      return
+    }
+    router.push(`/pay/${payNo}`)
+  },
   delivered: () => doAction(() => markDeliveredProduct(orderId), '已标记交付，等待买家确认收货', '确认商品已交付给买家？'),
   confirm: () => doAction(() => confirmProductOrder(orderId), '订单完成，货款已支付给卖家', '确认已收到商品？确认后货款将转给卖家'),
   cancel: () =>

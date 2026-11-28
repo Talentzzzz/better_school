@@ -28,7 +28,7 @@
 - 三个平级**独立 project**：`backend/points/`（积分）、`backend/lottery/`（抽奖）、`backend/referral/`（拉新）；单体 `backend/pom.xml` 原地不动，与三服务**无 reactor 关系**（靠 `~/.m2` 里的 `bs-api` / `points-api` 通信）。
 - 每服务 = 一个聚合器 pom（parent `spring-boot-starter-parent:3.3.5`）+ 7 个模块 `<svc>-types/api/domain/case/infrastructure/trigger/app`，依赖方向照 `backend/CLAUDE.md` §1 严格单向。
 - groupId `com.betterschool`；基础包 `com.betterschool.<svc>`；启动类在各自 `-app` 根包。
-- **每个服务自带 types**：各自的 `-types` 内自带 `common/Constants`（本服务 topic / redis key 前缀）、`enums/ResponseCode`、`exception/AppException` —— **不复用 `bs-types`**（改一个常量会三个服务一起重发）。对外 HTTP 的 `Response<T>{code,info,data}` 信封放各自的 **`-api/response/`**（照 `backend/CLAUDE.md` §5 与 `bs-api/.../response/Response.java` 的位置），前端 `unwrap` 不变。
+- **每个服务自带 types**：各自的 `-types` 内自带 `common/Constants`（本服务 topic / redis key 前缀）、`enums/ResponseCodeEnum`、`exception/AppException` —— **不复用 `bs-types`**（改一个常量会三个服务一起重发）。对外 HTTP 的 `Response<T>{code,info,data}` 信封放各自的 **`-api/response/`**（照 `backend/CLAUDE.md` §5 与 `bs-api/.../response/Response.java` 的位置），前端 `unwrap` 不变。
 - mapper XML 在各自 `-app/src/main/resources/mybatis/mapper/`。
 - 三个**各自独立 schema**（同实例），跨库不 join、互相只存 id；昵称头像一律经 Dubbo 取回后应用层拼装。
 
@@ -181,7 +181,7 @@
 - **排序**：中奖记录 / 我的奖品 / 积分流水 / 拉新名单一律 `created_at DESC`；活动信息与奖品目录不分页。
 - **领取表单校验**：收件人 `@NotBlank @Size(max=30)`、手机号 `^1\d{10}$`、地址 `@NotBlank @Size(max=200)`（中文 message，走 `GlobalExceptionHandler` → `400`）。
 
-**③ 失败语义 = 业务 code 分支 + `info` 中文文案**。成功码一律 `"200"`（前端 `unwrap` 已认）；业务失败用**各服务自带的 `-types/enums/ResponseCode` 里的 `4xxx` 业务码**（无全局注册表），`info` 则放**逐条固定的中文文案**（全文见 [票 06 §3](issues/06-marketing-api-contract.md)）。前端 `api/marketing.ts` **按 code 分支**（`NO_CHANCE` → 票 02 的「次数不足」专用弹窗、填码五码 → 对应文案），未识别 code 落回默认 toast `info`。**失败码**（代表集）：填码 `CODE_NOT_FOUND`/`ACTIVITY_NOT_STARTED`/`ACTIVITY_ENDED`/`OLD_USER`/`ALREADY_INVITED`/`CANNOT_INVITE_SELF`；抽奖 `ACTIVITY_NOT_STARTED`/`ACTIVITY_ENDED`/`NO_CHANCE`/`DAILY_LIMIT_REACHED`；兑换 `ACTIVITY_NOT_STARTED`/`ACTIVITY_ENDED`/`INSUFFICIENT_POINTS`/`PRIZE_NOT_REDEEMABLE`/`OUT_OF_STOCK`；领奖 `PRIZE_NOT_CLAIMABLE`；开桶 `PRIZE_NOT_FOUND`/`PARAM_ERROR`。
+**③ 失败语义 = 业务 code 分支 + `info` 中文文案**。成功码一律 `"200"`（前端 `unwrap` 已认）；业务失败用**各服务自带的 `-types/enums/ResponseCodeEnum` 里的 `4xxx` 业务码**（无全局注册表），`info` 则放**逐条固定的中文文案**（全文见 [票 06 §3](issues/06-marketing-api-contract.md)）。前端 `api/marketing.ts` **按 code 分支**（`NO_CHANCE` → 票 02 的「次数不足」专用弹窗、填码五码 → 对应文案），未识别 code 落回默认 toast `info`。**失败码**（代表集）：填码 `CODE_NOT_FOUND`/`ACTIVITY_NOT_STARTED`/`ACTIVITY_ENDED`/`OLD_USER`/`ALREADY_INVITED`/`CANNOT_INVITE_SELF`；抽奖 `ACTIVITY_NOT_STARTED`/`ACTIVITY_ENDED`/`NO_CHANCE`/`DAILY_LIMIT_REACHED`；兑换 `ACTIVITY_NOT_STARTED`/`ACTIVITY_ENDED`/`INSUFFICIENT_POINTS`/`PRIZE_NOT_REDEEMABLE`/`OUT_OF_STOCK`；领奖 `PRIZE_NOT_CLAIMABLE`；开桶 `PRIZE_NOT_FOUND`/`PARAM_ERROR`。
 ⇢ **落地注意**：`front/src/api/http.ts` 的 `unwrap` 现在对任何非 200 都 toast `info`，要加一个「调用方自己处理失败」的开关，否则业务 code 已被专用弹窗处理后默认 toast 还会再弹一次。
 
 **④ 抽奖 POST 幂等**：`lottery_draw_record` 加 `client_token` + `uk_user_token(user_id, client_token)`（⚠️ 此列由票 06 回填票 05），前端生成 uuid 随 `draw` 请求带上，撞键**回放**已存结果（不重复抽、不重复扣次数）。这是本仓「幂等 + 重试」铁律在**唯一一个失败会让用户真亏一次抽奖**的写接口上的落地。

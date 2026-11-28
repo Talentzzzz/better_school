@@ -1,0 +1,3746 @@
+
+<!DOCTYPE HTML>
+<html lang="zh-hans" >
+    <head>
+        <meta charset="UTF-8">
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <title>消息 · 野火IM开发手册</title>
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <meta name="description" content="">
+        <meta name="generator" content="GitBook 3.2.3">
+        <meta name="author" content="野火IM">
+        
+        
+    
+    <link rel="stylesheet" href="../gitbook/style.css">
+
+    
+            
+                
+                <link rel="stylesheet" href="../gitbook/gitbook-plugin-search-plus/search.css">
+                
+            
+                
+                <link rel="stylesheet" href="../gitbook/gitbook-plugin-prism/prism-base16-ateliersulphurpool.light.css">
+                
+            
+                
+                <link rel="stylesheet" href="../gitbook/gitbook-plugin-anchors/plugin.css">
+                
+            
+                
+                <link rel="stylesheet" href="../gitbook/gitbook-plugin-emphasize/plugin.css">
+                
+            
+                
+                <link rel="stylesheet" href="../gitbook/gitbook-plugin-splitter/splitter.css">
+                
+            
+                
+                <link rel="stylesheet" href="../gitbook/gitbook-plugin-tbfed-pagefooter/footer.css">
+                
+            
+                
+                <link rel="stylesheet" href="../gitbook/gitbook-plugin-expandable-chapters-small/expandable-chapters-small.css">
+                
+            
+                
+                <link rel="stylesheet" href="https://static.wildfirechat.cn/bootstrap-3.3.7.min.css">
+                
+            
+                
+                <link rel="stylesheet" href="../gitbook/gitbook-plugin-sectionx/sectionx.css">
+                
+            
+                
+                <link rel="stylesheet" href="../gitbook/gitbook-plugin-anchor-navigation-ex/style/plugin.css">
+                
+            
+                
+                <link rel="stylesheet" href="../gitbook/gitbook-plugin-terminal/plugin.css">
+                
+            
+                
+                <link rel="stylesheet" href="../gitbook/gitbook-plugin-alerts/style.css">
+                
+            
+                
+                <link rel="stylesheet" href="../gitbook/gitbook-plugin-navigator/plugin.css">
+                
+            
+                
+                <link rel="stylesheet" href="../gitbook/gitbook-plugin-fontsettings/website.css">
+                
+            
+        
+
+    
+
+    
+        
+    
+        
+    
+
+        
+    
+    
+    
+    
+    <meta name="HandheldFriendly" content="true"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="apple-touch-icon-precomposed" sizes="152x152" href="../gitbook/images/apple-touch-icon-precomposed-152.png">
+    <link rel="shortcut icon" href="../gitbook/images/favicon.ico" type="image/x-icon">
+
+    
+    <link rel="next" href="message_content.html" />
+    
+    
+    <link rel="prev" href="conversation.html" />
+    
+
+    
+        <link rel="shortcut icon" href='../favicon.ico' type="image/x-icon">
+    
+    
+        <link rel="bookmark" href='../favicon.ico' type="image/x-icon">
+    
+    
+    
+
+    <style>
+    @media only screen and (max-width: 640px) {
+        .book-header .hidden-mobile {
+            display: none;
+        }
+    }
+    </style>
+    <script>
+        window["gitbook-plugin-github-buttons"] = {"repo":"wildfirechat/im-server","types":["star"],"size":"small"};
+    </script>
+
+    </head>
+    <body>
+        
+<div class="book">
+    <div class="book-summary">
+        
+            
+<div id="book-search-input" role="search">
+    <input type="text" placeholder="输入并搜索" />
+</div>
+
+            
+                <nav role="navigation">
+                
+
+
+<ul class="summary">
+    
+    
+    
+        
+        <li>
+            <a href="https://www.wildfirechat.cn" target="_blank" class="custom-link">Home</a>
+        </li>
+    
+    
+
+    
+    <li class="divider"></li>
+    
+
+    
+        
+        
+    
+        <li class="chapter " data-level="1.1" data-path="../">
+            
+                <a href="../">
+            
+                    
+                        <b>1.1.</b>
+                    
+                    产品介绍
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.2" data-path="../demo/">
+            
+                <a href="../demo/">
+            
+                    
+                        <b>1.2.</b>
+                    
+                    体验野火
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.3" data-path="../opensource/">
+            
+                <a href="../opensource/">
+            
+                    
+                        <b>1.3.</b>
+                    
+                    开源项目
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.4" data-path="../price/">
+            
+                <a href="../price/">
+            
+                    
+                        <b>1.4.</b>
+                    
+                    收费项目
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.5" data-path="../quick_start/">
+            
+                <a href="../quick_start/">
+            
+                    
+                        <b>1.5.</b>
+                    
+                    快速开始
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.5.1" data-path="../quick_start/server.html">
+            
+                <a href="../quick_start/server.html">
+            
+                    
+                        <b>1.5.1.</b>
+                    
+                    服务器部署
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.5.2" data-path="../quick_start/android.html">
+            
+                <a href="../quick_start/android.html">
+            
+                    
+                        <b>1.5.2.</b>
+                    
+                    安卓编译
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.5.3" data-path="../quick_start/iOS.html">
+            
+                <a href="../quick_start/iOS.html">
+            
+                    
+                        <b>1.5.3.</b>
+                    
+                    iOS编译
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.6" data-path="../trial/">
+            
+                <a href="../trial/">
+            
+                    
+                        <b>1.6.</b>
+                    
+                    收费组件试用
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.6.1" data-path="../trial/pc_electron.html">
+            
+                <a href="../trial/pc_electron.html">
+            
+                    
+                        <b>1.6.1.</b>
+                    
+                    PC Electron版本试用
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.6.2" data-path="../trial/pc_qt.html">
+            
+                <a href="../trial/pc_qt.html">
+            
+                    
+                        <b>1.6.2.</b>
+                    
+                    PC Qt版本试用
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.6.3" data-path="../trial/web.html">
+            
+                <a href="../trial/web.html">
+            
+                    
+                        <b>1.6.3.</b>
+                    
+                    Web试用
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.6.4" data-path="../trial/wx.html">
+            
+                <a href="../trial/wx.html">
+            
+                    
+                        <b>1.6.4.</b>
+                    
+                    小程序试用
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.6.5" data-path="../trial/trial.html">
+            
+                <a href="../trial/trial.html">
+            
+                    
+                        <b>1.6.5.</b>
+                    
+                    试用专业版和Web/小程序
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.6.6" data-path="../trial/voip.html">
+            
+                <a href="../trial/voip.html">
+            
+                    
+                        <b>1.6.6.</b>
+                    
+                    音视频高级版
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.6.7" data-path="../trial/moments.html">
+            
+                <a href="../trial/moments.html">
+            
+                    
+                        <b>1.6.7.</b>
+                    
+                    朋友圈
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.6.8" data-path="../trial/harmony.html">
+            
+                <a href="../trial/harmony.html">
+            
+                    
+                        <b>1.6.8.</b>
+                    
+                    鸿蒙SDK试用
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.7" data-path="../performance_test/">
+            
+                <a href="../performance_test/">
+            
+                    
+                        <b>1.7.</b>
+                    
+                    性能测试报告
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.8" data-path="../architecture/">
+            
+                <a href="../architecture/">
+            
+                    
+                        <b>1.8.</b>
+                    
+                    系统架构
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9" data-path="./">
+            
+                <a href="./">
+            
+                    
+                        <b>1.9.</b>
+                    
+                    基础知识
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.9.1" data-path="feature.html">
+            
+                <a href="feature.html">
+            
+                    
+                        <b>1.9.1.</b>
+                    
+                    功能特性
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.2" data-path="sdk_demo.html">
+            
+                <a href="sdk_demo.html">
+            
+                    
+                        <b>1.9.2.</b>
+                    
+                    SDK与客户端的关系
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.3" data-path="user.html">
+            
+                <a href="user.html">
+            
+                    
+                        <b>1.9.3.</b>
+                    
+                    用户
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.4" data-path="sdk_abilities.html">
+            
+                <a href="sdk_abilities.html">
+            
+                    
+                        <b>1.9.4.</b>
+                    
+                    SDK的功能
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.5" data-path="connect.html">
+            
+                <a href="connect.html">
+            
+                    
+                        <b>1.9.5.</b>
+                    
+                    连接
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.6" data-path="conversation.html">
+            
+                <a href="conversation.html">
+            
+                    
+                        <b>1.9.6.</b>
+                    
+                    会话
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter active" data-level="1.9.7" data-path="message.html">
+            
+                <a href="message.html">
+            
+                    
+                        <b>1.9.7.</b>
+                    
+                    消息
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.8" data-path="message_content.html">
+            
+                <a href="message_content.html">
+            
+                    
+                        <b>1.9.8.</b>
+                    
+                    消息内容
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.9" data-path="message_payload.html">
+            
+                <a href="message_payload.html">
+            
+                    
+                        <b>1.9.9.</b>
+                    
+                    消息负载
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.10" data-path="storage_and_sync.html">
+            
+                <a href="storage_and_sync.html">
+            
+                    
+                        <b>1.9.10.</b>
+                    
+                    存储与同步
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.11" data-path="offline_message.html">
+            
+                <a href="offline_message.html">
+            
+                    
+                        <b>1.9.11.</b>
+                    
+                    离线消息
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.12" data-path="group.html">
+            
+                <a href="group.html">
+            
+                    
+                        <b>1.9.12.</b>
+                    
+                    群组
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.13" data-path="chatroom.html">
+            
+                <a href="chatroom.html">
+            
+                    
+                        <b>1.9.13.</b>
+                    
+                    聊天室
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.14" data-path="channel.html">
+            
+                <a href="channel.html">
+            
+                    
+                        <b>1.9.14.</b>
+                    
+                    频道
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.15" data-path="custom_message_content.html">
+            
+                <a href="custom_message_content.html">
+            
+                    
+                        <b>1.9.15.</b>
+                    
+                    自定义消息内容
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.9.16" data-path="user_setting.html">
+            
+                <a href="user_setting.html">
+            
+                    
+                        <b>1.9.16.</b>
+                    
+                    用户设置
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.10" data-path="../commercial_server/">
+            
+                <a href="../commercial_server/">
+            
+                    
+                        <b>1.10.</b>
+                    
+                    专业版IM服务
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11" data-path="../server/">
+            
+                <a href="../server/">
+            
+                    
+                        <b>1.11.</b>
+                    
+                    服务器开发和运维
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.11.1" data-path="../server/server_port.html">
+            
+                <a href="../server/server_port.html">
+            
+                    
+                        <b>1.11.1.</b>
+                    
+                    服务器端口说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.2" data-path="../server/db_config.html">
+            
+                <a href="../server/db_config.html">
+            
+                    
+                        <b>1.11.2.</b>
+                    
+                    数据库配置
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.3" data-path="../server/server_memory.html">
+            
+                <a href="../server/server_memory.html">
+            
+                    
+                        <b>1.11.3.</b>
+                    
+                    机器内存的选择
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.4" data-path="../server/system_tune.html">
+            
+                <a href="../server/system_tune.html">
+            
+                    
+                        <b>1.11.4.</b>
+                    
+                    系统调优
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.5" data-path="../server/server_config.html">
+            
+                <a href="../server/server_config.html">
+            
+                    
+                        <b>1.11.5.</b>
+                    
+                    服务器配置
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.6" data-path="../server/admin_api/">
+            
+                <a href="../server/admin_api/">
+            
+                    
+                        <b>1.11.6.</b>
+                    
+                    Server API接口
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.11.6.1" data-path="../server/admin_api/user_api.html">
+            
+                <a href="../server/admin_api/user_api.html">
+            
+                    
+                        <b>1.11.6.1.</b>
+                    
+                    用户
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.6.2" data-path="../server/admin_api/user_relation.html">
+            
+                <a href="../server/admin_api/user_relation.html">
+            
+                    
+                        <b>1.11.6.2.</b>
+                    
+                    用户关系
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.6.3" data-path="../server/admin_api/message_api.html">
+            
+                <a href="../server/admin_api/message_api.html">
+            
+                    
+                        <b>1.11.6.3.</b>
+                    
+                    消息
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.6.4" data-path="../server/admin_api/group_api.html">
+            
+                <a href="../server/admin_api/group_api.html">
+            
+                    
+                        <b>1.11.6.4.</b>
+                    
+                    群组
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.6.5" data-path="../server/admin_api/chatroom_api.html">
+            
+                <a href="../server/admin_api/chatroom_api.html">
+            
+                    
+                        <b>1.11.6.5.</b>
+                    
+                    聊天室
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.6.6" data-path="../server/admin_api/conference_api.html">
+            
+                <a href="../server/admin_api/conference_api.html">
+            
+                    
+                        <b>1.11.6.6.</b>
+                    
+                    音视频会议
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.6.7" data-path="../server/admin_api/sensitive_word_api.html">
+            
+                <a href="../server/admin_api/sensitive_word_api.html">
+            
+                    
+                        <b>1.11.6.7.</b>
+                    
+                    敏感词
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.6.8" data-path="../server/admin_api/channel_api.html">
+            
+                <a href="../server/admin_api/channel_api.html">
+            
+                    
+                        <b>1.11.6.8.</b>
+                    
+                    频道接口
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.6.9" data-path="../server/admin_api/mesh_api.html">
+            
+                <a href="../server/admin_api/mesh_api.html">
+            
+                    
+                        <b>1.11.6.9.</b>
+                    
+                    桥接接口
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.6.10" data-path="../server/admin_api/moments_api.html">
+            
+                <a href="../server/admin_api/moments_api.html">
+            
+                    
+                        <b>1.11.6.10.</b>
+                    
+                    朋友圈接口
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.6.11" data-path="../server/admin_api/general_api.html">
+            
+                <a href="../server/admin_api/general_api.html">
+            
+                    
+                        <b>1.11.6.11.</b>
+                    
+                    其它接口
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.6.12" data-path="../server/admin_api/models.html">
+            
+                <a href="../server/admin_api/models.html">
+            
+                    
+                        <b>1.11.6.12.</b>
+                    
+                    常用对象
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.7" data-path="../server/sdk.html">
+            
+                <a href="../server/sdk.html">
+            
+                    
+                        <b>1.11.7.</b>
+                    
+                    Server SDK
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.8" data-path="../server/robot_api/">
+            
+                <a href="../server/robot_api/">
+            
+                    
+                        <b>1.11.8.</b>
+                    
+                    Robot API接口
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.11.8.1" data-path="../server/robot_api/group_api.html">
+            
+                <a href="../server/robot_api/group_api.html">
+            
+                    
+                        <b>1.11.8.1.</b>
+                    
+                    机器人群操作
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.8.2" data-path="../server/robot_api/moments_api.html">
+            
+                <a href="../server/robot_api/moments_api.html">
+            
+                    
+                        <b>1.11.8.2.</b>
+                    
+                    机器人朋友圈操作
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.9" data-path="../server/channel_api/">
+            
+                <a href="../server/channel_api/">
+            
+                    
+                        <b>1.11.9.</b>
+                    
+                    Channel API接口
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.10" data-path="../server/predefined_message_content.html">
+            
+                <a href="../server/predefined_message_content.html">
+            
+                    
+                        <b>1.11.10.</b>
+                    
+                    内置消息内容
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.11" data-path="../server/event_callback.html">
+            
+                <a href="../server/event_callback.html">
+            
+                    
+                        <b>1.11.11.</b>
+                    
+                    事件回调
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.12" >
+            
+                <a target="_blank" href="https://github.com/wildfirechat/push_server">
+            
+                    
+                        <b>1.11.12.</b>
+                    
+                    推送说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.13" data-path="../server/oss.html">
+            
+                <a href="../server/oss.html">
+            
+                    
+                        <b>1.11.13.</b>
+                    
+                    对象存储服务
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.11.13.1" data-path="../server/oss_config_sample.html">
+            
+                <a href="../server/oss_config_sample.html">
+            
+                    
+                        <b>1.11.13.1.</b>
+                    
+                    对象存储配置示例
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.13.2" data-path="../server/oss_bucket.html">
+            
+                <a href="../server/oss_bucket.html">
+            
+                    
+                        <b>1.11.13.2.</b>
+                    
+                    对象存储桶
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.14" data-path="../server/server_clean.html">
+            
+                <a href="../server/server_clean.html">
+            
+                    
+                        <b>1.11.14.</b>
+                    
+                    服务的维护
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.15" data-path="../server/mysql_tune.html">
+            
+                <a href="../server/mysql_tune.html">
+            
+                    
+                        <b>1.11.15.</b>
+                    
+                    MySQL调优
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.16" data-path="../server/hardware_requirement.html">
+            
+                <a href="../server/hardware_requirement.html">
+            
+                    
+                        <b>1.11.16.</b>
+                    
+                    硬件要求
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.17" data-path="../server/upgrade.html">
+            
+                <a href="../server/upgrade.html">
+            
+                    
+                        <b>1.11.17.</b>
+                    
+                    升级指南
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.18" data-path="../server/client_database_secret.html">
+            
+                <a href="../server/client_database_secret.html">
+            
+                    
+                        <b>1.11.18.</b>
+                    
+                    客户端数据库密钥
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.11.19" >
+            
+                <a target="_blank" href="https://gitee.com/wfchat/mesh-bridge">
+            
+                    
+                        <b>1.11.19.</b>
+                    
+                    多服务组网互联互通
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.12" data-path="../android/">
+            
+                <a href="../android/">
+            
+                    
+                        <b>1.12.</b>
+                    
+                    Android开发
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.12.1" data-path="../android/compile.html">
+            
+                <a href="../android/compile.html">
+            
+                    
+                        <b>1.12.1.</b>
+                    
+                    代码编译与工程说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.12.2" data-path="../android/chatclient.html">
+            
+                <a href="../android/chatclient.html">
+            
+                    
+                        <b>1.12.2.</b>
+                    
+                    ChatClient简介
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.12.3" data-path="../android/chatuikit.html">
+            
+                <a href="../android/chatuikit.html">
+            
+                    
+                        <b>1.12.3.</b>
+                    
+                    ChatUIKit简介
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.12.4" data-path="../android/wildfirechat.html">
+            
+                <a href="../android/wildfirechat.html">
+            
+                    
+                        <b>1.12.4.</b>
+                    
+                    WildfireChat简介
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.12.5" data-path="../android/android_integration.html">
+            
+                <a href="../android/android_integration.html">
+            
+                    
+                        <b>1.12.5.</b>
+                    
+                    集成说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.12.6" >
+            
+                <a target="_blank" href="https://github.com/wildfirechat/push_server">
+            
+                    
+                        <b>1.12.6.</b>
+                    
+                    推送集成
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.13" data-path="../ios/">
+            
+                <a href="../ios/">
+            
+                    
+                        <b>1.13.</b>
+                    
+                    iOS开发
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.13.1" data-path="../ios/compile.html">
+            
+                <a href="../ios/compile.html">
+            
+                    
+                        <b>1.13.1.</b>
+                    
+                    代码编译与工程说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.13.2" data-path="../ios/chatclient.html">
+            
+                <a href="../ios/chatclient.html">
+            
+                    
+                        <b>1.13.2.</b>
+                    
+                    ChatClient简介
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.13.3" data-path="../ios/chatuikit.html">
+            
+                <a href="../ios/chatuikit.html">
+            
+                    
+                        <b>1.13.3.</b>
+                    
+                    ChatUIKit简介
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.13.4" data-path="../ios/wildfirechat.html">
+            
+                <a href="../ios/wildfirechat.html">
+            
+                    
+                        <b>1.13.4.</b>
+                    
+                    WildfireChat简介
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.13.5" data-path="../ios/ios_integration.html">
+            
+                <a href="../ios/ios_integration.html">
+            
+                    
+                        <b>1.13.5.</b>
+                    
+                    集成说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.13.6" >
+            
+                <a target="_blank" href="https://github.com/wildfirechat/push_server">
+            
+                    
+                        <b>1.13.6.</b>
+                    
+                    推送集成
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.13.7" data-path="../ios/distribution.html">
+            
+                <a href="../ios/distribution.html">
+            
+                    
+                        <b>1.13.7.</b>
+                    
+                    打包
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.14" data-path="../pc/">
+            
+                <a href="../pc/">
+            
+                    
+                        <b>1.14.</b>
+                    
+                    PC开发
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.14.1" data-path="../pc/dev.html">
+            
+                <a href="../pc/dev.html">
+            
+                    
+                        <b>1.14.1.</b>
+                    
+                    二次开发
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.15" data-path="../web/">
+            
+                <a href="../web/">
+            
+                    
+                        <b>1.15.</b>
+                    
+                    Web开发
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.15.1" data-path="../web/web_config.html">
+            
+                <a href="../web/web_config.html">
+            
+                    
+                        <b>1.15.1.</b>
+                    
+                    Web配置
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.15.2" data-path="../web/im_server_config.html">
+            
+                <a href="../web/im_server_config.html">
+            
+                    
+                        <b>1.15.2.</b>
+                    
+                    IM服务配置
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.15.3" data-path="../web/integration.html">
+            
+                <a href="../web/integration.html">
+            
+                    
+                        <b>1.15.3.</b>
+                    
+                    二次开发
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.16" data-path="../webrtc/">
+            
+                <a href="../webrtc/">
+            
+                    
+                        <b>1.16.</b>
+                    
+                    音视频
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.16.1" data-path="../webrtc/turn_server.html">
+            
+                <a href="../webrtc/turn_server.html">
+            
+                    
+                        <b>1.16.1.</b>
+                    
+                    TURN服务
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.16.2" data-path="../webrtc/udp_connectivity.html">
+            
+                <a href="../webrtc/udp_connectivity.html">
+            
+                    
+                        <b>1.16.2.</b>
+                    
+                    UDP端口连通性检查
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.17" data-path="../moments/">
+            
+                <a href="../moments/">
+            
+                    
+                        <b>1.17.</b>
+                    
+                    朋友圈
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.18" data-path="../open/">
+            
+                <a href="../open/">
+            
+                    
+                        <b>1.18.</b>
+                    
+                    开放平台
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.18.1" data-path="../open/">
+            
+                <a href="../open/">
+            
+                    
+                        <b>1.18.1.</b>
+                    
+                    概述
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.18.2" data-path="../open/app_intergration.html">
+            
+                <a href="../open/app_intergration.html">
+            
+                    
+                        <b>1.18.2.</b>
+                    
+                    应用接入
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.18.3" data-path="../open/auth.html">
+            
+                <a href="../open/auth.html">
+            
+                    
+                        <b>1.18.3.</b>
+                    
+                    认证
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.18.4" data-path="../open/jssdk.html">
+            
+                <a href="../open/jssdk.html">
+            
+                    
+                        <b>1.18.4.</b>
+                    
+                    JSSDK
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.18.5" data-path="../open/serversdk.html">
+            
+                <a href="../open/serversdk.html">
+            
+                    
+                        <b>1.18.5.</b>
+                    
+                    Server SDK
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.18.6" data-path="../open/application_demo.html">
+            
+                <a href="../open/application_demo.html">
+            
+                    
+                        <b>1.18.6.</b>
+                    
+                    示例应用
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.19" data-path="../api/">
+            
+                <a href="../api/">
+            
+                    
+                        <b>1.19.</b>
+                    
+                    接口说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.20" data-path="../server/error_code.html">
+            
+                <a href="../server/error_code.html">
+            
+                    
+                        <b>1.20.</b>
+                    
+                    code状态码
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.21" data-path="maintain.html">
+            
+                <a href="maintain.html">
+            
+                    
+                        <b>1.21.</b>
+                    
+                    维护说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.22" data-path="support.html">
+            
+                <a href="support.html">
+            
+                    
+                        <b>1.22.</b>
+                    
+                    野火技术支持
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.23" data-path="../admin/">
+            
+                <a href="../admin/">
+            
+                    
+                        <b>1.23.</b>
+                    
+                    管理后台
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.24" >
+            
+                <a target="_blank" href="https://github.com/wildfirechat/app-server/blob/master/README.md">
+            
+                    
+                        <b>1.24.</b>
+                    
+                    应用服务
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.25" >
+            
+                <a target="_blank" href="https://github.com/wildfirechat/push_server/blob/master/README.md">
+            
+                    
+                        <b>1.25.</b>
+                    
+                    推送服务
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.26" >
+            
+                <a target="_blank" href="https://github.com/wildfirechat/robot_server/blob/master/README.md">
+            
+                    
+                        <b>1.26.</b>
+                    
+                    机器人服务
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27" data-path="../faq/">
+            
+                <a href="../faq/">
+            
+                    
+                        <b>1.27.</b>
+                    
+                    常见问题
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.27.1" data-path="../faq/checklist.html">
+            
+                <a href="../faq/checklist.html">
+            
+                    
+                        <b>1.27.1.</b>
+                    
+                    部署检查单
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.2" data-path="../faq/general.html">
+            
+                <a href="../faq/general.html">
+            
+                    
+                        <b>1.27.2.</b>
+                    
+                    通用问题
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.27.2.1" data-path="../faq/buy.html">
+            
+                <a href="../faq/buy.html">
+            
+                    
+                        <b>1.27.2.1.</b>
+                    
+                    购买流程
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.3" data-path="../faq/server.html">
+            
+                <a href="../faq/server.html">
+            
+                    
+                        <b>1.27.3.</b>
+                    
+                    服务器问题
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.27.3.1" data-path="../faq/server/q1.html">
+            
+                <a href="../faq/server/q1.html">
+            
+                    
+                        <b>1.27.3.1.</b>
+                    
+                    如何解决等登录但一直连接中的问题
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.4" data-path="../faq/android.html">
+            
+                <a href="../faq/android.html">
+            
+                    
+                        <b>1.27.4.</b>
+                    
+                    安卓问题
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.27.4.1" data-path="../faq/android/q1.html">
+            
+                <a href="../faq/android/q1.html">
+            
+                    
+                        <b>1.27.4.1.</b>
+                    
+                    如何导入到Android Studio中
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.4.2" data-path="../faq/android/q2.html">
+            
+                <a href="../faq/android/q2.html">
+            
+                    
+                        <b>1.27.4.2.</b>
+                    
+                    如何集成到现有项目中
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.4.3" data-path="../faq/android/q3.html">
+            
+                <a href="../faq/android/q3.html">
+            
+                    
+                        <b>1.27.4.3.</b>
+                    
+                    如何抓取日志
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.4.4" data-path="../faq/android/q4.html">
+            
+                <a href="../faq/android/q4.html">
+            
+                    
+                        <b>1.27.4.4.</b>
+                    
+                    小米手机没有音视频推送
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.4.5" data-path="../faq/android/q5.html">
+            
+                <a href="../faq/android/q5.html">
+            
+                    
+                        <b>1.27.4.5.</b>
+                    
+                    点击消息推送通知，如何根据消息类型，跳转到不同的界面？
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.4.6" >
+            
+                <a target="_blank" href="https://github.com/wildfirechat/push_server">
+            
+                    
+                        <b>1.27.4.6.</b>
+                    
+                    收不到推送
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.5" data-path="../faq/ios.html">
+            
+                <a href="../faq/ios.html">
+            
+                    
+                        <b>1.27.5.</b>
+                    
+                    iOS问题
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.6" data-path="../faq/web.html">
+            
+                <a href="../faq/web.html">
+            
+                    
+                        <b>1.27.6.</b>
+                    
+                    Web问题
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.27.6.1" data-path="../faq/web/https.html">
+            
+                <a href="../faq/web/https.html">
+            
+                    
+                        <b>1.27.6.1.</b>
+                    
+                    https
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.6.2" data-path="../faq/web/all_in_one_http.html">
+            
+                <a href="../faq/web/all_in_one_http.html">
+            
+                    
+                        <b>1.27.6.2.</b>
+                    
+                    快速体验 Web 端
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.6.3" data-path="../faq/web/all_in_one_https.html">
+            
+                <a href="../faq/web/all_in_one_https.html">
+            
+                    
+                        <b>1.27.6.3.</b>
+                    
+                    all-in-one
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.6.4" data-path="../faq/web/all_in_one_ip_https.html">
+            
+                <a href="../faq/web/all_in_one_ip_https.html">
+            
+                    
+                        <b>1.27.6.4.</b>
+                    
+                    all-in-one-ip
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.7" data-path="../faq/pc_electron.html">
+            
+                <a href="../faq/pc_electron.html">
+            
+                    
+                        <b>1.27.7.</b>
+                    
+                    PC Electron版本问题
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.8" data-path="../faq/pc_qt.html">
+            
+                <a href="../faq/pc_qt.html">
+            
+                    
+                        <b>1.27.8.</b>
+                    
+                    PC Qt版本问题
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.9" data-path="../faq/wx.md">
+            
+                <span>
+            
+                    
+                        <b>1.27.9.</b>
+                    
+                    小程序问题
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.10" data-path="../faq/webrtc.html">
+            
+                <a href="../faq/webrtc.html">
+            
+                    
+                        <b>1.27.10.</b>
+                    
+                    音视频问题
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.11" data-path="../faq/uniapp.html">
+            
+                <a href="../faq/uniapp.html">
+            
+                    
+                        <b>1.27.11.</b>
+                    
+                    Uniapp问题
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.27.12" data-path="../faq/practicality.html">
+            
+                <a href="../faq/practicality.html">
+            
+                    
+                        <b>1.27.12.</b>
+                    
+                    最佳实践
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.27.12.1" data-path="../faq/practicality/stickers.html">
+            
+                <a href="../faq/practicality/stickers.html">
+            
+                    
+                        <b>1.27.12.1.</b>
+                    
+                    小表情大世界
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28" data-path="../blogs/">
+            
+                <a href="../blogs/">
+            
+                    
+                        <b>1.28.</b>
+                    
+                    文章
+            
+                </a>
+            
+
+            
+            <ul class="articles">
+                
+    
+        <li class="chapter " data-level="1.28.1" data-path="../blogs/如何开发一款微信.html">
+            
+                <a href="../blogs/如何开发一款微信.html">
+            
+                    
+                        <b>1.28.1.</b>
+                    
+                    如何开发一款微信
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.2" data-path="../blogs/如何修改野火应用服务生成用户名的策略.html">
+            
+                <a href="../blogs/如何修改野火应用服务生成用户名的策略.html">
+            
+                    
+                        <b>1.28.2.</b>
+                    
+                    如何修改野火应用服务生成用户名的策略
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.3" data-path="../blogs/苹果ATS处理.html">
+            
+                <a href="../blogs/苹果ATS处理.html">
+            
+                    
+                        <b>1.28.3.</b>
+                    
+                    苹果ATS处理
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.4" data-path="../blogs/野火IM的商业逻辑.html">
+            
+                <a href="../blogs/野火IM的商业逻辑.html">
+            
+                    
+                        <b>1.28.4.</b>
+                    
+                    野火IM的商业逻辑
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.5" data-path="../blogs/如何理解野火IM设计理念.html">
+            
+                <a href="../blogs/如何理解野火IM设计理念.html">
+            
+                    
+                        <b>1.28.5.</b>
+                    
+                    如何理解野火IM设计理念
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.6" data-path="../blogs/为什么野火IM不全免费.html">
+            
+                <a href="../blogs/为什么野火IM不全免费.html">
+            
+                    
+                        <b>1.28.6.</b>
+                    
+                    为什么野火IM不全免费
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.7" data-path="../blogs/开发运营社交软件也要遵守法律.html">
+            
+                <a href="../blogs/开发运营社交软件也要遵守法律.html">
+            
+                    
+                        <b>1.28.7.</b>
+                    
+                    开发运营社交软件也要遵守法律
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.8" data-path="../blogs/如何实现聊天记录的备份与恢复.html">
+            
+                <a href="../blogs/如何实现聊天记录的备份与恢复.html">
+            
+                    
+                        <b>1.28.8.</b>
+                    
+                    如何实现聊天记录的备份与恢复
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.9" data-path="../blogs/如何远程收集日志.html">
+            
+                <a href="../blogs/如何远程收集日志.html">
+            
+                    
+                        <b>1.28.9.</b>
+                    
+                    如何远程收集日志
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.10" data-path="../blogs/野火IM抗击疫情行动.html">
+            
+                <a href="../blogs/野火IM抗击疫情行动.html">
+            
+                    
+                        <b>1.28.10.</b>
+                    
+                    野火IM抗击疫情行动
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.11" data-path="../blogs/多端登录的处理.html">
+            
+                <a href="../blogs/多端登录的处理.html">
+            
+                    
+                        <b>1.28.11.</b>
+                    
+                    多端登录的处理
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.12" data-path="../blogs/野火IM应用之Webhook机器人.html">
+            
+                <a href="../blogs/野火IM应用之Webhook机器人.html">
+            
+                    
+                        <b>1.28.12.</b>
+                    
+                    野火IM应用之Webhook机器人
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.13" data-path="../blogs/野火IM应用之对讲机.html">
+            
+                <a href="../blogs/野火IM应用之对讲机.html">
+            
+                    
+                        <b>1.28.13.</b>
+                    
+                    野火IM应用之对讲机
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.14" data-path="../blogs/野火IM应用之如何做一套客服系统.html">
+            
+                <a href="../blogs/野火IM应用之如何做一套客服系统.html">
+            
+                    
+                        <b>1.28.14.</b>
+                    
+                    野火IM应用系列之如何做一套客服系统
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.15" data-path="../blogs/野火IM应用之如何做一套简单客服系统.html">
+            
+                <a href="../blogs/野火IM应用之如何做一套简单客服系统.html">
+            
+                    
+                        <b>1.28.15.</b>
+                    
+                    野火IM应用系列之如何做一套简单客服系统
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.16" data-path="../blogs/文件存储的安全性问题.html">
+            
+                <a href="../blogs/文件存储的安全性问题.html">
+            
+                    
+                        <b>1.28.16.</b>
+                    
+                    文件存储的安全性问题
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.17" data-path="../blogs/群的一些细节问题.html">
+            
+                <a href="../blogs/群的一些细节问题.html">
+            
+                    
+                        <b>1.28.17.</b>
+                    
+                    群的一些细节问题
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.18" data-path="../blogs/聊天室的一些细节.html">
+            
+                <a href="../blogs/聊天室的一些细节.html">
+            
+                    
+                        <b>1.28.18.</b>
+                    
+                    聊天室的一些细节
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.19" data-path="../blogs/关于登录的一些说明.html">
+            
+                <a href="../blogs/关于登录的一些说明.html">
+            
+                    
+                        <b>1.28.19.</b>
+                    
+                    关于登录的一些说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.20" data-path="../blogs/如何正确地理解机器人.html">
+            
+                <a href="../blogs/如何正确地理解机器人.html">
+            
+                    
+                        <b>1.28.20.</b>
+                    
+                    如何正确地理解机器人
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.21" data-path="../blogs/已送达和已读回执功能使用说明.html">
+            
+                <a href="../blogs/已送达和已读回执功能使用说明.html">
+            
+                    
+                        <b>1.28.21.</b>
+                    
+                    已送达和已读回执功能使用说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.22" data-path="../blogs/推送计数不准确的问题.html">
+            
+                <a href="../blogs/推送计数不准确的问题.html">
+            
+                    
+                        <b>1.28.22.</b>
+                    
+                    推送计数不准确的问题
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.23" data-path="../blogs/手机通讯录用户关系和好友推荐.html">
+            
+                <a href="../blogs/手机通讯录用户关系和好友推荐.html">
+            
+                    
+                        <b>1.28.23.</b>
+                    
+                    手机通讯录用户关系和好友推荐
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.24" data-path="../blogs/上线检查事项.html">
+            
+                <a href="../blogs/上线检查事项.html">
+            
+                    
+                        <b>1.28.24.</b>
+                    
+                    上线检查事项
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.25" data-path="../blogs/推送的extra在哪里.html">
+            
+                <a href="../blogs/推送的extra在哪里.html">
+            
+                    
+                        <b>1.28.25.</b>
+                    
+                    推送的extra在哪里
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.26" data-path="../blogs/国产化系统鲲鹏CPU+UOS适配经历.html">
+            
+                <a href="../blogs/国产化系统鲲鹏CPU+UOS适配经历.html">
+            
+                    
+                        <b>1.28.26.</b>
+                    
+                    国产化系统鲲鹏CPU+UOS适配经历
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.27" data-path="../blogs/面对面建群.html">
+            
+                <a href="../blogs/面对面建群.html">
+            
+                    
+                        <b>1.28.27.</b>
+                    
+                    面对面建群
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.28" data-path="../blogs/野火IM国产化适配状态.html">
+            
+                <a href="../blogs/野火IM国产化适配状态.html">
+            
+                    
+                        <b>1.28.28.</b>
+                    
+                    野火IM国产化适配状态
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.29" data-path="../blogs/加群验证功能.html">
+            
+                <a href="../blogs/加群验证功能.html">
+            
+                    
+                        <b>1.28.29.</b>
+                    
+                    加群验证功能
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.30" data-path="../blogs/野火音视频简介.html">
+            
+                <a href="../blogs/野火音视频简介.html">
+            
+                    
+                        <b>1.28.30.</b>
+                    
+                    野火音视频简介
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.31" data-path="../blogs/野火音视频之超级会议.html">
+            
+                <a href="../blogs/野火音视频之超级会议.html">
+            
+                    
+                        <b>1.28.31.</b>
+                    
+                    野火音视频之超级会议
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.32" data-path="../blogs/如何不显示退群和踢人消息.html">
+            
+                <a href="../blogs/如何不显示退群和踢人消息.html">
+            
+                    
+                        <b>1.28.32.</b>
+                    
+                    如何不显示退群和踢人消息
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.33" data-path="../blogs/政企内外双网解决方案.html">
+            
+                <a href="../blogs/政企内外双网解决方案.html">
+            
+                    
+                        <b>1.28.33.</b>
+                    
+                    政企内外双网解决方案
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.34" data-path="../blogs/系统通知对接的一些要点.html">
+            
+                <a href="../blogs/系统通知对接的一些要点.html">
+            
+                    
+                        <b>1.28.34.</b>
+                    
+                    系统通知对接的一些要点
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.35" data-path="../blogs/iOS如何抓网络包.html">
+            
+                <a href="../blogs/iOS如何抓网络包.html">
+            
+                    
+                        <b>1.28.35.</b>
+                    
+                    iOS如何抓网络包
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.36" data-path="../blogs/野火安全吗.html">
+            
+                <a href="../blogs/野火安全吗.html">
+            
+                    
+                        <b>1.28.36.</b>
+                    
+                    野火安全吗
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.37" data-path="../blogs/如何开发匿名聊天功能.html">
+            
+                <a href="../blogs/如何开发匿名聊天功能.html">
+            
+                    
+                        <b>1.28.37.</b>
+                    
+                    如何开发匿名聊天功能
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.38" data-path="../blogs/iOS音视频通知的处理.html">
+            
+                <a href="../blogs/iOS音视频通知的处理.html">
+            
+                    
+                        <b>1.28.38.</b>
+                    
+                    iOS音视频通知的处理
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.39" data-path="../blogs/野火IM全球接入方案.html">
+            
+                <a href="../blogs/野火IM全球接入方案.html">
+            
+                    
+                        <b>1.28.39.</b>
+                    
+                    野火IM全球接入方案
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.40" data-path="../blogs/野火IM支持国密啦.html">
+            
+                <a href="../blogs/野火IM支持国密啦.html">
+            
+                    
+                        <b>1.28.40.</b>
+                    
+                    野火IM支持国密啦
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.41" data-path="../blogs/野火音视频之双流模式.html">
+            
+                <a href="../blogs/野火音视频之双流模式.html">
+            
+                    
+                        <b>1.28.41.</b>
+                    
+                    野火音视频之双流模式
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.42" data-path="../blogs/野火音视频高级版的一些知识.html">
+            
+                <a href="../blogs/野火音视频高级版的一些知识.html">
+            
+                    
+                        <b>1.28.42.</b>
+                    
+                    野火音视频高级版的一些知识
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.43" data-path="../blogs/野火音视频全球接入方案.html">
+            
+                <a href="../blogs/野火音视频全球接入方案.html">
+            
+                    
+                        <b>1.28.43.</b>
+                    
+                    野火音视频全球接入方案
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.44" data-path="../blogs/野火在线状态简介和开发说明.html">
+            
+                <a href="../blogs/野火在线状态简介和开发说明.html">
+            
+                    
+                        <b>1.28.44.</b>
+                    
+                    野火在线状态简介和开发说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.45" data-path="../blogs/iOS如何启用CallKit.html">
+            
+                <a href="../blogs/iOS如何启用CallKit.html">
+            
+                    
+                        <b>1.28.45.</b>
+                    
+                    iOS如何启用CallKit
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.46" data-path="../blogs/野火端到端及阅后即焚功能介绍.html">
+            
+                <a href="../blogs/野火端到端及阅后即焚功能介绍.html">
+            
+                    
+                        <b>1.28.46.</b>
+                    
+                    野火端到端及阅后即焚功能介绍
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.47" data-path="../blogs/多人音视频的主动加入功能.html">
+            
+                <a href="../blogs/多人音视频的主动加入功能.html">
+            
+                    
+                        <b>1.28.47.</b>
+                    
+                    多人音视频的主动加入功能
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.48" data-path="../blogs/野火IM使用方式.html">
+            
+                <a href="../blogs/野火IM使用方式.html">
+            
+                    
+                        <b>1.28.48.</b>
+                    
+                    野火IM使用方式
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.49" data-path="../blogs/systemd.html">
+            
+                <a href="../blogs/systemd.html">
+            
+                    
+                        <b>1.28.49.</b>
+                    
+                    Systemd Service部署
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.50" data-path="../blogs/签名验证.html">
+            
+                <a href="../blogs/签名验证.html">
+            
+                    
+                        <b>1.28.50.</b>
+                    
+                    签名验证
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.51" data-path="../blogs/基于TCP的短链接.html">
+            
+                <a href="../blogs/基于TCP的短链接.html">
+            
+                    
+                        <b>1.28.51.</b>
+                    
+                    基于TCP的短链接
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.52" data-path="../blogs/超级群组.html">
+            
+                <a href="../blogs/超级群组.html">
+            
+                    
+                        <b>1.28.52.</b>
+                    
+                    超级群组
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.53" data-path="../blogs/音视频高级版的单端口化和强制TCP化.html">
+            
+                <a href="../blogs/音视频高级版的单端口化和强制TCP化.html">
+            
+                    
+                        <b>1.28.53.</b>
+                    
+                    音视频高级版的单端口化和强制TCP化
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.54" data-path="../blogs/数据库重复消息ID的问题.html">
+            
+                <a href="../blogs/数据库重复消息ID的问题.html">
+            
+                    
+                        <b>1.28.54.</b>
+                    
+                    数据库重复消息ID的问题
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.55" data-path="../blogs/物联网设备的接入.html">
+            
+                <a href="../blogs/物联网设备的接入.html">
+            
+                    
+                        <b>1.28.55.</b>
+                    
+                    物联网设备的接入
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.56" data-path="../blogs/AVENGINE_DEVELOPER_GUIDE.html">
+            
+                <a href="../blogs/AVENGINE_DEVELOPER_GUIDE.html">
+            
+                    
+                        <b>1.28.56.</b>
+                    
+                    物联网设备接入音视频
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.57" data-path="../blogs/内存泄漏排查.html">
+            
+                <a href="../blogs/内存泄漏排查.html">
+            
+                    
+                        <b>1.28.57.</b>
+                    
+                    内存泄漏排查
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.58" data-path="../blogs/应用服务的一些细节问题.html">
+            
+                <a href="../blogs/应用服务的一些细节问题.html">
+            
+                    
+                        <b>1.28.58.</b>
+                    
+                    应用服务的一些细节问题
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.59" data-path="../blogs/消息点赞和评论推荐实现方案.html">
+            
+                <a href="../blogs/消息点赞和评论推荐实现方案.html">
+            
+                    
+                        <b>1.28.59.</b>
+                    
+                    消息点赞和评论推荐实现方案
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.60" data-path="../blogs/野火IM互通方案.html">
+            
+                <a href="../blogs/野火IM互通方案.html">
+            
+                    
+                        <b>1.28.60.</b>
+                    
+                    野火IM互通方案
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.61" data-path="../blogs/野火远程协助功能简介.html">
+            
+                <a href="../blogs/野火远程协助功能简介.html">
+            
+                    
+                        <b>1.28.61.</b>
+                    
+                    野火远程协助功能简介
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.62" data-path="../blogs/野火IM如何做单点登录.html">
+            
+                <a href="../blogs/野火IM如何做单点登录.html">
+            
+                    
+                        <b>1.28.62.</b>
+                    
+                    野火IM如何做单点登录
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.63" data-path="../blogs/野火IM×OpenClaw：打造你的私有化AI助手.html">
+            
+                <a href="../blogs/野火IM×OpenClaw：打造你的私有化AI助手.html">
+            
+                    
+                        <b>1.28.63.</b>
+                    
+                    野火IM x OpenClaw打造你的私有化AI助手
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.64" data-path="../blogs/如何迁移数据到野火.html">
+            
+                <a href="../blogs/如何迁移数据到野火.html">
+            
+                    
+                        <b>1.28.64.</b>
+                    
+                    如何迁移数据到野火
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.65" data-path="../blogs/如何创建用户并设置密码.html">
+            
+                <a href="../blogs/如何创建用户并设置密码.html">
+            
+                    
+                        <b>1.28.65.</b>
+                    
+                    如何创建用户并设置密码
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.66" data-path="../blogs/IM服务安全防护指南.html">
+            
+                <a href="../blogs/IM服务安全防护指南.html">
+            
+                    
+                        <b>1.28.66.</b>
+                    
+                    IM服务安全防护指南
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.67" data-path="../blogs/野火IM支持TLS与KCP连接方式.html">
+            
+                <a href="../blogs/野火IM支持TLS与KCP连接方式.html">
+            
+                    
+                        <b>1.28.67.</b>
+                    
+                    野火IM支持TLS与KCP连接方式
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.68" data-path="../blogs/electron-auto-updater-guide.html">
+            
+                <a href="../blogs/electron-auto-updater-guide.html">
+            
+                    
+                        <b>1.28.68.</b>
+                    
+                    Electron PC客户的升级功能说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.69" data-path="../blogs/wfchat_schema_documentation.html">
+            
+                <a href="../blogs/wfchat_schema_documentation.html">
+            
+                    
+                        <b>1.28.69.</b>
+                    
+                    野火IM数据库表结构说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.70" data-path="../blogs/A2A_vs_WeChat_Agent_Communication.html">
+            
+                <a href="../blogs/A2A_vs_WeChat_Agent_Communication.html">
+            
+                    
+                        <b>1.28.70.</b>
+                    
+                    Agent通信的未来
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.71" data-path="../blogs/野火机器人MCP服务简介.html">
+            
+                <a href="../blogs/野火机器人MCP服务简介.html">
+            
+                    
+                        <b>1.28.71.</b>
+                    
+                    野火机器人MCP服务简介
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.72" data-path="../blogs/野火IMxHermes：用一座桥，把企业即时通讯接入AIAgent时代.html">
+            
+                <a href="../blogs/野火IMxHermes：用一座桥，把企业即时通讯接入AIAgent时代.html">
+            
+                    
+                        <b>1.28.72.</b>
+                    
+                    野火 IM × Hermes：用一座桥，把企业即时通讯接入 AI Agent 时代
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.73" data-path="../blogs/野火IM与AI对接开发说明.html">
+            
+                <a href="../blogs/野火IM与AI对接开发说明.html">
+            
+                    
+                        <b>1.28.73.</b>
+                    
+                    野火IM与AI对接开发说明
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.74" data-path="../blogs/野火企信介绍.html">
+            
+                <a href="../blogs/野火企信介绍.html">
+            
+                    
+                        <b>1.28.74.</b>
+                    
+                    野火企信介绍
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="1.28.75" data-path="../blogs/使用指南-用现有Webhook推送消息.html">
+            
+                <a href="../blogs/使用指南-用现有Webhook推送消息.html">
+            
+                    
+                        <b>1.28.75.</b>
+                    
+                    使用指南-用现有Webhook推送消息
+            
+                </a>
+            
+
+            
+        </li>
+    
+
+            </ul>
+            
+        </li>
+    
+
+    
+
+    <li class="divider"></li>
+
+    <li>
+        <a href="https://www.gitbook.com" target="blank" class="gitbook-link">
+            本书使用 GitBook 发布
+        </a>
+    </li>
+</ul>
+
+
+                </nav>
+            
+        
+    </div>
+
+    <div class="book-body">
+        
+            <div class="body-inner">
+                
+                    
+
+<div class="book-header" role="navigation">
+    
+
+    <!-- Title -->
+    <h1>
+        <i class="fa fa-circle-o-notch fa-spin"></i>
+        <a href=".." >消息</a>
+    </h1>
+</div>
+
+
+
+
+                    <div class="page-wrapper" tabindex="-1" role="main">
+                        <div class="page-inner">
+                            
+<div id="book-search-results">
+    <div class="search-noresults">
+    
+                                <section class="normal markdown-section">
+                                
+                                <div id="anchor-navigation-ex-navbar"><i class="fa fa-anchor"></i><ul><li><a href="#&#x6D88;&#x606F;">&#x6D88;&#x606F;</a></li></ul></div><a href="#&#x6D88;&#x606F;" id="anchorNavigationExGoTop"><i class="fa fa-arrow-up"></i></a><h1 id="&#x6D88;&#x606F;"><a name="&#x6D88;&#x606F;" class="anchor-navigation-ex-anchor" href="#&#x6D88;&#x606F;"><i class="fa fa-link" aria-hidden="true"></i></a>&#x6D88;&#x606F;</h1>
+<p>&#x6D88;&#x606F;&#x5B9A;&#x4E49;&#x4E3A;<code>message</code>&#x5BF9;&#x8C61;&#x3002;&#x6D88;&#x606F;&#x4E0E;&#x4F1A;&#x8BDD;&#x7684;&#x5173;&#x7CFB;&#x662F;&#x4E00;&#x5BF9;&#x591A;&#xFF0C;&#x4E00;&#x6761;&#x6D88;&#x606F;&#x5BF9;&#x5E94;&#x4E8E;&#x4E00;&#x4E2A;&#x4F1A;&#x8BDD;&#xFF0C;&#x4E00;&#x4E2A;&#x4F1A;&#x8BDD;&#x53EF;&#x4EE5;&#x6709;&#x591A;&#x6761;&#x6D88;&#x606F;&#x3002;&#x5B83;&#x5177;&#x6709;&#x5982;&#x4E0B;&#x5C5E;&#x6027;&#xFF1A;</p>
+<h4 id="messageId">0.0.1. messageId</h4>
+<p>&#x6D88;&#x606F;ID&#xFF0C;&#x5982;&#x679C;&#x6D88;&#x606F;&#x5185;&#x5BB9;&#x662F;&#x5B58;&#x50A8;&#x7C7B;&#x578B;&#x7684;&#xFF0C;messageId&#x5BF9;&#x5E94;&#x4E8E;&#x672C;&#x5730;&#x6570;&#x636E;&#x5E93;&#x4E2D;&#x7684;&#x81EA;&#x589E;id&#xFF0C;&#x540C;&#x4E00;&#x6761;&#x6D88;&#x606F;&#x5728;&#x53D1;&#x9001;&#x65B9;&#x548C;&#x63A5;&#x6536;&#x65B9;&#x90FD;&#x53EF;&#x80FD;&#x662F;&#x4E0D;&#x540C;&#x7684;&#xFF0C;&#x751A;&#x81F3;&#x5728;&#x591A;&#x7AEF;&#x7684;&#x60C5;&#x51B5;&#x4E0B;&#x4E5F;&#x4E0D;&#x80FD;&#x4FDD;&#x8BC1;&#x76F8;&#x540C;&#x3002;&#x5982;&#x679C;&#x6D88;&#x606F;&#x5185;&#x5BB9;&#x662F;&#x975E;&#x5B58;&#x50A8;&#x7684;&#xFF0C;messageId&#x4E3A;0.</p>
+<h4 id="messageUid">0.0.2. messageUid</h4>
+<p>&#x6D88;&#x606F;&#x552F;&#x4E00;ID&#xFF0C;&#x7531;&#x670D;&#x52A1;&#x5668;&#x5206;&#x914D;&#x7684;&#x5168;&#x5C40;&#x552F;&#x4E00;ID&#x3002;&#x6D88;&#x606F;&#x53EA;&#x6709;&#x53D1;&#x9001;&#x6210;&#x529F;&#x624D;&#x4F1A;&#x62E5;&#x6709;&#x552F;&#x4E00;ID&#x3002;</p>
+<h4 id="conversation">0.0.3. conversation</h4>
+<p>&#x6240;&#x5C5E;&#x7684;&#x4F1A;&#x8BDD;</p>
+<h4 id="fromUser">0.0.4. fromUser</h4>
+<p>&#x53D1;&#x9001;&#x8005;</p>
+<h4 id="direction">0.0.5. direction</h4>
+<p>&#x6D88;&#x606F;&#x65B9;&#x5411;&#xFF0C;&#x662F;&#x53D1;&#x9001;&#x7684;&#x8FD8;&#x662F;&#x63A5;&#x6536;&#x7684;&#x3002;</p>
+<h4 id="status">0.0.6. status</h4>
+<p>&#x6D88;&#x606F;&#x72B6;&#x6001;&#xFF0C;&#x5206;&#x4E3A;&#x5982;&#x4E0B;&#x503C;</p>
+<pre class="language-"><code>* Sending 0&#xFF0C;&#x6B63;&#x5728;&#x53D1;&#x9001;&#x4E2D;&#x3002;
+* Sent 1&#xFF0C;&#x5DF2;&#x53D1;&#x9001;&#x3002;
+* Send_Failure 2&#xFF0C;&#x53D1;&#x9001;&#x5931;&#x8D25;&#x3002;
+* Mentioned 3&#xFF0C;&#x63D0;&#x9192;&#x3002;
+* AllMentioned 4&#xFF0C;&#x63D0;&#x9192;&#x6240;&#x6709;&#x4EBA;&#x3002;
+* Unread 5&#xFF0C;&#x672A;&#x8BFB;&#x3002;
+* Readed 6&#xFF0C;&#x5DF2;&#x8BFB;&#x3002;
+* Played 7&#xFF0C;&#x5DF2;&#x64AD;&#x653E;&#x3002;
+</code></pre><blockquote>
+<p>&#x5176;&#x4E2D;&#x63D0;&#x9192;&#x548C;&#x63D0;&#x9192;&#x6240;&#x6709;&#x4EBA;&#x662F;&#x4E00;&#x79CD;&#x7279;&#x6B8A;&#x7684;&#x672A;&#x8BFB;&#x72B6;&#x6001;&#xFF0C;&#x5F53;&#x6E05;&#x7406;&#x672A;&#x8BFB;&#x72B6;&#x6001;&#x65F6;&#xFF0C;&#x8FD9;&#x4E24;&#x79CD;&#x72B6;&#x6001;&#x4E5F;&#x4F1A;&#x88AB;&#x6E05;&#x6389;&#x3002;</p>
+</blockquote>
+<p>&#x5173;&#x4E8E;&#x5DF2;&#x9001;&#x8FBE;&#x548C;&#x5DF2;&#x8BFB;&#x56DE;&#x6267;&#x529F;&#x80FD;&#xFF0C;&#x8BF7;&#x53C2;&#x8003;<a href="../blogs/&#x5DF2;&#x9001;&#x8FBE;&#x548C;&#x5DF2;&#x8BFB;&#x56DE;&#x6267;&#x529F;&#x80FD;&#x4F7F;&#x7528;&#x8BF4;&#x660E;.html">&#x5DF2;&#x9001;&#x8FBE;&#x548C;&#x5DF2;&#x8BFB;&#x56DE;&#x6267;&#x529F;&#x80FD;&#x4F7F;&#x7528;&#x8BF4;&#x660E;</a>&#x3002;</p>
+<h4 id="serverTime">0.0.7. serverTime</h4>
+<p>&#x6D88;&#x606F;&#x5728;&#x670D;&#x52A1;&#x5668;&#x5904;&#x7406;&#x7684;&#x65F6;&#x95F4;&#x6233;</p>
+<h4 id="content">0.0.8. content</h4>
+<p>&#x6D88;&#x606F;&#x7684;&#x5185;&#x5BB9;&#xFF0C;&#x6D88;&#x606F;&#x5185;&#x5BB9;&#x53EF;&#x4EE5;&#x662F;&#x591A;&#x79CD;&#x683C;&#x5F0F;&#xFF0C;&#x6BD4;&#x5982;&#x56FE;&#x7247;/&#x6587;&#x672C;/&#x8BED;&#x97F3;/&#x5730;&#x7406;&#x4F4D;&#x7F6E;&#x7B49;&#x3002;&#x91CE;&#x706B;IM&#x652F;&#x6301;&#x81EA;&#x5B9A;&#x4E49;&#x6D88;&#x606F;&#x5185;&#x5BB9;&#x7C7B;&#x578B;&#xFF0C;&#x53EF;&#x4EE5;&#x4EFB;&#x610F;&#x5B9A;&#x4E49;&#x6D88;&#x606F;&#x5185;&#x5BB9;&#x6765;&#x670D;&#x52A1;&#x60A8;&#x7684;&#x4E1A;&#x52A1;&#x9700;&#x6C42;&#x3002;</p>
+<footer class="page-footer"><span class="copyright">2018 &#xA9; wildfirechat.net &#x4EAC;ICP&#x5907;18060403&#x53F7;-1 all right reserved&#xFF0C;powered by Gitbook</span><span class="footer-modification">&#x8BE5;&#x6587;&#x4EF6;&#x4FEE;&#x8BA2;&#x65F6;&#x95F4;&#xFF1A;
+2026-10-14 05:45:14
+</span></footer><div id="anchors-navbar"><i class="fa fa-anchor"></i><ul><p><a href="#&#x6D88;&#x606F;">&#x6D88;&#x606F;</a></p><li><a href="#">none</a></li><ul><li><a href="#">none</a></li><ul><li><a href="#messageId">0.0.1. messageId</a></li><li><a href="#messageUid">0.0.2. messageUid</a></li><li><a href="#conversation">0.0.3. conversation</a></li><li><a href="#fromUser">0.0.4. fromUser</a></li><li><a href="#direction">0.0.5. direction</a></li><li><a href="#status">0.0.6. status</a></li><li><a href="#serverTime">0.0.7. serverTime</a></li><li><a href="#content">0.0.8. content</a></li></ul></ul></ul></div><a href="#" id="goTop"><i class="fa fa-arrow-up"></i></a>
+                                
+                                </section>
+                            
+    </div>
+    <div class="search-results">
+        <div class="has-results">
+            
+            <h1 class="search-results-title"><span class='search-results-count'></span> results matching "<span class='search-query'></span>"</h1>
+            <ul class="search-results-list"></ul>
+            
+        </div>
+        <div class="no-results">
+            
+            <h1 class="search-results-title">No results matching "<span class='search-query'></span>"</h1>
+            
+        </div>
+    </div>
+</div>
+
+                        </div>
+                    </div>
+                
+            </div>
+
+            
+                
+                <a href="conversation.html" class="navigation navigation-prev " aria-label="Previous page: 会话">
+                    <i class="fa fa-angle-left"></i>
+                </a>
+                
+                
+                <a href="message_content.html" class="navigation navigation-next " aria-label="Next page: 消息内容">
+                    <i class="fa fa-angle-right"></i>
+                </a>
+                
+            
+        
+    </div>
+
+    <script>
+        var gitbook = gitbook || [];
+        gitbook.push(function() {
+            gitbook.page.hasChanged({"page":{"title":"消息","level":"1.9.7","depth":2,"next":{"title":"消息内容","level":"1.9.8","depth":2,"path":"base_knowledge/message_content.md","ref":"base_knowledge/message_content.md","articles":[]},"previous":{"title":"会话","level":"1.9.6","depth":2,"path":"base_knowledge/conversation.md","ref":"base_knowledge/conversation.md","articles":[]},"dir":"ltr"},"config":{"plugins":["-lunr","-search","-highlight","-livereload","search-plus@^0.0.11","simple-page-toc@^0.1.1","github@^2.0.0","github-buttons@2.1.0","prism@^2.1.0","prism-themes@^0.0.2","anchors@^0.7.1","emphasize@^1.1.0","splitter@^0.0.8","tbfed-pagefooter@^0.0.1","expandable-chapters-small@^0.1.7","sectionx@^3.1.0","sitemap-general@^0.1.1","anchor-navigation-ex@0.1.8","favicon@^0.0.2","todo@^0.1.3","3-ba@^0.9.0","terminal@^0.3.2","alerts@^0.2.0","include-csv@^0.1.0","-sharing","sharing-plus@^0.0.2","include-codeblock@^3.0.2","navigator"],"styles":{"website":"styles/website.css","ebook":"styles/ebook.css"},"pluginsConfig":{"tbfed-pagefooter":{"copyright":"2018 © wildfirechat.net 京ICP备18060403号-1","modify_label":"该文件修订时间：","modify_format":"YYYY-MM-DD HH:mm:ss"},"prism":{"lang":{"shell":"bash"},"css":["prism-themes/themes/prism-base16-ateliersulphurpool.light.css"]},"include-csv":{},"disqus":{"shortName":"gitbookuse"},"emphasize":{},"github":{"url":"https://github.com/wildfirechat/docs"},"simple-page-toc":{"maxDepth":3,"skipFirstH1":true},"todo":{},"splitter":{},"sharing-plus":{"qq":false,"all":["facebook","google","twitter","instapaper","linkedin","pocket","stumbleupon"],"douban":false,"facebook":true,"weibo":false,"instapaper":false,"whatsapp":false,"hatenaBookmark":false,"twitter":true,"messenger":false,"line":false,"vk":false,"pocket":true,"google":false,"viber":false,"stumbleupon":false,"qzone":false,"linkedin":false},"sitemap-general":{"prefix":"http://wildfirechat.net"},"fontsettings":{"theme":"white","family":"sans","size":2},"sectionx":{"tag":"b"},"anchor-navigation-ex":{"isRewritePageTitle":false,"tocLevel1Icon":"fa fa-hand-o-right","tocLevel2Icon":"fa fa-hand-o-right","tocLevel3Icon":"fa fa-hand-o-right"},"favicon":{"shortcut":"favicon.ico","bookmark":"favicon.ico"},"prism-themes":{},"navigator":{},"alerts":{},"github-buttons":{"repo":"wildfirechat/im-server","types":["star"],"size":"small"},"3-ba":{"configuration":"auto","token":"ff100361cdce95dd4c8fb96b4009f7bc"},"expandable-chapters-small":{},"include-codeblock":{"check":false,"edit":true,"lang":"","fixlang":false,"template":"ace","theme":"chrome","unindent":true},"sharing":{"qq":true,"all":["facebook","google","twitter","weibo","instapaper","linkedin","pocket","stumbleupon","qq","qzone"],"douban":false,"facebook":false,"weibo":true,"instapaper":false,"whatsapp":false,"hatenaBookmark":false,"twitter":false,"messenger":false,"line":false,"vk":false,"pocket":false,"google":false,"viber":false,"stumbleupon":false,"qzone":false,"linkedin":true},"terminal":{"copyButtons":true,"fade":false,"style":"flat"},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":true},"anchors":{},"search-plus":{}},"theme":"default","author":"野火IM","pdf":{"pageNumbers":true,"fontSize":9,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":45,"left":45,"top":56,"bottom":56}},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"variables":{},"title":"野火IM开发手册","language":"zh-hans","links":{"sidebar":{"Home":"https://www.wildfirechat.cn"}},"gitbook":"*","description":"野火IM开发手册"},"file":{"path":"base_knowledge/message.md","mtime":"2026-10-14T05:45:14.297Z","type":"markdown"},"gitbook":{"version":"3.2.3","time":"2026-11-13T08:24:19.169Z"},"basePath":"..","book":{"language":""}});
+        });
+    </script>
+</div>
+
+        
+    
+    <script src="../gitbook/gitbook.js"></script>
+    <script src="../gitbook/theme.js"></script>
+    
+        
+        <script src="../gitbook/gitbook-plugin-search-plus/jquery.mark.min.js"></script>
+        
+    
+        
+        <script src="../gitbook/gitbook-plugin-search-plus/search.js"></script>
+        
+    
+        
+        <script src="../gitbook/gitbook-plugin-github/plugin.js"></script>
+        
+    
+        
+        <script src="../gitbook/gitbook-plugin-github-buttons/plugin.js"></script>
+        
+    
+        
+        <script src="../gitbook/gitbook-plugin-splitter/splitter.js"></script>
+        
+    
+        
+        <script src="../gitbook/gitbook-plugin-expandable-chapters-small/expandable-chapters-small.js"></script>
+        
+    
+        
+        <script src="https://static.wildfirechat.cn/bootstrap-3.3.7.min.js"></script>
+        
+    
+        
+        <script src="../gitbook/gitbook-plugin-sectionx/sectionx.js"></script>
+        
+    
+        
+        <script src="../gitbook/gitbook-plugin-3-ba/plugin.js"></script>
+        
+    
+        
+        <script src="../gitbook/gitbook-plugin-terminal/plugin.js"></script>
+        
+    
+        
+        <script src="../gitbook/gitbook-plugin-alerts/plugin.js"></script>
+        
+    
+        
+        <script src="../gitbook/gitbook-plugin-sharing-plus/buttons.js"></script>
+        
+    
+        
+        <script src="../gitbook/gitbook-plugin-fontsettings/fontsettings.js"></script>
+        
+    
+
+    <script>
+    require(['gitbook', 'jquery'], function(gitbook, $) {
+        gitbook.events.bind('page.change', function() {
+            setTimeout(function() {
+                console.log('GitBook page changed, applying custom button behavior');
+                
+                // 使用正确的ID选择器查找滚动到顶部按钮
+                var $scrollToTop = $('#anchors-navbar');
+		$('#anchors-navbar ul').remove()
+                
+                // 找到左上角菜单按钮
+                var $menuButton = $('a.btn.pull-left.js-toolbar-action');
+                
+                // 调试日志
+                console.log('Found scroll to top button:', $scrollToTop.length > 0);
+                console.log('Found menu button:', $menuButton.length > 0);
+
+                
+                // 如果找到了按钮
+                if ($scrollToTop.length > 0 && $menuButton.length > 0) {
+                    // 移除原始的点击事件处理器
+                    $scrollToTop.off('click');
+                    $scrollToTop.off('mouseup');
+                    
+                    // 添加新的点击事件，用于触发菜单按钮
+                    $scrollToTop.on('click', function(e) {
+                        e.preventDefault();
+                        console.log('Custom scroll button clicked, triggering menu button');
+                        
+			$('.book-body').animate({ scrollTop: 0 }, 'fast');
+                        // 触发左上角菜单按钮的点击事件
+                        $menuButton[0].click();
+                        return false;
+                    });
+                    
+                    // 更改按钮图标（如果有的话）
+                    if ($scrollToTop.find('i').length > 0) {
+                        $scrollToTop.find('i')
+                            .removeClass('fa-anchor')
+                            .addClass('fa-align-justify');
+                        console.log('Button icon changed to bars');
+                    }
+                    
+                    // 更新提示文本
+                    $scrollToTop.attr('title', '展开目录');
+                    console.log('Button title updated');
+                }
+            }, 100); // 给予页面充分的加载时间
+        });
+    });
+    </script>
+    <style>
+    /* 可选：调整按钮样式 */
+    #goTop {
+    }
+    </style>
+
+    </body>
+</html>
+

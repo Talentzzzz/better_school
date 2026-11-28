@@ -12,20 +12,19 @@ import com.betterschool.api.dto.SendMessageRequestDTO;
 import com.betterschool.api.response.Response;
 import com.betterschool.domain.chat.model.entity.MessageEntity;
 import com.betterschool.domain.chat.model.entity.RoomEntity;
-import com.betterschool.domain.chat.model.valobj.CardRefTypeVO;
-import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
+import com.betterschool.domain.chat.model.valobj.CardRefTypeEnum;
+import com.betterschool.domain.chat.model.valobj.MsgTypeEnum;
 import com.betterschool.domain.chat.model.valobj.RoomMemberVO;
 import com.betterschool.domain.chat.model.valobj.RoomSourceEnum;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
 import com.betterschool.domain.chat.model.valobj.TimelinePageVO;
-import com.betterschool.domain.chat.service.query.IChatQueryService;
 import com.betterschool.domain.chat.service.recall.IChatRecallService;
 import com.betterschool.domain.chat.service.read.IChatReadService;
-import com.betterschool.domain.chat.service.send.IChatSendService;
 import com.betterschool.domain.user.adapter.repository.IUserRepository;
+import com.betterschool.usecase.chat.ChatCase;
 import com.betterschool.domain.user.model.valobj.UserBriefVO;
 import com.betterschool.trigger.http.security.SecurityUtils;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -53,37 +52,36 @@ public class ChatController implements IChatService {
     /** 列表分页默认值与硬顶 */
     private static final int MAX_PAGE_SIZE = 200;
 
-    private final IChatSendService chatSendService;
-    private final IChatQueryService chatQueryService;
+    private final ChatCase chatCase;
     private final IChatReadService chatReadService;
     private final IChatRecallService chatRecallService;
     private final IUserRepository userRepository;
 
     @Override
     @PostMapping("/rooms/direct")
-    public Response<ChatRoomResponseDTO> createDirectRoom(@Valid @RequestBody CreateDirectRoomRequestDTO request) {
-        RoomEntity roomEntity = chatSendService.createDirectRoom(SecurityUtils.currentUserId(),
-                request.getTargetUserId(), parseRoomSource(request.getSource()));
-        ChatRoomResponseDTO dto = new ChatRoomResponseDTO();
-        dto.setRoomId(roomEntity.getRoomId());
-        return Response.ok(dto);
+    public Response<ChatRoomResponseDTO> createDirectRoom(@Valid @RequestBody CreateDirectRoomRequestDTO createDirectRoomRequestDTO) {
+        RoomEntity roomEntity = chatCase.createDirectRoom(SecurityUtils.currentUserId(),
+                createDirectRoomRequestDTO.getTargetUserId(), parseRoomSource(createDirectRoomRequestDTO.getSource()));
+        ChatRoomResponseDTO chatRoomResponseDTO = new ChatRoomResponseDTO();
+        chatRoomResponseDTO.setRoomId(roomEntity.getRoomId());
+        return Response.ok(chatRoomResponseDTO);
     }
 
     @Override
     @PostMapping("/rooms/messages")
-    public Response<ChatMessageResponseDTO> sendMessage(@Valid @RequestBody SendMessageRequestDTO request) {
-        MessageEntity draftEntity = new MessageEntity();
-        draftEntity.setRoomId(request.getRoomId());
-        draftEntity.setFromUserId(SecurityUtils.currentUserId());
-        draftEntity.setClientMsgId(request.getClientMsgId());
-        draftEntity.setMsgType(parseMsgType(request.getMsgType()));
-        draftEntity.setContent(request.getContent());
-        draftEntity.setRefType(parseRefType(request.getRefType()));
-        draftEntity.setRefId(request.getRefId());
-        MessageEntity messageEntity = chatSendService.sendMessage(draftEntity);
-        ChatMessageResponseDTO dto = toMessageResponseDTO(messageEntity, null);
-        fillSenderInfo(dto, messageEntity.getFromUserId());
-        return Response.ok(dto);
+    public Response<ChatMessageResponseDTO> sendMessage(@Valid @RequestBody SendMessageRequestDTO sendMessageRequestDTO) {
+        MessageEntity messageEntity = new MessageEntity();
+        messageEntity.setRoomId(sendMessageRequestDTO.getRoomId());
+        messageEntity.setFromUserId(SecurityUtils.currentUserId());
+        messageEntity.setClientMsgId(sendMessageRequestDTO.getClientMsgId());
+        messageEntity.setMsgType(parseMsgType(sendMessageRequestDTO.getMsgType()));
+        messageEntity.setContent(sendMessageRequestDTO.getContent());
+        messageEntity.setRefType(parseRefType(sendMessageRequestDTO.getRefType()));
+        messageEntity.setRefId(sendMessageRequestDTO.getRefId());
+        MessageEntity messageEntity = chatCase.sendMessage(messageEntity);
+        ChatMessageResponseDTO chatMessageResponseDTO = toMessageResponseDTO(messageEntity, null);
+        fillSenderInfo(chatMessageResponseDTO, messageEntity.getFromUserId());
+        return Response.ok(chatMessageResponseDTO);
     }
 
     @Override
@@ -92,15 +90,15 @@ public class ChatController implements IChatService {
                                                        @RequestParam(defaultValue = "50") int pageSize) {
         int effectivePage = Math.max(1, page);
         int effectivePageSize = Math.max(1, Math.min(pageSize, MAX_PAGE_SIZE));
-        List<RoomListItemVO> rooms = chatQueryService.listRooms(SecurityUtils.currentUserId(),
+        List<RoomListItemVO> rooms = chatCase.listRooms(SecurityUtils.currentUserId(),
                 effectivePage, effectivePageSize);
-        ChatRoomListResponseDTO dto = new ChatRoomListResponseDTO();
-        dto.setPage(effectivePage);
-        dto.setPageSize(effectivePageSize);
+        ChatRoomListResponseDTO chatRoomListResponseDTO = new ChatRoomListResponseDTO();
+        chatRoomListResponseDTO.setPage(effectivePage);
+        chatRoomListResponseDTO.setPageSize(effectivePageSize);
         // 会话列表不精确 COUNT（与 feed 索引路径同口径）：-1 = 未知，不为一个没人消费的数字多跑一次查询
-        dto.setTotal(-1L);
-        dto.setList(rooms.stream().map(this::toRoomListItemResponseDTO).toList());
-        return Response.ok(dto);
+        chatRoomListResponseDTO.setTotal(-1L);
+        chatRoomListResponseDTO.setList(rooms.stream().map(this::toRoomListItemResponseDTO).toList());
+        return Response.ok(chatRoomListResponseDTO);
     }
 
     @Override
@@ -108,7 +106,7 @@ public class ChatController implements IChatService {
     public Response<List<ChatMessageResponseDTO>> listMessages(@PathVariable String roomId,
                                                                @RequestParam(required = false) Long beforeSeq,
                                                                @RequestParam(required = false) Integer limit) {
-        List<MessageEntity> messages = chatQueryService.listMessages(roomId, SecurityUtils.currentUserId(),
+        List<MessageEntity> messages = chatCase.listMessages(roomId, SecurityUtils.currentUserId(),
                 beforeSeq, limit);
         List<ChatMessageResponseDTO> dtos = messages.stream()
                 .map(message -> toMessageResponseDTO(message, null))
@@ -122,16 +120,16 @@ public class ChatController implements IChatService {
             // 对外参数名保持 afterDeliverySeq（既有契约），域内统一叫「投递序游标」
             @RequestParam(name = "afterDeliverySeq", required = false) Long deliverySeqCursor,
             @RequestParam(required = false) Integer limit) {
-        TimelinePageVO page = chatQueryService.pullTimeline(SecurityUtils.currentUserId(),
+        TimelinePageVO timelinePageVO = chatCase.pullTimeline(SecurityUtils.currentUserId(),
                 deliverySeqCursor, limit);
-        List<ChatMessageResponseDTO> dtos = page.getItems().stream()
+        List<ChatMessageResponseDTO> dtos = timelinePageVO.getItems().stream()
                 .map(item -> toMessageResponseDTO(item.getMessage(), item.getDeliverySeq()))
                 .toList();
-        ChatTimelineResponseDTO dto = new ChatTimelineResponseDTO();
-        dto.setList(fillSenderInfo(dtos));
-        dto.setNextCursor(page.getNextCursor());
-        dto.setHasMore(page.getHasMore());
-        return Response.ok(dto);
+        ChatTimelineResponseDTO chatTimelineResponseDTO = new ChatTimelineResponseDTO();
+        chatTimelineResponseDTO.setList(fillSenderInfo(dtos));
+        chatTimelineResponseDTO.setNextCursor(timelinePageVO.getNextCursor());
+        chatTimelineResponseDTO.setHasMore(timelinePageVO.getHasMore());
+        return Response.ok(chatTimelineResponseDTO);
     }
 
     @Override
@@ -157,20 +155,20 @@ public class ChatController implements IChatService {
     @Override
     @GetMapping("/rooms/{roomId}/members")
     public Response<ChatMembersResponseDTO> listMembers(@PathVariable String roomId) {
-        List<RoomMemberVO> members = chatQueryService.listMembers(roomId, SecurityUtils.currentUserId());
-        ChatMembersResponseDTO dto = new ChatMembersResponseDTO();
-        dto.setMemberCount(members.size());
-        dto.setMembers(members.stream().map(this::toMemberResponseDTO).toList());
-        return Response.ok(dto);
+        List<RoomMemberVO> members = chatCase.listMembers(roomId, SecurityUtils.currentUserId());
+        ChatMembersResponseDTO chatMembersResponseDTO = new ChatMembersResponseDTO();
+        chatMembersResponseDTO.setMemberCount(members.size());
+        chatMembersResponseDTO.setMembers(members.stream().map(this::toMemberResponseDTO).toList());
+        return Response.ok(chatMembersResponseDTO);
     }
 
     // ===== 装配 =====
 
-    private MsgTypeVO parseMsgType(String msgType) {
+    private MsgTypeEnum parseMsgType(String msgType) {
         try {
-            return MsgTypeVO.valueOf(msgType);
+            return MsgTypeEnum.valueOf(msgType);
         } catch (IllegalArgumentException e) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "消息类型不合法");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "消息类型不合法");
         }
     }
 
@@ -182,54 +180,54 @@ public class ChatController implements IChatService {
         try {
             return RoomSourceEnum.valueOf(source);
         } catch (IllegalArgumentException e) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "会话来源不合法");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "会话来源不合法");
         }
     }
 
-    private CardRefTypeVO parseRefType(String refType) {
+    private CardRefTypeEnum parseRefType(String refType) {
         if (refType == null) {
             return null;
         }
         try {
-            return CardRefTypeVO.valueOf(refType);
+            return CardRefTypeEnum.valueOf(refType);
         } catch (IllegalArgumentException e) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "卡片引用类型不合法");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "卡片引用类型不合法");
         }
     }
 
-    private ChatRoomListItemResponseDTO toRoomListItemResponseDTO(RoomListItemVO room) {
-        ChatRoomListItemResponseDTO dto = new ChatRoomListItemResponseDTO();
-        dto.setRoomId(room.getRoomId());
-        dto.setPeerUserId(room.getPeerUserId());
-        dto.setPeerNickname(room.getPeerNickname());
-        dto.setPeerAvatar(room.getPeerAvatar());
-        dto.setPeerRole(room.getPeerRole() == null ? null : room.getPeerRole().name());
-        dto.setSource(room.getSource() == null ? null : room.getSource().name());
-        dto.setUnread(room.getUnread());
-        dto.setLastMsgType(room.getLastMsgType() == null ? null : room.getLastMsgType().name());
-        dto.setLastMsgPreview(room.getLastMsgPreview());
+    private ChatRoomListItemResponseDTO toRoomListItemResponseDTO(RoomListItemVO roomListItemVO) {
+        ChatRoomListItemResponseDTO chatRoomListItemResponseDTO = new ChatRoomListItemResponseDTO();
+        chatRoomListItemResponseDTO.setRoomId(roomListItemVO.getRoomId());
+        chatRoomListItemResponseDTO.setPeerUserId(roomListItemVO.getPeerUserId());
+        chatRoomListItemResponseDTO.setPeerNickname(roomListItemVO.getPeerNickname());
+        chatRoomListItemResponseDTO.setPeerAvatar(roomListItemVO.getPeerAvatar());
+        chatRoomListItemResponseDTO.setPeerRole(roomListItemVO.getPeerRole() == null ? null : roomListItemVO.getPeerRole().name());
+        chatRoomListItemResponseDTO.setSource(roomListItemVO.getSource() == null ? null : roomListItemVO.getSource().name());
+        chatRoomListItemResponseDTO.setUnread(roomListItemVO.getUnread());
+        chatRoomListItemResponseDTO.setLastMsgType(roomListItemVO.getLastMsgType() == null ? null : roomListItemVO.getLastMsgType().name());
+        chatRoomListItemResponseDTO.setLastMsgPreview(roomListItemVO.getLastMsgPreview());
         // JSON 字段名 lastMsgAt/lastReadSeq 是对外契约（chat-member-table-refactor 票 01：接口契约零变化），
         // 内部实体列名已随表翻成 lastMsgTime/readSeq，仅在装配处收敛
-        dto.setLastMsgAt(room.getLastMsgTime());
-        return dto;
+        chatRoomListItemResponseDTO.setLastMsgAt(roomListItemVO.getLastMsgTime());
+        return chatRoomListItemResponseDTO;
     }
 
-    private ChatMembersResponseDTO.ChatMemberResponseDTO toMemberResponseDTO(RoomMemberVO member) {
+    private ChatMembersResponseDTO.ChatMemberResponseDTO toMemberResponseDTO(RoomMemberVO roomMemberVO) {
         ChatMembersResponseDTO.ChatMemberResponseDTO dto = new ChatMembersResponseDTO.ChatMemberResponseDTO();
-        dto.setUserId(member.getUserId());
-        dto.setNickname(member.getNickname());
-        dto.setAvatar(member.getAvatar());
-        dto.setLastReadSeq(member.getReadSeq());
+        dto.setUserId(roomMemberVO.getUserId());
+        dto.setNickname(roomMemberVO.getNickname());
+        dto.setAvatar(roomMemberVO.getAvatar());
+        dto.setLastReadSeq(roomMemberVO.getReadSeq());
         return dto;
     }
 
     /** 发送者昵称头像补齐：单条走批查同一口径（发送 200 只补一条发送者） */
-    private ChatMessageResponseDTO fillSenderInfo(ChatMessageResponseDTO dto, String fromUserId) {
+    private ChatMessageResponseDTO fillSenderInfo(ChatMessageResponseDTO chatMessageResponseDTO, String fromUserId) {
         if (fromUserId == null) {
-            return dto;
+            return chatMessageResponseDTO;
         }
-        fillSenderInfo(List.of(dto));
-        return dto;
+        fillSenderInfo(List.of(chatMessageResponseDTO));
+        return chatMessageResponseDTO;
     }
 
     /**
@@ -247,28 +245,28 @@ public class ChatController implements IChatService {
         }
         Map<String, UserBriefVO> senders = userRepository.listBriefByIds(senderIds).stream()
                 .collect(Collectors.toMap(UserBriefVO::getUserId, Function.identity()));
-        for (ChatMessageResponseDTO dto : dtos) {
-            UserBriefVO sender = senders.get(dto.getFromUserId());
-            dto.setFromNickname(sender == null ? null : sender.getNickname());
-            dto.setFromAvatar(sender == null ? null : sender.getAvatar());
+        for (ChatMessageResponseDTO chatMessageResponseDTO : dtos) {
+            UserBriefVO userBriefVO = senders.get(chatMessageResponseDTO.getFromUserId());
+            chatMessageResponseDTO.setFromNickname(userBriefVO == null ? null : userBriefVO.getNickname());
+            chatMessageResponseDTO.setFromAvatar(userBriefVO == null ? null : userBriefVO.getAvatar());
         }
         return dtos;
     }
 
     private ChatMessageResponseDTO toMessageResponseDTO(MessageEntity messageEntity, Long deliverySeq) {
-        ChatMessageResponseDTO dto = new ChatMessageResponseDTO();
-        dto.setRoomId(messageEntity.getRoomId());
-        dto.setMessageId(messageEntity.getMessageId());
-        dto.setSeq(messageEntity.getSeq());
-        dto.setFromUserId(messageEntity.getFromUserId());
-        dto.setMsgType(messageEntity.getMsgType().name());
-        dto.setStatus(messageEntity.getStatus().name());
-        dto.setContent(messageEntity.getContent());
-        dto.setRefType(messageEntity.getRefType() == null ? null : messageEntity.getRefType().name());
-        dto.setRefId(messageEntity.getRefId());
-        dto.setClientMsgId(messageEntity.getClientMsgId());
-        dto.setDeliverySeq(deliverySeq);
-        dto.setCreatedAt(messageEntity.getCreatedAt());
-        return dto;
+        ChatMessageResponseDTO chatMessageResponseDTO = new ChatMessageResponseDTO();
+        chatMessageResponseDTO.setRoomId(messageEntity.getRoomId());
+        chatMessageResponseDTO.setMessageId(messageEntity.getMessageId());
+        chatMessageResponseDTO.setSeq(messageEntity.getSeq());
+        chatMessageResponseDTO.setFromUserId(messageEntity.getFromUserId());
+        chatMessageResponseDTO.setMsgType(messageEntity.getMsgType().name());
+        chatMessageResponseDTO.setStatus(messageEntity.getStatus().name());
+        chatMessageResponseDTO.setContent(messageEntity.getContent());
+        chatMessageResponseDTO.setRefType(messageEntity.getRefType() == null ? null : messageEntity.getRefType().name());
+        chatMessageResponseDTO.setRefId(messageEntity.getRefId());
+        chatMessageResponseDTO.setClientMsgId(messageEntity.getClientMsgId());
+        chatMessageResponseDTO.setDeliverySeq(deliverySeq);
+        chatMessageResponseDTO.setCreatedAt(messageEntity.getCreatedAt());
+        return chatMessageResponseDTO;
     }
 }

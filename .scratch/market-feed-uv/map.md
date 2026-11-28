@@ -21,7 +21,7 @@ Label: wayfinder:map
 
 ### 关键现状事实（读码所得）
 
-- **闲置**：`ProductMapper.xml` 直查 `WHERE state='ON_SALE'`，offset 分页（`(page-1)*pageSize`，ProductServiceImpl.java:244），排序最新/价格升降；先审后售状态机 `ProductStatusVO`（DRAFT/PENDING_REVIEW/ON_SALE/LOCKED/SOLD/REJECTED/DELETED），流转全是条件 UPDATE；浏览 = `TradeRepository.recordProductView`（不带 userId）→ ViewMergeWriter 合并 → `flushViewGroup` 一条 `UPDATE product SET view_count += N`；DTO `ProductResponseDTO`（列表详情共用，无 cursor）。
+- **闲置**：`ProductMapper.xml` 直查 `WHERE state='ON_SALE'`，offset 分页（`(page-1)*pageSize`，ProductServiceImpl.java:244），排序最新/价格升降；先审后售状态机 `ProductStatusEnum`（DRAFT/PENDING_REVIEW/ON_SALE/LOCKED/SOLD/REJECTED/DELETED），流转全是条件 UPDATE；浏览 = `TradeRepository.recordProductView`（不带 userId）→ ViewMergeWriter 合并 → `flushViewGroup` 一条 `UPDATE product SET view_count += N`；DTO `ProductResponseDTO`（列表详情共用，无 cursor）。
 - **跑腿**：`ErrandMapper.xml selectPage` 直查 `WHERE state NOT IN ('DRAFT','DELETED')`（大厅默认传 PUBLISHED），offset 分页，仅 `create_time DESC` 排序且该排序无索引；13 态状态机 + 先付后审 + 锁单轮次已落地（errand-lock-review-hub-impl / errand-order-review 已收口）；**无浏览量列、无打点、无历史**；DTO `ErrandOrderResponseDTO` 无 viewCount。
 - **帖子样板（照抄出处）**：`post_feed_index`（state/feed_time/like_count + 两索引）、`user_view_history`（PK (user_id,post_id)）、`post_view_count` 加速列；`viewPosts` 合并器三步（INSERT IGNORE 明细 → 全组刷 viewed_at → 计数 += INSERT 影响行数）；`FeedCursorVO` 域内编解码；`GET /posts/history`；重建 job `feedIndexRebuildJob` 样板。
 - **前端**：`MarketView.vue` 双 tab 都走 `useWaterfall`（已支持 cursor keyset 协议，响应带 cursor 才走 keyset）；帖子侧灰显 = `PostCard` 整卡降不透明度 + DTO viewed 字段（仅 feed 填充、匿名 false）。

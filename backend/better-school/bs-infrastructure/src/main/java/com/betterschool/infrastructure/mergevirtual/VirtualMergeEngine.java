@@ -133,17 +133,17 @@ public class VirtualMergeEngine<T, R> {
     /** 是否接收新件：停机第一步置 false，入口立刻开始拒绝 */
     private volatile boolean accepting = true;
 
-    public VirtualMergeEngine(MergeConfig config, MergeStrategy<T, R> strategy) {
-        this(config, strategy, DEFAULT_LEADER_FACTORY);
+    public VirtualMergeEngine(MergeConfig mergeConfig, MergeStrategy<T, R> strategy) {
+        this(mergeConfig, strategy, DEFAULT_LEADER_FACTORY);
     }
 
-    VirtualMergeEngine(MergeConfig config, MergeStrategy<T, R> strategy, LeaderThreadFactory leaderFactory) {
-        this.config = Objects.requireNonNull(config, "VirtualMergeEngine.config 不能为 null");
+    VirtualMergeEngine(MergeConfig mergeConfig, MergeStrategy<T, R> strategy, LeaderThreadFactory leaderFactory) {
+        this.config = Objects.requireNonNull(mergeConfig, "VirtualMergeEngine.config 不能为 null");
         this.strategy = Objects.requireNonNull(strategy, "VirtualMergeEngine.strategy 不能为 null");
         this.leaderFactory = Objects.requireNonNull(leaderFactory, "VirtualMergeEngine.leaderFactory 不能为 null");
         log.info("合并引擎启动（专属虚拟线程 leader 模型）：strategy={}, 发车条件=队列非空即发（无收集窗口）, "
                         + "maxBatch={}, groupCapacity={}, drainTimeoutMs={}",
-                strategy.getName(), config.maxBatch(), config.shardCapacity(), config.drainTimeoutMs());
+                strategy.getName(), mergeConfig.maxBatch(), mergeConfig.shardCapacity(), mergeConfig.drainTimeoutMs());
     }
 
     /**
@@ -173,17 +173,17 @@ public class VirtualMergeEngine<T, R> {
         String key = strategy.getShardKey(item);
         VirtualMergeItem<T, R> mine = new VirtualMergeItem<>(item, key);
         VirtualMergeGroup<T, R> group = groups.computeIfAbsent(key, k -> new VirtualMergeGroup<>(k, config));
-        VirtualMergeGroup.EnqueueOutcome outcome = group.enqueue(mine, accepting);
+        VirtualMergeGroup.EnqueueOutcomeEnum outcome = group.enqueue(mine, accepting);
         // 乐观删除竞态自愈：撞上刚被摘除的组就换组重建（同 key 永远收敛到同一个活组），
         // 新组会 spawn 新 leader（spec story 13）
-        while (outcome == VirtualMergeGroup.EnqueueOutcome.GROUP_REMOVED) {
+        while (outcome == VirtualMergeGroup.EnqueueOutcomeEnum.GROUP_REMOVED) {
             group = groups.computeIfAbsent(key, k -> new VirtualMergeGroup<>(k, config));
             outcome = group.enqueue(mine, accepting);
         }
         // spawn 兜底 claim：ENQUEUED / BUFFER_FULL 都试一次——满队也可能撞上「该有 leader 而没有」
         // 的自愈窗口（spawn 失败放行后的遗留件）；CLOSED 不试，停机排空由 close 的 failRemaining 兜底。
         // 注意：claim-CAS 在这里（commit 线程上），绝不在 computeIfAbsent 的 lambda 里（spawn 备忘·错法 A）
-        if (outcome != VirtualMergeGroup.EnqueueOutcome.CLOSED) {
+        if (outcome != VirtualMergeGroup.EnqueueOutcomeEnum.CLOSED) {
             ensureLeader(group);
         }
         // 入队结果逐种写清（不用「!= ENQUEUED」的兜底）：将来多一个拒收原因，必须在这里显式表态

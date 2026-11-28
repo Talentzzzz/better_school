@@ -153,7 +153,7 @@ WHERE comment_id = #{commentId}
 
 ### 4.4 PO / DTO 链（零改动验证）
 
-`PostCommentPO.likeCount` 字段**保留**、由批量回查投影填充（ProductPO 先例）→ `CommunityRepository.toCommentEntity`（:823）→ `PostCommentEntity` → PostController 三个组装方法（:456/:472/:488）→ 三个 ResponseDTO：全链字段名与搬运零改动；`replyCount` 全链零改动。接口层注释同步约 6 处（触点票 ③ 列的 ICommunityRepository / CommentServiceImpl / CommunityRepository / CountAction / IPostCommentDao）。
+`PostCommentPO.likeCount` 字段**保留**、由批量回查投影填充（ProductPO 先例）→ `CommunityRepository.toCommentEntity`（:823）→ `PostCommentEntity` → PostController 三个组装方法（:456/:472/:488）→ 三个 ResponseDTO：全链字段名与搬运零改动；`replyCount` 全链零改动。接口层注释同步约 6 处（触点票 ③ 列的 ICommunityRepository / CommentServiceImpl / CommunityRepository / CountActionEnum / IPostCommentDao）。
 
 ## 5 交付序
 

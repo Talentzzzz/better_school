@@ -129,13 +129,13 @@ public class TimeoutScanner {
      */
     private CallbackReport callback(List<TimeoutTaskEntity> batch, ITimeoutHandler handler, int slot) {
         Set<TaskKey> succeeded = new HashSet<>(batch.size());
-        for (TimeoutTaskEntity taskEntity : batch) {
+        for (TimeoutTaskEntity timeoutTaskEntity : batch) {
             try {
-                handler.fire(taskEntity);
-                succeeded.add(TaskKey.of(taskEntity.getTaskType(), taskEntity.getBizId()));
+                handler.fire(timeoutTaskEntity);
+                succeeded.add(TaskKey.of(timeoutTaskEntity.getTaskType(), timeoutTaskEntity.getBizId()));
             } catch (Exception e) {
                 log.error("[超时中心告警] 回调失败，本项按失败重投：taskType={}, bizId={}, 槽位={}",
-                        taskEntity.getTaskType(), taskEntity.getBizId(), slot, e);
+                        timeoutTaskEntity.getTaskType(), timeoutTaskEntity.getBizId(), slot, e);
             }
         }
         return CallbackReport.of(succeeded);
@@ -143,10 +143,10 @@ public class TimeoutScanner {
 
     /** 就地结算一批（在槽位线程上跑；三桶各一条条件 UPDATE，不带事务） */
     private void settle(List<TimeoutTaskEntity> batch, CallbackReport report, Counters counters) {
-        SettleOutcome outcome = timeoutSettler.settle(batch, report);
-        counters.successCount.addAndGet(outcome.getSuccessCount());
-        counters.retryCount.addAndGet(outcome.getRetryCount());
-        counters.deadCount.addAndGet(outcome.getDeadCount());
+        SettleOutcome settleOutcome = timeoutSettler.settle(batch, report);
+        counters.successCount.addAndGet(settleOutcome.getSuccessCount());
+        counters.retryCount.addAndGet(settleOutcome.getRetryCount());
+        counters.deadCount.addAndGet(settleOutcome.getDeadCount());
     }
 
     /** 等一批槽位任务收口：异常就地记账，不向上冒（一个槽失败不该毁掉整个 tick，下轮重扫补上） */

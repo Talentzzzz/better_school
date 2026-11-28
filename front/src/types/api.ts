@@ -110,6 +110,8 @@ export interface ProductOrder {
   sellerAvatar: string | null
   price: number
   status: ProductOrderStatus
+  /** 支付单号（仅买家 + 待支付时有值；收银台支付凭据） */
+  payNo?: string | null
   createdAt: string
 }
 
@@ -133,8 +135,8 @@ export interface PostDetail {
   createdAt: string
 }
 
-/** 发帖返利状态：CLAIMED 已发放 / DENIED 今日已领 / NO_REBATE 无返利活动 / PENDING 发放中 */
-export type RebateState = 'CLAIMED' | 'DENIED' | 'NO_REBATE' | 'PENDING'
+/** 发帖返利状态：CLAIMED 已发放 / DENIED 今日已领 / NO_REBATE 无返利活动 / CLAIM_ERROR 领取异常待重放 */
+export type RebateState = 'CLAIMED' | 'DENIED' | 'NO_REBATE' | 'CLAIM_ERROR'
 
 /** 发帖（直接发布 / 草稿提交）返回的结构化返利结果 */
 export interface PostPublishResult {
@@ -204,26 +206,16 @@ export interface Product {
   createdAt: string
 }
 
-// ---------- wallet ----------
-export interface WalletBalance {
-  balance: number
-  frozenAmount: number
-}
+// ---------- pay（模拟微信支付收银台） ----------
+export type PaymentOrderState = 'WAIT_PAY' | 'PAID' | 'CLOSED'
 
-export type WalletTxnType =
-  | 'RECHARGE'
-  | 'FROZEN'
-  | 'UNFROZEN'
-  | 'INCOME'
-  | 'PRODUCT_FROZEN'
-  | 'PRODUCT_UNFROZEN'
-  | 'PRODUCT_INCOME'
-
-export interface WalletTransaction {
-  id: number
-  type: WalletTxnType
+export interface PaymentOrder {
+  payNo: string
+  /** 商户订单业务 ID（支付成功后跳回订单详情） */
+  bizOrderId: string
+  subject: string
   amount: number
-  orderId: number | null
+  state: PaymentOrderState
   createdAt: string
 }
 

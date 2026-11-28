@@ -1,7 +1,7 @@
 # 积分 / 抽奖次数 schema（桶模型表集，已并入单体库 better_school）
 
 > 业务：积分与抽奖次数（桶模型，营销域；monolith-restructure 票 07 起随单体收口并入 `better_school`）。
-> 域归属：积分桶归 points 域，**抽奖次数桶归 raffle 域**（抽奖次数与抽奖同域，`draw_count_config` 随之归 raffle）。
+> 域归属：积分桶归 points 域，**抽奖次数桶归 draw 域**（抽奖次数与抽奖同域，`draw_count_config` 随之归 draw）。
 > 单体收口后与单体业务表**同库**（跨域纪律不因此改变：一个物理事务只写一个域的仓储，见 ADR-0016；用户表归 user 域独占写，读经消费方 port / case 层编排）。**SQL 层零 JOIN**：跨表展示一律多查一次应用层拼装。
 > 票 10 起积分域三张旧表已删除（lot/明细/单行配置），积分域全面切根 `sql.md` §2 的桶模型。
 
@@ -17,10 +17,10 @@
 | ---- | ---- | ---- |
 | points_bucket | 积分桶：每笔入账一行，**同时是发放流水与事实源** | points |
 | points_detail | 积分消费明细：一次消费跨几个桶就有几行 | points |
-| draw_count_bucket | 抽奖次数桶（与积分桶同构） | raffle |
-| draw_count_detail | 抽奖次数消费明细（一行 = 1 次，无 amount 列） | raffle |
+| draw_count_bucket | 抽奖次数桶（与积分桶同构） | draw |
+| draw_count_detail | 抽奖次数消费明细（一行 = 1 次，无 amount 列） | draw |
 | points_validity_config | 积分有效期配置（单行 id=1，种子 365 天） | points |
-| draw_count_config | 抽奖次数有效期配置（单行 id=1，种子 30 天） | raffle |
+| draw_count_config | 抽奖次数有效期配置（单行 id=1，种子 30 天） | draw |
 | action_rebate_config | 行为返利规则（签到/支付 → 发积分或次数） | rebate |
 | outbox_message | 本服务自己的本地消息表（票 08 新形状） | common |
 
@@ -145,5 +145,5 @@
 
 形状见 `schema.sql`（票 08 新形状：`destination` / `state` 0/1/2 / `retry_count`，`msg_id` 唯一键）。
 积分域的 topic：`bs-points-changed`（变动事件，单体消费后落通知）；
-`reasonType` 取值见 `PointsReasonType`：入账 `LOTTERY_WIN` / `REBATE`，出账 `REDEEM_DRAW_COUNT` / `REDEEM_PRIZE`
+`reasonType` 取值见 `PointsReasonTypeEnum`：入账 `LOTTERY_WIN` / `REBATE`，出账 `REDEEM_DRAW_COUNT` / `REDEEM_PRIZE`
 （`COMPACTION` 只落桶表、不进流水与事件，见「桶合并」小节）。

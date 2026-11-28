@@ -1,12 +1,13 @@
 package com.betterschool.integration.ws;
 
+import com.betterschool.domain.notification.model.valobj.NotificationEventMessage;
+import com.betterschool.domain.notification.model.valobj.NotificationScopeEnum;
+import com.betterschool.domain.notification.model.valobj.NotificationTypeEnum;
+import com.betterschool.domain.notification.service.INotificationService;
 import com.betterschool.infrastructure.ws.WsLocalSessions;
 import com.betterschool.infrastructure.ws.wsframe.WsFrame;
-import com.betterschool.infrastructure.ws.wsframe.WsFrameType;
+import com.betterschool.infrastructure.ws.wsframe.WsFrameTypeEnum;
 import com.betterschool.integration.support.PostApiTestBase;
-import com.betterschool.trigger.listener.ChatPushConsumer;
-import com.betterschool.trigger.listener.ChatReadPushConsumer;
-import com.betterschool.trigger.listener.ChatRecallPushConsumer;
 import com.betterschool.trigger.ws.WsConnectionConstants;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
@@ -30,6 +31,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -43,7 +45,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * chat WS 全链路行为集成测试（落地票 07，spec §9）：真 WS 客户端直连 RANDOM_PORT，
- * 推送触发不经过 MQ——直接调用 outbox 消费者（{@link ChatPushConsumer} 等）模拟消费一跳。
+ * 推送在写请求内同步完成（发送/已读/撤回的事务提交后直接投递），不再经过 MQ。
  *
  * <p>覆盖：握手 401 与票据一次性、单设备互踢 close(4001)、心跳 PING/PONG 与 60s 判死清理、
  * MSG 排除发送者+判重键 (roomId, seq)、群消息全员在线各一份、READ 水位线推送与幂等、
@@ -59,16 +61,10 @@ public class WsIntegrationTest extends PostApiTestBase {
     private int port;
 
     @Resource
-    private ChatPushConsumer chatPushConsumer;
-
-    @Resource
-    private ChatReadPushConsumer chatReadPushConsumer;
-
-    @Resource
-    private ChatRecallPushConsumer chatRecallPushConsumer;
-
-    @Resource
     private WsLocalSessions localSessions;
+
+    @Resource
+    private INotificationService notificationService;
 
     private StandardWebSocketClient wsClient;
 
@@ -129,7 +125,7 @@ public class WsIntegrationTest extends PostApiTestBase {
         WsClient second = connect(userA);
 
         // 旧连接先收 KICK（reason 供客户端提示重新登录），随后被 close(4001) 阻断自动重连
-        WsFrame kick = awaitFrame(first, WsFrameType.KICK, 5_000);
+        WsFrame kick = awaitFrame(first, WsFrameTypeEnum.KICK, 5_000);
         assertThat(kick).as("旧连接应收到 KICK").isNotNull();
         assertThat(payloadOf(kick)).containsEntry("reason", WsConnectionConstants.KICK_REASON_SESSION_TAKEN_OVER);
         assertThat(first.awaitClose(5_000).getCode()).as("互踢关闭码 4001").isEqualTo(WsConnectionConstants.CLOSE_CODE_TAKEN_OVER);
@@ -138,9 +134,8 @@ public class WsIntegrationTest extends PostApiTestBase {
         // 旧连接迟到 close 由两参注销挡住：新连接仍在注册表中（外部证据=还能收到推送）
         JsonNode sent = sendText(roomId, "kick-after", "踢号后的消息", userB);
         assertSuccess(sent, "B 发言");
-        chatPushConsumer.onMessage(outboxPayloads(Constants.CHAT_PUSH_TOPIC).get(0));
 
-        WsFrame pushed = awaitFrame(second, WsFrameType.MSG, 5_000);
+        WsFrame pushed = awaitFrame(second, WsFrameTypeEnum.MSG, 5_000);
         assertThat(pushed).as("新连接未被旧连接迟到 close 误删").isNotNull();
         assertThat((String) payloadOf(pushed).get("roomId")).isEqualTo(roomId);
     }
@@ -153,7 +148,7 @@ public class WsIntegrationTest extends PostApiTestBase {
         WsClient connection = connect(user);
 
         connection.sendText("{\"type\":\"PING\"}");
-        assertThat(awaitFrame(connection, WsFrameType.PONG, 5_000)).as("PING 应得 PONG 应答").isNotNull();
+        assertThat(awaitFrame(connection, WsFrameTypeEnum.PONG, 5_000)).as("PING 应得 PONG 应答").isNotNull();
 
         // 正向：刚入站（PING 刷新过活跃时间）的会话不被清扫误杀
         localSessions.sweepExpired(System.currentTimeMillis(), WsLocalSessions.DEAD_THRESHOLD_MS);
@@ -180,20 +175,19 @@ public class WsIntegrationTest extends PostApiTestBase {
 
         JsonNode sent = sendText(roomId, "ws-1", "实时消息", userA);
         assertSuccess(sent, "发送");
-        chatPushConsumer.onMessage(outboxPayloads(Constants.CHAT_PUSH_TOPIC).get(0));
 
         // 接收端拿全量消息体：含判重键 (roomId, seq) 供与补拉结果合流
-        WsFrame received = awaitFrame(connB, WsFrameType.MSG, 5_000);
-        assertThat(received).as("在线成员应收到 MSG").isNotNull();
-        Map<String, Object> payload = payloadOf(received);
+        WsFrame wsFrame = awaitFrame(connB, WsFrameTypeEnum.MSG, 5_000);
+        assertThat(wsFrame).as("在线成员应收到 MSG").isNotNull();
+        Map<String, Object> payload = payloadOf(wsFrame);
         assertThat((String) payload.get("roomId")).as("载荷含判重键 roomId").isEqualTo(roomId);
         assertThat(((Number) payload.get("seq")).longValue()).as("载荷含判重键 seq").isEqualTo(1L);
         assertThat(payload).containsEntry("content", "实时消息").containsEntry("fromNickname", "推送用户A");
         assertThat(payload).as("载荷含发送者完整资料槽位（头像可空但须带出）").containsKey("fromAvatar");
 
         // 发送方以 HTTP 200 为准，不做自推
-        assertThat(drain(connA, 400)).as("发送者不自收").noneMatch(frame -> frame.getType() == WsFrameType.MSG);
-        assertThat(drain(connB, 300)).as("同一事件只推一份").noneMatch(frame -> frame.getType() == WsFrameType.MSG);
+        assertThat(drain(connA, 400)).as("发送者不自收").noneMatch(frame -> frame.getType() == WsFrameTypeEnum.MSG);
+        assertThat(drain(connB, 300)).as("同一事件只推一份").noneMatch(frame -> frame.getType() == WsFrameTypeEnum.MSG);
     }
 
     // ---------- 5. READ 水位线推送 ----------
@@ -210,21 +204,19 @@ public class WsIntegrationTest extends PostApiTestBase {
         WsClient connB = connect(userB);
 
         assertSuccess(postJson("/api/chat/rooms/" + roomId + "/read", Map.of(), userB), "B 打开会话");
-        chatReadPushConsumer.onMessage(outboxPayloads(Constants.CHAT_READ_TOPIC).get(0));
 
-        WsFrame read = awaitFrame(connA, WsFrameType.READ, 5_000);
-        assertThat(read).as("其他在线成员应收到 READ").isNotNull();
-        Map<String, Object> payload = payloadOf(read);
+        WsFrame wsFrame = awaitFrame(connA, WsFrameTypeEnum.READ, 5_000);
+        assertThat(wsFrame).as("其他在线成员应收到 READ").isNotNull();
+        Map<String, Object> payload = payloadOf(wsFrame);
         assertThat((String) payload.get("roomId")).as("payload 含 roomId").isEqualTo(roomId);
         assertThat((String) payload.get("userId")).as("payload 含 readerId").isEqualTo(userB.userId());
         assertThat(((Number) payload.get("readSeq")).longValue()).as("水位线=room.last_seq").isEqualTo(2L);
 
-        assertThat(drain(connB, 400)).as("reader 本人不收回执").noneMatch(frame -> frame.getType() == WsFrameType.READ);
+        assertThat(drain(connB, 400)).as("reader 本人不收回执").noneMatch(frame -> frame.getType() == WsFrameTypeEnum.READ);
 
-        // 重复打开幂等：无新事件（写侧保证）→ 无第二份推送
+        // 重复打开幂等：写侧守卫 UPDATE 落空 → 不产生第二份推送
         assertSuccess(postJson("/api/chat/rooms/" + roomId + "/read", Map.of(), userB), "B 重复打开");
-        assertThat(outboxPayloads(Constants.CHAT_READ_TOPIC)).as("重复打开不产生 READ 事件").hasSize(1);
-        assertThat(drain(connA, 400)).as("无第二份 READ").noneMatch(frame -> frame.getType() == WsFrameType.READ);
+        assertThat(drain(connA, 400)).as("无第二份 READ").noneMatch(frame -> frame.getType() == WsFrameTypeEnum.READ);
     }
 
     @Test
@@ -238,9 +230,8 @@ public class WsIntegrationTest extends PostApiTestBase {
         // B 断线
         connect(userB).closeQuietly();
 
-        // 断线期间对方（A）已读：事件在，但 B 不在线 → 漏推合法（接受退化，不缓存不补推）
+        // 断线期间对方（A）已读：推给 B 时 B 不在线 → 漏推合法（接受退化，不缓存不补推）
         assertSuccess(postJson("/api/chat/rooms/" + roomId + "/read", Map.of(), userA), "A 打开会话");
-        chatReadPushConsumer.onMessage(outboxPayloads(Constants.CHAT_READ_TOPIC).get(0));
 
         // 重连后水位线初值走 REST 读路径，不靠补推
         WsClient reconnected = connect(userB);
@@ -250,7 +241,7 @@ public class WsIntegrationTest extends PostApiTestBase {
                 .collect(Collectors.toMap(node -> node.path("userId").asText(), node -> node));
         assertThat(byUser.get(userA.userId()).path("lastReadSeq").asLong())
                 .as("重连后从 REST 取到对方水位线").isEqualTo(2L);
-        assertThat(drain(reconnected, 400)).as("断线期间已读不补推").noneMatch(frame -> frame.getType() == WsFrameType.READ);
+        assertThat(drain(reconnected, 400)).as("断线期间已读不补推").noneMatch(frame -> frame.getType() == WsFrameTypeEnum.READ);
     }
 
     // ---------- 6. 断线重连：补拉与实时推送合流 ----------
@@ -266,20 +257,16 @@ public class WsIntegrationTest extends PostApiTestBase {
 
         sendText(roomId, "c-1", "断线期间1", userA);
         sendText(roomId, "c-2", "断线期间2", userA);
-        List<String> events = outboxPayloads(Constants.CHAT_PUSH_TOPIC);
-        chatPushConsumer.onMessage(events.get(0));
-        chatPushConsumer.onMessage(events.get(1));
 
         // 重连（内存游标随连接丢失 → 游标 0 = 全量，spec §2）
         WsClient reconnected = connect(userB);
-        assertThat(drain(reconnected, 300)).as("断线期间推送已漏（漏推合法）").noneMatch(frame -> frame.getType() == WsFrameType.MSG);
+        assertThat(drain(reconnected, 300)).as("断线期间推送已漏（漏推合法）").noneMatch(frame -> frame.getType() == WsFrameTypeEnum.MSG);
 
         // 期间实时推送
         sendText(roomId, "c-3", "重连后实时", userA);
-        chatPushConsumer.onMessage(outboxPayloads(Constants.CHAT_PUSH_TOPIC).get(2));
-        WsFrame pushed = awaitFrame(reconnected, WsFrameType.MSG, 5_000);
-        assertThat(pushed).as("重连后实时推送可达").isNotNull();
-        assertThat(((Number) payloadOf(pushed).get("seq")).longValue()).isEqualTo(3L);
+        WsFrame wsFrame = awaitFrame(reconnected, WsFrameTypeEnum.MSG, 5_000);
+        assertThat(wsFrame).as("重连后实时推送可达").isNotNull();
+        assertThat(((Number) payloadOf(wsFrame).get("seq")).longValue()).isEqualTo(3L);
 
         // 补拉：游标 0 全量取回三条，每条带 (roomId, seq) 判重键 + delivery_seq 游标
         JsonNode timeline = getJson("/api/chat/timeline?afterDeliverySeq=0", userB);
@@ -296,7 +283,7 @@ public class WsIntegrationTest extends PostApiTestBase {
 
         // 合流：实时推送段的 (roomId, seq) 已在补拉结果中 → 客户端按此键吸收重复段，不丢不重
         assertThat(pulledKeys).as("推送段与补拉段判重键重合，可吸收")
-                .contains(payloadOf(pushed).get("roomId") + ":" + payloadOf(pushed).get("seq"));
+                .contains(payloadOf(wsFrame).get("roomId") + ":" + payloadOf(wsFrame).get("seq"));
     }
 
     // ---------- 7. RECALL 轻推 ----------
@@ -312,17 +299,48 @@ public class WsIntegrationTest extends PostApiTestBase {
         WsClient connB = connect(userB);
 
         assertSuccess(postJson("/api/chat/rooms/" + roomId + "/messages/1/recall", Map.of(), userA), "撤回");
-        chatRecallPushConsumer.onMessage(outboxPayloads(Constants.CHAT_RECALL_TOPIC).get(0));
 
         // RECALL 轻事件只带定位 payload={roomId, seq}：内容终态以拉取为准（轻推丢失可接受，重进/重连自然收敛）
-        WsFrame forB = awaitFrame(connB, WsFrameType.RECALL, 5_000);
+        WsFrame forB = awaitFrame(connB, WsFrameTypeEnum.RECALL, 5_000);
         assertThat(forB).as("对方在线成员应收到 RECALL").isNotNull();
         assertThat((String) payloadOf(forB).get("roomId")).isEqualTo(roomId);
         assertThat(((Number) payloadOf(forB).get("seq")).longValue()).isEqualTo(1L);
 
-        WsFrame forA = awaitFrame(connA, WsFrameType.RECALL, 5_000);
+        WsFrame forA = awaitFrame(connA, WsFrameTypeEnum.RECALL, 5_000);
         assertThat(forA).as("撤回推给会话全部在线成员（含发送者）").isNotNull();
         assertThat(((Number) payloadOf(forA).get("seq")).longValue()).isEqualTo(1L);
+    }
+
+    // ---------- 8. 通知横幅直推 ----------
+
+    @Test
+    void bannerNotificationPushedDirectlyAsNotifFrame() throws Exception {
+        Session user = registerAndLogin("13800004091", "横幅用户");
+        WsClient conn = connect(user);
+
+        notificationService.publish(NotificationEventMessage.builder()
+                .notificationId(UUID.randomUUID().toString())
+                .userId(user.userId())
+                .senderId("sender-1")
+                .scope(NotificationScopeEnum.INTERACTION_LIKE.name())
+                .type(NotificationTypeEnum.POST_LIKED.name())
+                .title("收到的赞")
+                .content("有人赞了你的帖子")
+                .refType("POST")
+                .refId("p1")
+                .dedupKey("POST_LIKED:p1:sender-1")
+                .build());
+
+        // 直接喂通知事件消费方：落库后不再走第二跳 MQ，当场推 NOTIF 帧
+        notifyEventConsumer.onMessage(outboxPayloads(Constants.NOTIFY_EVENT_TOPIC).get(0));
+
+        WsFrame<?> frame = awaitFrame(conn, WsFrameTypeEnum.NOTIF, 5_000);
+        assertThat(frame).as("BANNER 通知应实时推 NOTIF 帧").isNotNull();
+        Map<String, Object> payload = payloadOf(frame);
+        assertThat(payload.get("scope")).isEqualTo("INTERACTION_LIKE");
+        assertThat(((Number) payload.get("seq")).longValue()).isEqualTo(1L);
+        assertThat(payload.get("type")).isEqualTo("POST_LIKED");
+        assertThat(payload.get("refId")).isEqualTo("p1");
     }
 
     // ---------- helpers: WS ----------
@@ -351,7 +369,7 @@ public class WsIntegrationTest extends PostApiTestBase {
         WsClient client = new WsClient(session, handler);
         openClients.add(client);
         client.sendText("{\"type\":\"PING\"}");
-        assertThat(awaitFrame(client, WsFrameType.PONG, 5_000)).as("建连同步 PONG").isNotNull();
+        assertThat(awaitFrame(client, WsFrameTypeEnum.PONG, 5_000)).as("建连同步 PONG").isNotNull();
         return client;
     }
 
@@ -368,7 +386,7 @@ public class WsIntegrationTest extends PostApiTestBase {
                 .hasMessageContaining("401");
     }
 
-    private WsFrame<?> awaitFrame(WsClient client, WsFrameType type, long timeoutMs) throws InterruptedException {
+    private WsFrame<?> awaitFrame(WsClient client, WsFrameTypeEnum wsFrameType, long timeoutMs) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (true) {
             long remaining = deadline - System.currentTimeMillis();
@@ -379,7 +397,7 @@ public class WsIntegrationTest extends PostApiTestBase {
             if (frame == null) {
                 return null;
             }
-            if (frame.getType() == type) {
+            if (frame.getType() == wsFrameType) {
                 return frame;
             }
         }
@@ -416,8 +434,8 @@ public class WsIntegrationTest extends PostApiTestBase {
         }
 
         @Override
-        protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
-            frames.add(mapper.readValue(message.getPayload(), WsFrame.class));
+        protected void handleTextMessage(WebSocketSession session, TextMessage textMessage) throws Exception {
+            frames.add(mapper.readValue(textMessage.getPayload(), WsFrame.class));
         }
 
         @Override
@@ -485,7 +503,7 @@ public class WsIntegrationTest extends PostApiTestBase {
                 "roomId", roomId, "clientMsgId", clientMsgId, "msgType", "TEXT", "content", content), sender);
     }
 
-    /** 按 destination 取 outbox 事件载荷（id 升序 = 落库顺序）；推送触发直调消费者，不经 MQ */
+    /** 按 destination 取 outbox 事件载荷（id 升序 = 落库顺序）；仅通知等仍走 outbox 的链路使用 */
     private List<String> outboxPayloads(String destination) {
         return jdbcTemplate.queryForList(
                 "SELECT payload FROM mq_outbox WHERE destination = ? ORDER BY id", String.class, destination);
