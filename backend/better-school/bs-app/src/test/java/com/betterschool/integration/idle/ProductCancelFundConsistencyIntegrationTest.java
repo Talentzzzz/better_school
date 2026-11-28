@@ -2,7 +2,6 @@ package com.betterschool.integration.idle;
 
 import com.betterschool.integration.support.PostApiTestBase;
 import com.betterschool.usecase.idle.IdleCase;
-import com.betterschool.usecase.payment.PaymentCase;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -29,10 +28,6 @@ class ProductCancelFundConsistencyIntegrationTest extends PostApiTestBase {
     @Autowired
     private IdleCase idleCase;
 
-    /** 支付前置走钱包支付渠道主缝（IdleCase.payOrder 已删除，支付入口迁至 PaymentCase） */
-    @Autowired
-    private PaymentCase paymentCase;
-
     /** 注册赠送初始余额（WalletRepository.INITIAL_BALANCE）——资金注入基线 */
     private static final String INITIAL_BALANCE = "1000";
 
@@ -44,7 +39,7 @@ class ProductCancelFundConsistencyIntegrationTest extends PostApiTestBase {
         Session buyer = registerAndLogin("13800011002", "取消买家A");
         String productId = createProduct(seller, "九成新台灯", "19.90");
         String orderId = createProductOrder(buyer, productId, 2);
-        paymentCase.payOrder(orderId, buyer.userId());
+        idleCase.payOrder(orderId, buyer.userId());
         assertThat(frozenAmountOf(buyer.userId())).as("前置：支付后货款已冻结").isEqualByComparingTo("39.80");
 
         idleCase.cancelOrder(orderId, buyer.userId());
@@ -71,7 +66,7 @@ class ProductCancelFundConsistencyIntegrationTest extends PostApiTestBase {
         Session buyer = registerAndLogin("13800011004", "重放买家B");
         String productId = createProduct(seller, "九成新吉他", "19.90");
         String orderId = createProductOrder(buyer, productId, 2);
-        paymentCase.payOrder(orderId, buyer.userId());
+        idleCase.payOrder(orderId, buyer.userId());
         idleCase.cancelOrder(orderId, buyer.userId());
 
         // 重放：终态短路返回原结果（不抛异常、订单保持已取消），uk_order_type 幂等吸收重复

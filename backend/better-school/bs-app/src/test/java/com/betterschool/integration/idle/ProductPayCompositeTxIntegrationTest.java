@@ -1,7 +1,7 @@
 package com.betterschool.integration.idle;
 
 import com.betterschool.integration.support.PostApiTestBase;
-import com.betterschool.usecase.payment.PaymentCase;
+import com.betterschool.usecase.idle.IdleCase;
 import com.betterschool.types.exception.BusinessException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,8 +14,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 商品支付资金链路集成测试（资金一致性票 06；钱包支付渠道化后主缝迁至 {@link PaymentCase}）：
- * 在主缝（支付用例层公开支付方法 {@link PaymentCase#payOrder}）上断言支付链路的外显行为——
+ * 商品支付资金链路集成测试（资金一致性票 06；钱包支付渠道化后主缝迁至商品订单用例
+ * {@link IdleCase#payOrder}）：
+ * 在主缝（订单用例层公开支付方法）上断言支付链路的外显行为——
  * 资金段「货款 PRODUCT_FROZEN 冻结」（流水 uk_order_type 幂等 + 余额条件扣减）与支付单 PAID
  * 在钱包单仓储事务内完成，提交后回调翻转订单「待支付→已支付」；只断言外部可观察状态
  * （订单状态 / 钱包流水 / 余额），不断言段落编排。失败注入点 = 钱包冻结动作边界
@@ -25,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ProductPayCompositeTxIntegrationTest extends PostApiTestBase {
 
     @Autowired
-    private PaymentCase paymentCase;
+    private IdleCase idleCase;
 
     /** 注册赠送初始余额（WalletRepository.INITIAL_BALANCE）——低余额买家的资金注入基线 */
     private static final String INITIAL_BALANCE = "1000";
@@ -39,7 +40,7 @@ class ProductPayCompositeTxIntegrationTest extends PostApiTestBase {
         String productId = createProduct(seller, "九成新台灯", "19.90");
         String orderId = createProductOrder(buyer, productId, 2);
 
-        paymentCase.payOrder(orderId, buyer.userId());
+        idleCase.payOrder(orderId, buyer.userId());
 
         // 外显一：订单翻转已支付
         assertThat(orderState(orderId)).as("订单翻转已支付").isEqualTo("PAID");
@@ -63,7 +64,7 @@ class ProductPayCompositeTxIntegrationTest extends PostApiTestBase {
         String productId = createProduct(seller, "高价古董花瓶", "2000.00");
         String orderId = createProductOrder(buyer, productId, 1);
 
-        assertThatThrownBy(() -> paymentCase.payOrder(orderId, buyer.userId()))
+        assertThatThrownBy(() -> idleCase.payOrder(orderId, buyer.userId()))
                 .as("余额不足支付直接失败").isInstanceOf(BusinessException.class);
 
         // 资金段失败（流水与余额条件扣减随其本地事务回滚），翻转段尚未执行：订单停在待支付，
@@ -84,9 +85,9 @@ class ProductPayCompositeTxIntegrationTest extends PostApiTestBase {
         String productId = createProduct(seller, "九成新吉他", "19.90");
         String orderId = createProductOrder(buyer, productId, 2);
 
-        paymentCase.payOrder(orderId, buyer.userId());
+        idleCase.payOrder(orderId, buyer.userId());
         // 重放：与首次同结果（不抛异常、订单保持已支付），uk_order_type 幂等吸收重复
-        paymentCase.payOrder(orderId, buyer.userId());
+        idleCase.payOrder(orderId, buyer.userId());
 
         assertThat(orderState(orderId)).as("重放后订单保持已支付").isEqualTo("PAID");
         assertThat(freezeFlowCount(orderId)).as("无重复冻结流水").isEqualTo(1);

@@ -33,6 +33,17 @@ public class WalletPaymentServiceImpl implements IWalletPaymentService {
     }
 
     @Override
+    public PaymentOrderEntity createPaymentOrderQuietly(String userId, String bizOrderId, BigDecimal amount, String subject) {
+        try {
+            return walletRepository.createPaymentOrder(userId, bizOrderId, amount, subject);
+        } catch (Exception e) {
+            // 预下单失败不回滚商户订单：订单详情 / 支付前会按同一 bizOrderId 幂等补齐
+            log.warn("[支付单] 预下单失败，留待后续幂等补齐 bizOrderId={}", bizOrderId, e);
+            return null;
+        }
+    }
+
+    @Override
     public PaymentOrderEntity getPaymentOrder(String payNo, String userId) {
         PaymentOrderEntity paymentOrderEntity = walletRepository.getPaymentOrderByPayNo(payNo);
         if (paymentOrderEntity == null) {
@@ -68,6 +79,16 @@ public class WalletPaymentServiceImpl implements IWalletPaymentService {
     @Override
     public void closePaymentOrder(String bizOrderId) {
         walletRepository.closePaymentOrder(bizOrderId);
+    }
+
+    @Override
+    public void closePaymentOrderQuietly(String bizOrderId) {
+        try {
+            walletRepository.closePaymentOrder(bizOrderId);
+        } catch (Exception e) {
+            // 关单失败最多让旧支付单仍可支付：回调按订单已取消/超时拒绝，冻结款由资金孤儿扫描退
+            log.warn("[支付单] 关闭支付单失败，留待回调拒绝 / 资金孤儿扫描收敛 bizOrderId={}", bizOrderId, e);
+        }
     }
 
     @Override

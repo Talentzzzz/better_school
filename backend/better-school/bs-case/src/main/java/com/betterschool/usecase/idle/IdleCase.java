@@ -7,11 +7,14 @@ import com.betterschool.domain.idle.model.valobj.ProductFundOrphanScanSummaryVO;
 import com.betterschool.domain.idle.model.valobj.ProductOrderEventVO;
 import com.betterschool.domain.idle.model.valobj.ProductOrderStatusEnum;
 import com.betterschool.domain.idle.service.IIdleService;
+import com.betterschool.domain.wallet.model.entity.PaymentOrderEntity;
 import com.betterschool.domain.wallet.model.entity.WalletDetailEntity;
 import com.betterschool.domain.wallet.model.valobj.WalletDetailTypeEnum;
 import com.betterschool.domain.wallet.service.IWalletAccountService;
+import com.betterschool.domain.wallet.service.IWalletPaymentService;
 import com.betterschool.types.concurrent.VirtualThreadFanout;
-import com.betterschool.usecase.payment.PaymentCase;
+import com.betterschool.types.enums.ResponseCodeEnum;
+import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -29,9 +32,10 @@ import java.util.List;
  * 订单段向钱包域要冻结/解冻/入账，扫描段读钱包流水做补偿——任何一处改了资金口径，
  * 另外两处的判据都在同一文件里，不会各走各的。
  *
- * <p>支付走支付渠道（wallet 模拟微信支付）：下单时向 {@link PaymentCase} 预下单拿支付单号，
- * 用户在收银台按支付单号付款；钱包扣冻完成后回调本域翻转订单。本类只保留发货、收货、
- * 取消、超时与资金孤儿扫描，支付编排在 {@link PaymentCase}。
+ * <p>支付走支付渠道（wallet 模拟微信支付）：本类直接注入钱包域的 {@link IWalletPaymentService}
+ * 编排「下单后预下单 / 取消与超时关支付单」，不注入其他 case——case 之间不互相注入，
+ * 跨域顺序各自在本层排完。收银台按支付单号支付、支付单查询与支付回调重放属渠道侧入口，
+ * 在 {@code PaymentCase}；钱包回调本域翻转订单仍走 {@code IPaymentNotifyPort}。
  */
 @Slf4j
 @Service
@@ -47,13 +51,16 @@ public class IdleCase {
     /** 单轮每段最多处理的行数：孤儿是异常路径，正常流量下恒 0 行 */
     private static final int SCAN_LIMIT = 200;
 
+    /** 收银台标题长度上限（payment_order.subject） */
+    private static final int SUBJECT_MAX_LENGTH = 100;
+
     /** 取消事件类型字面量（与仓储写入侧 saveEvent 同口径） */
     private static final String EVENT_CANCELLED = "CANCELLED";
 
     private final IIdleService idleService;
     private final ICreditAccountService creditAccountService;
     private final IWalletAccountService walletAccountService;
-    private final PaymentCase paymentCase;
+    private final IWalletPaymentService walletPaymentService;
     private final VirtualThreadFanout fanout;
 
     // ==================== 发布：信用分门槛前置校验 ====================
@@ -116,14 +123,45 @@ public class IdleCase {
     public String createOrder(String buyerId, String productId, int quantity) {
         creditAccountService.ensureOperable(buyerId);
         String orderId = idleService.createOrder(buyerId, productId, quantity);
-        // 下单后向钱包预下单拿支付单号（best-effort）：预下单失败不拖垮已成立的订单，
-        // 订单详情 / 支付前会按同一 bizOrderId 幂等补齐
-        try {
-            paymentCase.ensurePayNo(idleService.getOrderEntity(orderId), buyerId);
-        } catch (Exception e) {
-            log.warn("[支付单] 下单后预下单失败，待订单详情懒创建 orderId={}", orderId, e);
-        }
+        // 下单后向钱包预下单拿支付单号：best-effort 策略在钱包域（失败只记日志返回 null），
+        // 预下单失败不拖垮已成立的订单，订单详情 / 支付前会按同一 bizOrderId 幂等补齐
+        ProductOrderEntity productOrderEntity = idleService.getOrderEntity(orderId);
+        walletPaymentService.createPaymentOrderQuietly(buyerId, orderId,
+                productOrderEntity.totalAmount(), subjectOf(productOrderEntity));
         return orderId;
+    }
+
+    /**
+     * 订单详情页懒创建：确保待支付订单的支付单存在并返回支付单号（按 bizOrderId 幂等）。
+     * 仅买家、仅待支付订单可预下单；其余状态返回 null。
+     */
+    public String ensurePayNo(ProductOrderEntity productOrderEntity, String userId) {
+        if (productOrderEntity == null) {
+            throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "订单不存在");
+        }
+        if (!productOrderEntity.isBuyer(userId)) {
+            throw new BusinessException(ResponseCodeEnum.FORBIDDEN, "只能支付自己的订单");
+        }
+        if (productOrderEntity.getStatus() != ProductOrderStatusEnum.PENDING_PAYMENT) {
+            return null;
+        }
+        PaymentOrderEntity paymentOrderEntity = walletPaymentService.createPaymentOrder(userId,
+                productOrderEntity.getOrderId(), productOrderEntity.totalAmount(), subjectOf(productOrderEntity));
+        return paymentOrderEntity == null ? null : paymentOrderEntity.getPayNo();
+    }
+
+    /**
+     * 内部便捷入口：按商户订单号支付（测试 / 内部调用）。先做买家与可支付态守卫，
+     * 再按支付单号走同一支付链路；已支付及之后的订单幂等返回。
+     */
+    public void payOrder(String orderId, String buyerId) {
+        ProductOrderEntity productOrderEntity = idleService.preparePayOrder(orderId, buyerId);
+        if (productOrderEntity.getStatus() != ProductOrderStatusEnum.PENDING_PAYMENT) {
+            return; // 幂等：上次支付已提交 / 订单已流转
+        }
+        PaymentOrderEntity paymentOrderEntity = walletPaymentService.createPaymentOrder(buyerId, orderId,
+                productOrderEntity.totalAmount(), subjectOf(productOrderEntity));
+        walletPaymentService.pay(paymentOrderEntity.getPayNo(), buyerId);
     }
 
     public void markDelivered(String orderId, String sellerId) {
@@ -152,7 +190,7 @@ public class IdleCase {
                     WalletDetailTypeEnum.PRODUCT_UNFROZEN);
         }
         // 支付前取消：关闭支付单，避免旧支付单被继续支付（已支付订单 close 是空操作，退款走上面的解冻）
-        closePaymentOrderQuietly(orderId);
+        walletPaymentService.closePaymentOrderQuietly(orderId);
     }
 
     public ProductOrderEntity orderDetail(String orderId, String currentUserId) {
@@ -169,17 +207,16 @@ public class IdleCase {
 
     public void handlePayTimeout(String orderId) {
         idleService.handlePayTimeout(orderId);
-        // 超时关单后关闭支付单：晚到的收银台请求按「支付单已关闭」拒绝
-        closePaymentOrderQuietly(orderId);
+        // 超时关单后关闭支付单：晚到的收银台请求按「支付单已关闭」拒绝（失败策略在钱包域）
+        walletPaymentService.closePaymentOrderQuietly(orderId);
     }
 
-    /** 关闭支付单不阻断取消/超时主流程：关失败最多让旧支付单可支付，回调按订单已取消拒绝，冻结款由孤儿扫描退 */
-    private void closePaymentOrderQuietly(String orderId) {
-        try {
-            paymentCase.closePaymentOrder(orderId);
-        } catch (Exception e) {
-            log.warn("[支付单] 关闭支付单失败，留待回调拒绝/资金孤儿扫描收敛 orderId={}", orderId, e);
-        }
+    /** 收银台展示标题：商品标题 + 件数，超长截断（payment_order.subject 列宽） */
+    private String subjectOf(ProductOrderEntity productOrderEntity) {
+        String title = productOrderEntity.getProductTitle() == null ? "商品订单" : productOrderEntity.getProductTitle();
+        int quantity = productOrderEntity.getQuantity() == null ? 1 : productOrderEntity.getQuantity();
+        String subject = quantity > 1 ? title + " × " + quantity : title;
+        return subject.length() > SUBJECT_MAX_LENGTH ? subject.substring(0, SUBJECT_MAX_LENGTH) : subject;
     }
 
     // ==================== 资金孤儿扫描：两段式链路的收敛 job ====================
