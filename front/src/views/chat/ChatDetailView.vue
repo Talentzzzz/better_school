@@ -5,13 +5,14 @@ import { listMembers, listMessages, recallMessage, sendMessage } from '@/api/cha
 import { getProduct } from '@/api/idle'
 import { getPost } from '@/api/community'
 import { uploadImage } from '@/api/files'
-import type { ChatMessage, RoomMember } from '@/types/api'
+import type { ChatMessage, RecallPayload, RoomMember } from '@/types/api'
 import { useAuthStore } from '@/stores/auth'
 import { useChatRoomsStore } from '@/stores/chatRooms'
 import { wsClient } from '@/utils/ws'
 import { formatTime } from '@/utils/format'
 import { parseImageContent, roomDisplayName } from '@/utils/chat'
 import { vLongpress } from '@/utils/longpress'
+import { isUuid } from '@/utils/validate'
 import NavBar from '@/components/NavBar.vue'
 import AppImage from '@/components/AppImage.vue'
 import ActionSheet from '@/components/ActionSheet.vue'
@@ -21,7 +22,8 @@ const router = useRouter()
 const auth = useAuthStore()
 const chatRooms = useChatRoomsStore()
 
-const roomId = Number(route.params.roomId)
+// 会话 ID 是不透明字符串（UUID），原样承载，不做数值解析
+const roomId = String(route.params.roomId ?? '')
 const PAGE_LIMIT = 50
 const RECALL_WINDOW_MS = 2 * 60 * 1000
 
@@ -155,7 +157,8 @@ function newClientMsgId() {
 function optimisticRow(partial: Partial<ChatMessage>, extra?: Partial<Row>): Row {
   const msg: ChatMessage = {
     roomId,
-    messageId: 0,
+    messageId: '',
+    // 消息序号仍是数值：乐观行用最大安全整数占位压到末尾
     seq: Number.MAX_SAFE_INTEGER,
     fromUserId: auth.userId,
     fromNickname: auth.userInfo?.nickname ?? null,
@@ -287,11 +290,11 @@ async function doRecall() {
 // ---------- CARD 实时查对象 + 失效态 ----------
 
 const CARD_LABELS: Record<string, string> = { PRODUCT: '商品', POST: '帖子' }
-const CARD_FETCHERS: Record<string, (id: number) => Promise<string>> = {
+const CARD_FETCHERS: Record<string, (id: string) => Promise<string>> = {
   PRODUCT: (id) => getProduct(id).then((p) => p.title),
   POST: (id) => getPost(id).then((p) => p.title)
 }
-const CARD_ROUTES: Record<string, (id: number) => string> = {
+const CARD_ROUTES: Record<string, (id: string) => string> = {
   PRODUCT: (id) => `/product/${id}`,
   POST: (id) => `/post/${id}`
 }
@@ -325,7 +328,7 @@ function onCardClick(msg: ChatMessage) {
 
 interface PendingCard {
   refType: 'PRODUCT' | 'POST'
-  refId: number
+  refId: string
 }
 const pendingCard = ref<PendingCard | null>(null)
 // 标题/失效态复用 cardInfos 缓存（与气泡渲染同源，查一次）
@@ -337,9 +340,14 @@ const pendingCardInfo = computed(() => {
 
 function initPendingCard() {
   const raw = typeof route.query.card === 'string' ? route.query.card : ''
-  const [refType, idStr] = raw.split(':')
-  const refId = Number(idStr)
-  if ((refType !== 'PRODUCT' && refType !== 'POST') || !Number.isInteger(refId) || refId <= 0) return
+  // 复合参数按第一个冒号切分：refType 段之后整段作为业务 ID 原样收下，不做数值解析
+  const i = raw.indexOf(':')
+  if (i < 0) return
+  const refType = raw.slice(0, i)
+  const refId = raw.slice(i + 1)
+  // 合法性：refType 只认 PRODUCT/POST，ID 段须形如 UUID（避免把任意垃圾串带进发送链路）
+  if (refType !== 'PRODUCT' && refType !== 'POST') return
+  if (!isUuid(refId)) return
   pendingCard.value = { refType, refId }
   void ensureCard({ refType, refId } as ChatMessage) // 对象已删/不可见 → 失效态条仍展示但禁发（后端同样拒绝）
 }
@@ -379,7 +387,8 @@ async function onSendCard() {
 
 // ---------- 已读回执（members 水位 map + READ 推送，纯前端推导，spec §7.5） ----------
 
-function watermark(userId: number): number {
+function watermark(userId: string): number {
+  // 水位线是消息序号（number），map 的键是字符串形式的会话 ID / 用户 ID
   return chatRooms.readSeqs[roomId]?.[userId] ?? 0
 }
 
@@ -427,8 +436,8 @@ onMounted(() => {
   void chatRooms.markRead(roomId)
   unbindMessage = chatRooms.onMessage((msg) => applyIncoming(msg))
   unbindRecall = wsClient.on('RECALL', (env) => {
-    // payload={roomId, seq}：轻事件只带定位
-    const payload = env.payload as { roomId: number; seq: number } | undefined
+    // payload={roomId, seq}：轻事件只带定位；roomId 是不透明字符串，按等值比对，seq 仍用真值判断
+    const payload = env.payload as RecallPayload | undefined
     if (payload?.roomId !== roomId || !payload?.seq) return
     const row = rows.value.find((r) => r.msg.seq === payload.seq)
     if (row) row.msg.status = 'RECALLED'

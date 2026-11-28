@@ -20,7 +20,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
-const orderId = Number(route.params.id)
+const orderId = String(route.params.id ?? '')
 const order = ref<ProductOrder | null>(null)
 const busy = ref(false)
 

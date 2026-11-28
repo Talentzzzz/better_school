@@ -14,7 +14,7 @@ const router = useRouter()
 const route = useRoute()
 
 /** 草稿编辑模式：/publish/post?draft=<postId> */
-const draftId = ref<number | null>(route.query.draft ? Number(route.query.draft) : null)
+const draftId = ref<string | null>(typeof route.query.draft === 'string' && route.query.draft ? route.query.draft : null)
 const isDraftEdit = computed(() => draftId.value !== null)
 const loadingDraft = ref(false)
 

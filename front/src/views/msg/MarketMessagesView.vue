@@ -34,7 +34,7 @@ const unreadOf = (rooms: ChatRoomSummary[]) => rooms.reduce((sum, r) => sum + r.
 /** 空态判据：既无对家会话即空；取数未落地前不判，免得首屏闪空态 */
 const isEmpty = computed(() => chatRooms.loaded && partyRooms.value.length === 0)
 
-function openRoom(roomId: number) {
+function openRoom(roomId: string) {
   router.push(`/chat/${roomId}`)
 }
 

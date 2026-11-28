@@ -4,7 +4,7 @@ import NavBar from '@/components/NavBar.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { toast } from '@/components/Toast'
 import { confirmDialog } from '@/components/ConfirmDialog'
-import { confirmReceived, listMyPrizes, PRIZE_TINTS, tierText } from '@/api/marketing'
+import { confirmReceived, listMyPrizes, prizeTint, tierText } from '@/api/marketing'
 import type { UserPrize, UserPrizeStatus } from '@/api/marketing'
 import { formatDateTime } from '@/utils/format'
 
@@ -46,7 +46,7 @@ function switchTab(key: UserPrizeStatus) {
 
 // ---------- 确认收货：已发货 → 已完成（后端幂等，重复点仍返回 COMPLETED） ----------
 
-const receiving = ref<number | null>(null)
+const receiving = ref<string | null>(null)
 
 async function onReceive(p: UserPrize) {
   const ok = await confirmDialog('确认收货', `确认已收到「${p.name}」？`)
@@ -63,8 +63,8 @@ async function onReceive(p: UserPrize) {
   }
 }
 
-// 色块按 prizeId 取，与营销页奖品目录同一奖品同色
-const tintOf = (p: UserPrize) => PRIZE_TINTS[p.prizeId % PRIZE_TINTS.length]
+// 色块按 prizeId 取，与营销页奖品目录同一奖品同色（UUID 不能取模，走 prizeTint 哈希）
+const tintOf = (p: UserPrize) => prizeTint(p.prizeId)
 
 onMounted(load)
 </script>

@@ -20,13 +20,13 @@ const loading = computed(() => !chatRooms.loaded)
 
 const rooms = computed(() => chatRooms.rooms)
 
-const menuRoomId = ref<number | null>(null)
+const menuRoomId = ref<string | null>(null)
 const menuRoomName = computed(() => {
-  const room = chatRooms.roomById(menuRoomId.value ?? 0)
+  const room = chatRooms.roomById(menuRoomId.value ?? '')
   return (room && roomDisplayName(room)) || ''
 })
 
-function openMenu(roomId: number) {
+function openMenu(roomId: string) {
   menuRoomId.value = roomId
 }
 
