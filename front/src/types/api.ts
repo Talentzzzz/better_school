@@ -242,6 +242,19 @@ export type RoomSource = 'PRODUCT'
 /** 对家角色标签（服务端按来源 + 本人是否首建发起人现算） */
 export type RoomPeerRole = 'SELLER' | 'BUYER'
 
+/** READ 推送载荷：读方 userId 的已读水位线推进到 readSeq */
+export interface ReadReceiptPayload {
+  roomId: string
+  userId: string
+  readSeq: number
+}
+
+/** RECALL 推送载荷：轻事件只带定位，内容终态以拉取为准 */
+export interface RecallPayload {
+  roomId: string
+  seq: number
+}
+
 export interface ChatRoomSummary {
   roomId: string
   peerUserId: string | null

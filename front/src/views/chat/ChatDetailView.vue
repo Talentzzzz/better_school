@@ -5,13 +5,14 @@ import { listMembers, listMessages, recallMessage, sendMessage } from '@/api/cha
 import { getProduct } from '@/api/idle'
 import { getPost } from '@/api/community'
 import { uploadImage } from '@/api/files'
-import type { ChatMessage, RoomMember } from '@/types/api'
+import type { ChatMessage, RecallPayload, RoomMember } from '@/types/api'
 import { useAuthStore } from '@/stores/auth'
 import { useChatRoomsStore } from '@/stores/chatRooms'
 import { wsClient } from '@/utils/ws'
 import { formatTime } from '@/utils/format'
 import { parseImageContent, roomDisplayName } from '@/utils/chat'
 import { vLongpress } from '@/utils/longpress'
+import { isUuid } from '@/utils/validate'
 import NavBar from '@/components/NavBar.vue'
 import AppImage from '@/components/AppImage.vue'
 import ActionSheet from '@/components/ActionSheet.vue'
@@ -346,7 +347,7 @@ function initPendingCard() {
   const refId = raw.slice(i + 1)
   // 合法性：refType 只认 PRODUCT/POST，ID 段须形如 UUID（避免把任意垃圾串带进发送链路）
   if (refType !== 'PRODUCT' && refType !== 'POST') return
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(refId)) return
+  if (!isUuid(refId)) return
   pendingCard.value = { refType, refId }
   void ensureCard({ refType, refId } as ChatMessage) // 对象已删/不可见 → 失效态条仍展示但禁发（后端同样拒绝）
 }
@@ -436,7 +437,7 @@ onMounted(() => {
   unbindMessage = chatRooms.onMessage((msg) => applyIncoming(msg))
   unbindRecall = wsClient.on('RECALL', (env) => {
     // payload={roomId, seq}：轻事件只带定位；roomId 是不透明字符串，按等值比对，seq 仍用真值判断
-    const payload = env.payload as { roomId: string; seq: number } | undefined
+    const payload = env.payload as RecallPayload | undefined
     if (payload?.roomId !== roomId || !payload?.seq) return
     const row = rows.value.find((r) => r.msg.seq === payload.seq)
     if (row) row.msg.status = 'RECALLED'

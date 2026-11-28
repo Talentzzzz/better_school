@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { hideRoom as apiHideRoom, listRooms, markRead as apiMarkRead, pullTimeline } from '@/api/chat'
-import type { ChatMessage, ChatRoomSummary } from '@/types/api'
+import type { ChatMessage, ChatRoomSummary, ReadReceiptPayload, RecallPayload } from '@/types/api'
 import { wsClient } from '@/utils/ws'
 
 const TIMELINE_LIMIT = 200
@@ -76,12 +76,12 @@ export const useChatRoomsStore = defineStore('chatRooms', {
         }),
         wsClient.on('READ', (env) => {
           // payload={roomId, userId(readerId), readSeq}，就地更新成员水位 map
-          const payload = env.payload as { roomId: string; userId: string; readSeq: number } | undefined
+          const payload = env.payload as ReadReceiptPayload | undefined
           if (payload?.roomId) this.mergeReadSeq(payload.roomId, payload.userId, payload.readSeq)
         }),
         wsClient.on('RECALL', (env) => {
           // payload={roomId, seq}：轻事件只带定位，内容终态以拉取为准
-          const payload = env.payload as { roomId: string; seq: number } | undefined
+          const payload = env.payload as RecallPayload | undefined
           if (payload?.roomId && payload.seq) this.applyRecall(payload.roomId, payload.seq)
         }),
         // 断线重连对齐：连接成功即补拉（推是加速，拉是真相，spec §2）
