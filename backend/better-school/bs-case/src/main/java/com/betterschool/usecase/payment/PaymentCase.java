@@ -17,7 +17,7 @@ import java.util.List;
 /**
  * 支付渠道用例（模拟微信支付）：收银台按支付单号支付、支付单查询、支付回调重放。
  * <ul>
- *   <li>收银台支付：按支付单号扣冻 + 回调商户（钱包支付服务内完成）；</li>
+ *   <li>收银台支付：按支付单号出账（买家余额 → 平台代收账户）+ 回调商户（钱包支付服务内完成）；</li>
  *   <li>回调收敛：支付成功但商户未确认（进程崩溃 / 回调失败）由 {@code productPayTaskScan} 重放。</li>
  * </ul>
  *
@@ -25,7 +25,7 @@ import java.util.List;
  * 直接编排钱包域完成；钱包回调商户仍走 {@link IPaymentNotifyPort}（实现方
  * {@code PaymentNotifyHandler} 只依赖 idle 域服务）。
  *
- * <p>资金动作在钱包域单仓储事务内（支付单 PAID + 冻结流水 + 余额条件扣减 + 任务行）；
+ * <p>资金动作在钱包域单仓储事务内（支付单 PAID + 买家出账 / 平台入账双边流水 + 买家余额条件扣减 + 任务行）；
  * 本层不做事务，只编排跨域顺序（ADR-0016）。回调端口实现方保证幂等。
  */
 @Slf4j
@@ -45,7 +45,7 @@ public class PaymentCase {
     private final IWalletAccountService walletAccountService;
     private final IPaymentNotifyPort paymentNotifyPort;
 
-    /** 收银台支付：按支付单号支付（钱包扣冻 + 进程内回调商户） */
+    /** 收银台支付：按支付单号支付（钱包出账 + 进程内回调商户） */
     public void pay(String payNo, String userId) {
         walletPaymentService.pay(payNo, userId);
     }
@@ -103,7 +103,7 @@ public class PaymentCase {
         boolean accepted = paymentNotifyPort.notifyPaid(paymentOrderEntity.getPayNo(),
                 paymentOrderEntity.getBizOrderId(), paymentOrderEntity.getUserId());
         if (!accepted) {
-            // 订单已取消 / 不存在：永久无需再通知；冻结款由 productFundOrphanScan 退买家
+            // 订单已取消 / 不存在：永久无需再通知；已收进平台的货款由 productFundOrphanScan 退买家
             log.warn("[支付回调] 商户拒绝或订单已关闭，停止重试 orderId={}", task.getOrderId());
         }
         walletAccountService.markPayTaskDone(task.getOrderId());

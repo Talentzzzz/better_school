@@ -34,31 +34,6 @@ public interface IWalletRepository {
     /** mock 充值（+余额 +流水 RECHARGE）：单个原子用例 */
     void recharge(String userId, BigDecimal amount);
 
-    /** 冻结金额：可用余额（balance - frozen）不足抛 400（+流水 FROZEN）：单个原子用例 */
-    void freeze(String userId, BigDecimal amount, String orderId);
-
-    /**
-     * 冻结（带流水类型）：流水 + 余额条件 UPDATE 一个原子用例。
-     * 商品支付的冻结不走本方法，由 {@link #pay(String, String)} 在支付事务内与支付单状态、
-     * 回调任务行一起完成（见下方支付单小节）
-     */
-    void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO);
-
-    /** 解冻退回（+流水 UNFROZEN）：单个原子用例 */
-    void unfreeze(String userId, BigDecimal amount, String orderId);
-
-    /** 解冻退回（带流水类型）：单个原子用例 */
-    void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO);
-
-    /** 解冻退回（带业务轮次，与冻结轮次对齐）：单个原子用例 */
-    void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO, int bizRound);
-
-    /** 接单方入账（+流水 INCOME）：单个原子用例 */
-    void income(String userId, BigDecimal amount, String orderId);
-
-    /** 接收方入账（带流水类型）：单个原子用例 */
-    void income(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO);
-
     /**
      * 确认收货结算（单仓储事务）：平台出账 + 卖家入账，双边流水 + 双边余额同生共死。
      * <p>
@@ -88,16 +63,6 @@ public interface IWalletRepository {
     List<WalletDetailEntity> listDetails(String userId, int offset, int limit);
 
     long countDetails(String userId);
-
-    /**
-     * 孤儿扫描输入（ADR-0016 两段式）：存在冻结流水、但同订单同轮次没有对应解冻流水、
-     * 且冻结时间早于阈值的行（按 create_time 升序）。单仓储自查（冻结与解冻都在本表比对），
-     * 不跨域；流水类型成对传入——同表不同 type，各域扫描线只认自己的类型对；
-     * 「是否该解冻」的业务判据（订单是否终态）
-     * 由扫描用例查订单域裁决
-     */
-    List<WalletDetailEntity> listOrphanFrozen(WalletDetailTypeEnum frozenType, WalletDetailTypeEnum unfrozenType,
-                                              int thresholdMinutes, int limit);
 
     /**
      * 孤儿扫描输入（平台侧线索）：平台有 {@link WalletDetailTypeEnum#PLATFORM_IN}、同订单同轮次却

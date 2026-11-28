@@ -37,7 +37,7 @@ public class PaymentNotifyHandler implements IPaymentNotifyPort {
         }
         ProductOrderStatusEnum status = productOrderEntity.getStatus();
         if (status == ProductOrderStatusEnum.CANCELLED) {
-            // 支付与取消竞态：支付赢了取消前的校验，但订单已终态；冻结款由 productFundOrphanScan 退买家
+            // 支付与取消竞态：支付赢了取消前的校验，但订单已终态；已收进平台的货款由 productFundOrphanScan 退买家
             log.warn("[支付回调] 订单已取消，拒绝回调 payNo={}, bizOrderId={}", payNo, bizOrderId);
             return false;
         }

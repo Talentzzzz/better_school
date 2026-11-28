@@ -14,21 +14,6 @@
         WHERE user_id = #{userId}
     </select>
 
-    <update id="updateFreeze">
-        UPDATE virtual_wallet
-        SET frozen_amount = frozen_amount + #{amount},
-            update_time   = NOW()
-        WHERE user_id = #{userId}
-          AND balance - frozen_amount &gt;= #{amount}
-    </update>
-
-    <update id="updateUnfreeze">
-        UPDATE virtual_wallet
-        SET frozen_amount = GREATEST(0, frozen_amount - #{amount}),
-            update_time   = NOW()
-        WHERE user_id = #{userId}
-    </update>
-
     <update id="updateIncreaseBalance">
         UPDATE virtual_wallet
         SET balance    = balance + #{amount},

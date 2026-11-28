@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** resolved（`IdleCase` 四笔资金动作翻到平台过账、孤儿扫描收敛为单段平台线索，钱包旧 `freeze` / `unfreeze` / `income` / `listOrphanFrozen` 口径与测试探针全部删除）
 
 ### 1. 确认收货 → 平台结算卖家
 
@@ -51,12 +51,32 @@
 
 验收清单：
 
-- [ ] `confirmReceived` 只调 `settleProductOrder`；`cancelOrder` 只在 `needRefund` 时调 `refundProductOrder`；`handlePayTimeout` 无资金动作且注释解释「晚到支付由孤儿扫描收敛」
-- [ ] `scanFundOrphans` 单段平台线索：`COMPLETED` 补结算、`CANCELLED` 补退款、未终态不动钱、订单缺失记 ERROR 跳过；目标买家/卖家取自订单而非流水行
-- [ ] 摘要 VO 三字段与新口径一致，job 文案同步
-- [ ] 钱包 `freeze` / `unfreeze` / `income` / `listOrphanFrozen` 从 service 与 repository 删除，全仓无残留引用；`WalletIncomeFailureProbe` 删除
-- [ ] `IdleCase` 仍只注入域 service，未注入 `PaymentCase` / 其他 case
-- [ ] 全仓 grep `PRODUCT_FROZEN` / `PRODUCT_UNFROZEN` 只剩枚举常量、`@Deprecated` 注释与票 04 待改的测试断言
-- [ ] 编译闸门：**不运行 mvn / 任何测试**（spec 交付口径）
+- [x] `confirmReceived` 只调 `settleProductOrder`；`cancelOrder` 只在 `needRefund` 时调 `refundProductOrder`；`handlePayTimeout` 无资金动作且注释解释「晚到支付由孤儿扫描收敛」
+- [x] `scanFundOrphans` 单段平台线索：`COMPLETED` 补结算、`CANCELLED` 补退款、未终态不动钱、订单缺失记 ERROR 跳过；目标买家/卖家取自订单而非流水行
+- [x] 摘要 VO 三字段与新口径一致，job 文案同步
+- [x] 钱包 `freeze` / `unfreeze` / `income` / `listOrphanFrozen` 从 service 与 repository 删除，全仓无残留引用；`WalletIncomeFailureProbe` 删除
+- [x] `IdleCase` 仍只注入域 service，未注入 `PaymentCase` / 其他 case
+- [x] 全仓 grep `PRODUCT_FROZEN` / `PRODUCT_UNFROZEN` 只剩枚举常量、`@Deprecated` 注释与票 04 待改的测试断言
+- [x] 编译闸门：**不运行 mvn / 任何测试**（spec 交付口径）
 
-**落地注记（实现取舍）：** 待实现者补。
+**落地注记（实现取舍）：**
+
+**孤儿扫描最终形态**：`scanFundOrphans()` 单段——`walletAccountService.listOrphanPlatformIn(PLATFORM_ORPHAN_THRESHOLD_MINUTES=10, SCAN_LIMIT=200)` 取「平台有 `PLATFORM_IN`、同订单同轮次无 `PLATFORM_OUT`、已超阈值」的行，逐行 `idleService.getOrderEntity(orderId)`（订单缺失 `log.error` 跳过、不动钱），按订单终态裁决：`COMPLETED` → `settleProductOrder(orderId, 订单 sellerId, 订单金额)`、`CANCELLED` → `refundProductOrder(orderId, 订单 buyerId, 订单金额)`，其余状态（`PENDING_PAYMENT` / `PAID` / `DELIVERED`）`continue`（宁可长款）。金额用 `ProductOrderEntity.totalAmount()`（`price × quantity`，`quantity` 为 null 按 1，与旧实现同口径），目标买家/卖家一律取自订单，不取流水行的 `user_id`（那现在是平台）。
+
+**摘要 VO 字段名**：`platformInOrphanTotal`（候选行数，含跳过的未终态行 / 订单缺失行）/ `settleDone` / `refundDone`；`ProductFundOrphanScanJob` 文案「商品孤儿扫描完成：平台入账无出账 %d 行（补结算 %d、补退款 %d）」，三个字段都被 job 使用，无哑字段。
+
+**删掉的方法与文件**：
+- `IWalletAccountService` / `WalletAccountServiceImpl`：`freeze`（2 个重载）、`unfreeze`（3 个重载）、`income`（2 个重载）、`listOrphanFrozen`；
+- `IWalletRepository` / `WalletRepository`：`freeze`（2 个）、`unfreeze`（3 个）、`income`（2 个）、`listOrphanFrozen`；
+- `IWalletDetailDao` / `WalletDetailMapper.xml`：`selectOrphanFrozen`；`IWalletDao` / `WalletMapper.xml`：`updateFreeze`、`updateUnfreeze`（`updateIncreaseBalance` 仍被 `recharge` 与卖家/平台入账使用，保留）；
+- `IdleCase`：私有 `unfreezeTerminalOrphans` / `replayPaidCancelUnfreeze`、常量 `EVENT_CANCELLED` / `SETTLED_WINDOW_MINUTES`，`FROZEN_ORPHAN_THRESHOLD_MINUTES` 改名 `PLATFORM_ORPHAN_THRESHOLD_MINUTES`；
+- 测试支撑类 `WalletIncomeFailureProbe`（全仓无使用方）；
+- `WalletDetailTypeEnum` 的 `FROZEN` / `UNFROZEN` / `INCOME` / `PRODUCT_FROZEN` / `PRODUCT_UNFROZEN` 常量全部保留（历史数据读取）。
+
+**与票面不同 / 需要维护者留意的地方**：
+1. **注释同步超出票面第 6 节清单**：为让「全仓 grep `PRODUCT_FROZEN`」只剩枚举 / `@Deprecated` / 票 04 测试断言，`IdleServiceImpl`（`confirmPayOrder`、`cancelOrder` 注释里明确写着 `PRODUCT_FROZEN` 与「冻结 / 解冻」现行口径）也同步改成平台过账描述；同时把 `IWalletPaymentService`、`PaymentOrderStateEnum`、`IPaymentNotifyPort`、`PaymentNotifyHandler` 里「扣冻 / 冻结款 / 解冻链路」的现行表述改为出账 / 入账。仅注释，无逻辑改动。
+2. **金额取法**：票面写「订单金额（`price × quantity`，`quantity` 为 null 按 1，与既有一致）」，实现直接用实体 `ProductOrderEntity.totalAmount()`（同一口径），不再手写乘法。
+3. **历史数据盲区**：单段平台线索只覆盖新口径下的订单（每笔支付都落 `PLATFORM_IN`）。改造前已存在的旧口径冻结/解冻流水即使经票 05 映射成 `PRODUCT_PAY` / `PRODUCT_REFUND`，也没有平台腿，不会被平台扫描收敛——spec 已把存量数据修复划出范围（开发/测试库可重建），这里只提示：旧库不要指望孤儿扫描兜底。
+4. **`handlePayTimeout` 保留关支付单**：票面说「保留关支付单」，实现未动该调用，只在方法注释写清「无资金动作 + 晚到支付的并发窗口由孤儿扫描收敛」。
+5. **`IIdleService.listRecentSettled` / `latestEventOf`** 按票面保留（域能力），`IdleCase` 已不再引用。
+6. **未运行 mvn / 任何测试**（按交付口径）；自查只做了静态 `git grep`。

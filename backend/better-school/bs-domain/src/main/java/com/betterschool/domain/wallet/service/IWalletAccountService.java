@@ -3,7 +3,6 @@ package com.betterschool.domain.wallet.service;
 import com.betterschool.domain.wallet.model.entity.VirtualWalletEntity;
 import com.betterschool.domain.wallet.model.entity.WalletDetailEntity;
 import com.betterschool.domain.wallet.model.entity.WalletPayTaskEntity;
-import com.betterschool.domain.wallet.model.valobj.WalletDetailTypeEnum;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -26,27 +25,6 @@ public interface IWalletAccountService {
 
     /** mock 充值（v1 虚拟币，无真实支付） */
     void recharge(String userId, BigDecimal amount);
-
-    /** 冻结金额：流水先行（uk 幂等），余额不足抛 400 */
-    void freeze(String userId, BigDecimal amount, String orderId);
-
-    /** 冻结（带流水类型，uk_order_type 幂等按域区分）；商品支付的冻结由支付渠道的支付事务完成 */
-    void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO);
-
-    /** 解冻退回（幂等） */
-    void unfreeze(String userId, BigDecimal amount, String orderId);
-
-    /** 解冻退回（带流水类型） */
-    void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO);
-
-    /** 解冻退回（带业务轮次，与冻结轮次对齐） */
-    void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO, int bizRound);
-
-    /** 接单方入账（幂等） */
-    void income(String userId, BigDecimal amount, String orderId);
-
-    /** 接收方入账（带流水类型） */
-    void income(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO);
 
     /**
      * 确认收货结算：平台出账 + 卖家入账，单仓储事务、双边流水幂等；平台余额不足整笔回滚。
@@ -72,10 +50,6 @@ public interface IWalletAccountService {
     void markPayTaskDone(String orderId);
 
     // ---------- 资金补偿扫描（资金孤儿扫描 / 支付回调扫描的取数口） ----------
-
-    /** 冻结孤儿候选：有 frozenType 流水、同订单同轮次无 unfrozenType 流水且已超阈值的流水行 */
-    List<WalletDetailEntity> listOrphanFrozen(WalletDetailTypeEnum frozenType, WalletDetailTypeEnum unfrozenType,
-                                              int thresholdMinutes, int limit);
 
     /**
      * 平台侧自查：平台有 {@code PLATFORM_IN}、同订单同轮次无 {@code PLATFORM_OUT} 且已超阈值的流水行，

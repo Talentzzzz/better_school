@@ -8,12 +8,12 @@ import lombok.Data;
 @AllArgsConstructor
 public class ProductFundOrphanScanSummaryVO {
 
-    /** 第一段扫到的「有 PRODUCT_FROZEN 无 PRODUCT_UNFROZEN」冻结孤儿行数（含跳过的未终态行） */
-    private int frozenOrphanTotal;
+    /** 单轮扫到的「平台有 PLATFORM_IN 无 PLATFORM_OUT」候选行数（含跳过的未终态行 / 订单缺失行） */
+    private int platformInOrphanTotal;
 
-    /** 第一段补解冻（订单已终态）执行数：流水 uk 幂等吸收重复 */
-    private int orphanUnfrozenDone;
+    /** 订单 COMPLETED 补结算（平台出账 + 卖家入账）执行数：流水 uk 幂等吸收重复 */
+    private int settleDone;
 
-    /** 第二段近窗口终态订单里补买家解冻退款执行数（已支付取消）：流水 uk 幂等吸收重复 */
-    private int replayUnfrozenDone;
+    /** 订单 CANCELLED 补退款（平台出账 + 买家入账）执行数：流水 uk 幂等吸收重复 */
+    private int refundDone;
 }
