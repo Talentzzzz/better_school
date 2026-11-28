@@ -5,13 +5,13 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 
-/** 取消动作结果：case 层据此决定是否解冻退款 */
+/** 取消动作结果：case 层据此决定是否平台退款（平台出账 + 买家入账） */
 @Data
 @AllArgsConstructor
 public class ProductCancelResult {
-    /** 已支付需解冻退回 */
+    /** 已支付需平台退款 */
     private boolean needRefund;
     private String buyerId;
-    /** 需解冻金额（成交单价 × 件数） */
+    /** 退款金额（成交单价 × 件数） */
     private BigDecimal amount;
 }

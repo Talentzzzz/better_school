@@ -111,38 +111,6 @@ public class WalletRepository implements IWalletRepository {
         });
     }
 
-    @Override
-    public void freeze(String userId, BigDecimal amount, String orderId) {
-        freeze(userId, amount, orderId, WalletDetailTypeEnum.FROZEN);
-    }
-
-    /**
-     * 流水先行 + 余额条件 UPDATE 一个原子用例（余额不足时流水随之回滚）。
-     * <p>
-     * 商品链路已不再冻结：支付在 {@link #pay(String, String)} 里直接出账给平台，确认收货 / 取消
-     * 在 {@link #settleProductOrder} / {@link #refundProductOrder} 里由平台出账。本方法保留给非商品链路，
-     * 冻结额列与历史值也一并保留（只作为买家出账守卫的减项）。
-     */
-    @Override
-    public void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO) {
-        WalletDetail walletDetail = new WalletDetail();
-        walletDetail.setUserId(userId);
-        walletDetail.setType(walletDetailTypeVO.name());
-        walletDetail.setAmount(amount);
-        walletDetail.setOrderId(orderId);
-        walletDetail.setBizRound(0);
-        transactionTemplate.execute(status -> {
-            // 流水先行：uk_order_type 冲突（已冻结过）→ 幂等跳过，不动余额
-            if (walletDetailDao.insertIgnoreDetail(walletDetail) > 0) {
-                // 可用余额（balance - frozen）不足则冻结失败，事务整体回滚（含流水）
-                if (walletDao.updateFreeze(userId, amount) == 0) {
-                    throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "余额不足，无法完成操作");
-                }
-            }
-            return null;
-        });
-    }
-
     /** 支付回调任务行：首次可扫延后 {@link #PAY_TASK_GRACE_SECONDS} 秒，给请求线程的同步回调留窗口 */
     private WalletPayTaskPO newPayTask(String orderId) {
         LocalDateTime now = LocalDateTime.now();
@@ -154,57 +122,6 @@ public class WalletRepository implements IWalletRepository {
         walletPayTaskPO.setCreateTime(now);
         walletPayTaskPO.setUpdateTime(now);
         return walletPayTaskPO;
-    }
-
-    @Override
-    public void unfreeze(String userId, BigDecimal amount, String orderId) {
-        unfreeze(userId, amount, orderId, WalletDetailTypeEnum.UNFROZEN);
-    }
-
-    @Override
-    public void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO) {
-        unfreeze(userId, amount, orderId, walletDetailTypeVO, 0);
-    }
-
-    /** 流水先行 + 解冻回退一个原子用例 */
-    @Override
-    public void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO, int bizRound) {
-        WalletDetail walletDetail = new WalletDetail();
-        walletDetail.setUserId(userId);
-        walletDetail.setType(walletDetailTypeVO.name());
-        walletDetail.setAmount(amount);
-        walletDetail.setOrderId(orderId);
-        walletDetail.setBizRound(bizRound);
-        transactionTemplate.execute(status -> {
-            if (walletDetailDao.insertIgnoreDetail(walletDetail) == 0) {
-                return null;
-            }
-            walletDao.updateUnfreeze(userId, amount);
-            return null;
-        });
-    }
-
-    @Override
-    public void income(String userId, BigDecimal amount, String orderId) {
-        income(userId, amount, orderId, WalletDetailTypeEnum.INCOME);
-    }
-
-    /** 流水先行 + 余额入账一个原子用例 */
-    @Override
-    public void income(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO) {
-        WalletDetail walletDetail = new WalletDetail();
-        walletDetail.setUserId(userId);
-        walletDetail.setType(walletDetailTypeVO.name());
-        walletDetail.setAmount(amount);
-        walletDetail.setOrderId(orderId);
-        walletDetail.setBizRound(0);
-        transactionTemplate.execute(status -> {
-            if (walletDetailDao.insertIgnoreDetail(walletDetail) == 0) {
-                return null;
-            }
-            walletDao.updateIncreaseBalance(userId, amount);
-            return null;
-        });
     }
 
     /**
@@ -329,14 +246,6 @@ public class WalletRepository implements IWalletRepository {
         walletDetailEntity.setBizRound(walletDetail.getBizRound());
         walletDetailEntity.setCreateTime(walletDetail.getCreateTime());
         return walletDetailEntity;
-    }
-
-    /** 孤儿扫描输入（ADR-0016 两段式）：流水类型成对传入（按域各一条扫描线），只读，无事务 */
-    @Override
-    public List<WalletDetailEntity> listOrphanFrozen(WalletDetailTypeEnum frozenType, WalletDetailTypeEnum unfrozenType,
-                                                     int thresholdMinutes, int limit) {
-        return walletDetailDao.selectOrphanFrozen(frozenType.name(), unfrozenType.name(), thresholdMinutes, limit)
-                .stream().map(this::toDetailEntity).toList();
     }
 
     /** 平台侧孤儿扫描输入（平台有入账无出账 = 平台已收但未结算 / 退款），只读，无事务 */

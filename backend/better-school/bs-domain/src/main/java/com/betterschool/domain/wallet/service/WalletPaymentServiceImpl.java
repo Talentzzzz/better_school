@@ -15,7 +15,8 @@ import java.math.BigDecimal;
 /**
  * 支付渠道服务（钱包域扮演「微信支付」）：预下单、按支付单号支付、回调商户、关闭支付单。
  * <p>
- * 资金动作（支付单置 PAID + 冻结流水 + 余额条件扣减 + 回调任务行）在 {@link IWalletRepository#pay}
+ * 资金动作（支付单置 PAID + 买家出账 / 平台入账双边流水 + 买家余额条件扣减 + 回调任务行）在
+ * {@link IWalletRepository#pay}
  * 的单仓储事务内完成；事务提交后才调用 {@link IPaymentNotifyPort} 通知商户（跨域动作不并事务，
  * ADR-0016）。回调失败不撤销支付，任务行留 PENDING 由 {@code productPayTaskScan} 重放。
  */
@@ -57,13 +58,13 @@ public class WalletPaymentServiceImpl implements IWalletPaymentService {
 
     @Override
     public PaymentPayResult pay(String payNo, String userId) {
-        // 钱包事务：支付单置 PAID + 冻结资金 + 回调任务行（任一步失败整体回滚）
+        // 钱包事务：支付单置 PAID + 买家出账 + 平台入账 + 回调任务行（任一步失败整体回滚）
         PaymentPayResult paymentPayResult = walletRepository.pay(payNo, userId);
         try {
             boolean accepted = paymentNotifyPort.notifyPaid(paymentPayResult.getPayNo(),
                     paymentPayResult.getBizOrderId(), paymentPayResult.getPayerId());
             if (!accepted) {
-                // 订单已关闭/不存在：永久无需再通知；已冻结的钱由资金孤儿扫描退买家
+                // 订单已关闭/不存在：永久无需再通知；已收进平台的货款由资金孤儿扫描退买家
                 log.warn("[支付回调] 商户拒绝或订单已关闭，停止重试 payNo={}, bizOrderId={}",
                         paymentPayResult.getPayNo(), paymentPayResult.getBizOrderId());
             }
@@ -86,7 +87,7 @@ public class WalletPaymentServiceImpl implements IWalletPaymentService {
         try {
             walletRepository.closePaymentOrder(bizOrderId);
         } catch (Exception e) {
-            // 关单失败最多让旧支付单仍可支付：回调按订单已取消/超时拒绝，冻结款由资金孤儿扫描退
+            // 关单失败最多让旧支付单仍可支付：回调按订单已取消/超时拒绝，已收进平台的货款由资金孤儿扫描退
             log.warn("[支付单] 关闭支付单失败，留待回调拒绝 / 资金孤儿扫描收敛 bizOrderId={}", bizOrderId, e);
         }
     }

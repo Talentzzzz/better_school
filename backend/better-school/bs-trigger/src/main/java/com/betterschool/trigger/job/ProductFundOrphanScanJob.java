@@ -26,9 +26,10 @@ public class ProductFundOrphanScanJob {
         try {
             ProductFundOrphanScanSummaryVO productFundOrphanScanSummaryVO = idleCase.scanFundOrphans();
             XxlJobHelper.handleSuccess(String.format(
-                    "商品孤儿扫描完成：冻结孤儿 %d 行（补解冻 %d）、已支付取消补解冻 %d",
-                    productFundOrphanScanSummaryVO.getFrozenOrphanTotal(), productFundOrphanScanSummaryVO.getOrphanUnfrozenDone(),
-                    productFundOrphanScanSummaryVO.getReplayUnfrozenDone()));
+                    "商品孤儿扫描完成：平台入账无出账 %d 行（补结算 %d、补退款 %d）",
+                    productFundOrphanScanSummaryVO.getPlatformInOrphanTotal(),
+                    productFundOrphanScanSummaryVO.getSettleDone(),
+                    productFundOrphanScanSummaryVO.getRefundDone()));
         } catch (Exception e) {
             // 本轮失败不补跑：job 调度层重试 0，下个周期照常重扫（未收敛行永远满足扫描条件）
             log.error("[资金孤儿告警] 商品孤儿扫描 job 异常", e);
