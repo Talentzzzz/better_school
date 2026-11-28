@@ -1,8 +1,9 @@
 package com.betterschool.integration.idle;
 
 import com.betterschool.integration.support.PostApiTestBase;
-import com.betterschool.usecase.idle.IdleCase;
+import com.betterschool.types.common.Constants;
 import com.betterschool.types.exception.BusinessException;
+import com.betterschool.usecase.idle.IdleCase;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -14,27 +15,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 商品支付资金链路集成测试（资金一致性票 06；钱包支付渠道化后主缝迁至商品订单用例
- * {@link IdleCase#payOrder}）：
- * 在主缝（订单用例层公开支付方法）上断言支付链路的外显行为——
- * 资金段「货款 PRODUCT_FROZEN 冻结」（流水 uk_order_type 幂等 + 余额条件扣减）与支付单 PAID
- * 在钱包单仓储事务内完成，提交后回调翻转订单「待支付→已支付」；只断言外部可观察状态
- * （订单状态 / 钱包流水 / 余额），不断言段落编排。失败注入点 = 钱包冻结动作边界
- * （余额不足即真实失败注入，支付单留 WAIT_PAY）。只断言外显行为：支付成功三态齐备、
- * 余额不足支付失败订单留待支付、幂等重放无害。
+ * 商品支付资金链路集成测试（平台代收口径；主缝 = 商品订单用例 {@link IdleCase#payOrder}）：
+ * 支付链路的外显行为是「买家余额出账 + 平台代收入账」——买家 {@code PRODUCT_PAY} 与平台
+ * {@code PLATFORM_IN} 双边流水、双边余额在钱包单仓储事务内完成（{@code uk_order_type} 幂等），
+ * 提交后进程内回调把订单「待支付 → 已支付」；本类只断言外部可观察状态（订单状态 / 买家与平台余额 /
+ * 流水行），不断言事务内部顺序与调用次数。
+ * <p>
+ * 失败注入点用天然条件「买家可用余额不足」（下单 2000 > 注册赠送 1000）：钱包事务整笔回滚，
+ * 支付单留 WAIT_PAY、订单留待支付，双边流水与平台懒创建行一起消失——所以平台余额断言必须容忍
+ * 「平台账户行不存在 = 0」，不能用 {@code queryForObject} 直取。
  */
 class ProductPayCompositeTxIntegrationTest extends PostApiTestBase {
 
     @Autowired
     private IdleCase idleCase;
 
-    /** 注册赠送初始余额（WalletRepository.INITIAL_BALANCE）——低余额买家的资金注入基线 */
+    /** 注册赠送初始余额（WalletRepository 注册路径口径）——低余额买家的资金注入基线 */
     private static final String INITIAL_BALANCE = "1000";
 
-    // ---------- 支付成功：订单已支付 + 货款真实冻结（两段式成功路径的外显三态） ----------
+    // ---------- 支付成功：订单已支付 + 买家出账 / 平台代收双边落账（外显三态） ----------
 
     @Test
-    void 支付成功_订单转已支付且货款同事务冻结() {
+    void 支付成功_订单转已支付且买家出账平台入账() {
         Session seller = registerAndLogin("13800010001", "卖家A");
         Session buyer = registerAndLogin("13800010002", "买家A");
         String productId = createProduct(seller, "九成新台灯", "19.90");
@@ -44,55 +46,63 @@ class ProductPayCompositeTxIntegrationTest extends PostApiTestBase {
 
         // 外显一：订单翻转已支付
         assertThat(orderState(orderId)).as("订单翻转已支付").isEqualTo("PAID");
-        // 外显二：货款冻结流水诞生（PRODUCT_FROZEN，带订单幂等键）
-        Map<String, Object> freezeFlow = freezeFlowRow(orderId);
-        assertThat(freezeFlow).as("已支付订单必然带着冻结流水").isNotNull();
-        assertThat(((BigDecimal) freezeFlow.get("amount"))).as("冻结金额 = 单价 × 件数")
-                .isEqualByComparingTo("39.80");
-        // 外显三：可用余额被冻结额占据（balance 扣减、frozen_amount 同额抬升）
-        assertThat(balanceOf(buyer.userId())).as("余额扣减货款").isEqualByComparingTo("960.20");
-        assertThat(frozenAmountOf(buyer.userId())).as("冻结额抬升货款").isEqualByComparingTo("39.80");
+        // 外显二：双边流水恰两行（买家出账 + 平台代收，同一 order_id；uk_order_type 幂等的物证）
+        assertThat(flowTypesOf(orderId)).as("支付只落买家出账 + 平台代收两行流水")
+                .hasSize(2)
+                .containsExactlyInAnyOrder("PRODUCT_PAY", "PLATFORM_IN");
+        assertThat(flowAmountOf(orderId, "PRODUCT_PAY")).as("买家出账金额 = 单价 × 件数")
+                .isNotNull().isEqualByComparingTo("39.80");
+        assertThat(flowAmountOf(orderId, "PLATFORM_IN")).as("平台代收金额 = 订单总额")
+                .isNotNull().isEqualByComparingTo("39.80");
+        // 外显三：钱真的从买家余额离开、进平台代收账户；frozen_amount 列已退役，全程为 0
+        assertThat(balanceOf(buyer.userId())).as("买家余额扣减货款").isEqualByComparingTo("960.20");
+        assertThat(frozenAmountOf(buyer.userId())).as("支付不再写冻结额：frozen_amount 保持 0")
+                .isEqualByComparingTo("0");
+        assertThat(platformBalance()).as("平台代收账户收到货款").isEqualByComparingTo("39.80");
     }
 
-    // ---------- 余额不足：资金段先行失败，翻转段未执行，订单留待支付 ----------
+    // ---------- 余额不足：钱包事务整笔回滚，翻转段未执行，订单留待支付 ----------
 
     @Test
     void 余额不足_支付整事务回滚订单留待支付() {
         Session seller = registerAndLogin("13800010003", "卖家B");
         Session buyer = registerAndLogin("13800010004", "买家B");
-        // 标价 2000 > 注册初始余额 1000：冻结（资金段钱包动作）必败，即资金段边界的真实失败注入
+        // 标价 2000 > 注册初始余额 1000：买家出账守卫必败，这是钱包动作边界的真实失败注入
         String productId = createProduct(seller, "高价古董花瓶", "2000.00");
         String orderId = createProductOrder(buyer, productId, 1);
 
         assertThatThrownBy(() -> idleCase.payOrder(orderId, buyer.userId()))
                 .as("余额不足支付直接失败").isInstanceOf(BusinessException.class);
 
-        // 资金段失败（流水与余额条件扣减随其本地事务回滚），翻转段尚未执行：订单停在待支付，
-        // 冻结流水不诞生，余额纹丝不动，PAID 事件也未落
+        // 钱包事务整体回滚：双边流水与平台懒创建行都不留痕，订单翻转段也未执行
         assertThat(orderState(orderId)).as("订单留待支付").isEqualTo("PENDING_PAYMENT");
-        assertThat(freezeFlowCount(orderId)).as("不产生冻结流水").isZero();
-        assertThat(balanceOf(buyer.userId())).as("余额不变").isEqualByComparingTo(INITIAL_BALANCE);
-        assertThat(frozenAmountOf(buyer.userId())).as("冻结额不变").isEqualByComparingTo("0");
+        assertThat(flowTypesOf(orderId)).as("失败支付不产生任何资金流水").isEmpty();
+        assertThat(balanceOf(buyer.userId())).as("买家余额纹丝不动").isEqualByComparingTo(INITIAL_BALANCE);
+        assertThat(frozenAmountOf(buyer.userId())).as("冻结额保持零").isEqualByComparingTo("0");
+        assertThat(platformBalance()).as("平台账户行随事务回滚，按 0 处理").isEqualByComparingTo("0");
         assertThat(eventTypesOf(orderId)).as("支付事件随事务回滚").doesNotContain("PAID");
     }
 
-    // ---------- 幂等重放：同结果，无重复冻结 ----------
+    // ---------- 幂等重放：同结果，无重复出账 ----------
 
     @Test
-    void 幂等重放_同结果无重复冻结() {
+    void 幂等重放_同结果无重复出账() {
         Session seller = registerAndLogin("13800010005", "卖家C");
         Session buyer = registerAndLogin("13800010006", "买家C");
         String productId = createProduct(seller, "九成新吉他", "19.90");
         String orderId = createProductOrder(buyer, productId, 2);
 
         idleCase.payOrder(orderId, buyer.userId());
-        // 重放：与首次同结果（不抛异常、订单保持已支付），uk_order_type 幂等吸收重复
+        // 重放：订单已 PAID，支付入口幂等短路（不抛异常、不再动钱包），流水唯一键兜底
         idleCase.payOrder(orderId, buyer.userId());
 
         assertThat(orderState(orderId)).as("重放后订单保持已支付").isEqualTo("PAID");
-        assertThat(freezeFlowCount(orderId)).as("无重复冻结流水").isEqualTo(1);
-        assertThat(balanceOf(buyer.userId())).as("余额只扣一次").isEqualByComparingTo("960.20");
-        assertThat(frozenAmountOf(buyer.userId())).as("冻结额只抬一次").isEqualByComparingTo("39.80");
+        assertThat(flowTypesOf(orderId)).as("无重复出账流水")
+                .hasSize(2)
+                .containsExactlyInAnyOrder("PRODUCT_PAY", "PLATFORM_IN");
+        assertThat(balanceOf(buyer.userId())).as("买家余额只扣一次").isEqualByComparingTo("960.20");
+        assertThat(platformBalance()).as("平台代收只加一次").isEqualByComparingTo("39.80");
+        assertThat(frozenAmountOf(buyer.userId())).as("冻结额始终为零").isEqualByComparingTo("0");
     }
 
     // ---------- 工具 ----------
@@ -131,18 +141,27 @@ class ProductPayCompositeTxIntegrationTest extends PostApiTestBase {
                 "SELECT frozen_amount FROM virtual_wallet WHERE user_id = ?", BigDecimal.class, userId);
     }
 
-    /** 该订单的货款冻结流水行数（uk_order_type 幂等的可观察事实源） */
-    private int freezeFlowCount(String orderId) {
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM wallet_detail WHERE order_id = ? AND type = 'PRODUCT_FROZEN'",
-                Integer.class, orderId);
-        return count == null ? 0 : count;
+    /**
+     * 平台代收余额：平台账户是懒创建的，行可能还不存在（如余额不足支付整笔回滚后），
+     * 此时按 0 处理——直取 queryForObject 会抛 EmptyResultDataAccessException。
+     */
+    private BigDecimal platformBalance() {
+        List<BigDecimal> balances = jdbcTemplate.queryForList(
+                "SELECT balance FROM virtual_wallet WHERE user_id = ?", BigDecimal.class, Constants.PLATFORM_USER_ID);
+        return balances.isEmpty() ? BigDecimal.ZERO : balances.get(0);
     }
 
-    private Map<String, Object> freezeFlowRow(String orderId) {
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT amount, biz_round FROM wallet_detail WHERE order_id = ? AND type = 'PRODUCT_FROZEN'", orderId);
-        return rows.isEmpty() ? null : rows.get(0);
+    /** 该订单的全部流水类型（每行一条，按落表顺序；行数 = 是否有重复记账的物证） */
+    private List<String> flowTypesOf(String orderId) {
+        return jdbcTemplate.queryForList(
+                "SELECT type FROM wallet_detail WHERE order_id = ? ORDER BY id", String.class, orderId);
+    }
+
+    /** 该订单指定类型的流水金额；没有该类型行返回 null（断言「不该有」时用） */
+    private BigDecimal flowAmountOf(String orderId, String type) {
+        List<BigDecimal> amounts = jdbcTemplate.queryForList(
+                "SELECT amount FROM wallet_detail WHERE order_id = ? AND type = ?", BigDecimal.class, orderId, type);
+        return amounts.isEmpty() ? null : amounts.get(0);
     }
 
     private List<String> eventTypesOf(String orderId) {
