@@ -31,7 +31,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const chatRooms = useChatRoomsStore()
 
-const postId = Number(route.params.id)
+const postId = String(route.params.id ?? '')
 const post = ref<PostDetail | null>(null)
 
 /** 独立封面（不在相册中）排在相册前展示；封面为相册图时相册自然包含，不重复 */
@@ -57,10 +57,10 @@ interface ThreadState {
   total: number
   loading: boolean
 }
-const threadStates = reactive<Record<number, ThreadState>>({})
+const threadStates = reactive<Record<string, ThreadState>>({})
 
 /** 回复目标：rootId 用于回复楼内子回复后刷新所在楼 */
-const replyTarget = ref<{ id: number; nickname: string; rootId: number | null } | null>(null)
+const replyTarget = ref<{ id: string; nickname: string; rootId: string | null } | null>(null)
 
 async function load() {
   post.value = await getPost(postId)
@@ -111,7 +111,7 @@ async function toggleLike() {
 }
 
 /** 评论/回复点赞（根评论与子回复通用）：乐观更新 + 失败回滚，按评论 id 防抖 */
-const commentLikeBusyIds = reactive(new Set<number>())
+const commentLikeBusyIds = reactive(new Set<string>())
 
 async function toggleCommentLike(item: PostComment | CommentReply) {
   if (!auth.isLoggedIn) {
@@ -134,7 +134,7 @@ async function toggleCommentLike(item: PostComment | CommentReply) {
   }
 }
 
-async function loadReplies(rootId: number) {
+async function loadReplies(rootId: string) {
   const thread = threadStates[rootId]
   if (!thread) return
   thread.loading = true
@@ -158,12 +158,12 @@ async function toggleThread(c: PostComment) {
   await loadReplies(c.commentId)
 }
 
-const hasMoreReplies = (rootId: number) => {
+const hasMoreReplies = (rootId: string) => {
   const thread = threadStates[rootId]
   return !!thread && thread.replies.length < thread.total
 }
 
-function startReply(id: number, nickname: string, rootId: number | null) {
+function startReply(id: string, nickname: string, rootId: string | null) {
   if (!auth.isLoggedIn) {
     router.push({ path: '/login', query: { redirect: route.fullPath } })
     return
@@ -175,7 +175,7 @@ function cancelReply() {
   replyTarget.value = null
 }
 
-async function refreshThread(rootId: number) {
+async function refreshThread(rootId: string) {
   const thread = threadStates[rootId]
   if (!thread?.expanded) return
   // 重放到用户已加载的页数，避免回复后把"展开更多"翻过的页重置掉
@@ -236,7 +236,7 @@ async function onDeleteComment(c: PostComment) {
   }
 }
 
-async function onDeleteReply(r: CommentReply, rootId: number) {
+async function onDeleteReply(r: CommentReply, rootId: string) {
   if (!auth.isLoggedIn) return
   const ok = await confirmDialog('删除这条回复？')
   if (!ok) return
@@ -291,10 +291,10 @@ const canDeleteComment = (c: PostComment | CommentReply) =>
   auth.isLoggedIn && (c.userId === auth.userId || isMine())
 
 /** 「作者」标：评论者即帖子作者 */
-const isAuthorComment = (userId: number) => userId === post.value?.userId
+const isAuthorComment = (userId: string) => userId === post.value?.userId
 
 /** 作者主页（票 04）尚未落地，路由暂落首页兜底 */
-function openAuthor(userId: number) {
+function openAuthor(userId: string) {
   router.push(`/user/${userId}`)
 }
 
