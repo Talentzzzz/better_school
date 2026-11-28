@@ -1,6 +1,6 @@
 package com.betterschool.domain.points.model.entity;
 
-import com.betterschool.types.points.PointsReasonType;
+import com.betterschool.types.points.PointsReasonTypeEnum;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -17,7 +17,7 @@ public class PointsDetailEntity {
     private String bucketId;
     /** 本次从该桶扣掉的积分数（恒正） */
     private Integer amount;
-    private PointsReasonType reasonType;
+    private PointsReasonTypeEnum reasonType;
     /** 来源业务 id = 兑换单 id（兑换幂等键） */
     private String refId;
     private LocalDateTime createTime;

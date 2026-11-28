@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.betterschool.infrastructure.dao.draw.IDrawReconVarianceDao">
+
+    <!-- 差错状态取值（与 DrawReconVarianceStateEnum 对应）：
+         0 待复查(PENDING) / 1 已确认(CONFIRMED) / 2 已自动修复(AUTO_FIXED) / 3 已人工处理(RESOLVED_MANUAL) / 4 假差错(FALSE_ALARM) -->
+
+    <!-- 只插入语义：撞 uk_round_check_biz 返回 0 = 本轮该检查类型该业务单号已登记过，按成功回放 -->
+    <insert id="insertIgnoreVariance"
+            parameterType="com.betterschool.infrastructure.dao.draw.po.DrawReconVariancePO">
+        INSERT IGNORE INTO draw_recon_variance
+            (round_no, check_type, scope_key, biz_id, expect_snapshot, actual_snapshot,
+             state, fixed_time, finish_time, create_time, update_time)
+        VALUES
+            (#{roundNo}, #{checkType}, #{scopeKey}, #{bizId}, #{expectSnapshot}, #{actualSnapshot},
+             #{state}, #{fixedTime}, #{finishTime}, #{createTime}, #{updateTime})
+    </insert>
+
+    <!-- 全部轮次的 PENDING 差错（下一轮复查的二次核对输入，不分轮次——调度中断停跑多日后
+         更早轮次的滞留 PENDING 也能收口；登记轮次随行带出，供证伪日志/人工溯源） -->
+    <select id="listAllPending" resultType="com.betterschool.infrastructure.dao.draw.po.DrawReconVariancePO">
+        SELECT id, round_no, check_type, scope_key, biz_id, expect_snapshot, actual_snapshot,
+               state, fixed_time, finish_time, create_time, update_time
+        FROM draw_recon_variance
+        WHERE state = 0
+        ORDER BY id ASC
+    </select>
+
+    <!-- 二次核对确认：state 0→1 条件更新；0 行 = 已不在 PENDING -->
+    <update id="confirm">
+        UPDATE draw_recon_variance
+        SET state = 1, update_time = NOW()
+        WHERE id = #{id} AND state = 0
+    </update>
+
+    <!-- 平账分流·自动修复：state 1→2，写 fixed_time -->
+    <update id="markAutoFixed">
+        UPDATE draw_recon_variance
+        SET state = 2, fixed_time = NOW(), update_time = NOW()
+        WHERE id = #{id} AND state = 1
+    </update>
+
+    <!-- 复查消失：state 0→4，写 finish_time -->
+    <update id="markFalseAlarm">
+        UPDATE draw_recon_variance
+        SET state = 4, finish_time = NOW(), update_time = NOW()
+        WHERE id = #{id} AND state = 0
+    </update>
+
+    <!-- 该轮次登记差错总数 -->
+    <select id="countByRound" resultType="long">
+        SELECT COUNT(*)
+        FROM draw_recon_variance
+        WHERE round_no = #{roundNo}
+    </select>
+
+    <!-- 该轮次指定状态的差错数 -->
+    <select id="countByRoundAndState" resultType="long">
+        SELECT COUNT(*)
+        FROM draw_recon_variance
+        WHERE round_no = #{roundNo} AND state = #{state}
+    </select>
+
+</mapper>

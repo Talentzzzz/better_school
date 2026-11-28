@@ -56,7 +56,7 @@ final class VirtualMergeGroup<T, R> {
     private static final long WAKEUP_PROBE_MS = 5;
 
     /** 入队结果：{@code GROUP_REMOVED} = 组刚被摘除，调用方必须换组重试 */
-    enum EnqueueOutcome {
+    enum EnqueueOutcomeEnum {
         ENQUEUED,
         BUFFER_FULL,
         CLOSED,
@@ -89,10 +89,10 @@ final class VirtualMergeGroup<T, R> {
     /** 本组已置死：新到达者必须换组重建，绝不许再往里入队（锁内守卫） */
     private boolean removed;
 
-    VirtualMergeGroup(String key, MergeConfig config) {
+    VirtualMergeGroup(String key, MergeConfig mergeConfig) {
         this.key = key;
-        this.maxBatch = config.maxBatch();
-        this.capacity = config.shardCapacity();
+        this.maxBatch = mergeConfig.maxBatch();
+        this.capacity = mergeConfig.shardCapacity();
     }
 
     String key() {
@@ -104,23 +104,23 @@ final class VirtualMergeGroup<T, R> {
      *
      * @return {@code GROUP_REMOVED} = 本组已被摘除，调用方必须换组重试（竞态自愈闭环）
      */
-    EnqueueOutcome enqueue(VirtualMergeItem<T, R> item, boolean accepting) {
+    EnqueueOutcomeEnum enqueue(VirtualMergeItem<T, R> item, boolean accepting) {
         lock.lock();
         try {
             if (removed) {
-                return EnqueueOutcome.GROUP_REMOVED;
+                return EnqueueOutcomeEnum.GROUP_REMOVED;
             }
             if (!accepting || closed) {
-                return EnqueueOutcome.CLOSED;
+                return EnqueueOutcomeEnum.CLOSED;
             }
             if (queue.size() >= capacity) {
-                return EnqueueOutcome.BUFFER_FULL;
+                return EnqueueOutcomeEnum.BUFFER_FULL;
             }
             queue.addLast(item);
             // 队列非空即发：每进一件都要叫醒可能正空等的 leader（落库进行中时 signal 落空无害，
             // leader 回到收集段会重查队列；没有等待者时 signal 只是一次空队列判断）
             ready.signalAll();
-            return EnqueueOutcome.ENQUEUED;
+            return EnqueueOutcomeEnum.ENQUEUED;
         } finally {
             lock.unlock();
         }

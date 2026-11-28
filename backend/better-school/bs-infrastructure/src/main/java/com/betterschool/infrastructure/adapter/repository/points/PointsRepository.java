@@ -7,7 +7,7 @@ import com.betterschool.types.common.PointsChangedMessage;
 import com.betterschool.domain.points.model.valobj.PointsBucketDeductionVO;
 import com.betterschool.domain.points.model.valobj.PointsDeductPlanVO;
 import com.betterschool.domain.points.model.valobj.PointsDeductResultVO;
-import com.betterschool.domain.points.model.valobj.PointsTransactionDirectionVO;
+import com.betterschool.domain.points.model.valobj.PointsTransactionDirectionEnum;
 import com.betterschool.domain.points.model.valobj.PointsTransactionVO;
 import com.betterschool.infrastructure.dao.IMqOutboxDao;
 import com.betterschool.infrastructure.dao.po.MqOutbox;
@@ -19,9 +19,9 @@ import com.betterschool.infrastructure.dao.points.po.PointsDetailPO;
 import com.betterschool.infrastructure.dao.points.po.PointsMergeGroupPO;
 import com.betterschool.infrastructure.dao.points.po.PointsTransactionPO;
 import com.betterschool.types.common.Constants;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.id.IIdGenerator;
-import com.betterschool.types.points.PointsReasonType;
+import com.betterschool.types.points.PointsReasonTypeEnum;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,11 +29,11 @@ import org.apache.rocketmq.client.producer.SendResult;
 import org.apache.rocketmq.client.producer.SendStatus;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -65,25 +65,30 @@ public class PointsRepository implements IPointsRepository {
     private final IIdGenerator idGenerator;
 
     @Override
-    public boolean insertBucketWithChanged(String userId, int amount, PointsReasonType reasonType, String refId) {
-        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-            PointsBucketEntity bucket = newBucket(userId, amount, reasonType, refId, LocalDateTime.now());
-            if (!insertBucket(bucket)) {
+    public boolean insertBucketWithChanged(String userId, int amount, PointsReasonTypeEnum pointsReasonType, String refId) {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
+        boolean inserted = Boolean.TRUE.equals(transactionTemplate.execute(status -> {
+            PointsBucketEntity pointsBucketEntity = newBucket(userId, amount, pointsReasonType, refId, LocalDateTime.now());
+            if (!insertBucket(pointsBucketEntity)) {
                 return false;
             }
             int balanceAfter = sumAvailableRemain(userId);
-            savePointsChanged(userId, amount, balanceAfter, reasonType, refId);
+            pendingOutboxList.add(savePointsChanged(userId, amount, balanceAfter, pointsReasonType, refId));
             return true;
         }));
+        // 事务已提交：事务外同步发送并更新 outbox 状态，失败留 PENDING 交 outboxScan 兜底
+        sendOutboxes(pendingOutboxList);
+        return inserted;
     }
 
     @Override
-    public PointsDeductResultVO deduct(String userId, int amount, PointsReasonType reasonType, String refId) {
-        PointsDeductResultVO result = transactionTemplate.execute(status -> {
-            if (existsConsume(userId, reasonType, refId)) {
+    public PointsDeductResultVO deduct(String userId, int amount, PointsReasonTypeEnum pointsReasonType, String refId) {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
+        PointsDeductResultVO pointsDeductResultVO = transactionTemplate.execute(status -> {
+            if (existsConsume(userId, pointsReasonType, refId)) {
                 // 重试同一笔兑换：已经扣过就按成功返回，不重复扣、不重复发事件
                 log.info("[PointsRepository] 兑换扣分已存在，幂等跳过 userId={}, reasonType={}, refId={}",
-                        userId, reasonType, refId);
+                        userId, pointsReasonType, refId);
                 return success(sumAvailableRemain(userId));
             }
             List<PointsBucketEntity> buckets = listAvailableBucketsForUpdate(userId);
@@ -93,25 +98,27 @@ public class PointsRepository implements IPointsRepository {
                 return insufficient(available);
             }
             // 第一段：纯粹在内存里算出这笔方案（被扣光的桶 + 至多一张部分扣的桶），不碰库
-            PointsDeductPlanVO plan = PointsDeductPlanVO.allocate(buckets, amount);
+            PointsDeductPlanVO pointsDeductPlanVO = PointsDeductPlanVO.allocate(buckets, amount);
             // 第二段：照这份方案原样落库
-            if (!writePlan(plan, userId, reasonType, refId, LocalDateTime.now())) {
+            if (!writePlan(pointsDeductPlanVO, userId, pointsReasonType, refId, LocalDateTime.now())) {
                 // 并发重复兑换的唯一互斥点在这里撞上（幂等预检不承担互斥）。
                 // 这里**不能**回报余额——方案里的余量变更本事务内可见，读出来是脏值；
                 // 返回 null 由事务外重读真实余额，按幂等成功返回
                 log.warn("[PointsRepository] 消费明细撞唯一键，判定为重复兑换 userId={}, reasonType={}, refId={}",
-                        userId, reasonType, refId);
+                        userId, pointsReasonType, refId);
                 status.setRollbackOnly();
                 return null;
             }
             int balanceAfter = sumAvailableRemain(userId);
-            savePointsChanged(userId, -amount, balanceAfter, reasonType, refId);
+            pendingOutboxList.add(savePointsChanged(userId, -amount, balanceAfter, pointsReasonType, refId));
             return success(balanceAfter);
         });
-        if (result == null) {
+        // 事务已提交：事务外同步发送并更新 outbox 状态，失败留 PENDING 交 outboxScan 兜底
+        sendOutboxes(pendingOutboxList);
+        if (pointsDeductResultVO == null) {
             return success(sumAvailableRemain(userId));
         }
-        return result;
+        return pointsDeductResultVO;
     }
 
     @Override
@@ -127,9 +134,9 @@ public class PointsRepository implements IPointsRepository {
                 com.betterschool.types.points.Constants.COMPACTION_BATCH_LIMIT);
         int mergedBuckets = 0;
         // 逐用户一事务：一个用户的合并失败不拖累其他用户，下一轮任务会重扫补上
-        for (PointsMergeGroupPO candidate : candidates) {
+        for (PointsMergeGroupPO pointsMergeGroupPO : candidates) {
             mergedBuckets += transactionTemplate.execute(status ->
-                    compactOneUser(candidate.getUserId()));
+                    compactOneUser(pointsMergeGroupPO.getUserId()));
         }
         return mergedBuckets;
     }
@@ -158,17 +165,17 @@ public class PointsRepository implements IPointsRepository {
         LocalDateTime now = LocalDateTime.now();
         // 合并产生的是一笔新的资产形态：新插一桶（reason_type = COMPACTION，ref_id = 合并批次号），
         // 旧行是发放流水（amount/ref_id 记着原始入账来源），不能被改写、只能归零
-        PointsBucketEntity mergedBucket = new PointsBucketEntity();
-        mergedBucket.setBucketId(idGenerator.nextId());
-        mergedBucket.setUserId(userId);
-        mergedBucket.setAmount(total);
-        mergedBucket.setRemain(total);
-        mergedBucket.setExpireAt(maxExpireAt);
-        mergedBucket.setReasonType(PointsReasonType.COMPACTION);
-        mergedBucket.setRefId(idGenerator.nextId());
-        mergedBucket.setCreateTime(now);
-        mergedBucket.setUpdateTime(now);
-        if (!insertBucket(mergedBucket)) {
+        PointsBucketEntity pointsBucketEntity = new PointsBucketEntity();
+        pointsBucketEntity.setBucketId(idGenerator.nextId());
+        pointsBucketEntity.setUserId(userId);
+        pointsBucketEntity.setAmount(total);
+        pointsBucketEntity.setRemain(total);
+        pointsBucketEntity.setExpireAt(maxExpireAt);
+        pointsBucketEntity.setReasonType(PointsReasonTypeEnum.COMPACTION);
+        pointsBucketEntity.setRefId(idGenerator.nextId());
+        pointsBucketEntity.setCreateTime(now);
+        pointsBucketEntity.setUpdateTime(now);
+        if (!insertBucket(pointsBucketEntity)) {
             throw new IllegalStateException("合并桶插入失败（uk_user_reason_ref 撞键不该发生：ref_id 是合并批次号），"
                     + "整笔回滚 userId=" + userId);
         }
@@ -193,22 +200,37 @@ public class PointsRepository implements IPointsRepository {
 
     // ---------------------------------------------------------------- 内部
 
-    /** 发一条积分变动事件（走本服务 outbox，与业务同事务）：入账与消费两个用例的最后一步 */
-    private void savePointsChanged(String userId, int delta, int balanceAfter, PointsReasonType reasonType, String refId) {
-        saveOutbox(Constants.POINTS_CHANGED_TOPIC,
-                new PointsChangedMessage(userId, delta, balanceAfter, reasonType.name(), refId));
+    /** 事务内落一条积分变动事件（走本服务 outbox，与业务同事务），返回待事务后发送的行 */
+    private MqOutbox savePointsChanged(String userId, int delta, int balanceAfter, PointsReasonTypeEnum pointsReasonType,
+                                       String refId) {
+        return saveOutbox(Constants.POINTS_CHANGED_TOPIC,
+                new PointsChangedMessage(userId, delta, balanceAfter, pointsReasonType.name(), refId));
     }
 
-    /** 事务内落一行 outbox，提交后同步发送并标记 SENT；失败留 PENDING 交 outboxScan 兜底 */
-    private void saveOutbox(String destination, Object payload) {
+    /** 事务内只做 DAO 写：落一行 PENDING outbox，发送交给事务提交后的调用点 */
+    private MqOutbox saveOutbox(String destination, Object payload) {
         MqOutbox mqOutbox = MqOutbox.pending(destination, payload, objectMapper);
         mqOutboxDao.insert(mqOutbox);
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                sendOutbox(mqOutbox);
-            }
-        });
+        return mqOutbox;
+    }
+
+    /**
+     * 事务外同步发送并更新 outbox 状态：成功标记 SENT，失败累计重试次数（到上限置死信），留 PENDING 交
+     * outboxScan 兜底。仓储事务是 REQUIRED——若并入调用方事务（执行后事务仍活跃），不在提交前发送，
+     * 留给扫描兜底，避免「消息已发、外层事务回滚」。
+     */
+    private void sendOutboxes(List<MqOutbox> outboxList) {
+        if (outboxList.isEmpty()) {
+            return;
+        }
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            log.debug("[PointsRepository] outbox 并入调用方事务，留给 outboxScan 兜底 msgIds={}",
+                    outboxList.stream().map(MqOutbox::getMsgId).toList());
+            return;
+        }
+        for (MqOutbox mqOutbox : outboxList) {
+            sendOutbox(mqOutbox);
+        }
     }
 
     private void sendOutbox(MqOutbox mqOutbox) {
@@ -249,8 +271,8 @@ public class PointsRepository implements IPointsRepository {
      * 后面还剩够用的桶），明细行数对得上，唯一键也不出场。逐桶版同样如此，不是本次改动引入的；
      * 要收它得改幂等键的粒度（例如按兑换单号唯一），那是另开票的事。
      */
-    private boolean existsConsume(String userId, PointsReasonType reasonType, String refId) {
-        return pointsDetailDao.selectConsumeId(userId, reasonType.name(), refId) != null;
+    private boolean existsConsume(String userId, PointsReasonTypeEnum pointsReasonType, String refId) {
+        return pointsDetailDao.selectConsumeId(userId, pointsReasonType.name(), refId) != null;
     }
 
     /** 当前可用桶（{@code remain > 0 AND expire_at > NOW()}），按 FIFO（expire_at, id）加行锁 */
@@ -276,19 +298,19 @@ public class PointsRepository implements IPointsRepository {
      *
      * @return false = 明细的影响行数少于明细条数（撞了 {@code uk_bucket_reason_ref}），这些桶里已有这一笔业务
      */
-    private boolean writePlan(PointsDeductPlanVO plan, String userId, PointsReasonType reasonType, String refId,
+    private boolean writePlan(PointsDeductPlanVO pointsDeductPlanVO, String userId, PointsReasonTypeEnum pointsReasonType, String refId,
                               LocalDateTime now) {
-        List<PointsBucketDeductionVO> deductions = plan.deductions();
+        List<PointsBucketDeductionVO> deductions = pointsDeductPlanVO.deductions();
         // 第一条：全部明细一次写完。行数偏少 = 有桶撞了 uk_bucket_reason_ref，从这一条开始回滚
         List<PointsDetailPO> details = deductions.stream()
-                .map(deduction -> toDetailPO(newDetail(userId, deduction, reasonType, refId, now)))
+                .map(deduction -> toDetailPO(newDetail(userId, deduction, pointsReasonType, refId, now)))
                 .toList();
         if (pointsDetailDao.insertIgnoreDetails(details) != details.size()) {
             return false;
         }
         // 第二条：扣光的桶一条语句清零。桶已在 listAvailableBucketsForUpdate 里加了行锁，方案又按同一份 remain
         // 算出，这里必然命中集合里的每一行；少命中一行就说明余量与方案不一致
-        List<String> drainedBucketIds = plan.getDrainedBuckets().stream()
+        List<String> drainedBucketIds = pointsDeductPlanVO.getDrainedBuckets().stream()
                 .map(PointsBucketDeductionVO::getBucketId)
                 .toList();
         if (!drainedBucketIds.isEmpty()) {
@@ -299,73 +321,73 @@ public class PointsRepository implements IPointsRepository {
             }
         }
         // 第三条：方案里唯一那张部分扣的桶（恰好整笔扣完时不存在，这条跳过）
-        PointsBucketDeductionVO partialBucket = plan.getPartialBucket();
-        if (partialBucket != null) {
-            int partialRows = pointsDao.deductRemain(partialBucket.getBucketId(), partialBucket.getAmount());
+        PointsBucketDeductionVO pointsBucketDeductionVO = pointsDeductPlanVO.getPartialBucket();
+        if (pointsBucketDeductionVO != null) {
+            int partialRows = pointsDao.deductRemain(pointsBucketDeductionVO.getBucketId(), pointsBucketDeductionVO.getAmount());
             if (partialRows != 1) {
                 throw new IllegalStateException("部分扣的桶影响 " + partialRows + " 行，桶余量与方案不一致，整笔回滚 userId="
-                        + userId + ", bucketId=" + partialBucket.getBucketId()
-                        + ", amount=" + partialBucket.getAmount());
+                        + userId + ", bucketId=" + pointsBucketDeductionVO.getBucketId()
+                        + ", amount=" + pointsBucketDeductionVO.getAmount());
             }
         }
         return true;
     }
 
     /** 造一行待落的消费明细：方案的一条 + 本次消费的来源业务（同一次消费的所有行共享一个时点） */
-    private PointsDetailEntity newDetail(String userId, PointsBucketDeductionVO deduction, PointsReasonType reasonType,
+    private PointsDetailEntity newDetail(String userId, PointsBucketDeductionVO pointsBucketDeductionVO, PointsReasonTypeEnum pointsReasonType,
                                          String refId, LocalDateTime now) {
-        PointsDetailEntity detail = new PointsDetailEntity();
-        detail.setUserId(userId);
-        detail.setBucketId(deduction.getBucketId());
-        detail.setAmount(deduction.getAmount());
-        detail.setReasonType(reasonType);
-        detail.setRefId(refId);
-        detail.setCreateTime(now);
-        detail.setUpdateTime(now);
-        return detail;
+        PointsDetailEntity pointsDetailEntity = new PointsDetailEntity();
+        pointsDetailEntity.setUserId(userId);
+        pointsDetailEntity.setBucketId(pointsBucketDeductionVO.getBucketId());
+        pointsDetailEntity.setAmount(pointsBucketDeductionVO.getAmount());
+        pointsDetailEntity.setReasonType(pointsReasonType);
+        pointsDetailEntity.setRefId(refId);
+        pointsDetailEntity.setCreateTime(now);
+        pointsDetailEntity.setUpdateTime(now);
+        return pointsDetailEntity;
     }
 
-    private PointsDetailPO toDetailPO(PointsDetailEntity detail) {
-        PointsDetailPO detailPO = new PointsDetailPO();
-        detailPO.setUserId(detail.getUserId());
-        detailPO.setBucketId(detail.getBucketId());
-        detailPO.setAmount(detail.getAmount());
-        detailPO.setReasonType(detail.getReasonType().name());
-        detailPO.setRefId(detail.getRefId());
-        detailPO.setCreateTime(detail.getCreateTime());
-        detailPO.setUpdateTime(detail.getUpdateTime());
-        return detailPO;
+    private PointsDetailPO toDetailPO(PointsDetailEntity pointsDetailEntity) {
+        PointsDetailPO pointsDetailPO = new PointsDetailPO();
+        pointsDetailPO.setUserId(pointsDetailEntity.getUserId());
+        pointsDetailPO.setBucketId(pointsDetailEntity.getBucketId());
+        pointsDetailPO.setAmount(pointsDetailEntity.getAmount());
+        pointsDetailPO.setReasonType(pointsDetailEntity.getReasonType().name());
+        pointsDetailPO.setRefId(pointsDetailEntity.getRefId());
+        pointsDetailPO.setCreateTime(pointsDetailEntity.getCreateTime());
+        pointsDetailPO.setUpdateTime(pointsDetailEntity.getUpdateTime());
+        return pointsDetailPO;
     }
 
     /** 插一行桶（{@link #insertBucketWithChanged} 的一步）；撞 uk_user_reason_ref 返回 false = 已记过 */
-    private boolean insertBucket(PointsBucketEntity bucket) {
-        PointsBucketPO bucketPO = new PointsBucketPO();
-        bucketPO.setBucketId(bucket.getBucketId());
-        bucketPO.setUserId(bucket.getUserId());
-        bucketPO.setAmount(bucket.getAmount());
-        bucketPO.setRemain(bucket.getRemain());
-        bucketPO.setExpireAt(bucket.getExpireAt());
-        bucketPO.setReasonType(bucket.getReasonType().name());
-        bucketPO.setRefId(bucket.getRefId());
-        bucketPO.setCreateTime(bucket.getCreateTime());
-        bucketPO.setUpdateTime(bucket.getUpdateTime());
-        return pointsDao.insertIgnoreBucket(bucketPO) > 0;
+    private boolean insertBucket(PointsBucketEntity pointsBucketEntity) {
+        PointsBucketPO pointsBucketPO = new PointsBucketPO();
+        pointsBucketPO.setBucketId(pointsBucketEntity.getBucketId());
+        pointsBucketPO.setUserId(pointsBucketEntity.getUserId());
+        pointsBucketPO.setAmount(pointsBucketEntity.getAmount());
+        pointsBucketPO.setRemain(pointsBucketEntity.getRemain());
+        pointsBucketPO.setExpireAt(pointsBucketEntity.getExpireAt());
+        pointsBucketPO.setReasonType(pointsBucketEntity.getReasonType().name());
+        pointsBucketPO.setRefId(pointsBucketEntity.getRefId());
+        pointsBucketPO.setCreateTime(pointsBucketEntity.getCreateTime());
+        pointsBucketPO.setUpdateTime(pointsBucketEntity.getUpdateTime());
+        return pointsDao.insertIgnoreBucket(pointsBucketPO) > 0;
     }
 
     /** 造一行待入账的桶：bucket_id 走统一 IdGenerator 发号（uuid-biz-id 票 07），expire_at = 入账时点 + 积分有效期配置（都在事务内取） */
-    private PointsBucketEntity newBucket(String userId, int amount, PointsReasonType reasonType, String refId,
+    private PointsBucketEntity newBucket(String userId, int amount, PointsReasonTypeEnum pointsReasonType, String refId,
                                          LocalDateTime now) {
-        PointsBucketEntity bucket = new PointsBucketEntity();
-        bucket.setBucketId(idGenerator.nextId());
-        bucket.setUserId(userId);
-        bucket.setAmount(amount);
-        bucket.setRemain(amount);
-        bucket.setExpireAt(now.plusDays(validDays()));
-        bucket.setReasonType(reasonType);
-        bucket.setRefId(refId);
-        bucket.setCreateTime(now);
-        bucket.setUpdateTime(now);
-        return bucket;
+        PointsBucketEntity pointsBucketEntity = new PointsBucketEntity();
+        pointsBucketEntity.setBucketId(idGenerator.nextId());
+        pointsBucketEntity.setUserId(userId);
+        pointsBucketEntity.setAmount(amount);
+        pointsBucketEntity.setRemain(amount);
+        pointsBucketEntity.setExpireAt(now.plusDays(validDays()));
+        pointsBucketEntity.setReasonType(pointsReasonType);
+        pointsBucketEntity.setRefId(refId);
+        pointsBucketEntity.setCreateTime(now);
+        pointsBucketEntity.setUpdateTime(now);
+        return pointsBucketEntity;
     }
 
     @Override
@@ -385,39 +407,39 @@ public class PointsRepository implements IPointsRepository {
     }
 
     private static PointsDeductResultVO success(int balance) {
-        return new PointsDeductResultVO(true, ResponseCode.SUCCESS.getCode(),
-                ResponseCode.SUCCESS.getInfo(), balance);
+        return new PointsDeductResultVO(true, ResponseCodeEnum.SUCCESS.getCode(),
+                ResponseCodeEnum.SUCCESS.getInfo(), balance);
     }
 
     private static PointsDeductResultVO insufficient(int balance) {
-        return new PointsDeductResultVO(false, ResponseCode.POINTS_INSUFFICIENT_POINTS.getCode(),
-                ResponseCode.POINTS_INSUFFICIENT_POINTS.getInfo(), balance);
+        return new PointsDeductResultVO(false, ResponseCodeEnum.POINTS_INSUFFICIENT_POINTS.getCode(),
+                ResponseCodeEnum.POINTS_INSUFFICIENT_POINTS.getInfo(), balance);
     }
 
-    private PointsBucketEntity toBucketEntity(PointsBucketPO bucketPO) {
-        PointsBucketEntity bucket = new PointsBucketEntity();
-        bucket.setId(bucketPO.getId());
-        bucket.setBucketId(bucketPO.getBucketId());
-        bucket.setUserId(bucketPO.getUserId());
-        bucket.setAmount(bucketPO.getAmount());
-        bucket.setRemain(bucketPO.getRemain());
-        bucket.setExpireAt(bucketPO.getExpireAt());
-        bucket.setReasonType(PointsReasonType.valueOf(bucketPO.getReasonType()));
-        bucket.setRefId(bucketPO.getRefId());
-        bucket.setCreateTime(bucketPO.getCreateTime());
-        bucket.setUpdateTime(bucketPO.getUpdateTime());
-        return bucket;
+    private PointsBucketEntity toBucketEntity(PointsBucketPO pointsBucketPO) {
+        PointsBucketEntity pointsBucketEntity = new PointsBucketEntity();
+        pointsBucketEntity.setId(pointsBucketPO.getId());
+        pointsBucketEntity.setBucketId(pointsBucketPO.getBucketId());
+        pointsBucketEntity.setUserId(pointsBucketPO.getUserId());
+        pointsBucketEntity.setAmount(pointsBucketPO.getAmount());
+        pointsBucketEntity.setRemain(pointsBucketPO.getRemain());
+        pointsBucketEntity.setExpireAt(pointsBucketPO.getExpireAt());
+        pointsBucketEntity.setReasonType(PointsReasonTypeEnum.valueOf(pointsBucketPO.getReasonType()));
+        pointsBucketEntity.setRefId(pointsBucketPO.getRefId());
+        pointsBucketEntity.setCreateTime(pointsBucketPO.getCreateTime());
+        pointsBucketEntity.setUpdateTime(pointsBucketPO.getUpdateTime());
+        return pointsBucketEntity;
     }
 
-    private PointsTransactionVO toTransactionVO(PointsTransactionPO transactionPO) {
-        PointsTransactionVO transaction = new PointsTransactionVO();
-        transaction.setId(transactionPO.getId());
-        transaction.setDirection(PointsTransactionDirectionVO.valueOf(transactionPO.getDirection()));
-        transaction.setAmount(transactionPO.getAmount());
-        transaction.setReasonType(PointsReasonType.valueOf(transactionPO.getReasonType()));
-        transaction.setRefId(transactionPO.getRefId());
-        transaction.setCreatedAt(transactionPO.getCreatedAt());
-        transaction.setExpireAt(transactionPO.getExpireAt());
-        return transaction;
+    private PointsTransactionVO toTransactionVO(PointsTransactionPO pointsTransactionPO) {
+        PointsTransactionVO pointsTransactionVO = new PointsTransactionVO();
+        pointsTransactionVO.setId(pointsTransactionPO.getId());
+        pointsTransactionVO.setDirection(PointsTransactionDirectionEnum.valueOf(pointsTransactionPO.getDirection()));
+        pointsTransactionVO.setAmount(pointsTransactionPO.getAmount());
+        pointsTransactionVO.setReasonType(PointsReasonTypeEnum.valueOf(pointsTransactionPO.getReasonType()));
+        pointsTransactionVO.setRefId(pointsTransactionPO.getRefId());
+        pointsTransactionVO.setCreatedAt(pointsTransactionPO.getCreatedAt());
+        pointsTransactionVO.setExpireAt(pointsTransactionPO.getExpireAt());
+        return pointsTransactionVO;
     }
 }

@@ -12,7 +12,7 @@ public class CreditLogResponseDTO {
     /** 变动量（正/负，0 = 封禁/解封审计流水） */
     private int change;
 
-    /** 变动原因类型（CreditReasonTypeVO 枚举名） */
+    /** 变动原因类型（CreditReasonTypeEnum 枚举名） */
     private String reasonType;
 
     /** 变动原因中文描述（未知类型兜底显示原值） */

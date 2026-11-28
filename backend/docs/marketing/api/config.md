@@ -10,7 +10,7 @@
 | 端点 | 归属域 | 表 |
 | --- | --- | --- |
 | `/points-validity` | points | points_validity_config |
-| `/draw-count-validity` | raffle（次数） | draw_count_config |
+| `/draw-count-validity` | draw（次数） | draw_count_config |
 | `/rebates` | rebate | action_rebate_config |
 
 每个端点只碰一个域，不构成跨域编排，控制器直接调域服务（不经 case）。
@@ -55,6 +55,6 @@ ConfigMapper.xml（单行 UPDATE / `ON DUPLICATE KEY UPDATE`）。
 
 ## 谁在读这些配置
 
-- 有效期：points / raffle 各读自己的 `I<域>Repository` 算 `expire_at`（次数有效期归 raffle 域，抽奖次数与抽奖同域）
-- 返利规则：`IPointsAccountService.creditForRebate`（POINTS 行）、
-  `IDrawCountAccountService.creditForRebate`（DRAW_COUNT 行）只查 `state=open` 的规则值
+- 有效期：points / draw 各读自己的 `I<域>Repository` 算 `expire_at`（次数有效期归 draw 域，抽奖次数与抽奖同域）
+- 返利规则：`IPointsAccountService.addForRebate`（POINTS 行）、
+  `IDrawCountAccountService.addForRebate`（DRAW_COUNT 行）只查 `state=open` 的规则值

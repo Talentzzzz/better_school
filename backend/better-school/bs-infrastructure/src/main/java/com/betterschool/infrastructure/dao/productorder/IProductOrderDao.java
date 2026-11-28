@@ -13,7 +13,7 @@ import java.util.List;
 @Mapper
 public interface IProductOrderDao {
 
-    int insert(ProductOrder order);
+    int insert(ProductOrder productOrder);
 
     ProductOrder selectById(@Param("orderId") String orderId);
 

@@ -1,9 +1,9 @@
 package com.betterschool.domain.chat.model.entity;
 
-import com.betterschool.domain.chat.model.valobj.CardRefTypeVO;
-import com.betterschool.domain.chat.model.valobj.MsgStatusVO;
-import com.betterschool.domain.chat.model.valobj.MsgTypeVO;
-import com.betterschool.domain.chat.model.valobj.RecallByVO;
+import com.betterschool.domain.chat.model.valobj.CardRefTypeEnum;
+import com.betterschool.domain.chat.model.valobj.MsgStatusEnum;
+import com.betterschool.domain.chat.model.valobj.MsgTypeEnum;
+import com.betterschool.domain.chat.model.valobj.RecallByEnum;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -23,26 +23,26 @@ public class MessageEntity {
     /** 发送者用户 ID（SYSTEM 系统消息为 NULL） */
     private String fromUserId;
 
-    private MsgTypeVO msgType;
+    private MsgTypeEnum msgType;
 
-    /** 载荷（语义按类型分，见 MsgTypeVO） */
+    /** 载荷（语义按类型分，见 MsgTypeEnum） */
     private String content;
 
     /** 客户端幂等键（UUID，乐观上屏重发复用同键；SYSTEM 为 NULL 不受约束） */
     private String clientMsgId;
 
     /** CARD 引用（仅 CARD 非空） */
-    private CardRefTypeVO refType;
+    private CardRefTypeEnum refType;
     /** 卡片引用对象业务 ID（POST/PRODUCT 均为 UUID 字符串） */
     private String refId;
 
-    private MsgStatusVO status;
+    private MsgStatusEnum status;
     private LocalDateTime recalledAt;
-    private RecallByVO recalledBy;
+    private RecallByEnum recalledBy;
 
     private LocalDateTime createdAt;
 
     public boolean isRecalled() {
-        return status == MsgStatusVO.RECALLED;
+        return status == MsgStatusEnum.RECALLED;
     }
 }

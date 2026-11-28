@@ -19,7 +19,7 @@ public interface IPostFeedIndexDao {
      * cursor 非首页时 {@code WHERE (排序键, post_id) < (?, ?)} 续页。部分列直映域 VO
      * （post_id + feed_time + like_count，与审核超时扫描同款）
      */
-    List<FeedIndexItemVO> selectFeedIndex(@Param("sort") String sort, @Param("cursor") FeedCursorVO cursor,
+    List<FeedIndexItemVO> selectFeedIndex(@Param("sort") String sort, @Param("cursor") FeedCursorVO feedCursorVO,
                                           @Param("limit") int limit);
 
     // ---------- feed 异构索引同事务直写（feed-index-uv 票 03） ----------

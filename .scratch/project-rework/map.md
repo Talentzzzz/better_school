@@ -125,12 +125,12 @@ Frontier 规则照常：扫描 `.scratch/project-rework/issues/` 中开放、未
 **包名映射表**（旧 `marketing-asset` / 包根 `com.betterschool.asset` → 新 `backend/marketing` / 包根 `com.betterschool.marketing`）：
 完整 61 条逐类映射见 [`06-package-mapping.md`](06-package-mapping.md)，机读版 [`06-fileplan.json`](06-fileplan.json)。
 落位规则与票面一致，两处按实际语义微调（已在票 06 `## Answer` 说明）：
-`Constants` 与 `PointsReasonType` 落 `types.points`（非 `types.common`）——两者都是积分域自有常量/枚举，
+`Constants` 与 `PointsReasonTypeEnum` 落 `types.points`（非 `types.common`）——两者都是积分域自有常量/枚举，
 且票 07 的 lottery 侧各有同名同类物，落 common 必冲突。
 
 | 层 | 域专属落位 | 跨域公共落位 |
 | --- | --- | --- |
-| types | `types.points`(`Constants`/`PointsReasonType`)、`types.common`(`LotteryDrawnMessage`) | `types.common`(`AppException`/`ResponseCode`/`OutboxStatus`) |
+| types | `types.points`(`Constants`/`PointsReasonTypeEnum`)、`types.common`(`LotteryDrawnMessage`) | `types.common`(`AppException`/`ResponseCodeEnum`/`OutboxStatusEnum`) |
 | api | `api.points`(`IPointsService`/`IPointsExchangeService`)、`api.points.dto`(Points*DTO) | `api.common.dto`(`UserBasicResponseDTO`)、`api.common.response`(`Response`/`PageResult`) |
 | domain | `domain.points.{adapter.repository,model.entity,model.valobj,service}` | `domain.common.adapter.port.marketing`(`IUserQueryPort`)、`domain.common.model.valobj.marketing`(`UserBasicVO`) |
 | infrastructure | `infrastructure.points.{dao,dao.po,adapter.repository}` | `infrastructure.common.{dao.outbox,outbox,adapter.port.marketing,security}` |
@@ -188,13 +188,13 @@ parent 依赖管理新增本工程七模块 + 保留 `bs-api` / dubbo / mybatis 
 （域段插在层后，与票 06 的 points 同构）。逐类表与去重清单见 [`07-package-mapping.md`](07-package-mapping.md)，
 搬迁脚本 [`Migrate-07-v2.ps1`](Migrate-07-v2.ps1)，零行为变更比对脚本 [`Compare-07-bodies.ps1`](Compare-07-bodies.ps1)。
 
-**六类有意落位**（相对纯前缀替换）：`AppException`/`ResponseCode`/`OutboxStatus` → `types.common`；
+**六类有意落位**（相对纯前缀替换）：`AppException`/`ResponseCodeEnum`/`OutboxStatusEnum` → `types.common`；
 `Response`/`PageResult`/`UserBasicResponseDTO` → `api.common.*`；`IUserQueryPort`/`UserBasicVO` → `domain.common.*`；
 `IOutboxDao`/`OutboxPO`/`OutboxMessageStore`/`OutboxMessageSender` → `infrastructure.common.*`；
 `JwtService`/`JwtAuthenticationFilter`/`UserQueryPort`/`GlobalExceptionHandler`/`SecurityUtils` → 各自 `common` 包；
 `Constants` → `types.<域>`（去掉 `.common` 段）。跨域 wire 契约 `LotteryDrawnMessage` + 新增 `ReferralGroupedMessage` → `types.common`。
 
-**同名常量按域拆开（保行为的必要动作，不是美化）**：三份 `ResponseCode` 并一份后 Java 不允许重名常量，
+**同名常量按域拆开（保行为的必要动作，不是美化）**：三份 `ResponseCodeEnum` 并一份后 Java 不允许重名常量，
 而 **400 的 info 三域不同**（points/拉新 `参数错误`、lottery `参数不合法`，且集成测试逐字断言）→
 `POINTS_PARAM_ERROR` / `LOTTERY_PARAM_ERROR`；`{POINTS,LOTTERY}_INSUFFICIENT_POINTS`（4101/4306）、
 `{REFERRAL,LOTTERY}_ACTIVITY_{NOT_STARTED,ENDED}`（4202/4301、4203/4302）同理。**码值与 info 一字未改**，前端按码分支不受影响。
@@ -225,7 +225,7 @@ DDL 一字未改（四份 schema/migration `git show HEAD` 与工作区 SHA256 �
 
 **票面预算超顶**：`Context used: ~360k`（目标 150–200k、硬顶 300k）。超顶来自票面未预见的四件事：
 一次搬迁脚本事故（PowerShell 数组压平导致 `c`→`o` 全树污染，已回滚重做、未进产物）、
-`ResponseCode` 的 400 文案冲突、三处机械规则盲区（`marketing-api` 依赖 / 两个 `UserQueryPort` 副本 / `Constants` 的 `.common` 段）、
+`ResponseCodeEnum` 的 400 文案冲突、三处机械规则盲区（`marketing-api` 依赖 / 两个 `UserQueryPort` 副本 / `Constants` 的 `.common` 段）、
 随端口释放必须联改的 `front/vite.config.ts` + `run-app.sh` + 五处 docs/compose。**未触发拆分**——
 都在「机械搬迁 + 装配」边界内，拆出去只会把同一份映射表撕成两半。
 
@@ -416,7 +416,7 @@ Nacos 删 10 条遗留 dataId；referral / 旧 `lottery_*` 判定为「从未注
 ### 票 09 收口（删拉新）
 
 - 营销侧 referral 域 31 文件 + 单体侧成团通知 2 文件删除；`REFERRAL_GROUPED` 全网无生产/消费方；marketing 63 测试绿。
-- `DrawCountReasonType` 只剩 REDEEM/DRAW；`ResponseCode` 删 4201–4206；种子活动「开学季拉新抽奖」→「开学季抽奖」。
+- `DrawCountReasonTypeEnum` 只剩 REDEEM/DRAW；`ResponseCodeEnum` 删 4201–4206；种子活动「开学季拉新抽奖」→「开学季抽奖」。
 - `IUserQueryPort.getBasicBatch` 随唯一调用方删除；跨工程的 `bs-api IUserQueryService.getBasicBatch` 成全网零调用契约，
   超出票面边界（票 17 注册面清零亦未动它）——留给后续清理票。
 - 前端残留（vite 代理 / marketing.ts / 邀请码面板）归票 16，票 14 重写营销页时提前带走大半。

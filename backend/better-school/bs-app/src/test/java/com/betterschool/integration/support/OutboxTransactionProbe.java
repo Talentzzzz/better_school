@@ -1,11 +1,11 @@
 package com.betterschool.integration.support;
 
-import com.betterschool.domain.raffle.adapter.repository.IRaffleRepository;
-import com.betterschool.domain.raffle.model.aggregate.DrawRecordAggregate;
-import com.betterschool.domain.raffle.model.entity.DrawRecordDetailEntity;
-import com.betterschool.domain.raffle.model.entity.DrawRecordEntity;
-import com.betterschool.domain.raffle.model.valobj.DrawRecordActionVO;
-import com.betterschool.domain.raffle.model.valobj.DrawRecordStateVO;
+import com.betterschool.domain.draw.adapter.repository.IDrawRepository;
+import com.betterschool.domain.draw.model.aggregate.DrawRecordAggregate;
+import com.betterschool.domain.draw.model.entity.DrawRecordDetailEntity;
+import com.betterschool.domain.draw.model.entity.DrawRecordEntity;
+import com.betterschool.domain.draw.model.valobj.DrawRecordActionEnum;
+import com.betterschool.domain.draw.model.valobj.DrawRecordStateVO;
 import com.betterschool.types.common.LotteryDrawnMessage;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -25,7 +25,7 @@ import java.time.LocalDateTime;
 @RequiredArgsConstructor
 public class OutboxTransactionProbe {
 
-    private final IRaffleRepository raffleRepository;
+    private final IDrawRepository drawRepository;
     private final TransactionTemplate transactionTemplate;
 
     /** 同事务落 draw_record + DRAW 明细 + outbox 事件（不抛异常：正常路径） */
@@ -42,32 +42,32 @@ public class OutboxTransactionProbe {
         transactionTemplate.executeWithoutResult(status -> {
             LocalDateTime now = LocalDateTime.now();
 
-            DrawRecordEntity record = new DrawRecordEntity();
-            record.setRecordId(recordId);
-            record.setUserId(userId);
-            record.setActivityId("00000000-0000-4000-8000-000000000001");
-            record.setStrategyId("00000000-0000-4000-8000-000000000001");
-            record.setAwardId("00000000-0000-4000-8000-000000000001");
-            record.setAwardName("探针奖品");
-            record.setAwardType("VIRTUAL");
-            record.setLevel(1);
-            record.setInvId("00000000-0000-4000-8000-000000000999");
-            record.setState(DrawRecordStateVO.PENDING);
-            record.setCreateTime(now);
-            record.setUpdateTime(now);
+            DrawRecordEntity drawRecordEntity = new DrawRecordEntity();
+            drawRecordEntity.setRecordId(recordId);
+            drawRecordEntity.setUserId(userId);
+            drawRecordEntity.setActivityId("00000000-0000-4000-8000-000000000001");
+            drawRecordEntity.setStrategyId("00000000-0000-4000-8000-000000000001");
+            drawRecordEntity.setAwardId("00000000-0000-4000-8000-000000000001");
+            drawRecordEntity.setAwardName("探针奖品");
+            drawRecordEntity.setAwardType("VIRTUAL");
+            drawRecordEntity.setLevel(1);
+            drawRecordEntity.setInvId("00000000-0000-4000-8000-000000000999");
+            drawRecordEntity.setState(DrawRecordStateVO.PENDING);
+            drawRecordEntity.setCreateTime(now);
+            drawRecordEntity.setUpdateTime(now);
 
-            DrawRecordDetailEntity detail = new DrawRecordDetailEntity();
-            detail.setUserId(userId);
-            detail.setRecordId(recordId);
-            detail.setType(DrawRecordActionVO.DRAW.getCode());
-            detail.setCreateTime(now);
-            detail.setUpdateTime(now);
+            DrawRecordDetailEntity drawRecordDetailEntity = new DrawRecordDetailEntity();
+            drawRecordDetailEntity.setUserId(userId);
+            drawRecordDetailEntity.setRecordId(recordId);
+            drawRecordDetailEntity.setType(DrawRecordActionEnum.DRAW.getCode());
+            drawRecordDetailEntity.setCreateTime(now);
+            drawRecordDetailEntity.setUpdateTime(now);
 
-            DrawRecordAggregate aggregate = new DrawRecordAggregate();
-            aggregate.setRecord(record);
-            aggregate.setDetail(detail);
-            aggregate.setDrawnEvent(new LotteryDrawnMessage(recordId, userId, "00000000-0000-4000-8000-000000000001", "VIRTUAL", 20));
-            raffleRepository.insertDrawRecord(aggregate);
+            DrawRecordAggregate drawRecordAggregate = new DrawRecordAggregate();
+            drawRecordAggregate.setRecord(drawRecordEntity);
+            drawRecordAggregate.setDetail(drawRecordDetailEntity);
+            drawRecordAggregate.setDrawnEvent(new LotteryDrawnMessage(recordId, userId, "00000000-0000-4000-8000-000000000001", "VIRTUAL", 20));
+            drawRepository.insertDrawRecord(drawRecordAggregate);
 
             if (failAfterwards) {
                 throw new IllegalStateException("探针：业务事务后半段失败");

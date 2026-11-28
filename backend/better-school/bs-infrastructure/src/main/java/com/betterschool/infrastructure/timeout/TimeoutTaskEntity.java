@@ -28,7 +28,7 @@ public class TimeoutTaskEntity {
     private LocalDateTime actionTime;
     /** 下次可触发时刻：注册时 = actionTime，失败重试后 = now + 退避 */
     private LocalDateTime nextFireTime;
-    private TimeoutTaskStatus status;
+    private TimeoutTaskStatusEnum status;
     private Integer retryCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -46,12 +46,12 @@ public class TimeoutTaskEntity {
      * SQL 侧 TIMESTAMPADD(SECOND, #{delaySeconds}, NOW()) 落库（NOW() 与库列同为秒级精度）。
      */
     public static TimeoutTaskEntity newWaiting(String taskType, String bizId, long delaySeconds) {
-        TimeoutTaskEntity task = new TimeoutTaskEntity();
-        task.setTaskType(taskType);
-        task.setBizId(bizId);
-        task.setDelaySeconds(delaySeconds);
-        task.setStatus(TimeoutTaskStatus.WAITING);
-        task.setRetryCount(0);
-        return task;
+        TimeoutTaskEntity timeoutTaskEntity = new TimeoutTaskEntity();
+        timeoutTaskEntity.setTaskType(taskType);
+        timeoutTaskEntity.setBizId(bizId);
+        timeoutTaskEntity.setDelaySeconds(delaySeconds);
+        timeoutTaskEntity.setStatus(TimeoutTaskStatusEnum.WAITING);
+        timeoutTaskEntity.setRetryCount(0);
+        return timeoutTaskEntity;
     }
 }

@@ -10,9 +10,9 @@ import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
 import com.betterschool.usecase.credit.CreditCase;
 import com.betterschool.domain.credit.model.entity.CreditDetailEntity;
-import com.betterschool.domain.credit.model.valobj.CreditReasonTypeVO;
+import com.betterschool.domain.credit.model.valobj.CreditReasonTypeEnum;
 import com.betterschool.trigger.http.security.SecurityUtils;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -41,10 +41,10 @@ public class CreditController implements ICreditService {
     @GetMapping("/my")
     public Response<CreditInfoResponseDTO> myCreditInfo() {
         String userId = SecurityUtils.currentUserId();
-        CreditInfoResponseDTO dto = new CreditInfoResponseDTO();
-        dto.setCreditScore(creditCase.getCreditScore(userId));
-        dto.setStatus(creditCase.getStatus(userId));
-        return Response.ok(dto);
+        CreditInfoResponseDTO creditInfoResponseDTO = new CreditInfoResponseDTO();
+        creditInfoResponseDTO.setCreditScore(creditCase.getCreditScore(userId));
+        creditInfoResponseDTO.setStatus(creditCase.getStatus(userId));
+        return Response.ok(creditInfoResponseDTO);
     }
 
     @Override
@@ -60,25 +60,25 @@ public class CreditController implements ICreditService {
 
     @Override
     @PostMapping("/admin/adjust")
-    public Response<Void> adminAdjust(@Valid @RequestBody AdminAdjustRequestDTO request) {
+    public Response<Void> adminAdjust(@Valid @RequestBody AdminAdjustRequestDTO adminAdjustRequestDTO) {
         requireAdmin();
-        creditCase.adminAdjust(request.getTargetUserId(), request.getDelta(), request.getReason());
+        creditCase.adminAdjust(adminAdjustRequestDTO.getTargetUserId(), adminAdjustRequestDTO.getDelta(), adminAdjustRequestDTO.getReason());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/admin/ban")
-    public Response<Void> adminBan(@Valid @RequestBody AdminBanRequestDTO request) {
+    public Response<Void> adminBan(@Valid @RequestBody AdminBanRequestDTO adminBanRequestDTO) {
         requireAdmin();
-        creditCase.adminBan(request.getTargetUserId(), request.getReason());
+        creditCase.adminBan(adminBanRequestDTO.getTargetUserId(), adminBanRequestDTO.getReason());
         return Response.ok(null);
     }
 
     @Override
     @PostMapping("/admin/unban")
-    public Response<Void> adminUnban(@Valid @RequestBody AdminUnbanRequestDTO request) {
+    public Response<Void> adminUnban(@Valid @RequestBody AdminUnbanRequestDTO adminUnbanRequestDTO) {
         requireAdmin();
-        creditCase.adminUnban(request.getTargetUserId());
+        creditCase.adminUnban(adminUnbanRequestDTO.getTargetUserId());
         return Response.ok(null);
     }
 
@@ -103,19 +103,19 @@ public class CreditController implements ICreditService {
 
     private void requireAdmin() {
         if (!"ADMIN".equals(SecurityUtils.currentRole())) {
-            throw new BusinessException(ResponseCode.FORBIDDEN, "仅管理员可操作");
+            throw new BusinessException(ResponseCodeEnum.FORBIDDEN, "仅管理员可操作");
         }
     }
 
     private CreditLogResponseDTO toLogResponseDTO(CreditDetailEntity creditDetailEntity) {
-        CreditLogResponseDTO dto = new CreditLogResponseDTO();
-        dto.setId(creditDetailEntity.getId());
-        dto.setChange(creditDetailEntity.getChange());
-        dto.setReasonType(creditDetailEntity.getReasonType());
-        CreditReasonTypeVO reasonVO = CreditReasonTypeVO.from(creditDetailEntity.getReasonType());
-        dto.setReasonDesc(reasonVO == null ? creditDetailEntity.getReasonType() : reasonVO.getDesc());
-        dto.setRefId(creditDetailEntity.getRefId());
-        dto.setCreatedAt(creditDetailEntity.getCreateTime());
-        return dto;
+        CreditLogResponseDTO creditLogResponseDTO = new CreditLogResponseDTO();
+        creditLogResponseDTO.setId(creditDetailEntity.getId());
+        creditLogResponseDTO.setChange(creditDetailEntity.getChange());
+        creditLogResponseDTO.setReasonType(creditDetailEntity.getReasonType());
+        CreditReasonTypeEnum creditReasonTypeVO = CreditReasonTypeEnum.from(creditDetailEntity.getReasonType());
+        creditLogResponseDTO.setReasonDesc(creditReasonTypeVO == null ? creditDetailEntity.getReasonType() : creditReasonTypeVO.getDesc());
+        creditLogResponseDTO.setRefId(creditDetailEntity.getRefId());
+        creditLogResponseDTO.setCreatedAt(creditDetailEntity.getCreateTime());
+        return creditLogResponseDTO;
     }
 }

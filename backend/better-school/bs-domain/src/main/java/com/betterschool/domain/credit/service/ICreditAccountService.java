@@ -2,7 +2,7 @@ package com.betterschool.domain.credit.service;
 
 import com.betterschool.domain.credit.model.entity.CreditDetailEntity;
 import com.betterschool.domain.credit.model.valobj.CreditChangeResult;
-import com.betterschool.domain.credit.model.valobj.CreditReasonTypeVO;
+import com.betterschool.domain.credit.model.valobj.CreditReasonTypeEnum;
 
 import java.util.List;
 
@@ -16,7 +16,7 @@ public interface ICreditAccountService {
     void ensureOperable(String userId);
 
     /** 规则引擎统一入口（事务参与者，调用方须包事务）：扣/加分 + 流水 + 低分联动封禁，返回变动结果；refId 是引用业务 id（UUID 字符串）或物理流水 id 的字符串形 */
-    CreditChangeResult applyChange(String userId, CreditReasonTypeVO reasonType, String refId);
+    CreditChangeResult applyChange(String userId, CreditReasonTypeEnum creditReasonTypeVO, String refId);
 
     String getStatus(String userId);
 

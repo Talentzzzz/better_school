@@ -26,9 +26,9 @@ public class SearchSyncConsumer implements RocketMQListener<String> {
     @Override
     public void onMessage(String payload) {
         try {
-            SearchSyncMessage message = objectMapper.readValue(payload, SearchSyncMessage.class);
-            searchSyncCase.sync(message);
-            log.info("[SearchSyncConsumer] 索引同步 type={}, id={}", message.getType(), message.getId());
+            SearchSyncMessage searchSyncMessage = objectMapper.readValue(payload, SearchSyncMessage.class);
+            searchSyncCase.sync(searchSyncMessage);
+            log.info("[SearchSyncConsumer] 索引同步 type={}, id={}", searchSyncMessage.getType(), searchSyncMessage.getId());
         } catch (Exception e) {
             log.error("[SearchSyncConsumer] 索引同步失败 payload={}", payload, e);
         }

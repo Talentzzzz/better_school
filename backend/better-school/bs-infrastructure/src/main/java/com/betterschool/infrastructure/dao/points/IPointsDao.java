@@ -17,7 +17,7 @@ import java.util.List;
 public interface IPointsDao {
 
     /** 撞 uk_user_reason_ref 返回 0 = 已入过账（幂等） */
-    int insertIgnoreBucket(PointsBucketPO bucketPO);
+    int insertIgnoreBucket(PointsBucketPO pointsBucketPO);
 
     /** 当前可用桶，FIFO（expire_at, id）加行锁 */
     List<PointsBucketPO> selectAvailableBucketsForUpdate(@Param("userId") String userId);

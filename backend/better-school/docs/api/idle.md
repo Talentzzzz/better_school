@@ -24,7 +24,7 @@
 提交草稿（与直接发布同门槛，发布即对外可见）
 
 - Auth: 需要登录（本人）
-- 流程: 取本人 DRAFT 草稿 → 信用分门槛 → 完整性校验（title/price/tradeLocation/category 必填，缺 → code 500 "草稿内容不完整…"）→ 条件 UPDATE DRAFT→ON_SALE
+- 流程: 信用分门槛（case 层）→ 取本人 DRAFT 草稿 → 完整性校验（域内：title/price/tradeLocation/category 必填，缺 → code 500 "草稿内容不完整…"）→ 条件 UPDATE DRAFT→ON_SALE
 - 成功: 空 data，状态 ON_SALE
 
 ## POST /api/idle/products/{productId}/takedown
@@ -98,10 +98,10 @@
 ## 商品订单系列（`IdleCase`，商品下单要求 ON_SALE；LOCKED 托管状态机见代码）
 
 ### POST /api/idle/orders?productId
-下单（需登录，信用可操作账号）：商品锁定进订单，返回 `data = orderId`。
+下单（需登录，信用可操作账号）：商品锁定进订单（PENDING_PAYMENT，落库存扣减 + 超时关单任务），并 best-effort 向钱包预下单拿 `payNo`（失败不拖垮下单），返回 `data = orderId`。
 
-### POST /api/idle/orders/{orderId}/pay
-支付（买家）：钱包冻结 `PRODUCT_FROZEN` 托管款，订单进入已付款——**两段式资金链路（ADR-0016）**：资金段冻结（流水先行，`uk_order_type` 幂等 + 可用余额条件扣减）由 case 层先行，余额不足直接失败、订单留待支付；翻转段「待支付 → 已支付」条件翻转为单仓储事务。翻转失败时订单留待支付、货款悬置冻结（长款中间态），由 `productFundOrphanScan` 孤儿扫描解冻收敛（fund-consistency 票 06，组合事务端口已废止）。
+### GET /api/idle/orders/{orderId}
+订单详情（参与者可见），返回 `ProductOrderResponseDTO`。买家 + 待支付时带 `payNo`（收银台支付凭据；预下单失败时按 `biz_order_id` 幂等懒创建），其余情况 `payNo` 为 null。支付走独立收银台 `/api/pay/orders/{payNo}/pay`（见 [payment.md](payment.md)）——**原 `POST /api/idle/orders/{orderId}/pay` 已删除**，下单接口不再直接冻结钱包。
 
 ### POST /api/idle/orders/{orderId}/mark-delivered
 卖家标记已发货。
@@ -110,10 +110,7 @@
 买家确认收货：托管款解冻（`PRODUCT_UNFROZEN`）并入卖家余额（`PRODUCT_INCOME`），订单完成。
 
 ### POST /api/idle/orders/{orderId}/cancel
-买家取消订单：已支付的解冻托管款退回（未支付的不动钱包），订单关闭——**已支付态为两段式（ADR-0016）**：取消翻转（含台账回补 + 搜索同步，单仓储事务）先行，翻转未命中抛业务异常、资金段尚未执行零残留；解冻退款（`uk_order_type` 幂等）由 case 层随后执行；翻转与解冻之间的宕机孤儿（订单已取消但货款悬置冻结）由 `productFundOrphanScan` 收敛（fund-consistency 票 07）；待支付取消无冻结、保持原单事务翻转。
-
-### GET /api/idle/orders/{orderId}
-订单详情（参与者可见），返回 `ProductOrderResponseDTO`。
+买家取消订单：已支付的解冻托管款退回（未支付的不动钱包），订单关闭，并 best-effort 关闭支付单（WAIT_PAY→CLOSED，已支付是空操作）——**已支付态为两段式（ADR-0016）**：取消翻转（含台账回补 + 搜索同步，单仓储事务）先行，翻转未命中抛业务异常、资金段尚未执行零残留；解冻退款（`uk_order_type` 幂等）由 case 层随后执行；翻转与解冻之间的宕机孤儿（订单已取消但货款悬置冻结）由 `productFundOrphanScan` 收敛（fund-consistency 票 07）；待支付取消无冻结、保持原单事务翻转。
 
 ### GET /api/idle/orders/mine?role=buy
 我的订单分页：`role=buy` 买到的 / `role=sell` 卖出的，返回 `ProductOrderResponseDTO` 分页。

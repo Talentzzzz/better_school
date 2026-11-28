@@ -45,11 +45,11 @@ class TimeoutTaskScanParallelismIntegrationTest extends TimeoutScanTestBase {
     void 单实例认领16张分表时并发不超过并行度() {
         List<String> bizIds = registerOneDueTaskPerSlot("scan-par-all-");
 
-        ScanSummary summary = scanWithConcurrencyProbe(bizIds, 0, 1);
+        ScanSummary scanSummary = scanWithConcurrencyProbe(bizIds, 0, 1);
 
-        assertThat(summary.getSlotCount()).isEqualTo(TOTAL_SLOTS);
-        assertThat(summary.getTaskCount()).isEqualTo(TOTAL_SLOTS);
-        assertThat(summary.getSuccessCount()).isEqualTo(TOTAL_SLOTS);
+        assertThat(scanSummary.getSlotCount()).isEqualTo(TOTAL_SLOTS);
+        assertThat(scanSummary.getTaskCount()).isEqualTo(TOTAL_SLOTS);
+        assertThat(scanSummary.getSuccessCount()).isEqualTo(TOTAL_SLOTS);
         // 16 张表的行全部结算完：并行度只限并发，不限吞吐（其余在池队列里排队）
         assertThat(physicalRow(bizIds.get(0)).get("status")).isEqualTo("SUCCESS");
         assertThat(physicalRow(bizIds.get(TOTAL_SLOTS - 1)).get("status")).isEqualTo("SUCCESS");
@@ -60,11 +60,11 @@ class TimeoutTaskScanParallelismIntegrationTest extends TimeoutScanTestBase {
         List<String> bizIds = registerOneDueTaskPerSlot("scan-par-half-");
 
         // shardIndex = 0、shardTotal = 2：本实例认领 8 张表（偶数槽位）
-        ScanSummary summary = scanWithConcurrencyProbe(bizIds, 0, 2);
+        ScanSummary scanSummary = scanWithConcurrencyProbe(bizIds, 0, 2);
 
-        assertThat(summary.getSlotCount()).isEqualTo(TOTAL_SLOTS / 2);
-        assertThat(summary.getTaskCount()).isEqualTo(TOTAL_SLOTS / 2);
-        assertThat(summary.getSuccessCount()).isEqualTo(TOTAL_SLOTS / 2);
+        assertThat(scanSummary.getSlotCount()).isEqualTo(TOTAL_SLOTS / 2);
+        assertThat(scanSummary.getTaskCount()).isEqualTo(TOTAL_SLOTS / 2);
+        assertThat(scanSummary.getSuccessCount()).isEqualTo(TOTAL_SLOTS / 2);
     }
 
     // ---------- 辅助 ----------

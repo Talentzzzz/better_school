@@ -1,8 +1,8 @@
 # backend 文档索引
 
 > better-school 后端文档。单体收口后（monolith-restructure 票 05/06/07）只有**一个 Maven 工程**
-> `backend/better-school/`（bs-* 七模块、单应用、单库 `better_school`；营销四域 points / raffle / rebate /
-> inventory 以平级领域包并入）。超时中心已内嵌进单体，不再是独立工程（见 [`architecture/timeout.md`](architecture/timeout.md)）。
+> `backend/better-school/`（bs-* 七模块、单应用、单库 `better_school`；营销四域 points / draw / rebate /
+> award 以平级领域包并入）。超时中心已内嵌进单体，不再是独立工程（见 [`architecture/timeout.md`](architecture/timeout.md)）。
 
 | 目录 | 内容 |
 | --- | --- |

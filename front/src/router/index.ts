@@ -43,8 +43,9 @@ const router = createRouter({
     // 营销活动页：入口行「活动」格的去向；不加 requiresAuth（访客看 banner + 奖品目录）
     { path: '/marketing', component: () => import('@/views/marketing/MarketingView.vue') },
     { path: '/marketing/prizes', component: () => import('@/views/marketing/MyPrizesView.vue'), meta: { requiresAuth: true } },
-    { path: '/me/wallet', component: () => import('@/views/me/WalletView.vue'), meta: { requiresAuth: true } },
     { path: '/me/credit', component: () => import('@/views/me/CreditView.vue'), meta: { requiresAuth: true } },
+    // 模拟微信收银台：按支付单号支付（支付单号是 UUID，路由不做数字限制）
+    { path: '/pay/:payNo', component: () => import('@/views/pay/CashierView.vue'), meta: { requiresAuth: true } },
     // 聚合订单页：订单类唯一入口（?tab=idle）；收藏仍走 /me/favorites
     { path: '/me/orders', component: () => import('@/views/me/MyOrdersView.vue'), meta: { requiresAuth: true } },
     { path: '/me/favorites', component: () => import('@/views/me/MyFavoritesView.vue'), meta: { requiresAuth: true } },

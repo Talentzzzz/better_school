@@ -14,7 +14,7 @@ import com.betterschool.domain.user.model.entity.UserEntity;
 import com.betterschool.domain.user.service.profile.IUserProfileService;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import com.betterschool.types.common.SearchPageVO;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -92,41 +92,41 @@ public class SearchController implements ISearchService {
 
     private void requireKeyword(String keyword) {
         if (keyword == null || keyword.isBlank()) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "搜索关键词不能为空");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "搜索关键词不能为空");
         }
     }
 
     /** 访客视角摘要：不暴露浏览量（对齐社区列表）；liked = 当前用户点赞态，content 供客户端过滤 */
     private PostSummaryResponseDTO toPostSummaryDTO(PostEntity postEntity, boolean liked) {
-        PostSummaryResponseDTO dto = new PostSummaryResponseDTO();
-        dto.setPostId(postEntity.getPostId());
-        dto.setTitle(postEntity.getTitle());
-        dto.setCover(postEntity.displayCover());
-        dto.setUserId(postEntity.getUserId());
-        dto.setNickname(postEntity.getAuthorNickname());
-        dto.setAvatar(postEntity.getAuthorAvatar());
-        dto.setLikeCount(postEntity.getLikeCount());
-        dto.setCreatedAt(postEntity.getCreatedAt());
-        dto.setLiked(liked);
-        dto.setContent(postEntity.getContent());
-        return dto;
+        PostSummaryResponseDTO postSummaryResponseDTO = new PostSummaryResponseDTO();
+        postSummaryResponseDTO.setPostId(postEntity.getPostId());
+        postSummaryResponseDTO.setTitle(postEntity.getTitle());
+        postSummaryResponseDTO.setCover(postEntity.displayCover());
+        postSummaryResponseDTO.setUserId(postEntity.getUserId());
+        postSummaryResponseDTO.setNickname(postEntity.getAuthorNickname());
+        postSummaryResponseDTO.setAvatar(postEntity.getAuthorAvatar());
+        postSummaryResponseDTO.setLikeCount(postEntity.getLikeCount());
+        postSummaryResponseDTO.setCreatedAt(postEntity.getCreatedAt());
+        postSummaryResponseDTO.setLiked(liked);
+        postSummaryResponseDTO.setContent(postEntity.getContent());
+        return postSummaryResponseDTO;
     }
 
     private ProductResponseDTO toProductDTO(ProductEntity productEntity) {
-        ProductResponseDTO dto = new ProductResponseDTO();
-        dto.setProductId(productEntity.getProductId());
-        dto.setUserId(productEntity.getUserId());
-        dto.setSellerNickname(productEntity.getSellerNickname());
-        dto.setSellerAvatar(productEntity.getSellerAvatar());
-        dto.setTitle(productEntity.getTitle());
-        dto.setDescription(productEntity.getDescription());
-        dto.setImages(productEntity.getImages());
-        dto.setPrice(productEntity.getPrice());
-        dto.setTradeLocation(productEntity.getTradeLocation());
-        dto.setCategory(productEntity.getCategory().name());
-        dto.setStatus(productEntity.getStatus().name());
-        dto.setCreatedAt(productEntity.getCreatedAt());
-        return dto;
+        ProductResponseDTO productResponseDTO = new ProductResponseDTO();
+        productResponseDTO.setProductId(productEntity.getProductId());
+        productResponseDTO.setUserId(productEntity.getUserId());
+        productResponseDTO.setSellerNickname(productEntity.getSellerNickname());
+        productResponseDTO.setSellerAvatar(productEntity.getSellerAvatar());
+        productResponseDTO.setTitle(productEntity.getTitle());
+        productResponseDTO.setDescription(productEntity.getDescription());
+        productResponseDTO.setImages(productEntity.getImages());
+        productResponseDTO.setPrice(productEntity.getPrice());
+        productResponseDTO.setTradeLocation(productEntity.getTradeLocation());
+        productResponseDTO.setCategory(productEntity.getCategory().name());
+        productResponseDTO.setStatus(productEntity.getStatus().name());
+        productResponseDTO.setCreatedAt(productEntity.getCreatedAt());
+        return productResponseDTO;
     }
 
 }

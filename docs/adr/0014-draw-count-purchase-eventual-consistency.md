@@ -38,9 +38,9 @@ outbox 的清理生命周期会误删业务留痕。通用 outbox 继续只服�
   重试只做「入账 + 置 DONE」，从不碰扣分；③ T+1 对账兜底另开票（见 Consequences）。
 - **死信起步只日志 ERROR + 人工 SQL 重置**（`state=2` 置回 `0` 让扫描重领），
   告警通路等基建有了再接；`alarm_email` 现状为空，不为一条链路先建管理接口。
-- **术语收敛**：本域统一用「购买」（purchase），`DrawCountReasonType.REDEEM` 改名 `PURCHASE`
+- **术语收敛**：本域统一用「购买」（purchase），`DrawCountReasonTypeEnum.REDEEM` 改名 `PURCHASE`
   （存储值随枚举名落库，**存量库需删库重建**——本仓库改库表的标准口径）；
-  `PointsReasonType.REDEEM_DRAW_COUNT` **不动**（它出现在 Dubbo 契约的 `valueOf` 入参上，改了断契约）。
+  `PointsReasonTypeEnum.REDEEM_DRAW_COUNT` **不动**（它出现在 Dubbo 契约的 `valueOf` 入参上，改了断契约）。
 
 ## Considered Options
 

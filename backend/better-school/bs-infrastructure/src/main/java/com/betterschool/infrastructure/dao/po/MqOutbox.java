@@ -1,6 +1,6 @@
 package com.betterschool.infrastructure.dao.po;
 
-import com.betterschool.types.enums.OutboxStatus;
+import com.betterschool.types.enums.OutboxStatusEnum;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
@@ -43,7 +43,7 @@ public class MqOutbox {
         mqOutbox.setDestination(destination);
         mqOutbox.setPayload(toJson(payload, objectMapper));
         mqOutbox.setDelayLevel(0);
-        mqOutbox.setState(OutboxStatus.PENDING.getCode());
+        mqOutbox.setState(OutboxStatusEnum.PENDING.getCode());
         mqOutbox.setRetryCount(0);
         LocalDateTime now = LocalDateTime.now();
         mqOutbox.setCreateTime(now);

@@ -1,6 +1,5 @@
 package com.betterschool.usecase.user;
 
-import com.betterschool.domain.user.adapter.repository.IUserRepository;
 import com.betterschool.domain.user.model.entity.UserEntity;
 import com.betterschool.domain.user.model.valobj.UserAuthResult;
 import com.betterschool.domain.user.service.auth.IUserAuthService;
@@ -17,14 +16,12 @@ import org.springframework.stereotype.Service;
 public class UserRegisterCase {
 
     private final IUserAuthService userAuthService;
-    private final IUserRepository userRepository;
     private final IWalletAccountService walletAccountService;
 
     public UserAuthResult register(String phone, String code, String nickname) {
         UserEntity userEntity = userAuthService.register(phone, code, nickname);
         // 注册即送 1000 校园币（虚拟钱包演示用）
         walletAccountService.ensureWallet(userEntity.getUserId());
-        return new UserAuthResult(userEntity,
-                userRepository.generateToken(userEntity.getUserId(), userEntity.getRole().name()));
+        return new UserAuthResult(userEntity, userAuthService.issueToken(userEntity));
     }
 }

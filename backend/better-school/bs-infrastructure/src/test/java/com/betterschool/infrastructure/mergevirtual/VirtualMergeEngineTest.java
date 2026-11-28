@@ -54,15 +54,15 @@ class VirtualMergeEngineTest {
     }
 
     /** 起引擎必须连策略一起给：件里不带策略，一个引擎只服务一个用途 */
-    private VirtualMergeEngine<Job, Boolean> start(MergeConfig config, MergeStrategy<Job, Boolean> strategy) {
-        engine = new VirtualMergeEngine<>(config, strategy);
+    private VirtualMergeEngine<Job, Boolean> start(MergeConfig mergeConfig, MergeStrategy<Job, Boolean> strategy) {
+        engine = new VirtualMergeEngine<>(mergeConfig, strategy);
         return engine;
     }
 
     /** 测试专用构造：注入 leader 线程工厂（claim 死亡窗口用例） */
-    private VirtualMergeEngine<Job, Boolean> start(MergeConfig config, MergeStrategy<Job, Boolean> strategy,
+    private VirtualMergeEngine<Job, Boolean> start(MergeConfig mergeConfig, MergeStrategy<Job, Boolean> strategy,
                                                    VirtualMergeEngine.LeaderThreadFactory factory) {
-        engine = new VirtualMergeEngine<>(config, strategy, factory);
+        engine = new VirtualMergeEngine<>(mergeConfig, strategy, factory);
         return engine;
     }
 
@@ -85,7 +85,7 @@ class VirtualMergeEngineTest {
     }
 
     /** 落在某个终态的件数（{@code COMPLETED} / {@code FAILED}） */
-    private static long countState(List<MergeResult<Boolean>> outcomes, MergeResult.State state) {
+    private static long countState(List<MergeResult<Boolean>> outcomes, MergeResult.StateEnum state) {
         return outcomes.stream().filter(o -> o.state() == state).count();
     }
 
@@ -213,7 +213,7 @@ class VirtualMergeEngineTest {
         List<MergeResult<Boolean>> results = submitBurst(buffer, 5);
 
         assertEquals(1, countTrue(results));
-        assertEquals(4, countState(results, MergeResult.State.FAILED), "漏回填的件必须补 FAILED");
+        assertEquals(4, countState(results, MergeResult.StateEnum.FAILED), "漏回填的件必须补 FAILED");
     }
 
     @Test
@@ -226,7 +226,7 @@ class VirtualMergeEngineTest {
 
         List<MergeResult<Boolean>> results = submitBurst(buffer, 3);
 
-        assertEquals(3, countState(results, MergeResult.State.FAILED),
+        assertEquals(3, countState(results, MergeResult.StateEnum.FAILED),
                 "事务回滚 ⇒ 组内每件都是 FAILED（没有「结果未知」这一态）");
     }
 
@@ -241,7 +241,7 @@ class VirtualMergeEngineTest {
         VirtualMergeEngine<Job, Boolean> buffer = start(hotConfig(10), strategy);
 
         List<MergeResult<Boolean>> first = submitBurst(buffer, 3);
-        assertEquals(3, countState(first, MergeResult.State.FAILED),
+        assertEquals(3, countState(first, MergeResult.StateEnum.FAILED),
                 "Error 被就地消化：整组回填 FAILED，线程不死");
 
         // 引擎还活着：同一 key 继续提交照常成功
@@ -276,7 +276,7 @@ class VirtualMergeEngineTest {
         List<MergeResult<Boolean>> again = Collections.synchronizedList(new ArrayList<>());
         Thread second = submitInBackground(job(2), again);
         second.join(5_000);
-        assertEquals(List.of(MergeResult.State.COMPLETED),
+        assertEquals(List.of(MergeResult.StateEnum.COMPLETED),
                 again.stream().map(MergeResult::state).toList());
         assertEquals(2, flush.seenCount());
     }
@@ -340,7 +340,7 @@ class VirtualMergeEngineTest {
         Thread next = submitInBackground(job(2), secondOutcome);
         next.join(10_000);
         assertEquals(2, spawnAttempts.get(), "第二次 spawn 必须成功（第一次失败 + 兜底成功，恰好两次）");
-        assertEquals(List.of(MergeResult.State.COMPLETED),
+        assertEquals(List.of(MergeResult.StateEnum.COMPLETED),
                 secondOutcome.stream().map(MergeResult::state).toList(),
                 "窗口自愈：下一个提交者兜底 spawn 成功");
         assertEquals(2, flush.seenCount(), "创建者遗留的件没有被丢（换 leader 落库）");
@@ -403,7 +403,7 @@ class VirtualMergeEngineTest {
         long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
 
         assertEquals(1, otherKey.size());
-        assertEquals(MergeResult.State.COMPLETED, otherKey.get(0).state(),
+        assertEquals(MergeResult.StateEnum.COMPLETED, otherKey.get(0).state(),
                 "key-A 卡死期间 key-B 必须独立完成，不能被别的热点拖住");
         assertTrue(costMs < 1_000, "key-B 独立发车（队列非空即发），实测 " + costMs + "ms");
         assertTrue(flush.maxInFlightOf("key-A") >= 1);
@@ -464,7 +464,7 @@ class VirtualMergeEngineTest {
         long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
 
         assertEquals(1, results.size());
-        assertEquals(MergeResult.State.COMPLETED, results.get(0).state());
+        assertEquals(MergeResult.StateEnum.COMPLETED, results.get(0).state());
         assertTrue(costMs < 500, "队列非空即发：单件不许等任何窗口，实测 " + costMs + "ms");
         assertEquals(1, flush.callCount(), "单件自成一批，一次落库");
         assertTrue(buffer.awaitIdle(5_000));
@@ -554,7 +554,7 @@ class VirtualMergeEngineTest {
 
         MergeResult<Boolean> outcome = buffer.commit(job(1));
 
-        assertEquals(MergeResult.State.FAILED, outcome.state(), "停机后提交直接失败：件从未入队、必未落库");
+        assertEquals(MergeResult.StateEnum.FAILED, outcome.state(), "停机后提交直接失败：件从未入队、必未落库");
         assertEquals(0, flush.callCount(), "既不进队列，也不就地落库");
         assertEquals(0, buffer.pending(), "件从未进过队列");
     }
@@ -580,13 +580,13 @@ class VirtualMergeEngineTest {
         follower.join(5_000);
 
         assertEquals(1, followerOutcome.size());
-        assertEquals(MergeResult.State.FAILED, followerOutcome.get(0).state(),
+        assertEquals(MergeResult.StateEnum.FAILED, followerOutcome.get(0).state(),
                 "排空超时的残余件 = 确定没落（从未进入事务），可安全重试");
         assertEquals(1, flush.seenCount(), "只有第一件进过落库函数");
 
         flush.hold.countDown();
         leader.join(5_000);
-        assertEquals(MergeResult.State.COMPLETED, leaderOutcome.get(0).state(),
+        assertEquals(MergeResult.StateEnum.COMPLETED, leaderOutcome.get(0).state(),
                 "在途 flush 由 leader 自己收尾，不受停机回填影响");
         assertEquals(0, buffer.pending());
         // 停机之后不该再有 flush 跑出来
@@ -618,7 +618,7 @@ class VirtualMergeEngineTest {
         // 第 9 件：队列已满 ⇒ 不进队列，也不就地落库，立刻失败（调用方稍后重试）
         MergeResult<Boolean> rejected = buffer.commit(job(99));
 
-        assertEquals(MergeResult.State.FAILED, rejected.state(), "满即拒：直接失败，不抢连接落库");
+        assertEquals(MergeResult.StateEnum.FAILED, rejected.state(), "满即拒：直接失败，不抢连接落库");
         assertEquals(8, buffer.pending(), "拒收不许挤掉已入队的件，也不许扩容");
         assertEquals(1, flush.callCount(), "只有卡住的那条 flush，被拒的件没有触发落库");
 
@@ -658,7 +658,7 @@ class VirtualMergeEngineTest {
             rejected.add(item);
             rejectedOutcomes.add(buffer.commit(item));
         }
-        assertEquals(20, countState(rejectedOutcomes, MergeResult.State.FAILED), "满即拒：20 件全部直接失败");
+        assertEquals(20, countState(rejectedOutcomes, MergeResult.StateEnum.FAILED), "满即拒：20 件全部直接失败");
         assertEquals(8, buffer.pending(), "拒收不许扩容，也不许挤掉已入队的件");
         assertEquals(1, flush.callCount(), "只有卡住的那条 flush");
 
@@ -745,7 +745,7 @@ class VirtualMergeEngineTest {
         List<MergeResult<Boolean>> second = Collections.synchronizedList(new ArrayList<>());
         Thread secondSubmitter = submitInBackground(job(2), second);
         secondSubmitter.join(5_000);
-        assertEquals(List.of(MergeResult.State.COMPLETED),
+        assertEquals(List.of(MergeResult.StateEnum.COMPLETED),
                 second.stream().map(MergeResult::state).toList(),
                 "组摘除后的迟到提交换组重建并正常落库");
         assertEquals(2, flush.seenCount());
@@ -770,10 +770,10 @@ class VirtualMergeEngineTest {
     void differentPurposesNeverShareAGroup() throws Exception {
         RecordingFlush deductFlush = new RecordingFlush();
         RecordingFlush claimFlush = new RecordingFlush();
-        MergeConfig config = new MergeConfig(8, 200, 200, 2_000, 2_000);
-        VirtualMergeEngine<Job, Boolean> deductEngine = new VirtualMergeEngine<>(config,
+        MergeConfig mergeConfig = new MergeConfig(8, 200, 200, 2_000, 2_000);
+        VirtualMergeEngine<Job, Boolean> deductEngine = new VirtualMergeEngine<>(mergeConfig,
                 new MergeStrategy<>("deduct", Job::shardKey, deductFlush));
-        VirtualMergeEngine<Job, Boolean> claimEngine = new VirtualMergeEngine<>(config,
+        VirtualMergeEngine<Job, Boolean> claimEngine = new VirtualMergeEngine<>(mergeConfig,
                 new MergeStrategy<>("claim", Job::shardKey, claimFlush));
         try {
             List<MergeResult<Boolean>> deductResults = Collections.synchronizedList(new ArrayList<>());
@@ -840,9 +840,9 @@ class VirtualMergeEngineTest {
         leader.join(5_000);
         follower.join(5_000);
 
-        assertEquals(List.of(MergeResult.State.COMPLETED),
+        assertEquals(List.of(MergeResult.StateEnum.COMPLETED),
                 leaderOutcome.stream().map(MergeResult::state).toList(), "第一件照常落库");
-        assertEquals(List.of(MergeResult.State.COMPLETED),
+        assertEquals(List.of(MergeResult.StateEnum.COMPLETED),
                 followerOutcome.stream().map(MergeResult::state).toList(), "第二件由同一根 leader 落库，拿 COMPLETED");
         assertEquals(2, flush.seenCount(), "两件都落过库");
         assertEquals(0, buffer.pending());

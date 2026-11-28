@@ -33,5 +33,5 @@ public interface IMarketingConfigService {
     Response<List<RebateConfigResponseDTO>> listRebates();
 
     /** 按 (actionType, rebateType) upsert 一条返利规则（ADMIN） */
-    Response<RebateConfigResponseDTO> upsertRebate(RebateConfigUpsertRequestDTO request);
+    Response<RebateConfigResponseDTO> upsertRebate(RebateConfigUpsertRequestDTO rebateConfigUpsertRequestDTO);
 }

@@ -41,7 +41,7 @@ public interface ILotteryService {
     Response<DrawChanceResponseDTO> getDrawChances();
 
     /** 单抽（幂等：同一 token 重放返回同一结果，不重复抽也不重复扣次数） */
-    Response<DrawResponseDTO> draw(DrawRequestDTO request);
+    Response<DrawResponseDTO> draw(DrawRequestDTO drawRequestDTO);
 
     /** 我的中奖记录：过滤掉谢谢参与，created_at DESC */
     Response<PageResult<DrawRecordResponseDTO>> listRecords(int page, int pageSize);
@@ -59,7 +59,7 @@ public interface ILotteryService {
      * <p>
      * 路径：{@code POST /api/lottery/purchase/draw-count}（历史名 {@code /exchange/draw-count} 仍可用）。
      */
-    Response<RedeemDrawCountResponseDTO> exchangeDrawCount(RedeemDrawCountRequestDTO request);
+    Response<RedeemDrawCountResponseDTO> exchangeDrawCount(RedeemDrawCountRequestDTO redeemDrawCountRequestDTO);
 
     /**
      * 确认收货（票 14 发货闭环）：实物奖 {@code 已发货 → 已完成}，同事务落 {@code COMPLETE} 动作明细。

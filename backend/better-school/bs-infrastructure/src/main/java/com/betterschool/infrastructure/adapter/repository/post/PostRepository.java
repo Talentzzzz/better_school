@@ -3,14 +3,16 @@ package com.betterschool.infrastructure.adapter.repository.post;
 import com.betterschool.domain.post.adapter.repository.IPostRepository;
 import com.betterschool.domain.post.model.entity.PostCommentEntity;
 import com.betterschool.domain.post.model.entity.PostEntity;
+import com.betterschool.domain.post.model.entity.PostRebateClaimTaskEntity;
 import com.betterschool.domain.post.model.valobj.FeedCursorVO;
 import com.betterschool.domain.post.model.valobj.FeedIndexItemVO;
-import com.betterschool.domain.post.model.valobj.LikeStateVO;
-import com.betterschool.domain.post.model.valobj.PostStatusVO;
+import com.betterschool.domain.post.model.valobj.PostLikeStateEnum;
+import com.betterschool.domain.post.model.valobj.PostPublishResultVO;
+import com.betterschool.domain.post.model.valobj.PostStatusEnum;
 import com.betterschool.infrastructure.cache.post.PostDetailCache;
-import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountActionEnum;
 import com.betterschool.infrastructure.adapter.repository.CountEvent;
-import com.betterschool.infrastructure.adapter.repository.LikeState;
+import com.betterschool.infrastructure.adapter.repository.LikeStateEnum;
 import com.betterschool.infrastructure.merge.MergeConfig;
 import com.betterschool.infrastructure.merge.MergeEngine;
 import com.betterschool.infrastructure.merge.MergeResult;
@@ -25,12 +27,14 @@ import com.betterschool.infrastructure.dao.comment.po.PostCommentLikeCount;
 import com.betterschool.infrastructure.dao.comment.po.PostComment;
 import com.betterschool.infrastructure.dao.post.IPostDao;
 import com.betterschool.infrastructure.dao.post.IPostFeedIndexDao;
+import com.betterschool.infrastructure.dao.post.IPostRebateClaimTaskDao;
 import com.betterschool.infrastructure.dao.post.IPostLikeCountDao;
 import com.betterschool.infrastructure.dao.post.IPostLikeDao;
 import com.betterschool.infrastructure.dao.post.IPostViewCountDao;
 import com.betterschool.infrastructure.dao.post.IUserViewHistoryDao;
 import com.betterschool.infrastructure.dao.post.po.PostFeedIndexRow;
 import com.betterschool.infrastructure.dao.post.po.Post;
+import com.betterschool.infrastructure.dao.post.po.PostRebateClaimTaskPO;
 import com.betterschool.infrastructure.dao.post.po.PostRelationRow;
 import com.betterschool.infrastructure.dao.user.IUserDao;
 import com.betterschool.infrastructure.dao.user.po.User;
@@ -40,13 +44,15 @@ import com.betterschool.infrastructure.search.ISearchIndex;
 import com.betterschool.infrastructure.search.PostSearchDoc;
 import com.betterschool.infrastructure.search.SearchIndexName;
 import com.betterschool.types.common.Constants;
-import com.betterschool.types.common.PostRebateTaskKeys;
-import com.betterschool.types.common.PostRebateTaskMessage;
-import com.betterschool.types.common.SearchEntityType;
+import com.betterschool.types.common.CommentLikedMessage;
+import com.betterschool.types.common.PostLikedMessage;
+import com.betterschool.types.common.SearchEntityTypeEnum;
 import com.betterschool.types.common.SearchPageVO;
 import com.betterschool.types.common.SearchSyncMessage;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
+import com.betterschool.types.rebate.PostRebateClaimTaskStateEnum;
+import com.betterschool.types.rebate.RebatePeriodKeys;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
@@ -57,7 +63,6 @@ import org.apache.rocketmq.client.producer.SendStatus;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -98,6 +103,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class PostRepository implements IPostRepository {
 
+    /** 领取任务首次可扫前的缓冲（秒）：给发帖请求线程的同步领取留窗口，避免扫描并发重放同一行 */
+    private static final long REBATE_CLAIM_GRACE_SECONDS = 60;
+
     private final IPostDao postDao;
     private final IPostCommentDao commentDao;
     /** 帖子点赞关系行（post_like 单表） */
@@ -118,6 +126,8 @@ public class PostRepository implements IPostRepository {
     private final IPostCommentLikeCountDao postCommentLikeCountDao;
     /** 根评论热评索引（post_comment_feed_index 单表） */
     private final IPostCommentFeedIndexDao postCommentFeedIndexDao;
+    /** 发帖返利领取任务（post_rebate_claim_task 单表，域内最终一致任务表，不走 MQ） */
+    private final IPostRebateClaimTaskDao postRebateClaimTaskDao;
     /** 作者昵称头像批量回查（SQL 层零 JOIN：列表/详情的 bs_user 信息在这里多查一次拼装） */
     private final IUserDao userDao;
     /** 业务 ID 统一发号入口（uuid-biz-id 票 01）：帖 / 评在 insert 前发号一次写入 */
@@ -133,7 +143,7 @@ public class PostRepository implements IPostRepository {
      * 共用一个实例——同一张表共用一个引擎，才能保证「同一动作 × 同一行任一时刻至多一条 flush」。
      * 非 final：出口是 {@code this::flushGroup}，只能在依赖注入完成后再建。
      */
-    private MergeEngine<CountEvent, LikeState> countEngine;
+    private MergeEngine<CountEvent, LikeStateEnum> countEngine;
 
     /**
      * 引擎由本类自建（通用引擎不是 Spring 托管对象，谁用谁 new），策略里只有两件业务知识：
@@ -168,81 +178,148 @@ public class PostRepository implements IPostRepository {
     // ---------- 帖子 ----------
 
     @Override
-    public void savePublished(PostEntity postEntity) {
+    public PostPublishResultVO savePublished(PostEntity postEntity) {
         // 业务 ID 应用层发号、insert 前一次写入（物理自增 id 只作内部键，不再同值回写）
         postEntity.setPostId(UUID.randomUUID().toString());
         String postId = postEntity.getPostId();
         Post post = toPO(postEntity);
-        // 事务内只做 DAO 写：帖子行 + feed 索引行 + 两条 outbox 行，提交前不产生任何外部副作用
-        List<MqOutbox> outboxList = transactionTemplate.execute(status -> {
+        // 事务内只做 DAO 写：帖子行 + feed 索引行 + 领取任务行 + 搜索同步 outbox 行；领取任务只落不发，
+        // 提交前不产生任何外部副作用。发布时间取数据库时钟的 update_time，据此定死返利周期键
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
+        LocalDateTime publishTime = transactionTemplate.execute(status -> {
             postDao.insert(post);
             postFeedIndexDao.upsertFeedIndexOnApprove(postId);
-            MqOutbox searchSyncOutbox = MqOutbox.pending(
-                    Constants.SEARCH_SYNC_TOPIC, postSearchSyncMessage(postId), objectMapper);
-            MqOutbox rebateOutbox = MqOutbox.pending(
-                    PostRebateTaskKeys.of(postId),
-                    Constants.POST_REBATE_TOPIC,
-                    new PostRebateTaskMessage(postId, postEntity.getUserId()),
-                    objectMapper);
-            mqOutboxDao.insert(searchSyncOutbox);
-            mqOutboxDao.insert(rebateOutbox);
-            return List.of(searchSyncOutbox, rebateOutbox);
+            LocalDateTime insertedAt = postDao.selectUpdateTime(postId);
+            // 领取任务是域内最终一致任务：只落 PENDING，不发送；同步领取失败由 postRebateClaimScan 重放
+            insertRebateClaimTask(postId, postEntity.getUserId(), RebatePeriodKeys.of(insertedAt));
+            // 搜索同步：事务内落 outbox，事务外同步发送（失败留 PENDING 交 outboxScan 兜底）
+            pendingOutboxList.add(saveSearchSyncMessage(postId));
+            return insertedAt;
         });
-        // 事务外同步发送，broker 确认后逐条标记 SENT；失败留 PENDING 交 outboxScan 兜底
-        for (MqOutbox mqOutbox : outboxList) {
-            sendOutbox(mqOutbox);
-        }
+        // 事务已提交：事务外同步发送并更新 outbox 状态
+        sendOutboxes(pendingOutboxList);
         postDetailCache.add(postId);
+        return new PostPublishResultVO(postId, publishTime);
     }
 
     @Override
     public void saveDraft(PostEntity postEntity) {
-        // 草稿是私有停靠内容：只有帖子行，没有 feed 索引、没有搜索同步、没有返利任务
+        // 草稿是私有停靠内容：只有帖子行，没有 feed 索引、没有搜索同步、没有领取任务
         postEntity.setPostId(UUID.randomUUID().toString());
         postDao.insert(toPO(postEntity));
     }
 
     @Override
-    public boolean submitDraftAsPublished(String userId, String postId) {
-        List<MqOutbox> outboxList = transactionTemplate.execute(status -> {
+    public PostPublishResultVO submitDraftAsPublished(String userId, String postId) {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
+        PostPublishResultVO postPublishResultVO = transactionTemplate.execute(status -> {
             if (postDao.submitDraft(postId) == 0) {
+                // 0 行有两种原因：状态已变化（并发提交/删除），或正文被并发编辑清空触发了 content 条件。
+                // 仍是 DRAFT 说明卡在内容条件上——交给领域不变式报错，判定与文案都只有一份
+                Post current = postDao.selectById(postId);
+                if (current != null && PostStatusEnum.DRAFT.name().equals(current.getState())) {
+                    toPostEntity(current).ensurePublishable();
+                }
                 // 状态已变化：不写索引、不落 outbox
-                return List.of();
+                return null;
             }
-            // 提交即发布可见：feed 索引行 + 两条 outbox 行，与状态迁移同一事务
+            // 提交即发布可见：feed 索引行 + 领取任务行 + 搜索同步 outbox 行，与状态迁移同一事务。
+            // 发布时间取提交语句后的 update_time（提交时刻，不是草稿创建时刻）
             postFeedIndexDao.upsertFeedIndexOnApprove(postId);
-            MqOutbox searchSyncOutbox = MqOutbox.pending(
-                    Constants.SEARCH_SYNC_TOPIC, postSearchSyncMessage(postId), objectMapper);
-            MqOutbox rebateOutbox = MqOutbox.pending(
-                    PostRebateTaskKeys.of(postId),
-                    Constants.POST_REBATE_TOPIC,
-                    new PostRebateTaskMessage(postId, userId),
-                    objectMapper);
-            mqOutboxDao.insert(searchSyncOutbox);
-            mqOutboxDao.insert(rebateOutbox);
-            return List.of(searchSyncOutbox, rebateOutbox);
+            LocalDateTime publishTime = postDao.selectUpdateTime(postId);
+            // 领取任务是域内最终一致任务：只落 PENDING，不发送；同步领取失败由 postRebateClaimScan 重放
+            insertRebateClaimTask(postId, userId, RebatePeriodKeys.of(publishTime));
+            // 搜索同步：事务内落 outbox，事务外同步发送（失败留 PENDING 交 outboxScan 兜底）
+            pendingOutboxList.add(saveSearchSyncMessage(postId));
+            return new PostPublishResultVO(postId, publishTime);
         });
+        // 事务已提交：事务外同步发送并更新 outbox 状态
+        sendOutboxes(pendingOutboxList);
         // 草稿从未进过缓存（仅 NORMAL 进缓存）；提交转 NORMAL 后走缓存装配
         postDetailCache.evict(postId);
-        if (outboxList == null || outboxList.isEmpty()) {
-            return false;
+        return postPublishResultVO;
+    }
+
+    @Override
+    public void markRebateClaimTaskDone(String postId) {
+        // 单条条件 UPDATE（state=0 -> 1），幂等；无需显式事务，由 DAO 语句自身原子完成
+        postRebateClaimTaskDao.markDone(postId);
+    }
+
+    @Override
+    public List<PostRebateClaimTaskEntity> listDueRebateClaimTasks(int limit) {
+        return postRebateClaimTaskDao.listDue(limit).stream().map(this::toRebateClaimTaskEntity).toList();
+    }
+
+    @Override
+    public boolean claimRebateClaimTask(Long id, LocalDateTime nextRetryAt) {
+        return postRebateClaimTaskDao.claim(id, nextRetryAt) > 0;
+    }
+
+    @Override
+    public void markRebateClaimTaskDead(Long id) {
+        postRebateClaimTaskDao.markDead(id);
+    }
+
+    /**
+     * 事务内插领取任务行（PENDING）：与帖子行同生同死；正常路径随后由请求线程同步领取置 DONE。
+     * <p>
+     * 首次可扫时间延后 {@link #REBATE_CLAIM_GRACE_SECONDS} 秒，给请求线程的同步领取留出窗口——
+     * 否则扫描 job 可能与刚提交的请求并发领取同一行（结果幂等，但白跑一次）。与 {@code outboxScan}
+     * 的 {@code timeout-seconds} 兜底窗口同口径。
+     */
+    private void insertRebateClaimTask(String postId, String userId, String periodKey) {
+        LocalDateTime now = LocalDateTime.now();
+        PostRebateClaimTaskPO po = new PostRebateClaimTaskPO();
+        po.setPostId(postId);
+        po.setUserId(userId);
+        po.setPeriodKey(periodKey);
+        po.setState(PostRebateClaimTaskStateEnum.PENDING.getCode());
+        po.setRetryCount(0);
+        po.setNextRetryAt(now.plusSeconds(REBATE_CLAIM_GRACE_SECONDS));
+        po.setCreateTime(now);
+        po.setUpdateTime(now);
+        postRebateClaimTaskDao.insert(po);
+    }
+
+    private PostRebateClaimTaskEntity toRebateClaimTaskEntity(PostRebateClaimTaskPO po) {
+        PostRebateClaimTaskEntity entity = new PostRebateClaimTaskEntity();
+        entity.setId(po.getId());
+        entity.setPostId(po.getPostId());
+        entity.setUserId(po.getUserId());
+        entity.setPeriodKey(po.getPeriodKey());
+        entity.setState(PostRebateClaimTaskStateEnum.of(po.getState()));
+        entity.setRetryCount(po.getRetryCount());
+        entity.setNextRetryAt(po.getNextRetryAt());
+        entity.setFinishTime(po.getFinishTime());
+        entity.setCreateTime(po.getCreateTime());
+        entity.setUpdateTime(po.getUpdateTime());
+        return entity;
+    }
+
+    /** 事务内只做 DAO 写：落一行 PENDING outbox，发送交给事务提交后的调用点 */
+    private MqOutbox saveOutbox(String destination, Object payload) {
+        MqOutbox mqOutbox = MqOutbox.pending(destination, payload, objectMapper);
+        mqOutboxDao.insert(mqOutbox);
+        return mqOutbox;
+    }
+
+    /**
+     * 事务外逐条同步发送并更新 outbox 状态。仓储事务是 REQUIRED——若并入调用方事务（执行后事务仍活跃），
+     * 不在提交前发送，留给 outboxScan 兜底，避免「消息已发、外层事务回滚」。
+     */
+    private void sendOutboxes(List<MqOutbox> outboxList) {
+        if (outboxList.isEmpty()) {
+            return;
+        }
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            log.debug("[PostRepository] outbox 并入调用方事务，留给 outboxScan 兜底 msgIds={}",
+                    outboxList.stream().map(MqOutbox::getMsgId).toList());
+            return;
         }
         for (MqOutbox mqOutbox : outboxList) {
             sendOutbox(mqOutbox);
         }
-        return true;
-    }
-
-    /** 事务内落一行 outbox，提交后同步发送并标记 SENT；失败留 PENDING 交 outboxScan 兜底 */
-    private void saveOutbox(String destination, Object payload) {
-        MqOutbox mqOutbox = MqOutbox.pending(destination, payload, objectMapper);
-        mqOutboxDao.insert(mqOutbox);
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                sendOutbox(mqOutbox);
-            }
-        });
     }
 
     /** 同步发送一行 outbox：成功标记 SENT，失败累计重试次数（到上限置死信），留给 outboxScan 兜底 */
@@ -269,7 +346,7 @@ public class PostRepository implements IPostRepository {
     }
 
     @Override
-    public PostEntity findPostById(String postId) {
+    public PostEntity getPostEntityById(String postId) {
         // 详情缓存：命中直接返回；布隆拦截"一定不存在"；miss 单飞回填（仅 NORMAL 进缓存）。
         // 读路径拆两段（票 05 / spec §3.3）：内容走缓存，三个计数每次回库拼装——缓存与计数零耦合
         PostEntity cachedEntity = postDetailCache.get(postId);
@@ -280,12 +357,12 @@ public class PostRepository implements IPostRepository {
             return null;
         }
         PostEntity loadedEntity = postDetailCache.getOrLoad(postId, () -> {
-            Post row = postDao.selectById(postId);
-            if (row == null) {
+            Post post = postDao.selectById(postId);
+            if (post == null) {
                 return null;
             }
-            fillPostExtras(List.of(row));
-            return toPostEntity(row);
+            fillPostExtras(List.of(post));
+            return toPostEntity(post);
         });
         return loadedEntity == null ? null : withLiveCounts(postId, loadedEntity);
     }
@@ -297,21 +374,21 @@ public class PostRepository implements IPostRepository {
      * 点赞请求返回时事务已提交，库值本身就是新的，不需要模拟「缓冲里还有几件」。
      */
     private PostEntity withLiveCounts(String postId, PostEntity postEntity) {
-        Post probe = new Post();
-        probe.setPostId(postId);
-        fillPostExtras(List.of(probe));
-        postEntity.setLikeCount(probe.getLikeCount());
-        postEntity.setCommentCount(probe.getCommentCount());
-        postEntity.setViewCount(probe.getViewCount());
+        Post post = new Post();
+        post.setPostId(postId);
+        fillPostExtras(List.of(post));
+        postEntity.setLikeCount(post.getLikeCount());
+        postEntity.setCommentCount(post.getCommentCount());
+        postEntity.setViewCount(post.getViewCount());
         return postEntity;
     }
 
     @Override
-    public void deletePostById(String postId) {
+    public void deletePostEntityById(String postId) {
         transactionTemplate.execute(status -> {
             postDao.softDelete(postId);
             // feed 索引行同事务不可见化（feed-index-uv 票 03）：软删/强删共用此口，行不存在时 0 行静默
-            postFeedIndexDao.updateFeedIndexState(postId, PostStatusVO.DELETED.name());
+            postFeedIndexDao.updateFeedIndexState(postId, PostStatusEnum.DELETED.name());
             return null;
         });
         postDetailCache.evict(postId);
@@ -333,7 +410,7 @@ public class PostRepository implements IPostRepository {
                     allNormalPostList.stream().map(Post::getPostId).toList()));
             postList = allNormalPostList.stream()
                     .sorted(Comparator
-                            .comparing((Post p) -> countOf(likeRows, p.getPostId(), Post::getLikeCount)).reversed()
+                            .comparing((Post post) -> countOf(likeRows, post.getPostId(), Post::getLikeCount)).reversed()
                             .thenComparing(Post::getCreateTime, Comparator.reverseOrder())
                             .thenComparing(Post::getPostId, Comparator.reverseOrder()))
                     .skip(offset)
@@ -352,8 +429,8 @@ public class PostRepository implements IPostRepository {
     }
 
     @Override
-    public List<FeedIndexItemVO> scanFeedIndex(String sortType, FeedCursorVO cursor, int limit) {
-        return postFeedIndexDao.selectFeedIndex(sortType, cursor, limit);
+    public List<FeedIndexItemVO> scanFeedIndex(String sortType, FeedCursorVO feedCursorVO, int limit) {
+        return postFeedIndexDao.selectFeedIndex(sortType, feedCursorVO, limit);
     }
 
     @Override
@@ -376,7 +453,7 @@ public class PostRepository implements IPostRepository {
     private int rebuildFeedIndexRows() {
         List<PostFeedIndexRow> postFeedIndexRowList = new ArrayList<>();
         for (PostFeedIndexRow candidate : postDao.selectRebuildRows()) {
-            if (!PostStatusVO.NORMAL.name().equals(candidate.getState())) {
+            if (!PostStatusEnum.NORMAL.name().equals(candidate.getState())) {
                 // 草稿/已删帖不凭空进索引
                 continue;
             }
@@ -495,27 +572,27 @@ public class PostRepository implements IPostRepository {
         return postDao.selectIdsAfter(lastId, limit);
     }
 
-    @Override
-    public void saveSearchSyncMessage(String postId) {
-        saveOutbox(Constants.SEARCH_SYNC_TOPIC, postSearchSyncMessage(postId));
+    /** 事务内落一条搜索同步 outbox（返回待事务后发送的行；只允许在仓储事务方法内调用） */
+    private MqOutbox saveSearchSyncMessage(String postId) {
+        return saveOutbox(Constants.SEARCH_SYNC_TOPIC, postSearchSyncMessage(postId));
     }
 
-    /** 搜索同步消息载荷（发布走同步发送、删除走 afterCommit 异步发送，载荷构造只此一处） */
+    /** 搜索同步消息载荷（发布与删除都在事务内落 outbox、提交后发送，载荷构造只此一处） */
     private static SearchSyncMessage postSearchSyncMessage(String postId) {
-        return new SearchSyncMessage(SearchEntityType.POST.name().toLowerCase(), postId);
+        return new SearchSyncMessage(SearchEntityTypeEnum.POST.name().toLowerCase(), postId);
     }
 
     @Override
     public SearchPageVO<String> searchPostIds(String keyword, int page, int pageSize) {
         // ES 侧 status 过滤只是冗余兜底（索引可能短暂滞后），最终公开判定在领域服务回库后做
         return searchIndex.search(SearchIndexName.POST, SearchIndexName.POST_SEARCH_FIELDS,
-                List.of(PostStatusVO.NORMAL.name()), keyword, page, pageSize);
+                List.of(PostStatusEnum.NORMAL.name()), keyword, page, pageSize);
     }
 
     @Override
     public void syncPostSearchDoc(String postId) {
-        PostEntity postEntity = findPostById(postId);
-        if (postEntity != null && postEntity.getStatus() == PostStatusVO.NORMAL) {
+        PostEntity postEntity = getPostEntityById(postId);
+        if (postEntity != null && postEntity.getStatus() == PostStatusEnum.NORMAL) {
             searchIndex.bulkUpsert(SearchIndexName.POST, List.of(toPostSearchDoc(postEntity)),
                     PostSearchDoc::getPostId);
         } else {
@@ -535,7 +612,7 @@ public class PostRepository implements IPostRepository {
             }
             // 批内一次 IN 回查 + Java 侧过滤（SQL 层零 JOIN 的收口点），游标推进到空批是唯一终止条件
             List<PostSearchDoc> docList = listByIds(idList).stream()
-                    .filter(post -> post.getStatus() == PostStatusVO.NORMAL)
+                    .filter(post -> post.getStatus() == PostStatusEnum.NORMAL)
                     .map(this::toPostSearchDoc)
                     .toList();
             searchIndex.bulkUpsert(SearchIndexName.POST, docList, PostSearchDoc::getPostId);
@@ -547,13 +624,13 @@ public class PostRepository implements IPostRepository {
 
     /** 实体 → 索引文档：只取检索/过滤字段，展示字段不进索引（避免双写漂移） */
     private PostSearchDoc toPostSearchDoc(PostEntity postEntity) {
-        PostSearchDoc doc = new PostSearchDoc();
-        doc.setPostId(postEntity.getPostId());
-        doc.setTitle(postEntity.getTitle());
-        doc.setContent(postEntity.getContent());
-        doc.setStatus(postEntity.getStatus().name());
-        doc.setCreatedAt(postEntity.getCreatedAt());
-        return doc;
+        PostSearchDoc postSearchDoc = new PostSearchDoc();
+        postSearchDoc.setPostId(postEntity.getPostId());
+        postSearchDoc.setTitle(postEntity.getTitle());
+        postSearchDoc.setContent(postEntity.getContent());
+        postSearchDoc.setStatus(postEntity.getStatus().name());
+        postSearchDoc.setCreatedAt(postEntity.getCreatedAt());
+        return postSearchDoc;
     }
 
     @Override
@@ -565,29 +642,59 @@ public class PostRepository implements IPostRepository {
         if (userId == null) {
             return;
         }
-        writeView(CountAction.POST_VIEW, postId, userId);
+        writeView(CountActionEnum.POST_VIEW, postId, userId);
     }
 
     @Override
-    public void deleteWithSearchSync(String postId) {
-        transactionTemplate.execute(status -> {
-            deletePostById(postId);
+    public void deletePostEntityWithSearchSync(String postId) {
+        List<MqOutbox> pendingOutboxList = new ArrayList<>(1);
+        transactionTemplate.executeWithoutResult(status -> {
+            deletePostEntityById(postId);
             // 软删后贴文不可见，落搜索同步消息（消费方删除 ES 文档）
-            saveSearchSyncMessage(postId);
-            return null;
+            pendingOutboxList.add(saveSearchSyncMessage(postId));
         });
+        // 事务已提交：事务外同步发送并更新 outbox 状态
+        sendOutboxes(pendingOutboxList);
     }
 
     @Override
-    public LikeStateVO likePostWithMergedCount(String postId, String userId) {
+    public PostLikeStateEnum likePostWithMergedCount(String postId, String userId) {
         // 合并写：提交给通用引擎 → 一组一事务（INSERT IGNORE 关系行 + 计数 +N）→ 返回时计数已精确。
         // 引擎只回两态，FAILED 在这里翻成可重试（件确定没落）
-        return writeLike(CountAction.POST_LIKE, postId, userId);
+        return writeLike(CountActionEnum.POST_LIKE, postId, userId);
     }
 
     @Override
-    public LikeStateVO unlikePostWithMergedCount(String postId, String userId) {
-        return writeLike(CountAction.POST_UNLIKE, postId, userId);
+    public PostLikeStateEnum unlikePostWithMergedCount(String postId, String userId) {
+        return writeLike(CountActionEnum.POST_UNLIKE, postId, userId);
+    }
+
+    @Override
+    public void publishPostLiked(String postId, String likerUserId, String authorId) {
+        // 点赞已提交，事件是附属动作：落库/发送失败只告警，不回滚点赞
+        try {
+            MqOutbox mqOutbox = transactionTemplate.execute(status ->
+                    saveOutbox(Constants.POST_LIKED_TOPIC, new PostLikedMessage(postId, likerUserId, authorId)));
+            if (mqOutbox != null) {
+                sendOutboxes(Collections.singletonList(mqOutbox));
+            }
+        } catch (Exception e) {
+            log.warn("[PostRepository] 点赞事件落库失败（不回滚点赞） postId={} liker={}", postId, likerUserId, e);
+        }
+    }
+
+    @Override
+    public void publishCommentLiked(String commentId, String likerUserId, String authorId) {
+        // 点赞已提交，事件是附属动作：落库/发送失败只告警，不回滚点赞
+        try {
+            MqOutbox mqOutbox = transactionTemplate.execute(status ->
+                    saveOutbox(Constants.COMMENT_LIKED_TOPIC, new CommentLikedMessage(commentId, likerUserId, authorId)));
+            if (mqOutbox != null) {
+                sendOutboxes(Collections.singletonList(mqOutbox));
+            }
+        } catch (Exception e) {
+            log.warn("[PostRepository] 评论点赞事件落库失败（不回滚点赞） commentId={} liker={}", commentId, likerUserId, e);
+        }
     }
 
     /**
@@ -597,8 +704,8 @@ public class PostRepository implements IPostRepository {
      * ——重复赞被关系行唯一键吸收成 {@code DUPLICATE}。引擎没有「等待超时」这一态：等待的终点由
      * 底层 SQL 的 socketTimeout 保证（见 {@code MergeConfig} 类注释）。
      */
-    private LikeStateVO writeLike(CountAction action, String rowId, String userId) {
-        MergeResult<LikeState> outcome = countEngine.commit(new CountEvent(action, rowId, userId));
+    private PostLikeStateEnum writeLike(CountActionEnum action, String rowId, String userId) {
+        MergeResult<LikeStateEnum> outcome = countEngine.commit(new CountEvent(action, rowId, userId));
         if (!outcome.isCompleted()) {
             throw retryable(action, rowId, "确定没落（整组已回滚 / 件未入队），可安全重试");
         }
@@ -609,23 +716,23 @@ public class PostRepository implements IPostRepository {
      * 浏览类写入：与点赞同一套提交语义，但没有业务结果可分——落了就是落了。
      * {@code APPLIED} 只是引擎要求的占位值，这里不看它。
      */
-    private void writeView(CountAction action, String rowId, String userId) {
-        MergeResult<LikeState> outcome = countEngine.commit(new CountEvent(action, rowId, userId));
+    private void writeView(CountActionEnum action, String rowId, String userId) {
+        MergeResult<LikeStateEnum> outcome = countEngine.commit(new CountEvent(action, rowId, userId));
         if (!outcome.isCompleted()) {
             throw retryable(action, rowId, "确定没落（整组已回滚 / 件未入队），可安全重试");
         }
     }
 
     /** 引擎的结果枚举 → 域的结果枚举；两套枚举分开，域不依赖基础设施的合并器包 */
-    private static LikeStateVO toLikeStateVO(LikeState state, CountAction action) {
-        if (state == null) {
+    private static PostLikeStateEnum toLikeStateVO(LikeStateEnum likeState, CountActionEnum action) {
+        if (likeState == null) {
             throw new IllegalStateException("落库方法回填了 null 业务结果：" + action);
         }
-        return switch (state) {
-            case LIKED -> LikeStateVO.LIKED;
-            case UNLIKED -> LikeStateVO.UNLIKED;
-            case DUPLICATE -> LikeStateVO.DUPLICATE;
-            case NOT_FOUND -> LikeStateVO.NOT_FOUND;
+        return switch (likeState) {
+            case LIKED -> PostLikeStateEnum.LIKED;
+            case UNLIKED -> PostLikeStateEnum.UNLIKED;
+            case DUPLICATE -> PostLikeStateEnum.DUPLICATE;
+            case NOT_FOUND -> PostLikeStateEnum.NOT_FOUND;
             // APPLIED 是浏览件的占位值；出现在点赞路径 = 落库方法用错了动作分支
             case APPLIED -> throw new IllegalStateException("浏览占位结果不该出现在点赞路径：" + action);
         };
@@ -634,9 +741,9 @@ public class PostRepository implements IPostRepository {
     /**
      * 可重试：行一定没动（或重试会被唯一键吸收），对外统一「系统繁忙，请稍后重试」。
      */
-    private static BusinessException retryable(CountAction action, String rowId, String detail) {
+    private static BusinessException retryable(CountActionEnum action, String rowId, String detail) {
         log.warn("计数写入需重试：action={}, rowId={}, 原因={}", action, rowId, detail);
-        return new BusinessException(ResponseCode.SYSTEM_ERROR, ResponseCode.SYSTEM_ERROR.getInfo());
+        return new BusinessException(ResponseCodeEnum.SYSTEM_ERROR, ResponseCodeEnum.SYSTEM_ERROR.getInfo());
     }
 
     // ---------- 计数合并器的落库方法：一组一个事务（spec §3.1） ----------
@@ -652,13 +759,13 @@ public class PostRepository implements IPostRepository {
      *
      * <p><b>批内撞键怎么定位到具体请求</b>：影响行数只给总数（比如 200 件只插进 197 行），
      * 「哪 3 件撞了键」必须自己查：本事务内按这一批的 {@code (行主键, user_id)} 回查，
-     * 命中的那几件回 {@link LikeState#DUPLICATE}，其余照常成功。回查范围严格锁在批内。
+     * 命中的那几件回 {@link LikeStateEnum#DUPLICATE}，其余照常成功。回查范围严格锁在批内。
      *
      * <p><b>浏览</b>与点赞共用这条出口（{@link #viewPosts}）：{@code INSERT IGNORE} 明细行裁决重复 UV，
      * 影响行数就是增量——同一套「影响行数 = 计数增量」的裁决逻辑，只是裁决键从点赞关系唯一键换成了
      * {@code (user_id, post_id)} 主键。
      */
-    public List<LikeState> flushGroup(CountAction action, String shardKey, List<CountEvent> countEventList) {
+    public List<LikeStateEnum> flushGroup(CountActionEnum action, String shardKey, List<CountEvent> countEventList) {
         return switch (action) {
             case POST_LIKE -> transactionTemplate.execute(status -> likePosts(shardKey, countEventList));
             case POST_UNLIKE -> transactionTemplate.execute(status -> unlikePosts(shardKey, countEventList));
@@ -688,18 +795,18 @@ public class PostRepository implements IPostRepository {
      * 非 null 的占位值。引擎把「null / 缺位」当作落库方法漏回填，会补 {@code FAILED} 并计入
      * {@code failed}；那样 {@code flushed} 会漏掉这些件，合并比与「accepted − flushed」两个读数同时失真。
      */
-    private List<LikeState> viewPosts(String postId, List<CountEvent> countEventList) {
+    private List<LikeStateEnum> viewPosts(String postId, List<CountEvent> countEventList) {
         List<String> userIdList = distinctUserIds(countEventList);
         int inserted = userViewHistoryDao.insertViewHistory(postId, userIdList);
         userViewHistoryDao.touchViewedAt(postId, userIdList);
         if (inserted > 0) {
             postViewCountDao.upsertViewCount(postId, inserted);
         }
-        return Collections.nCopies(countEventList.size(), LikeState.APPLIED);
+        return Collections.nCopies(countEventList.size(), LikeStateEnum.APPLIED);
     }
 
     /** 一组点赞：关系行批量 INSERT IGNORE → 计数 + 真正插入的行数 */
-    private List<LikeState> likePosts(String postId, List<CountEvent> countEventList) {
+    private List<LikeStateEnum> likePosts(String postId, List<CountEvent> countEventList) {
         List<String> userIdList = distinctUserIds(countEventList);
         Set<String> alreadyLiked = new HashSet<>(postLikeDao.selectLikeUserIds(postId, userIdList));
         int inserted = postLikeDao.insertLikes(postId, userIdList);
@@ -709,11 +816,11 @@ public class PostRepository implements IPostRepository {
             syncFeedIndexLikeCount(postId, inserted);
         }
         // 已经赞过 → DUPLICATE；没赞过 → LIKED；同批重复 → 第一件已写，后面的必然撞键
-        return attribute(countEventList, alreadyLiked, LikeState.DUPLICATE, LikeState.LIKED, LikeState.DUPLICATE);
+        return attribute(countEventList, alreadyLiked, LikeStateEnum.DUPLICATE, LikeStateEnum.LIKED, LikeStateEnum.DUPLICATE);
     }
 
     /** 一组取消赞：关系行批量 DELETE → 计数 - 真正删掉的行数（GREATEST 兜住不为负） */
-    private List<LikeState> unlikePosts(String postId, List<CountEvent> countEventList) {
+    private List<LikeStateEnum> unlikePosts(String postId, List<CountEvent> countEventList) {
         List<String> userIdList = distinctUserIds(countEventList);
         Set<String> alreadyLiked = new HashSet<>(postLikeDao.selectLikeUserIds(postId, userIdList));
         int deleted = postLikeDao.deleteLikes(postId, userIdList);
@@ -723,7 +830,7 @@ public class PostRepository implements IPostRepository {
             syncFeedIndexLikeCount(postId, -deleted);
         }
         // 原本有赞 → 删掉了 → UNLIKED；本来就没赞 → NOT_FOUND；同批重复 → 第二件起已无行可删
-        return attribute(countEventList, alreadyLiked, LikeState.UNLIKED, LikeState.NOT_FOUND, LikeState.NOT_FOUND);
+        return attribute(countEventList, alreadyLiked, LikeStateEnum.UNLIKED, LikeStateEnum.NOT_FOUND, LikeStateEnum.NOT_FOUND);
     }
 
     /**
@@ -738,7 +845,7 @@ public class PostRepository implements IPostRepository {
     }
 
     /** 一组评论点赞：关系行批量 INSERT IGNORE → 窄表 like_count + 真正插入的行数 + 根评论索引旁带 */
-    private List<LikeState> likeComments(String commentId, List<CountEvent> countEventList) {
+    private List<LikeStateEnum> likeComments(String commentId, List<CountEvent> countEventList) {
         List<String> userIdList = distinctUserIds(countEventList);
         Set<String> alreadyLiked = new HashSet<>(postCommentLikeDao.selectCommentLikeUserIds(commentId, userIdList));
         int inserted = postCommentLikeDao.insertCommentLikes(commentId, userIdList);
@@ -747,7 +854,7 @@ public class PostRepository implements IPostRepository {
             postCommentLikeCountDao.updateLikeCount(commentId, inserted);
             syncCommentFeedIndexLikeCount(commentId, inserted);
         }
-        return attribute(countEventList, alreadyLiked, LikeState.DUPLICATE, LikeState.LIKED, LikeState.DUPLICATE);
+        return attribute(countEventList, alreadyLiked, LikeStateEnum.DUPLICATE, LikeStateEnum.LIKED, LikeStateEnum.DUPLICATE);
     }
 
     /**
@@ -794,15 +901,15 @@ public class PostRepository implements IPostRepository {
      * （只可能发生在「缓冲满降级」与「同分片 flush」同时跑的那一刻），逐件的成功/重复判定可能偏向
      * 「成功」；计数按影响行数走，与关系行条数仍然严格相等。
      */
-    private static List<LikeState> attribute(List<CountEvent> countEventList, Set<String> existing,
-                                             LikeState ifExisting, LikeState ifAbsent, LikeState ifRepeated) {
+    private static List<LikeStateEnum> attribute(List<CountEvent> countEventList, Set<String> existing,
+                                             LikeStateEnum ifExisting, LikeStateEnum ifAbsent, LikeStateEnum ifRepeated) {
         Set<String> seen = new HashSet<>();
-        List<LikeState> likeStateList = new ArrayList<>(countEventList.size());
-        for (CountEvent event : countEventList) {
-            if (!seen.add(event.userId())) {
+        List<LikeStateEnum> likeStateList = new ArrayList<>(countEventList.size());
+        for (CountEvent countEvent : countEventList) {
+            if (!seen.add(countEvent.userId())) {
                 likeStateList.add(ifRepeated);
             } else {
-                likeStateList.add(existing.contains(event.userId()) ? ifExisting : ifAbsent);
+                likeStateList.add(existing.contains(countEvent.userId()) ? ifExisting : ifAbsent);
             }
         }
         return likeStateList;
@@ -811,8 +918,8 @@ public class PostRepository implements IPostRepository {
     /** 去重后的 user_id（保持入队顺序）：同一个人在一批里出现多次时，SQL 只需要一个占位 */
     private static List<String> distinctUserIds(List<CountEvent> countEventList) {
         Set<String> userIds = new LinkedHashSet<>(countEventList.size());
-        for (CountEvent event : countEventList) {
-            userIds.add(event.userId());
+        for (CountEvent countEvent : countEventList) {
+            userIds.add(countEvent.userId());
         }
         return new ArrayList<>(userIds);
     }
@@ -820,31 +927,31 @@ public class PostRepository implements IPostRepository {
     // ---------- 评论 ----------
 
     @Override
-    public void saveComment(PostCommentEntity commentEntity) {
+    public void saveComment(PostCommentEntity postCommentEntity) {
         // 业务 ID 应用层发号、insert 前一次写入（物理自增 id 只作内部键，不再同值回写）
-        commentEntity.setCommentId(UUID.randomUUID().toString());
-        commentDao.insert(toCommentPO(commentEntity));
+        postCommentEntity.setCommentId(UUID.randomUUID().toString());
+        commentDao.insert(toCommentPO(postCommentEntity));
         // 时刻一律数据库时钟：create_time 由 SQL NOW() 落库，回读补齐（评论"乐观插顶"响应消费 createdAt；
         // saveCommentWithReviewMessage 的入池 entered_at 同取该 DB 值）
-        commentEntity.setCreatedAt(commentDao.selectById(commentEntity.getCommentId()).getCreateTime());
+        postCommentEntity.setCreatedAt(commentDao.selectById(postCommentEntity.getCommentId()).getCreateTime());
     }
 
     @Override
-    public void saveVisibleCommentWithCount(PostCommentEntity commentEntity) {
+    public void publishCommentAndPush(PostCommentEntity postCommentEntity) {
         transactionTemplate.execute(status -> {
-            saveComment(commentEntity);
-            updatePostCommentCount(commentEntity.getPostId(), 1);
+            saveComment(postCommentEntity);
+            updatePostCommentCount(postCommentEntity.getPostId(), 1);
             // 计数窄表行诞生（票 02）：根评论与子回复都入表，赞数恒 0。
             // INSERT IGNORE 只吞重复键（漂移），0 行落 warn 留痕、不覆盖既有计数
-            if (postCommentLikeCountDao.insertLikeCountOnApprove(commentEntity.getCommentId()) == 0) {
-                log.warn("post_comment_like_count 行已存在，评论发布未新建计数行（commentId={}），需手工对账", commentEntity.getCommentId());
+            if (postCommentLikeCountDao.insertLikeCountOnApprove(postCommentEntity.getCommentId()) == 0) {
+                log.warn("post_comment_like_count 行已存在，评论发布未新建计数行（commentId={}），需手工对账", postCommentEntity.getCommentId());
             }
-            if (!PostCommentEntity.NO_REFERENCE.equals(commentEntity.getRootId())) {
+            if (!PostCommentEntity.NO_REFERENCE.equals(postCommentEntity.getRootId())) {
                 // 楼内子回复 → 楼根 reply_count +1（与写入同事务）；子回复不入热评索引
-                updateReplyCount(commentEntity.getRootId(), 1);
+                updateReplyCount(postCommentEntity.getRootId(), 1);
             } else {
                 // 根评论 → 热评索引行诞生（票 01，赞数恒 0）
-                postCommentFeedIndexDao.insertFeedIndexOnApprove(commentEntity.getCommentId(), commentEntity.getPostId());
+                postCommentFeedIndexDao.insertFeedIndexOnApprove(postCommentEntity.getCommentId(), postCommentEntity.getPostId());
             }
             return null;
         });
@@ -878,14 +985,14 @@ public class PostRepository implements IPostRepository {
             return List.of();
         }
         Map<String, PostComment> rowsById = new HashMap<>(commentIdList.size());
-        for (PostComment row : commentDao.selectNormalRootsByIds(commentIdList)) {
-            rowsById.put(row.getCommentId(), row);
+        for (PostComment postComment : commentDao.selectNormalRootsByIds(commentIdList)) {
+            rowsById.put(postComment.getCommentId(), postComment);
         }
         List<PostComment> commentList = new ArrayList<>(commentIdList.size());
         for (String commentId : commentIdList) {
-            PostComment row = rowsById.get(commentId);
-            if (row != null) {
-                commentList.add(row);
+            PostComment postComment = rowsById.get(commentId);
+            if (postComment != null) {
+                commentList.add(postComment);
             }
         }
         return toCommentEntities(commentList);
@@ -960,26 +1067,26 @@ public class PostRepository implements IPostRepository {
         Map<String, Post> posts = postDao.selectByIds(commentList.stream().map(PostComment::getPostId).distinct().toList())
                 .stream().collect(Collectors.toMap(Post::getPostId, post -> post, (a, b) -> a));
         List<PostComment> visibleCommentList = new ArrayList<>(commentList.size());
-        for (PostComment row : commentList) {
-            Post post = posts.get(row.getPostId());
-            if (post == null || !PostStatusVO.NORMAL.name().equals(post.getState())) {
+        for (PostComment postComment : commentList) {
+            Post post = posts.get(postComment.getPostId());
+            if (post == null || !PostStatusEnum.NORMAL.name().equals(post.getState())) {
                 continue;
             }
-            row.setPostTitle(post.getTitle());
-            row.setPostCover(post.getCover());
-            visibleCommentList.add(row);
+            postComment.setPostTitle(post.getTitle());
+            postComment.setPostCover(post.getCover());
+            visibleCommentList.add(postComment);
         }
         return visibleCommentList;
     }
 
     @Override
-    public PostCommentEntity findCommentById(String commentId) {
-        PostComment comment = commentDao.selectById(commentId);
-        if (comment == null) {
+    public PostCommentEntity getCommentEntityById(String commentId) {
+        PostComment postComment = commentDao.selectById(commentId);
+        if (postComment == null) {
             return null;
         }
         // 单行即单元素回查（票 02）：与三条列表同一条通吃，不再为单行留一条「直取主列」的岔路
-        return toCommentEntities(List.of(comment)).get(0);
+        return toCommentEntities(List.of(postComment)).get(0);
     }
 
     @Override
@@ -989,15 +1096,15 @@ public class PostRepository implements IPostRepository {
     }
 
     @Override
-    public boolean markDeletedFromStatus(String commentId, PostStatusVO fromStatus) {
+    public boolean markDeletedFromStatus(String commentId, PostStatusEnum postStatusVO) {
         // 统一软删：用户删除与举报下架同轨，状态转 DELETED、行保留
-        return commentDao.markDeletedFromStatus(commentId, fromStatus.name()) > 0;
+        return commentDao.markDeletedFromStatus(commentId, postStatusVO.name()) > 0;
     }
 
     @Override
     public void softDeleteCommentWithCount(String commentId, String postId, String rootId) {
         transactionTemplate.execute(status -> {
-            if (markDeletedFromStatus(commentId, PostStatusVO.NORMAL)) {
+            if (markDeletedFromStatus(commentId, PostStatusEnum.NORMAL)) {
                 if (!PostCommentEntity.NO_REFERENCE.equals(rootId)) {
                     updatePostCommentCount(postId, -1);
                     updateReplyCount(rootId, -1);
@@ -1016,16 +1123,16 @@ public class PostRepository implements IPostRepository {
     }
 
     @Override
-    public LikeStateVO likeCommentWithMergedCount(String commentId, String userId) {
+    public PostLikeStateEnum likeCommentWithMergedCount(String commentId, String userId) {
         // 与帖子点赞同一条合并通道，只是 shardKey 取评论主键：一评一条 UPDATE（计数落 post_comment_like_count 窄表，票 02）
-        return writeLike(CountAction.COMMENT_LIKE, commentId, userId);
+        return writeLike(CountActionEnum.COMMENT_LIKE, commentId, userId);
     }
 
     @Override
     public void unlikeCommentWithCount(String commentId, String userId) {
         transactionTemplate.execute(status -> {
             if (!removeCommentLike(commentId, userId)) {
-                throw new BusinessException(ResponseCode.PARAM_ERROR, "尚未点赞");
+                throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "尚未点赞");
             }
             updateLikeCount(commentId, -1);
             // 根评论索引快照同步 -1（票 01）；子回复在 syncCommentFeedIndexLikeCount 里就地返回
@@ -1065,14 +1172,14 @@ public class PostRepository implements IPostRepository {
             return 0;
         }
         Map<String, PostCommentLikeCount> likeRows = new HashMap<>(commentFeedIndexRowList.size());
-        for (PostCommentLikeCount likeRow : postCommentLikeCountDao.selectLikeCountsByIds(
+        for (PostCommentLikeCount postCommentLikeCount : postCommentLikeCountDao.selectLikeCountsByIds(
                 commentFeedIndexRowList.stream().map(CommentFeedIndexRow::getCommentId).toList())) {
-            likeRows.put(likeRow.getCommentId(), likeRow);
+            likeRows.put(postCommentLikeCount.getCommentId(), postCommentLikeCount);
         }
-        for (CommentFeedIndexRow row : commentFeedIndexRowList) {
-            row.setFeedTime(row.getCreateTime());
-            PostCommentLikeCount likeRow = likeRows.get(row.getCommentId());
-            row.setLikeCount(likeRow == null ? 0L : likeRow.getLikeCount());
+        for (CommentFeedIndexRow commentFeedIndexRow : commentFeedIndexRowList) {
+            commentFeedIndexRow.setFeedTime(commentFeedIndexRow.getCreateTime());
+            PostCommentLikeCount postCommentLikeCount = likeRows.get(commentFeedIndexRow.getCommentId());
+            commentFeedIndexRow.setLikeCount(postCommentLikeCount == null ? 0L : postCommentLikeCount.getLikeCount());
         }
         for (int from = 0; from < commentFeedIndexRowList.size(); from += REBUILD_INSERT_BATCH) {
             postCommentFeedIndexDao.insertFeedIndexRows(commentFeedIndexRowList.subList(from, Math.min(from + REBUILD_INSERT_BATCH, commentFeedIndexRowList.size())));
@@ -1098,14 +1205,14 @@ public class PostRepository implements IPostRepository {
         Map<String, Post> commentRows = countRowsById(postCommentCountDao.selectCommentCountsByPostIds(postIdList));
         Map<String, Post> viewRows = countRowsById(postViewCountDao.selectViewCountsByPostIds(postIdList));
         Map<String, User> users = usersByIds(postList.stream().map(Post::getUserId).toList());
-        for (Post row : postList) {
-            row.setLikeCount(countOf(likeRows, row.getPostId(), Post::getLikeCount));
-            row.setCommentCount(countOf(commentRows, row.getPostId(), Post::getCommentCount));
-            row.setViewCount(countOf(viewRows, row.getPostId(), Post::getViewCount));
-            User user = users.get(row.getUserId());
+        for (Post post : postList) {
+            post.setLikeCount(countOf(likeRows, post.getPostId(), Post::getLikeCount));
+            post.setCommentCount(countOf(commentRows, post.getPostId(), Post::getCommentCount));
+            post.setViewCount(countOf(viewRows, post.getPostId(), Post::getViewCount));
+            User user = users.get(post.getUserId());
             if (user != null) {
-                row.setAuthorNickname(user.getNickname());
-                row.setAuthorAvatar(user.getAvatar());
+                post.setAuthorNickname(user.getNickname());
+                post.setAuthorAvatar(user.getAvatar());
             }
         }
     }
@@ -1117,8 +1224,8 @@ public class PostRepository implements IPostRepository {
 
     /** 窄表缺行 = 计数 0（与原 LEFT JOIN COALESCE(x, 0) 同口径） */
     private static Integer countOf(Map<String, Post> rows, String postId, Function<Post, Integer> getter) {
-        Post row = rows.get(postId);
-        return row == null ? 0 : getter.apply(row);
+        Post post = rows.get(postId);
+        return post == null ? 0 : getter.apply(post);
     }
 
     /** userId 集 → bs_user 批量回查索引 */
@@ -1144,8 +1251,8 @@ public class PostRepository implements IPostRepository {
         Map<String, Post> postsById = postDao.selectByIds(postIdList).stream()
                 .collect(Collectors.toMap(Post::getPostId, post -> post, (a, b) -> a));
         List<Post> visiblePostList = new ArrayList<>(postRelationRowList.size());
-        for (PostRelationRow row : postRelationRowList) {
-            Post post = postsById.get(row.getPostId());
+        for (PostRelationRow postRelationRow : postRelationRowList) {
+            Post post = postsById.get(postRelationRow.getPostId());
             if (post != null && visible.test(post)) {
                 visiblePostList.add(post);
             }
@@ -1162,18 +1269,18 @@ public class PostRepository implements IPostRepository {
 
     /** 点赞者视角可见性：NORMAL 照常展示（草稿从未公开、已删除一律过滤） */
     private static boolean visibleToLiker(Post post) {
-        return PostStatusVO.NORMAL.name().equals(post.getState());
+        return PostStatusEnum.NORMAL.name().equals(post.getState());
     }
 
     /** 他人视角可见性（作者主页 tab）：仅 NORMAL */
     private static boolean isNormal(Post post) {
-        return PostStatusVO.NORMAL.name().equals(post.getState());
+        return PostStatusEnum.NORMAL.name().equals(post.getState());
     }
 
     /** 浏览历史可见性：NORMAL 公开；本人看自己浏览过的非删除帖照常展示（详情对作者可见） */
     private static boolean visibleInHistory(String viewerId, Post post) {
         return isNormal(post)
-                || (viewerId.equals(post.getUserId()) && !PostStatusVO.DELETED.name().equals(post.getState()));
+                || (viewerId.equals(post.getUserId()) && !PostStatusEnum.DELETED.name().equals(post.getState()));
     }
 
     // ---------- 行转换 ----------
@@ -1202,7 +1309,7 @@ public class PostRepository implements IPostRepository {
         postEntity.setContent(post.getContent());
         postEntity.setImages(toImagesList(post.getImages()));
         postEntity.setCover(post.getCover());
-        postEntity.setStatus(PostStatusVO.valueOf(post.getState()));
+        postEntity.setStatus(PostStatusEnum.valueOf(post.getState()));
         // 空安全：详情内容查询（selectById）已不带计数列（票 05，计数每次读单独取），投影列为 null
         postEntity.setLikeCount(post.getLikeCount() == null ? 0 : post.getLikeCount());
         postEntity.setCommentCount(post.getCommentCount() == null ? 0 : post.getCommentCount());
@@ -1253,9 +1360,9 @@ public class PostRepository implements IPostRepository {
         Map<String, Long> likeCounts = likeCountsOf(commentList.stream().map(PostComment::getCommentId).toList());
         fillAuthors(commentList);
         List<PostCommentEntity> commentEntityList = new ArrayList<>(commentList.size());
-        for (PostComment commentRow : commentList) {
-            commentRow.setLikeCount(likeCounts.getOrDefault(commentRow.getCommentId(), 0L));
-            commentEntityList.add(toCommentEntity(commentRow));
+        for (PostComment postComment : commentList) {
+            postComment.setLikeCount(likeCounts.getOrDefault(postComment.getCommentId(), 0L));
+            commentEntityList.add(toCommentEntity(postComment));
         }
         return commentEntityList;
     }
@@ -1265,9 +1372,9 @@ public class PostRepository implements IPostRepository {
      */
     private void fillAuthors(List<PostComment> commentList) {
         Map<String, User> users = usersByIds(commentList.stream().map(PostComment::getUserId).toList());
-        for (PostComment row : commentList) {
-            User user = users.get(row.getUserId());
-            row.setAuthorNickname(user == null ? null : user.getNickname());
+        for (PostComment postComment : commentList) {
+            User user = users.get(postComment.getUserId());
+            postComment.setAuthorNickname(user == null ? null : user.getNickname());
         }
     }
 
@@ -1294,8 +1401,8 @@ public class PostRepository implements IPostRepository {
                 continue;
             }
             row.setReplyToUserId(parent.getUserId());
-            User parentUser = users.get(parent.getUserId());
-            row.setReplyToNickname(parentUser == null ? null : parentUser.getNickname());
+            User user = users.get(parent.getUserId());
+            row.setReplyToNickname(user == null ? null : user.getNickname());
         }
         return toCommentEntities(commentList);
     }
@@ -1303,44 +1410,44 @@ public class PostRepository implements IPostRepository {
     /** 页内评论 id 集 → 窄表赞数（缺行不在返回值里，由调用方按 0 处理） */
     private Map<String, Long> likeCountsOf(List<String> commentIdList) {
         Map<String, Long> likeCounts = new HashMap<>(commentIdList.size());
-        for (PostCommentLikeCount countRow : postCommentLikeCountDao.selectLikeCountsByIds(commentIdList)) {
-            likeCounts.put(countRow.getCommentId(), countRow.getLikeCount());
+        for (PostCommentLikeCount postCommentLikeCount : postCommentLikeCountDao.selectLikeCountsByIds(commentIdList)) {
+            likeCounts.put(postCommentLikeCount.getCommentId(), postCommentLikeCount.getLikeCount());
         }
         return likeCounts;
     }
 
-    private PostComment toCommentPO(PostCommentEntity commentEntity) {
-        PostComment comment = new PostComment();
-        comment.setCommentId(commentEntity.getCommentId());
-        comment.setPostId(commentEntity.getPostId());
-        comment.setUserId(commentEntity.getUserId());
-        comment.setContent(commentEntity.getContent());
-        comment.setState(commentEntity.getStatus().name());
-        comment.setRootId(commentEntity.getRootId());
-        comment.setParentId(commentEntity.getParentId());
-        return comment;
+    private PostComment toCommentPO(PostCommentEntity postCommentEntity) {
+        PostComment postComment = new PostComment();
+        postComment.setCommentId(postCommentEntity.getCommentId());
+        postComment.setPostId(postCommentEntity.getPostId());
+        postComment.setUserId(postCommentEntity.getUserId());
+        postComment.setContent(postCommentEntity.getContent());
+        postComment.setState(postCommentEntity.getStatus().name());
+        postComment.setRootId(postCommentEntity.getRootId());
+        postComment.setParentId(postCommentEntity.getParentId());
+        return postComment;
     }
 
-    private PostCommentEntity toCommentEntity(PostComment comment) {
-        if (comment == null) {
+    private PostCommentEntity toCommentEntity(PostComment postComment) {
+        if (postComment == null) {
             return null;
         }
-        PostCommentEntity commentEntity = new PostCommentEntity();
-        commentEntity.setCommentId(comment.getCommentId());
-        commentEntity.setPostId(comment.getPostId());
-        commentEntity.setUserId(comment.getUserId());
-        commentEntity.setContent(comment.getContent());
-        commentEntity.setStatus(PostStatusVO.valueOf(comment.getState()));
-        commentEntity.setRootId(comment.getRootId());
-        commentEntity.setParentId(comment.getParentId());
-        commentEntity.setLikeCount(comment.getLikeCount());
-        commentEntity.setReplyCount(comment.getReplyCount());
-        commentEntity.setCreatedAt(comment.getCreateTime());
-        commentEntity.setAuthorNickname(comment.getAuthorNickname());
-        commentEntity.setReplyToUserId(comment.getReplyToUserId());
-        commentEntity.setReplyToNickname(comment.getReplyToNickname());
-                commentEntity.setPostTitle(comment.getPostTitle());
-        commentEntity.setPostCover(comment.getPostCover());
-        return commentEntity;
+        PostCommentEntity postCommentEntity = new PostCommentEntity();
+        postCommentEntity.setCommentId(postComment.getCommentId());
+        postCommentEntity.setPostId(postComment.getPostId());
+        postCommentEntity.setUserId(postComment.getUserId());
+        postCommentEntity.setContent(postComment.getContent());
+        postCommentEntity.setStatus(PostStatusEnum.valueOf(postComment.getState()));
+        postCommentEntity.setRootId(postComment.getRootId());
+        postCommentEntity.setParentId(postComment.getParentId());
+        postCommentEntity.setLikeCount(postComment.getLikeCount());
+        postCommentEntity.setReplyCount(postComment.getReplyCount());
+        postCommentEntity.setCreatedAt(postComment.getCreateTime());
+        postCommentEntity.setAuthorNickname(postComment.getAuthorNickname());
+        postCommentEntity.setReplyToUserId(postComment.getReplyToUserId());
+        postCommentEntity.setReplyToNickname(postComment.getReplyToNickname());
+                postCommentEntity.setPostTitle(postComment.getPostTitle());
+        postCommentEntity.setPostCover(postComment.getPostCover());
+        return postCommentEntity;
     }
 }

@@ -3,11 +3,13 @@ package com.betterschool.domain.wallet.service;
 import com.betterschool.domain.wallet.adapter.repository.IWalletRepository;
 import com.betterschool.domain.wallet.model.entity.VirtualWalletEntity;
 import com.betterschool.domain.wallet.model.entity.WalletDetailEntity;
-import com.betterschool.domain.wallet.model.valobj.WalletDetailTypeVO;
+import com.betterschool.domain.wallet.model.entity.WalletPayTaskEntity;
+import com.betterschool.domain.wallet.model.valobj.WalletDetailTypeEnum;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -32,53 +34,74 @@ public class WalletAccountServiceImpl implements IWalletAccountService {
 
     @Override
     public void freeze(String userId, BigDecimal amount, String orderId) {
-        freeze(userId, amount, orderId, WalletDetailTypeVO.FROZEN);
+        freeze(userId, amount, orderId, WalletDetailTypeEnum.FROZEN);
     }
 
     @Override
-    public void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type) {
-        freeze(userId, amount, orderId, type, 0);
+    public void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO) {
+        walletRepository.freeze(userId, amount, orderId, walletDetailTypeVO);
     }
 
     @Override
-    public void freeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type, int bizRound) {
-        walletRepository.freeze(userId, amount, orderId, type, bizRound);
+    public void markPayTaskDone(String orderId) {
+        walletRepository.markPayTaskDone(orderId);
+    }
+
+    @Override
+    public List<WalletDetailEntity> listOrphanFrozen(WalletDetailTypeEnum frozenType, WalletDetailTypeEnum unfrozenType,
+                                                     int thresholdMinutes, int limit) {
+        return walletRepository.listOrphanFrozen(frozenType, unfrozenType, thresholdMinutes, limit);
+    }
+
+    @Override
+    public List<WalletPayTaskEntity> listDuePayTasks(int limit) {
+        return walletRepository.listDuePayTasks(limit);
+    }
+
+    @Override
+    public boolean claimPayTask(Long id, LocalDateTime nextRetryAt) {
+        return walletRepository.claimPayTask(id, nextRetryAt);
+    }
+
+    @Override
+    public void markPayTaskDead(Long id) {
+        walletRepository.markPayTaskDead(id);
     }
 
     @Override
     public void unfreeze(String userId, BigDecimal amount, String orderId) {
-        unfreeze(userId, amount, orderId, WalletDetailTypeVO.UNFROZEN);
+        unfreeze(userId, amount, orderId, WalletDetailTypeEnum.UNFROZEN);
     }
 
     @Override
-    public void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type) {
-        unfreeze(userId, amount, orderId, type, 0);
+    public void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO) {
+        unfreeze(userId, amount, orderId, walletDetailTypeVO, 0);
     }
 
     @Override
-    public void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type, int bizRound) {
-        walletRepository.unfreeze(userId, amount, orderId, type, bizRound);
+    public void unfreeze(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO, int bizRound) {
+        walletRepository.unfreeze(userId, amount, orderId, walletDetailTypeVO, bizRound);
     }
 
     @Override
     public void income(String userId, BigDecimal amount, String orderId) {
-        income(userId, amount, orderId, WalletDetailTypeVO.INCOME);
+        income(userId, amount, orderId, WalletDetailTypeEnum.INCOME);
     }
 
     @Override
-    public void income(String userId, BigDecimal amount, String orderId, WalletDetailTypeVO type) {
-        walletRepository.income(userId, amount, orderId, type);
+    public void income(String userId, BigDecimal amount, String orderId, WalletDetailTypeEnum walletDetailTypeVO) {
+        walletRepository.income(userId, amount, orderId, walletDetailTypeVO);
     }
 
     @Override
     public VirtualWalletEntity getBalance(String userId) {
-        VirtualWalletEntity walletEntity = walletRepository.getByUserId(userId);
-        if (walletEntity == null) {
+        VirtualWalletEntity virtualWalletEntity = walletRepository.getByUserId(userId);
+        if (virtualWalletEntity == null) {
             // 兜底自愈：注册成功但建钱包失败的存量用户，查余额时补建
             walletRepository.ensureWallet(userId);
-            walletEntity = walletRepository.getByUserId(userId);
+            virtualWalletEntity = walletRepository.getByUserId(userId);
         }
-        return walletEntity;
+        return virtualWalletEntity;
     }
 
     @Override

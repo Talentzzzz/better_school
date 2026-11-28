@@ -16,21 +16,28 @@ public class Constants {
     public final static String SEARCH_SYNC_TOPIC = "bs-search-sync";
 
     /**
-     * 发帖返利任务 topic。
-     * 发帖事务内落 PENDING 任务行，提交后同步发送到本 topic（broker 确认即标记 SENT）；
-     * 发送失败（或标记前宕机）由 {@code outboxScan} 兜底重发。
-     * 消费组：{@code bs-monolith-post-rebate-group}
+     * 发帖返利入账任务 topic（两段式第二段）。
+     * 领取事务内落 credit outbox（含金额快照），提交后同步发送；消费方按快照金额给积分桶/抽奖次数桶入账，
+     * 桶唯一键吸收重复投递。
+     * 消费组：{@code bs-monolith-post-rebate-credit-group}
      */
-    public final static String POST_REBATE_TOPIC = "bs-post-rebate";
+    public final static String POST_REBATE_CREDIT_TOPIC = "bs-post-rebate-credit";
 
-    /** chat 消息推送 topic：发送事务内 outbox 写入，WS 推送消费（票 04 ChatPushConsumer） */
-    public final static String CHAT_PUSH_TOPIC = "bs-chat-push";
+    /**
+     * 帖子点赞事实 topic：点赞提交后落 outbox 发送。
+     * 消息只带「谁赞了谁的帖子」（postId / likerUserId / authorId）；通知的类型、收件范围、文案、
+     * 去重键由消费端（{@code PostLikedConsumer → PostCase#notifyPostLiked}）决定。
+     * 消费组：{@code bs-monolith-post-liked-group}
+     */
+    public final static String POST_LIKED_TOPIC = "bs-post-liked";
 
-    /** chat 已读推送 topic：水位线推进事务内 outbox 写入，WS 推送消费（票 04 ChatPushConsumer） */
-    public final static String CHAT_READ_TOPIC = "bs-chat-read";
-
-    /** chat 撤回推送 topic：撤回事务内 outbox 写入（票 05 投递），WS 推送消费（票 04 ChatRecallPushConsumer） */
-    public final static String CHAT_RECALL_TOPIC = "bs-chat-recall";
+    /**
+     * 评论点赞事实 topic：评论点赞提交后落 outbox 发送。
+     * 消息只带「谁赞了哪条评论」（commentId / likerUserId / authorId）；通知的类型、收件范围、文案、
+     * 去重键由消费端（{@code CommentLikedConsumer → PostCase#notifyCommentLiked}）决定。
+     * 消费组：{@code bs-monolith-comment-liked-group}
+     */
+    public final static String COMMENT_LIKED_TOPIC = "bs-comment-liked";
 
     /** 营销域两个 topic（生产方 = 抽奖/积分服务，outbox 投递）：单体作为消费者订阅落通知（营销票 09）。
      *  消费组必须是 bs-monolith-<topic>-group（同 topic 多方订阅，同组会抢消息、不同组各收全量） */
@@ -48,14 +55,8 @@ public class Constants {
      */
     public final static String SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001";
 
-    /** 通知事件 topic：业务事务内写 outbox，通知域消费者统一落 notification + 按通道投递（事件驱动改造） */
+    /** 通知事件 topic：业务事务内写 outbox，通知域消费者统一落 notification 并按通道直接投递（不再有第二跳投递 topic） */
     public final static String NOTIFY_EVENT_TOPIC = "bs-notify-event";
-
-    /** 通知 CHAT 通道投递 topic：通知落库事务内 outbox 写入，消费后经 chat 发送管线落系统消息 */
-    public final static String NOTIFY_CHAT_TOPIC = "bs-notify-chat";
-
-    /** 通知 BANNER 通道推送 topic：通知落库事务内 outbox 写入，消费后经 WS 推 NOTIF 帧（在线者，漏推由前端 seq 水位补拉兜底） */
-    public final static String NOTIFY_PUSH_TOPIC = "bs-notify-push";
 
     /** 超时中心 taskType（业务域前缀命名，spec §7.4；取值记于 spec §8）：商品订单 15 分钟支付超时 */
     public final static String PRODUCT_ORDER_PAY_TIMEOUT = "PRODUCT_ORDER_PAY_TIMEOUT";

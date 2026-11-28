@@ -1,9 +1,9 @@
 package com.betterschool.integration.post;
 
-import com.betterschool.infrastructure.adapter.repository.CountAction;
+import com.betterschool.infrastructure.adapter.repository.CountActionEnum;
 import com.betterschool.infrastructure.adapter.repository.CountEvent;
 import com.betterschool.infrastructure.adapter.repository.post.PostRepository;
-import com.betterschool.infrastructure.adapter.repository.LikeState;
+import com.betterschool.infrastructure.adapter.repository.LikeStateEnum;
 import com.betterschool.integration.support.PostApiTestBase;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.DisplayName;
@@ -199,7 +199,7 @@ class PostCountMergeIntegrationTest extends PostApiTestBase {
         String u3 = "viewer-3";
         String u4 = "viewer-4";
 
-        List<LikeState> first = flushHandler.flushGroup(CountAction.POST_VIEW, postId,
+        List<LikeStateEnum> first = flushHandler.flushGroup(CountActionEnum.POST_VIEW, postId,
                 List.of(viewEvent(postId, u1), viewEvent(postId, u2), viewEvent(postId, u3)));
 
         assertThat(first).as("浏览件没有业务结果，但必须等长回填（否则引擎会记 failed、合并比失真）")
@@ -209,7 +209,7 @@ class PostCountMergeIntegrationTest extends PostApiTestBase {
         // 第二组：u1 已看过（撞主键）、u4 与 u4 同批重复（去重后一件）→ 只新增 1 个 UV
         jdbcTemplate.update("UPDATE user_view_history SET viewed_at = '2000-01-01' WHERE post_id = ? AND user_id = ?",
                 postId, u1);
-        List<LikeState> second = flushHandler.flushGroup(CountAction.POST_VIEW, postId,
+        List<LikeStateEnum> second = flushHandler.flushGroup(CountActionEnum.POST_VIEW, postId,
                 List.of(viewEvent(postId, u1), viewEvent(postId, u4), viewEvent(postId, u4)));
 
         assertThat(second).hasSize(3).doesNotContainNull();
@@ -223,7 +223,7 @@ class PostCountMergeIntegrationTest extends PostApiTestBase {
     // ---------- 工具 ----------
 
     private static CountEvent viewEvent(String postId, String userId) {
-        return new CountEvent(CountAction.POST_VIEW, postId, userId);
+        return new CountEvent(CountActionEnum.POST_VIEW, postId, userId);
     }
 
     private long likeRowCountOf(String postId) {

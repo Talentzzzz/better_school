@@ -1,26 +1,32 @@
 # 通知投递通道（notification 呈现路由）
 
 > 通知落库（`notification` 表）是唯一真相源：通知中心列表、未读水位线、dedup 幂等全部不变。
-> 在落库之上按通知类型路由到两条**呈现通道**，路由定义在 `NotificationTypeVO.Channel`。
+> 在落库之上按通知类型路由到两条**呈现通道**，路由定义在 `NotificationTypeEnum.ChannelEnum`。
 
 ## 链路总览（事件驱动，业务侧不直写通知库）
 
 ```
 业务事务：业务写 + outbox 写一行「通知事件」bs-notify-event（NotificationEventMessage，同事务原子）
     ↓ 提交后 outbox sender 发 MQ
-NotifyEventConsumer（通知域唯一写入口）
+NotifyEventConsumer（通知域唯一写入口 + 唯一投递入口）
     ├─ 落 notification 表（幂等：notificationId uk_notification_id + dedupKey uk_dedup 双锚）
-    └─ 按类型通道路由：CHAT → bs-notify-chat outbox（系统消息链路）
-                      BANNER → bs-notify-push outbox（横幅链路）
-                      NONE → 到此为止
+    └─ 落库成功后直接投递（不再写第二跳 outbox、不再经 MQ）：
+         CHAT   → NotificationCase.deliver（chat 发送管线，失败上抛由 broker 重投本事件）
+         BANNER → NotificationCase.push（WS NOTIF 帧，尽力而为，失败只记日志）
+         NONE   → 到此为止
 ```
 
 - **落库时机 = 事件消费时**：业务点只 `INotificationService.publish(NotificationEventMessage)`，
   业务事务内只写 outbox 一行；可靠性锚点从「通知与业务同事务」换成「outbox 至少一次 + 消费端幂等」
   （消费失败向上抛由 broker 重试，重试安全由 notificationId + dedupKey 双锚收敛）。
+- **投递不再单独过 MQ**：原 `bs-notify-chat` / `bs-notify-push` 两条投递 outbox 与对应消费者已删除。
+  CHAT 的重试由 broker 重投 `bs-notify-event` 承担（落库幂等 + chat `client_msg_id` 幂等）；
+  BANNER 本就允许丢，失败不重试，由前端水位补拉兜底。
 - 事件体仍携带完整通知文案（title/content/refType/refId/dedupKey），即"文案由业务点渲染"（方案 A）；
   `notificationId` 由生产点预生成 UUID 随事件携带（消费端幂等第一锚点）。
 - 幂等命中（未真正插入）时没有 seq，BANNER 投递跳过——重复事件不重复弹横幅，前端补拉兜底。
+  CHAT 例外：同一 `notificationId` 的重放（上次落库成功但投递失败）仍会再投一次，由 chat `client_msg_id`
+  幂等收敛；`dedupKey` 命中但 `notificationId` 不同的真正重复事件则不再投递。
 - 广播链路自洽不变：`broadcast` → `bs-notification-broadcast` → `NotificationBroadcastConsumer` 落库
   （ANNOUNCEMENT 是 NONE 通道，落库即止）。
 
@@ -37,17 +43,19 @@ NotifyEventConsumer（通知域唯一写入口）
 ## CHAT 通道：系统消息（聊天链路）
 
 - 发送者 = 系统助手固定账号 `Constants.SYSTEM_USER_ID`（schema.sql 种子行，phone 占位不参与登录）。
-- `NotifyEventConsumer` 落库成功后写 outbox `bs-notify-chat`（`NotifyChatMessage`）→ `NotifyChatConsumer` →
-  `SystemMessageCase.deliver`：懒创建「系统助手」1v1 会话（`uk_pair` 幂等）+ 以 `MsgTypeVO.SYSTEM`
-  发消息（content = JSON 载荷，`client_msg_id = NOTIFY:<notificationId>` 幂等）。
+- `NotifyEventConsumer` 落库成功后**直接**调 `NotificationCase.deliver`（`NotifyChatMessage`）：
+  懒创建「系统助手」1v1 会话（`uk_pair` 幂等）+ 以 `MsgTypeEnum.SYSTEM` 发消息
+  （content = JSON 载荷，`client_msg_id = NOTIFY:<notificationId>` 幂等）。
+- 投递抛异常时向上抛，broker 重投 `bs-notify-event`：落库幂等命中、chat 按 `client_msg_id` 收敛同一条。
 - 免费复用聊天链路的全部能力：在线走 WS MSG 帧实时冒泡、离线 timeline 补拉兜底、未读走会话水位线。
 - 守卫：用户不可主动与系统账号建会话、不可向系统会话发消息（`ChatSendServiceImpl` 双守卫，403）；
   前端识别 SYSTEM 消息后隐藏输入区。
 
 ## BANNER 通道：顶部横幅（瞬态）
 
-- `NotifyEventConsumer` 落库成功后写 outbox `bs-notify-push`（`NotifyPushMessage`）→ `NotifyPushConsumer`（反序列化 + 调 case）→
-  `NotifyPushCase` 组帧经本域仓储 `deliverWsFrame` 委托 infra WS 组件推 WS `NOTIF` 帧（只推在线者，漏推合法）。
+- `NotifyEventConsumer` 落库成功后**直接**调 `NotificationCase.push`（`NotifyPushMessage`）→
+  `INotificationService.pushNotif`，经本域仓储组帧委托 infra WS 组件推 WS `NOTIF` 帧
+  （只推在线者，漏推合法；失败只记日志、不重试）。幂等命中（重复事件）时没有 seq，跳过推送。
 - 「保证弹过」（小红书口径）：前端按 `(userId, scope)` 在 localStorage 记 seq 水位
   （`bs:notify-cursor:<userId>:<scope>`），WS 重连/上线时把 `seq > 水位` 的积压通知逐条重放横幅；
   首次登录该账号（无水位）静默对齐不回放历史存量。NOTIF 帧就地推进水位。
@@ -59,11 +67,10 @@ NotifyEventConsumer（通知域唯一写入口）
 |---|---|
 | 事件定义 | `bs-domain/.../notification/model/valobj/NotificationEventMessage.java` |
 | 事件发布 | `bs-domain/.../notification/service/INotificationService.java`（publish，业务点唯一生产入口） |
-| 事件消费+落库+通道路由 | `bs-trigger/.../listener/NotifyEventConsumer.java`（通知域唯一写入口） |
-| 路由定义 | `bs-domain/.../notification/model/valobj/NotificationTypeVO.java`（Channel 枚举） |
-| 系统消息投递 | `bs-case/.../usecase/notification/SystemMessageCase.java` |
-| 通道消费方 | `bs-trigger/.../listener/NotifyChatConsumer.java` / `NotifyPushConsumer.java`（均为反序列化 + 调 case） |
-| 推送决策 | `bs-case/.../usecase/notification/NotifyPushCase.java`（NOTIF 组帧） |
+| 事件消费+落库+直接投递 | `bs-trigger/.../listener/NotifyEventConsumer.java`（通知域唯一写入口 + 唯一投递入口） |
+| 路由定义 | `bs-domain/.../notification/model/valobj/NotificationTypeEnum.java`（Channel 枚举） |
+| 系统消息投递 | `bs-case/.../usecase/notification/NotificationCase.java`（`deliver`） |
+| 推送决策 | `bs-case/.../usecase/notification/NotificationCase.java`（`push`，NOTIF 组帧） |
 | WS 投递出口  | 各域仓储方法 `deliverWsFrame`（`IChatRepository`/`INotificationRepository`）→ 仓储实现委托组件 `bs-infrastructure/.../ws/`（IWsConnectionHub） 
-| WS 帧 | `bs-domain/.../chat/model/valobj/WsFrameType.java` 增 NOTIF |
+| WS 帧 | `bs-domain/.../chat/model/valobj/WsFrameTypeEnum.java` 增 NOTIF |
 | 前端 | `stores/notices.ts`（横幅队列/水位补放/未读）+ `components/NotifBanner.vue` + `App.vue` 挂载 |

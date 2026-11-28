@@ -1,6 +1,7 @@
 ## Java 编码规范
 
-- Entity 类型（`XxxEntity`）的**局部变量与方法参数**名必须以 `Entity` 结尾（如 `MessageEntity messageEntity`）。**实体类的成员字段除外**——字段保持业务裸名（`roomId`、`fromUserId`），因为字段名联动 Lombok 访问器、MyBatis 属性映射与 JSON 序列化。
+- 业务载体类型（`XxxEntity` / `XxxVO` / `XxxPO` / `XxxDTO` / `XxxMessage` / `XxxResult` / `XxxConfig` 等）的**局部变量与方法参数**名优先取「类型名首字母小写」：`RebateConfigEntity rebateConfigEntity`、`PostPublishRequestDTO postPublishRequestDTO`、`MqOutbox mqOutbox`。同一作用域内出现两个同类型变量、或目标名已被占用时，保留语义名并加前缀区分（如 `primary` / `fallback`），不强行同名。
+- **成员字段除外**——字段保持业务裸名（`roomId`、`fromUserId`），record 组件同理；因为字段名联动 Lombok 访问器、MyBatis 属性映射与 JSON 序列化。JDK 类型（`String`、`List` 等）仍用语义名，不套用该规则。
 
 ## SQL 规范（mapper XML）
 

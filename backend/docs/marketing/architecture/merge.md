@@ -1,7 +1,7 @@
 # 进程内合并（攒批）通用组件
 
 > 归属：`bs-infrastructure/.../infrastructure/merge`（2026-11-24 起只有通用引擎六件：MergeConfig / MergeEngine / MergeGroup / MergeItem / MergeResult / MergeStrategy；库存与计数都自己 new 引擎，计数侧的专用 `merge/count` 子包已删除），参数装配在 `bs-app/config` 的 `MergeEngineConfig`（一份 `merge.batch.*`）。
-> 本文只写「它为什么长这样、怎么接新用途、哪里不能动」；库存侧口径见 [`../db/inventory.md`](../db/inventory.md)，
+> 本文只写「它为什么长这样、怎么接新用途、哪里不能动」；奖品库存侧口径见 [`../db/award.md`](../db/award.md)，
 > 引擎参数见 `application.yml` 的 `merge.batch.*`。
 > 历史：hot-row-merge-l2w256（ADR-0013）把合并从 Redis 桶 + 消息搬进进程；通用化那一轮把引擎与库存解绑。
 > 本轮只做收敛：9 个文件 → 4 个，行为一行未改。之后把 `MergeShard`（分片本体）/ `MergeItem`（缓冲里的一件）从 `MergeEngine` 的私有嵌套类
@@ -24,7 +24,7 @@
 | `MergeEngine<T,R>` | 引擎：入口路由、批内按 `shardKey` 分组、逐件回填、同步降级、停机编排；`commit` 含同步降级。**一个实例绑一个策略**；不是 Spring Bean（写入组件 `new` 它并在 `@PreDestroy` 里 `close`） | 否 |
 | `MergeShard` | 合并分片（**包内**）：一条常驻 daemon 线程 + 一个缓冲队列，管攒批窗口、双缓冲换批、满即拒、停机排空。不认识引擎，批交给构造时传入的 `flusher` | 否 |
 | `MergeItem<T,R>` | 缓冲里的一件（**包内**）：载荷 + 路由键 + `CompletableFuture`；**不带策略**——引擎只有一个策略。`settle` 用 CAS 保证恰一个终态 | 否 |
-| `MergeResult<R>` | 「终态 + 业务结果」一体返回；五态枚举是**嵌套的** `MergeResult.State` | 否 |
+| `MergeResult<R>` | 「终态 + 业务结果」一体返回；五态枚举是**嵌套的** `MergeResult.StateEnum` | 否 |
 | `MergeConfig` | 引擎参数（构造即校验，不可变） | 否 |
 
 只有 `MergeConfig` / `MergeStrategy` / `MergeEngine` / `MergeResult` 四个是**公开类型**（包外可见的全部 API）。
@@ -41,17 +41,17 @@
 // ① 写入组件构造时把策略绑到自己的引擎上（一个用途一个引擎，此后策略不再出现在调用点）
 this.deductEngine = new MergeEngine<>(mergeConfig, new MergeStrategy<>(
         "inventory-deduct",
-        InventoryDeductRequestVO::awardId,                          // 分片键 + 分组键
+        AwardDeductRequestVO::awardId,                          // 分片键 + 分组键
         group -> flushService.flushDeductGroup(                      // 落库函数：一组一事务
                 group.get(0).type(), group.get(0).awardId(), group)));
 
 // ② 用时提交一件：commit = 入队 → 等 → 接不住就降级
-MergeResult<DeductResult> outcome = deductEngine.commit(request);
+MergeResult<DeductResultEnum> outcome = deductEngine.commit(request);
 
 // ③ 写入组件把引擎终态翻成域的出口
 return switch (outcome.state()) {
     case COMPLETED -> outcome.result();
-    case TIMEOUT, FAILED -> DeductResult.RETRY_LATER;   // 结果未知 / 确定没落 —— 域侧动作相同
+    case TIMEOUT, FAILED -> DeductResultEnum.RETRY_LATER;   // 结果未知 / 确定没落 —— 域侧动作相同
     case BUFFER_FULL, CLOSED -> throw new IllegalStateException("引擎已降级，不该冒到这里"); // 只为枚举穷尽
 };
 ```
@@ -117,14 +117,14 @@ return switch (outcome.state()) {
 // ② 写一个写入组件：引擎连策略一起 new，收口也归它
 @Component
 public class PostLikeMergeWriter {
-    private final MergeEngine<PostLikeEvent, LikeState> engine;
+    private final MergeEngine<PostLikeEvent, LikeStateEnum> engine;
 
     public PostLikeMergeWriter(MergeConfig mergeConfig, PostRepository repository) {
         this.engine = new MergeEngine<>(mergeConfig,
                 new MergeStrategy<>("post-like", PostLikeEvent::postId, repository::flushGroup));
     }
 
-    public LikeState like(PostLikeEvent event) { /* 五态 → 业务出口 */ }
+    public LikeStateEnum like(PostLikeEvent event) { /* 五态 → 业务出口 */ }
 
     @PreDestroy
     public void close() { engine.close(); }
@@ -132,7 +132,7 @@ public class PostLikeMergeWriter {
 
 // ③ 仓储里一行转发
 @Override
-public LikeState like(String postId, String userId) {
+public LikeStateEnum like(String postId, String userId) {
     return postLikeMergeWriter.like(new PostLikeEvent(postId, userId));
 }
 ```
@@ -146,7 +146,7 @@ public LikeState like(String postId, String userId) {
   A2 单飞、A3 锁不跨 DB、A4 排空 / 停收 / 排空超时、A5 满即拒 / 拒收不伤已入队、A6 批上限 + 同分片保序、
   策略隔离、业务失败透传、`TIMEOUT` 不等于失败。
 - `MergeConfigTest`（infra）、`MergeEngineConfigTest`（app，含「池 − 2」那条）。
-- `InventoryQuotaConservationIntegrationTest` B0–B4：库存守恒语义不变，只换注入点。
+- `AwardInventoryConservationIntegrationTest` B0–B4：库存守恒语义不变，只换注入点。
 - 静态判据：`infrastructure/merge` 不出现旧引擎 / 旧写入组件 / 旧降级接口的类名，配置键只有 `merge.batch.*` 一个前缀；
   `marketing-domain` 对 `infrastructure` 零 import。
 

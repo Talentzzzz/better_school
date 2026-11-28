@@ -1,7 +1,7 @@
 package com.betterschool.api.response;
 
 import com.betterschool.types.common.AppException;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import lombok.Data;
 
@@ -17,8 +17,8 @@ public class Response<T> {
 
     public static <T> Response<T> ok(T data) {
         Response<T> response = new Response<>();
-        response.setCode(ResponseCode.SUCCESS.getCode());
-        response.setInfo(ResponseCode.SUCCESS.getInfo());
+        response.setCode(ResponseCodeEnum.SUCCESS.getCode());
+        response.setInfo(ResponseCodeEnum.SUCCESS.getInfo());
         response.setData(data);
         return response;
     }

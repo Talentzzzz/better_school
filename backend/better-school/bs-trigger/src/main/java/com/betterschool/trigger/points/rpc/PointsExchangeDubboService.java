@@ -6,8 +6,8 @@ import com.betterschool.api.points.dto.PointsDeductResponseDTO;
 import com.betterschool.domain.points.model.valobj.PointsDeductResultVO;
 import com.betterschool.domain.points.service.IPointsAccountService;
 import com.betterschool.types.common.AppException;
-import com.betterschool.types.enums.ResponseCode;
-import com.betterschool.types.points.PointsReasonType;
+import com.betterschool.types.enums.ResponseCodeEnum;
+import com.betterschool.types.points.PointsReasonTypeEnum;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.dubbo.config.annotation.DubboService;
@@ -26,43 +26,43 @@ public class PointsExchangeDubboService implements IPointsExchangeService {
     private final IPointsAccountService pointsAccountService;
 
     @Override
-    public PointsDeductResponseDTO deduct(PointsDeductRequestDTO request) {
-        if (request == null || request.getUserId() == null || request.getAmount() == null || request.getRefId() == null
-                || request.getReasonType() == null) {
-            return fail(ResponseCode.POINTS_PARAM_ERROR);
+    public PointsDeductResponseDTO deduct(PointsDeductRequestDTO pointsDeductRequestDTO) {
+        if (pointsDeductRequestDTO == null || pointsDeductRequestDTO.getUserId() == null || pointsDeductRequestDTO.getAmount() == null || pointsDeductRequestDTO.getRefId() == null
+                || pointsDeductRequestDTO.getReasonType() == null) {
+            return fail(ResponseCodeEnum.POINTS_PARAM_ERROR);
         }
-        PointsReasonType reasonType;
+        PointsReasonTypeEnum pointsReasonType;
         try {
-            reasonType = PointsReasonType.valueOf(request.getReasonType());
+            pointsReasonType = PointsReasonTypeEnum.valueOf(pointsDeductRequestDTO.getReasonType());
         } catch (IllegalArgumentException e) {
-            return fail(ResponseCode.POINTS_PARAM_ERROR);
+            return fail(ResponseCodeEnum.POINTS_PARAM_ERROR);
         }
         try {
-            PointsDeductResultVO result = pointsAccountService.deduct(request.getUserId(), request.getAmount(),
-                    reasonType, request.getRefId());
-            PointsDeductResponseDTO dto = new PointsDeductResponseDTO();
-            dto.setSuccess(result.isSuccess());
-            dto.setCode(result.getCode());
-            dto.setInfo(result.getInfo());
-            dto.setBalance(result.getBalance());
-            return dto;
+            PointsDeductResultVO pointsDeductResultVO = pointsAccountService.deduct(pointsDeductRequestDTO.getUserId(), pointsDeductRequestDTO.getAmount(),
+                    pointsReasonType, pointsDeductRequestDTO.getRefId());
+            PointsDeductResponseDTO pointsDeductResponseDTO = new PointsDeductResponseDTO();
+            pointsDeductResponseDTO.setSuccess(pointsDeductResultVO.isSuccess());
+            pointsDeductResponseDTO.setCode(pointsDeductResultVO.getCode());
+            pointsDeductResponseDTO.setInfo(pointsDeductResultVO.getInfo());
+            pointsDeductResponseDTO.setBalance(pointsDeductResultVO.getBalance());
+            return pointsDeductResponseDTO;
         } catch (AppException e) {
             // 参数类业务异常（额度非法 / 原因不支持）也走结果对象，不跨进程抛
             log.warn("[PointsExchange] 扣分入参不合法 userId={}, reasonType={}, refId={}, info={}",
-                    request.getUserId(), request.getReasonType(), request.getRefId(), e.getInfo());
-            PointsDeductResponseDTO dto = new PointsDeductResponseDTO();
-            dto.setSuccess(false);
-            dto.setCode(e.getCode());
-            dto.setInfo(e.getInfo());
-            return dto;
+                    pointsDeductRequestDTO.getUserId(), pointsDeductRequestDTO.getReasonType(), pointsDeductRequestDTO.getRefId(), e.getInfo());
+            PointsDeductResponseDTO pointsDeductResponseDTO = new PointsDeductResponseDTO();
+            pointsDeductResponseDTO.setSuccess(false);
+            pointsDeductResponseDTO.setCode(e.getCode());
+            pointsDeductResponseDTO.setInfo(e.getInfo());
+            return pointsDeductResponseDTO;
         }
     }
 
-    private static PointsDeductResponseDTO fail(ResponseCode responseCode) {
-        PointsDeductResponseDTO dto = new PointsDeductResponseDTO();
-        dto.setSuccess(false);
-        dto.setCode(responseCode.getCode());
-        dto.setInfo(responseCode.getInfo());
-        return dto;
+    private static PointsDeductResponseDTO fail(ResponseCodeEnum responseCode) {
+        PointsDeductResponseDTO pointsDeductResponseDTO = new PointsDeductResponseDTO();
+        pointsDeductResponseDTO.setSuccess(false);
+        pointsDeductResponseDTO.setCode(responseCode.getCode());
+        pointsDeductResponseDTO.setInfo(responseCode.getInfo());
+        return pointsDeductResponseDTO;
     }
 }

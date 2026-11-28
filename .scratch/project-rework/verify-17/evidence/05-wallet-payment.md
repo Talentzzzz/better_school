@@ -15,7 +15,7 @@
 
 ## 支付是「资金托管冻结」，不是直接扣 balance
 
-**这一条必须写明，否则会误判。** 商品支付走 `WalletDetailTypeVO.PRODUCT_FROZEN` 冻结：
+**这一条必须写明，否则会误判。** 商品支付走 `WalletDetailTypeEnum.PRODUCT_FROZEN` 冻结：
 
 - `virtual_wallet.balance` **不减**，`frozen_amount` **加** 成交价（`WalletMapper.updateFreeze` 只动 `frozen_amount`）；
   因此「余额减少」的准确口径是 **可用余额 `balance - frozen_amount`**。

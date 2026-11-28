@@ -36,8 +36,8 @@ mapper XML、`application*.yml`、`pom.xml`、`sql/`、`docs/`。
 | 删除 | 保留并改用的目标 |
 | --- | --- |
 | `types.{lottery,referral}.exception.AppException` | `types.common.AppException`（构造器签名相同） |
-| `types.{lottery,referral}.enums.ResponseCode` | `types.common.ResponseCode`（**需并入全部 4xxx，见 §4**） |
-| `types.{lottery,referral}.enums.OutboxStatus` | `types.common.OutboxStatus`（逐字节相同） |
+| `types.{lottery,referral}.enums.ResponseCodeEnum` | `types.common.ResponseCodeEnum`（**需并入全部 4xxx，见 §4**） |
+| `types.{lottery,referral}.enums.OutboxStatusEnum` | `types.common.OutboxStatusEnum`（逐字节相同） |
 | `api.{lottery,referral}.response.{Response,PageResult}` | `api.common.response.*` |
 | `api.{lottery,referral}.dto.UserBasicResponseDTO` | `api.common.dto.UserBasicResponseDTO` |
 
@@ -92,7 +92,7 @@ mapper XML、`application*.yml`、`pom.xml`、`sql/`、`docs/`。
 
 `mybatis.mapper-locations` 必须**递归**：`classpath:/mybatis/mapper/**/*.xml`（票 06 写的 `*.xml` 漏子目录）。
 
-## 4. `types.common.ResponseCode` 并入清单
+## 4. `types.common.ResponseCodeEnum` 并入清单
 
 ```
 SUCCESS("200") UNAUTHORIZED("401") FORBIDDEN("403") NOT_FOUND("404") SYSTEM_ERROR("999")

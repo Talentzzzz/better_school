@@ -14,7 +14,7 @@ import java.util.List;
 @Mapper
 public interface IProductInventoryDao {
 
-    int insert(ProductInventory inventory);
+    int insert(ProductInventory productInventory);
 
     ProductInventory selectByProductId(@Param("productId") String productId);
 

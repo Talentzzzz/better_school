@@ -22,7 +22,7 @@ public class RoomListItemVO {
     private String peerAvatar;
 
     /** 对家角色（仅会话来源非空时非空）：会话行上的角色小标签取值 */
-    private RoomPeerRoleVO peerRole;
+    private RoomPeerRoleEnum peerRole;
 
     /** 会话来源（由市集入口首建时非空）：市集消息页按它分 tab */
     private RoomSourceEnum source;
@@ -38,7 +38,7 @@ public class RoomListItemVO {
     private MessagePreviewVO lastPreview;
 
     /** 最后一条消息类型（读时按 message 真相现算，不落副本） */
-    private MsgTypeVO lastMsgType;
+    private MsgTypeEnum lastMsgType;
 
     /** 预览文案（读时按 message 真相渲染：RECALLED→[已撤回]、IMAGE→[图片]、CARD→类型标签、TEXT→截 200） */
     private String lastMsgPreview;

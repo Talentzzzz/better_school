@@ -37,6 +37,37 @@ SELECT @group_id, '商品资金孤儿扫描（补解冻）', NOW(), NOW(), 'bett
        '', 1, 0, 0
 WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'productFundOrphanScan');
 
+-- 支付回调任务扫描（ADR-0017 域内最终一致任务）：扫到点的 PENDING 行，进程内重放商户回调
+-- （支付单 PAID、冻结与任务行同事务落库，行在 ⇒ 钱已冻；回调幂等）；
+-- 失败按 1/2/4/8/16 分钟退避，重试耗尽置死信。与 outboxScan 同口径 0/30。
+INSERT INTO xxl_job_info
+(job_group, job_desc, add_time, update_time, author, alarm_email,
+ schedule_type, schedule_conf, misfire_strategy, executor_route_strategy,
+ executor_handler, executor_param, executor_block_strategy, executor_timeout,
+ executor_fail_retry_count, glue_type, glue_source, glue_remark, glue_updatetime,
+ child_jobid, trigger_status, trigger_last_time, trigger_next_time)
+SELECT @group_id, '支付回调任务收敛（PENDING 重放/死信）', NOW(), NOW(), 'better-school', '',
+       'CRON', '0/30 * * * * ?', 'DO_NOTHING', 'FIRST',
+       'productPayTaskScan', '', 'SERIAL_EXECUTION', 0,
+       0, 'BEAN', '', '', NOW(),
+       '', 1, 0, 0
+WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'productPayTaskScan');
+
+-- 发帖返利领取任务收敛扫描（ADR-0017 域内最终一致任务）：扫到点的 PENDING 行，进程内重放领取
+-- （领取按 ref 幂等）；失败按 1/2/4/8/16 分钟退避，重试耗尽置死信。与 outboxScan 同口径 0/30。
+INSERT INTO xxl_job_info
+(job_group, job_desc, add_time, update_time, author, alarm_email,
+ schedule_type, schedule_conf, misfire_strategy, executor_route_strategy,
+ executor_handler, executor_param, executor_block_strategy, executor_timeout,
+ executor_fail_retry_count, glue_type, glue_source, glue_remark, glue_updatetime,
+ child_jobid, trigger_status, trigger_last_time, trigger_next_time)
+SELECT @group_id, '发帖返利领取任务收敛（PENDING 重放/死信）', NOW(), NOW(), 'better-school', '',
+       'CRON', '0/30 * * * * ?', 'DO_NOTHING', 'FIRST',
+       'postRebateClaimScan', '', 'SERIAL_EXECUTION', 0,
+       0, 'BEAN', '', '', NOW(),
+       '', 1, 0, 0
+WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'postRebateClaimScan');
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 营销域任务（monolith-restructure 票 07 自 marketing/sql/xxl-job-tasks.sql 并入本文件）：
 -- 执行器随单体归一为 better-school-executor；outboxScan 合并前两侧各注册一条，合并后
@@ -85,10 +116,10 @@ INSERT INTO xxl_job_info
  child_jobid, trigger_status, trigger_last_time, trigger_next_time)
 SELECT @group_id, '抽奖决策表预热（参数 = activityId；配置变更后手动重跑，幂等）', NOW(), NOW(), 'better-school', '',
        'CRON', '0 0 2 * * ?', 'DO_NOTHING', 'FIRST',
-       'raffleCacheWarmup', '', 'SERIAL_EXECUTION', 0,
+       'drawCacheWarmup', '', 'SERIAL_EXECUTION', 0,
        0, 'BEAN', '', '', NOW(),
        '', 1, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'raffleCacheWarmup');
+WHERE NOT EXISTS (SELECT 1 FROM xxl_job_info WHERE executor_handler = 'drawCacheWarmup');
 
 -- 积分桶合并（票 07 补登：handler 早就在 trigger/points/job/PointsBucketCompactionJob，此前漏了 seed 行）——
 -- 碎片桶收敛：同用户的有效小额桶并成一桶（过期时间取合并集合最大值、旧桶归零留审计），

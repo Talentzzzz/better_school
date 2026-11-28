@@ -19,17 +19,17 @@ import java.util.Objects;
  */
 public final class CountEvent {
 
-    private final CountAction action;
+    private final CountActionEnum action;
     private final String targetId;
     private final String userId;
 
-    public CountEvent(CountAction action, String targetId, String userId) {
+    public CountEvent(CountActionEnum action, String targetId, String userId) {
         this.action = action;
         this.targetId = targetId;
         this.userId = userId;
     }
 
-    public CountAction action() {
+    public CountActionEnum action() {
         return action;
     }
 
@@ -44,10 +44,10 @@ public final class CountEvent {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof CountEvent other)) return false;
-        return Objects.equals(action, other.action)
-                && Objects.equals(targetId, other.targetId)
-                && Objects.equals(userId, other.userId);
+        if (!(o instanceof CountEvent countEvent)) return false;
+        return Objects.equals(action, countEvent.action)
+                && Objects.equals(targetId, countEvent.targetId)
+                && Objects.equals(userId, countEvent.userId);
     }
 
     @Override

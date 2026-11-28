@@ -11,7 +11,7 @@
 - 前端 HTTP URL（`/api/<svc>/**`）与 RocketMQ topic 名不变；Dubbo 接口 FQN 随包名直接切换（无生产流量、无过渡需求，map 决策 6）。
 - 起草中**新核实**的事实（票 01 之外，均 grep 证实，已吸收进下文）：
   1. **xxl handler 冲突**：lottery 与 referral 各自的 `OutboxMessageSender` 都注册 `@XxlJob("outboxScan")`，收敛成一个执行器后重名（xxl-job 同执行器内 handler 名必须唯一）→ 见 §3.1-D。
-  2. **同名类冲突**：lottery/referral 两套代码里 `GlobalExceptionHandler`、`PingController`、`SecurityUtils`、`OutboxMapper.xml`、api 层的 `UserBasicResponseDTO`/`PageResult`/`Response`、types 层的 `Constants`/`OutboxStatus`/`ResponseCode`/`AppException` 同名 → 合并后所有层必须带域子包，见 §2.2。
+  2. **同名类冲突**：lottery/referral 两套代码里 `GlobalExceptionHandler`、`PingController`、`SecurityUtils`、`OutboxMapper.xml`、api 层的 `UserBasicResponseDTO`/`PageResult`/`Response`、types 层的 `Constants`/`OutboxStatusEnum`/`ResponseCodeEnum`/`AppException` 同名 → 合并后所有层必须带域子包，见 §2.2。
   3. **case 模块空壳**：三营销服务的 `*-case` 均无 src（与单体骨架保持一致的占位）→ 合并后各留一个空壳模块。
   4. 三营销服务的 `*-app` 下配置类（`MybatisConfig`/`SecurityConfig`/`TransactionConfig`/`XxlJobConfig`）同名同层 → 合并时逐个 diff 取一致者，属结构联改。
 

@@ -13,8 +13,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 评论点赞 + 通知补全（issue 06）：点赞/取消幂等 + 计数窄表（post_comment_like_count，票 02 起的真源）
  * 同事务 ±N + 互动通知去重（sender+目标）+ 不可见评论拒绝点赞 + 最热真实排序。
- * 通知为 chat 域衍生数据：case 层点赞事务提交后 publish 通知事件（失败不回滚点赞），
- * 测试断言成功路径前须 consumeNotifyEvents() 喂消费方落库（通知落库时机=事件消费时）。
+ * 通知为 chat 域衍生数据：评论点赞在 case 层直接发布通知事件；帖子点赞先发「谁赞了谁」的事实事件
+ * （bs-post-liked），由 PostLikedConsumer 决定通知内容后直接落库投递。两条路径都不回滚点赞。
+ * 测试断言通知前须 consumeNotifyEvents() 喂消费方（通知落库时机=事件消费时）。
  */
 @DisplayName("评论点赞：幂等/计数/通知去重/不可见拒绝/最热真实排序")
 class CommentLikeIntegrationTest extends PostApiTestBase {

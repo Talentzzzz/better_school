@@ -105,7 +105,7 @@
 
 ## 索引 / 注意
 - `uk_comment_user (comment_id, user_id)`：一人一评一次，`INSERT IGNORE` 幂等；`idx_user (user_id)`
-- 点赞只对 `state='NORMAL'` 评论有效（已删拒绝）；被赞通知由 case 层在点赞事务提交后尽力而为发送，按（触发者+目标）dedup 去重，取消赞不撤回已发通知，自赞不发
+- 点赞只对 `state='NORMAL'` 评论有效（已删拒绝）；被赞通知由点赞主链路在事务提交后落 `bs-comment-liked` 事实 outbox（自赞在发 MQ 前拦截），消费端按（触发者+目标）dedup 去重落通知并投递，取消赞不撤回已发通知
 - 计数不回写本表：点赞数为计数窄表 `post_comment_like_count` 的 `like_count`，与本表关系行同事务精确 ±1
 
 # post_comment_feed_index

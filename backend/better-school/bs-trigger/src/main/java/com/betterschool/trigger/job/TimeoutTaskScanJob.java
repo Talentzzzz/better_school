@@ -31,11 +31,11 @@ public class TimeoutTaskScanJob {
         int shardIndex = XxlJobHelper.getShardIndex();
         int shardTotal = XxlJobHelper.getShardTotal();
         try {
-            ScanSummary summary = timeoutScanner.scan(shardIndex, shardTotal, timeoutActionRouter);
+            ScanSummary scanSummary = timeoutScanner.scan(shardIndex, shardTotal, timeoutActionRouter);
             XxlJobHelper.handleSuccess(String.format(
                     "扫描完成：槽位 %d 个、批次 %d、任务 %d 条（成功 %d / 重试 %d / 进死信 %d）",
-                    summary.getSlotCount(), summary.getBatchCount(), summary.getTaskCount(),
-                    summary.getSuccessCount(), summary.getRetryCount(), summary.getDeadCount()));
+                    scanSummary.getSlotCount(), scanSummary.getBatchCount(), scanSummary.getTaskCount(),
+                    scanSummary.getSuccessCount(), scanSummary.getRetryCount(), scanSummary.getDeadCount()));
         } catch (Exception e) {
             // 本轮失败不补跑：job 调度层重试 0，下个周期照常重扫（未终态行永远满足扫描条件）
             log.error("[超时中心告警] 扫描 job 异常：shardIndex={}, shardTotal={}", shardIndex, shardTotal, e);

@@ -100,9 +100,9 @@ export const exchangeDrawCount = (token: string) =>
 
 export const getPointsBalance = () => httpGet<{ balance: number }>('/points/balance')
 
-// ---------- 失败码与文案（与后端 ResponseCode 逐字对齐） ----------
+// ---------- 失败码与文案（与后端 ResponseCodeEnum 逐字对齐） ----------
 
-/** 抽奖业务码（marketing-types ResponseCode 的 4xxx 段） */
+/** 抽奖业务码（marketing-types ResponseCodeEnum 的 4xxx 段） */
 export const LOTTERY_CODE = {
   ACTIVITY_NOT_STARTED: '4301',
   ACTIVITY_ENDED: '4302',

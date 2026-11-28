@@ -1,7 +1,7 @@
 package com.betterschool.infrastructure.adapter.port.file;
 
 import com.betterschool.domain.file.adapter.port.IFileStoragePort;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import io.minio.BucketExistsArgs;
 import io.minio.MakeBucketArgs;
@@ -69,7 +69,7 @@ public class FileStoragePort implements IFileStoragePort {
             throw e;
         } catch (Exception e) {
             log.error("MinIO 存储文件失败", e);
-            throw new BusinessException(ResponseCode.SYSTEM_ERROR, "文件上传失败，请稍后重试");
+            throw new BusinessException(ResponseCodeEnum.SYSTEM_ERROR, "文件上传失败，请稍后重试");
         }
     }
 

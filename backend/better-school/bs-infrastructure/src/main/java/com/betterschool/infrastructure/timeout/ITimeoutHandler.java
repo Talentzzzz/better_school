@@ -24,5 +24,5 @@ public interface ITimeoutHandler {
      *
      * @throws RuntimeException 动作失败（含无法识别的 taskType / 坏 bizId）——调用方按失败重投入重试或死信
      */
-    void fire(TimeoutTaskEntity taskEntity);
+    void fire(TimeoutTaskEntity timeoutTaskEntity);
 }

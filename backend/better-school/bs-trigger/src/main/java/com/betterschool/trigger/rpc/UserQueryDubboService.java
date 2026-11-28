@@ -41,11 +41,11 @@ public class UserQueryDubboService implements IUserQueryService {
     }
 
     private static UserBasicDTO toDTO(UserEntity userEntity) {
-        UserBasicDTO dto = new UserBasicDTO();
-        dto.setUserId(userEntity.getUserId());
-        dto.setNickname(userEntity.getNickname());
-        dto.setAvatar(userEntity.getAvatar());
-        dto.setCreatedAt(userEntity.getCreatedAt());
-        return dto;
+        UserBasicDTO userBasicDTO = new UserBasicDTO();
+        userBasicDTO.setUserId(userEntity.getUserId());
+        userBasicDTO.setNickname(userEntity.getNickname());
+        userBasicDTO.setAvatar(userEntity.getAvatar());
+        userBasicDTO.setCreatedAt(userEntity.getCreatedAt());
+        return userBasicDTO;
     }
 }

@@ -9,13 +9,15 @@ import com.betterschool.api.dto.ProductResponseDTO;
 import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
 import com.betterschool.usecase.idle.IdleCase;
+import com.betterschool.usecase.payment.PaymentCase;
 import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
 import com.betterschool.domain.idle.model.valobj.ProductFeedPageVO;
-import com.betterschool.domain.idle.model.valobj.ProductStatusVO;
+import com.betterschool.domain.idle.model.valobj.ProductOrderStatusEnum;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -34,6 +36,7 @@ import java.util.Set;
 /**
  * 二手交易 HTTP 入口：浏览免登录，发布/收藏需登录
  */
+@Slf4j
 @RestController
 // /api/trade 是更名前缀，保留为兼容别名（已发出的分享链接 / 客户端缓存不因改名 404）；下个大版本移除
 @RequestMapping({"/api/idle", "/api/trade"})
@@ -45,6 +48,7 @@ public class ProductController implements IIdleService {
     /** 域名服务与 api 契约同名，字段用全限定名区分（照 SearchController 先例） */
     private final com.betterschool.domain.idle.service.IIdleService idleService;
     private final IdleCase idleCase;
+    private final PaymentCase paymentCase;
 
     @Override
     @GetMapping("/products")
@@ -60,43 +64,43 @@ public class ProductController implements IIdleService {
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         // 索引 + 游标分页（票 04）：无筛选走索引序扫描，total 降口径 -1 不再精确 COUNT、续页靠 cursor；
         // 带筛选或索引查询降级时 indexPath=false，total 仍精确、按 page 续页
-        ProductFeedPageVO feedPage = idleService.listProducts(category, minPrice, maxPrice, sort, cursor,
+        ProductFeedPageVO productFeedPageVO = idleService.listProducts(category, minPrice, maxPrice, sort, cursor,
                 page, pageSize);
-        long total = feedPage.isIndexPath() ? -1 : idleService.countProducts(category, minPrice, maxPrice);
-        List<ProductResponseDTO> dtoList = feedPage.getProducts().stream()
+        long total = productFeedPageVO.isIndexPath() ? -1 : idleService.countProducts(category, minPrice, maxPrice);
+        List<ProductResponseDTO> dtoList = productFeedPageVO.getProducts().stream()
                 .map(product -> toProductResponseDTO(product, false)).toList();
         // 已读灰显（market-feed-uv 票 05，照帖子 listPosts）：页内 product_id 批量回查浏览明细，
         // 登录用户带 viewed 标记；未登录为空集 ⇒ 恒 false（市集列表匿名可浏览）
-        Set<String> viewedIds = viewedProductIdsOf(feedPage.getProducts(), SecurityUtils.currentUserId());
+        Set<String> viewedIds = viewedProductIdsOf(productFeedPageVO.getProducts(), SecurityUtils.currentUserId());
         dtoList.forEach(dto -> dto.setViewed(viewedIds.contains(dto.getProductId())));
-        return Response.ok(new PageResult<>(page, pageSize, total, dtoList, feedPage.getNextCursor()));
+        return Response.ok(new PageResult<>(page, pageSize, total, dtoList, productFeedPageVO.getNextCursor()));
     }
 
     @Override
     @PostMapping("/products")
-    public Response<String> publishProduct(@Valid @RequestBody ProductPublishRequestDTO request) {
-        String productId = idleCase.publishProduct(SecurityUtils.currentUserId(), request.getTitle(),
-                request.getDescription(), request.getImages(), request.getPrice(),
-                request.getTradeLocation(), request.getCategory(), request.getQuantity());
+    public Response<String> publishProduct(@Valid @RequestBody ProductPublishRequestDTO productPublishRequestDTO) {
+        String productId = idleCase.publishProduct(SecurityUtils.currentUserId(), productPublishRequestDTO.getTitle(),
+                productPublishRequestDTO.getDescription(), productPublishRequestDTO.getImages(), productPublishRequestDTO.getPrice(),
+                productPublishRequestDTO.getTradeLocation(), productPublishRequestDTO.getCategory(), productPublishRequestDTO.getQuantity());
         return Response.ok(productId);
     }
 
     @Override
     @PostMapping("/products/draft")
-    public Response<String> saveProductDraft(@Valid @RequestBody ProductDraftSaveRequestDTO request) {
-        String productId = idleCase.saveProductDraft(SecurityUtils.currentUserId(), request.getTitle(),
-                request.getDescription(), request.getImages(), request.getPrice(),
-                request.getTradeLocation(), request.getCategory(), request.getQuantity());
+    public Response<String> saveProductDraft(@Valid @RequestBody ProductDraftSaveRequestDTO productDraftSaveRequestDTO) {
+        String productId = idleCase.saveProductDraft(SecurityUtils.currentUserId(), productDraftSaveRequestDTO.getTitle(),
+                productDraftSaveRequestDTO.getDescription(), productDraftSaveRequestDTO.getImages(), productDraftSaveRequestDTO.getPrice(),
+                productDraftSaveRequestDTO.getTradeLocation(), productDraftSaveRequestDTO.getCategory(), productDraftSaveRequestDTO.getQuantity());
         return Response.ok(productId);
     }
 
     @Override
     @PutMapping("/products/{productId}/draft")
     public Response<Void> updateProductDraft(@PathVariable String productId,
-                                             @Valid @RequestBody ProductDraftSaveRequestDTO request) {
-        idleCase.updateProductDraft(SecurityUtils.currentUserId(), productId, request.getTitle(),
-                request.getDescription(), request.getImages(), request.getPrice(),
-                request.getTradeLocation(), request.getCategory(), request.getQuantity());
+                                             @Valid @RequestBody ProductDraftSaveRequestDTO productDraftSaveRequestDTO) {
+        idleCase.updateProductDraft(SecurityUtils.currentUserId(), productId, productDraftSaveRequestDTO.getTitle(),
+                productDraftSaveRequestDTO.getDescription(), productDraftSaveRequestDTO.getImages(), productDraftSaveRequestDTO.getPrice(),
+                productDraftSaveRequestDTO.getTradeLocation(), productDraftSaveRequestDTO.getCategory(), productDraftSaveRequestDTO.getQuantity());
         return Response.ok(null);
     }
 
@@ -117,9 +121,9 @@ public class ProductController implements IIdleService {
     @Override
     @PutMapping("/products/{productId}")
     public Response<Void> editProduct(@PathVariable String productId,
-                                      @Valid @RequestBody ProductEditRequestDTO request) {
-        idleCase.editOnSaleProduct(SecurityUtils.currentUserId(), productId, request.getTitle(),
-                request.getDescription(), request.getImages(), request.getPrice());
+                                      @Valid @RequestBody ProductEditRequestDTO productEditRequestDTO) {
+        idleCase.editOnSaleProduct(SecurityUtils.currentUserId(), productId, productEditRequestDTO.getTitle(),
+                productEditRequestDTO.getDescription(), productEditRequestDTO.getImages(), productEditRequestDTO.getPrice());
         return Response.ok(null);
     }
 
@@ -224,13 +228,6 @@ public class ProductController implements IIdleService {
     }
 
     @Override
-    @PostMapping("/orders/{orderId}/pay")
-    public Response<Void> payProductOrder(@PathVariable String orderId) {
-        idleCase.payOrder(orderId, SecurityUtils.currentUserId());
-        return Response.ok(null);
-    }
-
-    @Override
     @PostMapping("/orders/{orderId}/mark-delivered")
     public Response<Void> markDeliveredProduct(@PathVariable String orderId) {
         idleCase.markDelivered(orderId, SecurityUtils.currentUserId());
@@ -254,8 +251,19 @@ public class ProductController implements IIdleService {
     @Override
     @GetMapping("/orders/{orderId}")
     public Response<ProductOrderResponseDTO> productOrderDetail(@PathVariable String orderId) {
-        ProductOrderEntity orderEntity = idleCase.orderDetail(orderId, SecurityUtils.currentUserId());
-        return Response.ok(toProductOrderResponseDTO(orderEntity));
+        String currentUserId = SecurityUtils.currentUserId();
+        ProductOrderEntity productOrderEntity = idleCase.orderDetail(orderId, currentUserId);
+        ProductOrderResponseDTO productOrderResponseDTO = toProductOrderResponseDTO(productOrderEntity);
+        // 买家看自己的待支付订单时带上支付单号（收银台凭据）；预下单失败不阻塞详情，刷新会懒创建
+        if (productOrderEntity.isBuyer(currentUserId)
+                && productOrderEntity.getStatus() == ProductOrderStatusEnum.PENDING_PAYMENT) {
+            try {
+                productOrderResponseDTO.setPayNo(paymentCase.ensurePayNo(productOrderEntity, currentUserId));
+            } catch (Exception e) {
+                log.warn("[支付单] 订单详情预下单失败，本次不返回 payNo orderId={}", orderId, e);
+            }
+        }
+        return Response.ok(productOrderResponseDTO);
     }
 
     @Override
@@ -280,42 +288,42 @@ public class ProductController implements IIdleService {
     }
 
     private ProductResponseDTO toProductResponseDTO(ProductEntity productEntity, boolean favorited) {
-        ProductResponseDTO dto = new ProductResponseDTO();
-        dto.setProductId(productEntity.getProductId());
-        dto.setUserId(productEntity.getUserId());
-        dto.setSellerNickname(productEntity.getSellerNickname());
-        dto.setSellerAvatar(productEntity.getSellerAvatar());
-        dto.setTitle(productEntity.getTitle());
-        dto.setDescription(productEntity.getDescription());
-        dto.setImages(productEntity.getImages());
-        dto.setPrice(productEntity.getPrice());
+        ProductResponseDTO productResponseDTO = new ProductResponseDTO();
+        productResponseDTO.setProductId(productEntity.getProductId());
+        productResponseDTO.setUserId(productEntity.getUserId());
+        productResponseDTO.setSellerNickname(productEntity.getSellerNickname());
+        productResponseDTO.setSellerAvatar(productEntity.getSellerAvatar());
+        productResponseDTO.setTitle(productEntity.getTitle());
+        productResponseDTO.setDescription(productEntity.getDescription());
+        productResponseDTO.setImages(productEntity.getImages());
+        productResponseDTO.setPrice(productEntity.getPrice());
         // 草稿行可空：未填的字段回显 null
-        dto.setTradeLocation(productEntity.getTradeLocation());
-        dto.setCategory(productEntity.getCategory() == null ? null : productEntity.getCategory().name());
-        dto.setStatus(productEntity.getStatus().name());
-        dto.setViewCount(productEntity.getViewCount());
-        dto.setRemainingQuantity(productEntity.getRemainingQuantity());
-        dto.setFavoriteCount(productEntity.getFavoriteCount());
-        dto.setFavorited(favorited);
-        dto.setCreatedAt(productEntity.getCreatedAt());
-        return dto;
+        productResponseDTO.setTradeLocation(productEntity.getTradeLocation());
+        productResponseDTO.setCategory(productEntity.getCategory() == null ? null : productEntity.getCategory().name());
+        productResponseDTO.setStatus(productEntity.getStatus().name());
+        productResponseDTO.setViewCount(productEntity.getViewCount());
+        productResponseDTO.setRemainingQuantity(productEntity.getRemainingQuantity());
+        productResponseDTO.setFavoriteCount(productEntity.getFavoriteCount());
+        productResponseDTO.setFavorited(favorited);
+        productResponseDTO.setCreatedAt(productEntity.getCreatedAt());
+        return productResponseDTO;
     }
 
-    private ProductOrderResponseDTO toProductOrderResponseDTO(ProductOrderEntity orderEntity) {
-        ProductOrderResponseDTO dto = new ProductOrderResponseDTO();
-        dto.setOrderId(orderEntity.getOrderId());
-        dto.setProductId(orderEntity.getProductId());
-        dto.setProductTitle(orderEntity.getProductTitle());
-        dto.setBuyerId(orderEntity.getBuyerId());
-        dto.setBuyerNickname(orderEntity.getBuyerNickname());
-        dto.setBuyerAvatar(orderEntity.getBuyerAvatar());
-        dto.setSellerId(orderEntity.getSellerId());
-        dto.setSellerNickname(orderEntity.getSellerNickname());
-        dto.setSellerAvatar(orderEntity.getSellerAvatar());
-        dto.setPrice(orderEntity.getPrice());
-        dto.setQuantity(orderEntity.getQuantity());
-        dto.setStatus(orderEntity.getStatus().name());
-        dto.setCreatedAt(orderEntity.getCreatedAt());
-        return dto;
+    private ProductOrderResponseDTO toProductOrderResponseDTO(ProductOrderEntity productOrderEntity) {
+        ProductOrderResponseDTO productOrderResponseDTO = new ProductOrderResponseDTO();
+        productOrderResponseDTO.setOrderId(productOrderEntity.getOrderId());
+        productOrderResponseDTO.setProductId(productOrderEntity.getProductId());
+        productOrderResponseDTO.setProductTitle(productOrderEntity.getProductTitle());
+        productOrderResponseDTO.setBuyerId(productOrderEntity.getBuyerId());
+        productOrderResponseDTO.setBuyerNickname(productOrderEntity.getBuyerNickname());
+        productOrderResponseDTO.setBuyerAvatar(productOrderEntity.getBuyerAvatar());
+        productOrderResponseDTO.setSellerId(productOrderEntity.getSellerId());
+        productOrderResponseDTO.setSellerNickname(productOrderEntity.getSellerNickname());
+        productOrderResponseDTO.setSellerAvatar(productOrderEntity.getSellerAvatar());
+        productOrderResponseDTO.setPrice(productOrderEntity.getPrice());
+        productOrderResponseDTO.setQuantity(productOrderEntity.getQuantity());
+        productOrderResponseDTO.setStatus(productOrderEntity.getStatus().name());
+        productOrderResponseDTO.setCreatedAt(productOrderEntity.getCreatedAt());
+        return productOrderResponseDTO;
     }
 }

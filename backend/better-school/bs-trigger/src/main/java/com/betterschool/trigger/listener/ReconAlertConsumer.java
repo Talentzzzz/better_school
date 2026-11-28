@@ -1,8 +1,8 @@
 package com.betterschool.trigger.listener;
 
 import com.betterschool.types.common.Constants;
-import com.betterschool.usecase.marketing.DrawReconAlertMessage;
-import com.betterschool.usecase.marketing.MarketingNoticeCase;
+import com.betterschool.types.common.DrawReconAlertMessage;
+import com.betterschool.usecase.marketing.DrawCase;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,24 +21,24 @@ import org.springframework.stereotype.Component;
 @RocketMQMessageListener(topic = Constants.RECON_ALERT_TOPIC, consumerGroup = "bs-monolith-recon-alert-group")
 public class ReconAlertConsumer implements RocketMQListener<String> {
 
-    private final MarketingNoticeCase marketingNoticeCase;
+    private final DrawCase drawCase;
     private final ObjectMapper objectMapper;
 
     @Override
     public void onMessage(String payload) {
-        DrawReconAlertMessage message;
+        DrawReconAlertMessage drawReconAlertMessage;
         try {
-            message = objectMapper.readValue(payload, DrawReconAlertMessage.class);
+            drawReconAlertMessage = objectMapper.readValue(payload, DrawReconAlertMessage.class);
         } catch (Exception e) {
             // 载荷残缺重试也不会成功：记日志丢弃，不触发 broker 重投
             log.error("[ReconAlertConsumer] 消息载荷解析失败，丢弃 payload={}", payload, e);
             return;
         }
-        if (message.getRoundNo() == null || message.getCheckType() == null || message.getBizId() == null) {
+        if (drawReconAlertMessage.getRoundNo() == null || drawReconAlertMessage.getCheckType() == null || drawReconAlertMessage.getBizId() == null) {
             log.error("[ReconAlertConsumer] 消息缺 roundNo/checkType/bizId（dedupKey 三要素），丢弃 payload={}", payload);
             return;
         }
         // 解析成功后异常上抛，由 broker 自动重试；通知落库 dedup_key 幂等，重试不重复
-        marketingNoticeCase.notifyReconAlert(message);
+        drawCase.notifyReconAlert(drawReconAlertMessage);
     }
 }

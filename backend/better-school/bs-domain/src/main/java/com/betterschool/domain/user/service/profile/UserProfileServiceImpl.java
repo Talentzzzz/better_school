@@ -2,10 +2,10 @@ package com.betterschool.domain.user.service.profile;
 
 import com.betterschool.domain.user.adapter.repository.IUserRepository;
 import com.betterschool.domain.user.model.entity.UserEntity;
-import com.betterschool.domain.user.model.valobj.GenderVO;
-import com.betterschool.domain.user.model.valobj.UserStatusVO;
+import com.betterschool.domain.user.model.valobj.GenderEnum;
+import com.betterschool.domain.user.model.valobj.UserStatusEnum;
 import com.betterschool.types.common.SearchPageVO;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -30,7 +30,7 @@ public class UserProfileServiceImpl implements IUserProfileService {
     public UserEntity getProfile(String userId) {
         UserEntity userEntity = userRepository.findById(userId);
         if (userEntity == null) {
-            throw new BusinessException(ResponseCode.NOT_FOUND, "用户不存在");
+            throw new BusinessException(ResponseCodeEnum.NOT_FOUND, "用户不存在");
         }
         return userEntity;
     }
@@ -38,6 +38,16 @@ public class UserProfileServiceImpl implements IUserProfileService {
     @Override
     public long countReceivedLikes(String userId) {
         return userRepository.sumNormalPostLikeCount(userId);
+    }
+
+    @Override
+    public boolean isLikedVisibleTo(String ownerId, String viewerId) {
+        return userRepository.isLikedVisibleTo(ownerId, viewerId);
+    }
+
+    @Override
+    public boolean isCommentsVisibleTo(String ownerId, String viewerId) {
+        return userRepository.isCommentsVisibleTo(ownerId, viewerId);
     }
 
     @Override
@@ -52,7 +62,7 @@ public class UserProfileServiceImpl implements IUserProfileService {
     public UserEntity updateProfile(String userId, String signature, String gender) {
         UserEntity userEntity = getProfile(userId);
         String normalized = normalizeSignature(signature);
-        GenderVO genderVO = GenderVO.from(gender);
+        GenderEnum genderVO = GenderEnum.from(gender);
         userRepository.updateProfile(userId, normalized, genderVO == null ? null : genderVO.name());
         userEntity.setSignature(normalized);
         userEntity.setGender(genderVO);
@@ -79,7 +89,7 @@ public class UserProfileServiceImpl implements IUserProfileService {
             return new SearchPageVO<>(idPage.getTotal(), List.of());
         }
         Map<String, UserEntity> byId = userRepository.listByIds(idPage.getItems()).stream()
-                .filter(user -> user.getStatus() == UserStatusVO.NORMAL)
+                .filter(user -> user.getStatus() == UserStatusEnum.NORMAL)
                 .collect(Collectors.toMap(UserEntity::getUserId, Function.identity()));
         return new SearchPageVO<>(idPage.getTotal(), idPage.getItems().stream()
                 .map(byId::get)
@@ -104,7 +114,7 @@ public class UserProfileServiceImpl implements IUserProfileService {
         }
         String trimmed = signature.trim();
         if (trimmed.length() > SIGNATURE_MAX_LENGTH) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "签名最多 " + SIGNATURE_MAX_LENGTH + " 字");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "签名最多 " + SIGNATURE_MAX_LENGTH + " 字");
         }
         return trimmed.isEmpty() ? null : trimmed;
     }

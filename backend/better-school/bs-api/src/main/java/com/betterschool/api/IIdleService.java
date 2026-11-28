@@ -23,13 +23,13 @@ public interface IIdleService {
     Response<PageResult<ProductResponseDTO>> listProducts(String category, BigDecimal minPrice, BigDecimal maxPrice,
                                                           String sort, String cursor, int page, int pageSize);
 
-    Response<String> publishProduct(ProductPublishRequestDTO request);
+    Response<String> publishProduct(ProductPublishRequestDTO productPublishRequestDTO);
 
     /** 保存商品草稿（全部字段可缺省，不做初筛，仅本人可见） */
-    Response<String> saveProductDraft(ProductDraftSaveRequestDTO request);
+    Response<String> saveProductDraft(ProductDraftSaveRequestDTO productDraftSaveRequestDTO);
 
     /** 编辑商品草稿（仅 DRAFT；待审中不可编辑，需先撤回） */
-    Response<Void> updateProductDraft(String productId, ProductDraftSaveRequestDTO request);
+    Response<Void> updateProductDraft(String productId, ProductDraftSaveRequestDTO productDraftSaveRequestDTO);
 
     /** 提交商品草稿：完整性校验，通过即上架可见 */
     Response<Void> submitProductDraft(String productId);
@@ -38,7 +38,7 @@ public interface IIdleService {
     Response<Void> takeDownProduct(String productId);
 
     /** 上架后编辑商品（编辑语义）：变更立即生效 */
-    Response<Void> editProduct(String productId, ProductEditRequestDTO request);
+    Response<Void> editProduct(String productId, ProductEditRequestDTO productEditRequestDTO);
 
     Response<ProductResponseDTO> productDetail(String productId);
 
@@ -65,8 +65,6 @@ public interface IIdleService {
 
     /** 商品托管订单（quantity = 购买件数，1..999，可缺省默认 1） */
     Response<String> createProductOrder(String productId, Integer quantity);
-
-    Response<Void> payProductOrder(String orderId);
 
     Response<Void> markDeliveredProduct(String orderId);
 

@@ -33,7 +33,7 @@ class PostCoverFeedSummaryIntegrationTest extends PostApiTestBase {
                 Map.entry("images", List.of(ALBUM_FIRST, ALBUM_SECOND)),
                 Map.entry("cover", STANDALONE_COVER)), author);
         assertSuccess(publish, "发布带独立封面帖");
-        String postId = publish.path("data").asText();
+        String postId = publish.path("data").path("postId").asText();
 
         // 封面列存独立封面本身（不落回退值），相册不受影响
         assertThat(coverOf(postId)).as("独立封面应落独立列").isEqualTo(STANDALONE_COVER);
@@ -176,7 +176,7 @@ class PostCoverFeedSummaryIntegrationTest extends PostApiTestBase {
         }
         JsonNode response = postJson("/api/community/posts", body, author);
         assertSuccess(response, "发帖");
-        return response.path("data").asText();
+        return response.path("data").path("postId").asText();
     }
 
     private String coverOf(String postId) {

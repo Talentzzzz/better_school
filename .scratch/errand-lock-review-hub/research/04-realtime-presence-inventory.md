@@ -150,7 +150,7 @@
 ### 5.3 后端审核接口与角色门控
 - 队列与裁决（AUDITOR/ADMIN）：`bs-trigger/.../http/ModerationController.java:76-114` —— `POST /api/moderation/review`（`:76-83`，`requireAuditor()`）、`GET /api/moderation/queue`（`:85-102`，`pageSize ≤ 50`）、`GET /api/moderation/queue/{type}/{id}`（`:104-114`）。
 - 统一裁决（**仅 ADMIN**）：`bs-trigger/.../http/AdminReviewController.java:21-40` —— `POST /api/admin/reviews/decide`（`requireAdmin()`，`SecurityUtils.currentRole()` 服务端强制）。**注意：前端工作台走的是 `/api/moderation/review`，不是这个 ADMIN-only 入口。**
-- 角色定义：`bs-domain/.../user/model/valobj/UserRoleVO.java:9` `AUDITOR("内容审核员")`（另有 ADMIN）。
+- 角色定义：`bs-domain/.../user/model/valobj/UserRoleEnum.java:9` `AUDITOR("内容审核员")`（另有 ADMIN）。
 - **前端路由门控**：`front/src/router/index.ts:55` —— `/admin/review` → `meta: { requiresAuth: true, roles: ['ADMIN','AUDITOR'] }`；守卫 `:60-71` `router.beforeEach`：未登录跳 `/login`；`roles` 不含当前角色跳 `/home`（读 `auth.userInfo.role` 快照）。**服务端为权威（`SecurityUtils.currentRole()`），前端 gate 只是体验层。**
 
 ### 5.4 判断

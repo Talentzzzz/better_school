@@ -15,9 +15,9 @@
 | 旧 FQCN | 新 FQCN |
 | --- | --- |
 | `...asset.types.common.Constants` | `...marketing.types.points.Constants` |
-| `...asset.types.enums.OutboxStatus` | `...marketing.types.common.OutboxStatus` |
-| `...asset.types.enums.PointsReasonType` | `...marketing.types.points.PointsReasonType` |
-| `...asset.types.enums.ResponseCode` | `...marketing.types.common.ResponseCode` |
+| `...asset.types.enums.OutboxStatusEnum` | `...marketing.types.common.OutboxStatusEnum` |
+| `...asset.types.enums.PointsReasonTypeEnum` | `...marketing.types.points.PointsReasonTypeEnum` |
+| `...asset.types.enums.ResponseCodeEnum` | `...marketing.types.common.ResponseCodeEnum` |
 | `...asset.types.exception.AppException` | `...marketing.types.common.AppException` |
 | `...asset.api.IPointsExchangeService` | `...marketing.api.points.IPointsExchangeService` |
 | `...asset.api.IPointsService` | `...marketing.api.points.IPointsService` |
@@ -35,7 +35,7 @@
 | `...asset.domain.points.model.valobj.LotteryDrawnMessage` | `...marketing.types.common.LotteryDrawnMessage`（**跨域 wire 契约**） |
 | `...asset.domain.points.model.valobj.PointsChangedMessage` | `...marketing.domain.points.model.valobj.PointsChangedMessage` |
 | `...asset.domain.points.model.valobj.PointsDeductResultVO` | `...marketing.domain.points.model.valobj.PointsDeductResultVO` |
-| `...asset.domain.points.model.valobj.PointsTransactionDirectionVO` | `...marketing.domain.points.model.valobj.PointsTransactionDirectionVO` |
+| `...asset.domain.points.model.valobj.PointsTransactionDirectionEnum` | `...marketing.domain.points.model.valobj.PointsTransactionDirectionEnum` |
 | `...asset.domain.points.model.valobj.PointsTransactionVO` | `...marketing.domain.points.model.valobj.PointsTransactionVO` |
 | `...asset.domain.points.model.valobj.marketing.UserBasicVO` | `...marketing.domain.common.model.valobj.marketing.UserBasicVO` |
 | `...asset.domain.points.service.IPointsAccountService` | `...marketing.domain.points.service.IPointsAccountService` |

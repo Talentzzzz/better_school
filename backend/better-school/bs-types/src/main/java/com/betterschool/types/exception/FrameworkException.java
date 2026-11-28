@@ -1,6 +1,6 @@
 package com.betterschool.types.exception;
 
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import lombok.Getter;
 
 /**
@@ -13,11 +13,11 @@ public class FrameworkException extends RuntimeException {
 
     public FrameworkException(String message) {
         super(message);
-        this.code = ResponseCode.SYSTEM_ERROR.getCode();
+        this.code = ResponseCodeEnum.SYSTEM_ERROR.getCode();
     }
 
     public FrameworkException(String message, Throwable cause) {
         super(message, cause);
-        this.code = ResponseCode.SYSTEM_ERROR.getCode();
+        this.code = ResponseCodeEnum.SYSTEM_ERROR.getCode();
     }
 }

@@ -14,14 +14,14 @@ public class DirectRoomPairVO {
     private String userMax;
 
     public static DirectRoomPairVO canonicalOf(String a, String b) {
-        DirectRoomPairVO pair = new DirectRoomPairVO();
+        DirectRoomPairVO directRoomPairVO = new DirectRoomPairVO();
         if (a.compareTo(b) < 0) {
-            pair.setUserMin(a);
-            pair.setUserMax(b);
+            directRoomPairVO.setUserMin(a);
+            directRoomPairVO.setUserMax(b);
         } else {
-            pair.setUserMin(b);
-            pair.setUserMax(a);
+            directRoomPairVO.setUserMin(b);
+            directRoomPairVO.setUserMax(a);
         }
-        return pair;
+        return directRoomPairVO;
     }
 }

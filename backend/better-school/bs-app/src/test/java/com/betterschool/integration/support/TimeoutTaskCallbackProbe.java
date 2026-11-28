@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 测试递探针、生产递 {@link TimeoutActionRouter}，两边各走各的（顺带消掉了「@Primary 单例跨测试类
  * 共享 context 时桩模式漏给下一个类」那条坑的根因；{@code reset()} 仍保留，作为用例内的干净起点）。
  * <p>
- * 默认 {@link Outcome#DELEGATE}——原样委派真装配（{@link TimeoutActionRouter}），所以既有用例
+ * 默认 {@link OutcomeEnum#DELEGATE}——原样委派真装配（{@link TimeoutActionRouter}），所以既有用例
  * 的行为一字不变；只有显式摆了模式的用例才走桩。
  *
  * <p>为什么要探针而不是 Hikari 指标做并行度断言：并发上限的<b>因果链</b>是「扫描器只按
@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class TimeoutTaskCallbackProbe implements ITimeoutHandler {
 
     /** 回调处置方式 */
-    public enum Outcome {
+    public enum OutcomeEnum {
         /** 原样委派真装配（默认；真实链路的行为） */
         DELEGATE,
         /** 直接成功，不碰业务（只验扫描/结算机器时用，免造业务夹具） */
@@ -49,7 +49,7 @@ public class TimeoutTaskCallbackProbe implements ITimeoutHandler {
     private final TimeoutActionRouter router;
     private final TimeoutTaskStore timeoutTaskStore;
 
-    private volatile Outcome outcome = Outcome.DELEGATE;
+    private volatile OutcomeEnum outcome = OutcomeEnum.DELEGATE;
     private final Set<TaskKey> failingKeys = ConcurrentHashMap.newKeySet();
     private final Set<TaskKey> cancelingKeys = ConcurrentHashMap.newKeySet();
     private final List<TaskKey> invocations = new CopyOnWriteArrayList<>();
@@ -69,24 +69,24 @@ public class TimeoutTaskCallbackProbe implements ITimeoutHandler {
     }
 
     @Override
-    public void fire(TimeoutTaskEntity taskEntity) {
-        TaskKey key = TaskKey.of(taskEntity.getTaskType(), taskEntity.getBizId());
-        invocations.add(key);
+    public void fire(TimeoutTaskEntity timeoutTaskEntity) {
+        TaskKey taskKey = TaskKey.of(timeoutTaskEntity.getTaskType(), timeoutTaskEntity.getBizId());
+        invocations.add(taskKey);
         threadNames.add(Thread.currentThread().getName());
         int now = inFlight.incrementAndGet();
         maxInFlight.accumulateAndGet(now, Math::max);
         try {
             awaitBarrier();
-            if (outcome == Outcome.FAIL || failingKeys.contains(key)) {
-                throw new IllegalStateException("探针：这一项按失败回报 " + taskEntity.getTaskType() + ":" + taskEntity.getBizId());
+            if (outcome == OutcomeEnum.FAIL || failingKeys.contains(taskKey)) {
+                throw new IllegalStateException("探针：这一项按失败回报 " + timeoutTaskEntity.getTaskType() + ":" + timeoutTaskEntity.getBizId());
             }
-            if (cancelingKeys.remove(key)) {
+            if (cancelingKeys.remove(taskKey)) {
                 // 竞态用例：在「捞批」与「结算」之间的窗口里取消这一行——
                 // 结算的三条 UPDATE 都带 status IN ('WAITING','RETRYING') 守卫，不该把它翻回来
-                timeoutTaskStore.cancelActive(taskEntity.getTaskType(), taskEntity.getBizId());
+                timeoutTaskStore.cancelActive(timeoutTaskEntity.getTaskType(), timeoutTaskEntity.getBizId());
             }
-            if (outcome == Outcome.DELEGATE) {
-                router.fire(taskEntity);
+            if (outcome == OutcomeEnum.DELEGATE) {
+                router.fire(timeoutTaskEntity);
             }
         } finally {
             inFlight.decrementAndGet();
@@ -103,29 +103,29 @@ public class TimeoutTaskCallbackProbe implements ITimeoutHandler {
 
     /** 每次回调都成功（不碰业务） */
     public void stubSuccess() {
-        outcome = Outcome.SUCCEED;
+        outcome = OutcomeEnum.SUCCEED;
     }
 
     /** 每次回调都失败（进重试，第 16 次进死信） */
     public void stubFailure() {
-        outcome = Outcome.FAIL;
+        outcome = OutcomeEnum.FAIL;
     }
 
     /** 只有这些项失败，其余成功——验「逐项隔离：一条坏数据不拖垮同批」 */
     public void failOnly(String taskType, String bizId) {
-        outcome = Outcome.SUCCEED;
+        outcome = OutcomeEnum.SUCCEED;
         failingKeys.add(TaskKey.of(taskType, bizId));
     }
 
     /** 回调这一项时先把它取消掉，再回报成功——验结算的行级守卫 */
     public void cancelOnCallback(String taskType, String bizId) {
-        outcome = Outcome.SUCCEED;
+        outcome = OutcomeEnum.SUCCEED;
         cancelingKeys.add(TaskKey.of(taskType, bizId));
     }
 
     /** 回到默认（委派真装配）并清空全部观测 */
     public void reset() {
-        outcome = Outcome.DELEGATE;
+        outcome = OutcomeEnum.DELEGATE;
         failingKeys.clear();
         cancelingKeys.clear();
         invocations.clear();
@@ -148,8 +148,8 @@ public class TimeoutTaskCallbackProbe implements ITimeoutHandler {
 
     /** 某一项被回调了几次（同一行在一个 tick 里被重捞会 > 1） */
     public long invocationCountOf(String taskType, String bizId) {
-        TaskKey key = TaskKey.of(taskType, bizId);
-        return invocations.stream().filter(key::equals).count();
+        TaskKey taskKey = TaskKey.of(taskType, bizId);
+        return invocations.stream().filter(taskKey::equals).count();
     }
 
     /** 回调时刻同时在跑的项数峰值（= 扫描器的实际并发；受 timeout.scan.parallelism 约束） */

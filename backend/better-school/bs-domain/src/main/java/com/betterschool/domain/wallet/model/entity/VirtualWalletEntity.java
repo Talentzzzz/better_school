@@ -16,10 +16,10 @@ public class VirtualWalletEntity {
     private LocalDateTime createdAt;
 
     public static VirtualWalletEntity create(String userId, BigDecimal initialBalance) {
-        VirtualWalletEntity walletEntity = new VirtualWalletEntity();
-        walletEntity.userId = userId;
-        walletEntity.balance = initialBalance;
-        walletEntity.frozenAmount = BigDecimal.ZERO;
-        return walletEntity;
+        VirtualWalletEntity virtualWalletEntity = new VirtualWalletEntity();
+        virtualWalletEntity.userId = userId;
+        virtualWalletEntity.balance = initialBalance;
+        virtualWalletEntity.frozenAmount = BigDecimal.ZERO;
+        return virtualWalletEntity;
     }
 }

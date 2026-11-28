@@ -38,7 +38,7 @@ public interface IUserRoomDao {
     /** 新消息扇出时清空单个成员的隐藏位（删除的会话弹回；成员集由名册给定，逐用户执行） */
     int clearUserRoomHidden(@Param("roomId") String roomId, @Param("userId") String userId);
 
-    /** 发送扇出时刷单个成员的列表排序键（last_msg_time；预览读时现算不落副本；成员集由名册给定，逐用户执行） */
-    int updateUserRoomLastMsgTime(@Param("roomId") String roomId, @Param("userId") String userId,
-                                  @Param("lastMsgTime") LocalDateTime lastMsgTime);
+    /** 发送扇出时单个成员用户行：刷列表排序键 + 清隐藏位（一条 UPDATE，行不变式「可见 ⇒ 排序键非 NULL」；成员集由名册给定，逐用户执行） */
+    int updateUserRoomOnMessage(@Param("roomId") String roomId, @Param("userId") String userId,
+                                @Param("lastMsgTime") LocalDateTime lastMsgTime);
 }

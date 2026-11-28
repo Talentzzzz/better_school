@@ -25,7 +25,7 @@
 
 | 模块 | 落点 | 内容 |
 | --- | --- | --- |
-| `bs-infrastructure` | `infrastructure.timeout` | 组件整体（一个包）：`TimeoutConstants`（规格常量）、`TimeoutTaskEntity` / `TimeoutTaskStatus` / 各结算与死信值对象、`TimeoutTaskStore`（16 分表唯一读写口 + hint）、`TimeoutScanner`（认领 + 有界并行 + 循环拉批到空）、`TimeoutSettler`（分桶 + 退避）、`TimeoutDeadLetterAdmin`（死信管理面）、`ITimeoutHandler`（到点动作 SPI）、`ITimeoutBucketWriter`（结算写出缝，单测用）、槽位函数 `TimeoutTaskShardSlots` 与库/表维两个 hint 算法；DAO/PO 仍按惯例住 `dao/timeout` |
+| `bs-infrastructure` | `infrastructure.timeout` | 组件整体（一个包）：`TimeoutConstants`（规格常量）、`TimeoutTaskEntity` / `TimeoutTaskStatusEnum` / 各结算与死信值对象、`TimeoutTaskStore`（16 分表唯一读写口 + hint）、`TimeoutScanner`（认领 + 有界并行 + 循环拉批到空）、`TimeoutSettler`（分桶 + 退避）、`TimeoutDeadLetterAdmin`（死信管理面）、`ITimeoutHandler`（到点动作 SPI）、`ITimeoutBucketWriter`（结算写出缝，单测用）、槽位函数 `TimeoutTaskShardSlots` 与库/表维两个 hint 算法；DAO/PO 仍按惯例住 `dao/timeout` |
 | `bs-trigger` | `trigger.job` / `trigger.http.timeout` | `TimeoutTaskScanJob`（取分片参数 + 递入装配）、`TimeoutActionRouter`（taskType → 业务动作的装配点，实现 `ITimeoutHandler`）、`TimeoutTaskAdminController`（死信管理面，直调组件） |
 | `bs-api` | `api` / `api.dto` | `ITimeoutTaskAdminService` + 管理面 DTO（**不建 Dubbo 契约**——没有跨进程边） |
 | `bs-app` | `config` / `mybatis/mapper` | `ShardingSelfCheck`、`sharding.yaml`（dev）与测试侧 `sharding-test.yaml`、`TimeoutTaskMapper.xml` |

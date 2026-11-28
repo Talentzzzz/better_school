@@ -11,5 +11,5 @@ import org.apache.ibatis.annotations.Mapper;
 public interface IProductStockEventDao {
 
     /** 库存流水落表（与台账变更同事务，只插入） */
-    int insertStockEvent(ProductStockEvent event);
+    int insertStockEvent(ProductStockEvent productStockEvent);
 }

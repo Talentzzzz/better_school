@@ -48,13 +48,13 @@ public class TimeoutTaskStore implements ITimeoutBucketWriter {
      *
      * @return true = 本次注册生效（新插入或复活）；false = 在途同键幂等吸收（无副作用）
      */
-    public boolean register(TimeoutTaskEntity taskEntity) {
-        if (insertIfAbsent(taskEntity)) {
+    public boolean register(TimeoutTaskEntity timeoutTaskEntity) {
+        if (insertIfAbsent(timeoutTaskEntity)) {
             return true;
         }
         // 撞 uk_type_biz：终态行复活（重开一轮、刷新 action_time），在途行（WAITING/RETRYING）幂等不改期。
         // 裁决权在 reviveTerminal 的条件 UPDATE 上：打中 = 终态复活；没打中 = 在途 = 幂等成功（无副作用）。
-        return reviveTerminal(taskEntity);
+        return reviveTerminal(timeoutTaskEntity);
     }
 
     /**
@@ -62,9 +62,9 @@ public class TimeoutTaskStore implements ITimeoutBucketWriter {
      *
      * @return true = 新插入成功；false = 撞上 uk_type_biz（同键已有行）
      */
-    public boolean insertIfAbsent(TimeoutTaskEntity taskEntity) {
+    public boolean insertIfAbsent(TimeoutTaskEntity timeoutTaskEntity) {
         try {
-            withSlot(taskEntity.getBizId(), () -> timeoutTaskDao.insert(toPO(taskEntity)));
+            withSlot(timeoutTaskEntity.getBizId(), () -> timeoutTaskDao.insert(toPO(timeoutTaskEntity)));
             return true;
         } catch (DuplicateKeyException e) {
             return false;
@@ -73,8 +73,8 @@ public class TimeoutTaskStore implements ITimeoutBucketWriter {
 
     /** 按自然键取行；不存在返回 {@code null} */
     public TimeoutTaskEntity findByKey(String taskType, String bizId) {
-        TimeoutTask po = withSlot(bizId, () -> timeoutTaskDao.selectByKey(taskType, bizId));
-        return po == null ? null : toEntity(po);
+        TimeoutTask timeoutTask = withSlot(bizId, () -> timeoutTaskDao.selectByKey(taskType, bizId));
+        return timeoutTask == null ? null : toEntity(timeoutTask);
     }
 
     /**
@@ -83,8 +83,8 @@ public class TimeoutTaskStore implements ITimeoutBucketWriter {
      *
      * @return true = 命中并复活；false = 行不在终态（在途，幂等不改期）
      */
-    public boolean reviveTerminal(TimeoutTaskEntity taskEntity) {
-        return withSlot(taskEntity.getBizId(), () -> timeoutTaskDao.reviveTerminal(toPO(taskEntity))) > 0;
+    public boolean reviveTerminal(TimeoutTaskEntity timeoutTaskEntity) {
+        return withSlot(timeoutTaskEntity.getBizId(), () -> timeoutTaskDao.reviveTerminal(toPO(timeoutTaskEntity))) > 0;
     }
 
     /**
@@ -189,9 +189,9 @@ public class TimeoutTaskStore implements ITimeoutBucketWriter {
     }
 
     /** 给从某槽位捞出来的行盖上槽位号（不落库，供结算批量语句塞 hint） */
-    private static TimeoutTaskEntity withSlotOf(TimeoutTaskEntity taskEntity, int slot) {
-        taskEntity.setShardSlot(slot);
-        return taskEntity;
+    private static TimeoutTaskEntity withSlotOf(TimeoutTaskEntity timeoutTaskEntity, int slot) {
+        timeoutTaskEntity.setShardSlot(slot);
+        return timeoutTaskEntity;
     }
 
     /**
@@ -212,28 +212,28 @@ public class TimeoutTaskStore implements ITimeoutBucketWriter {
         }
     }
 
-    private static TimeoutTask toPO(TimeoutTaskEntity taskEntity) {
-        TimeoutTask po = new TimeoutTask();
-        po.setId(taskEntity.getId());
-        po.setTaskType(taskEntity.getTaskType());
-        po.setBizId(taskEntity.getBizId());
-        po.setDelaySeconds(taskEntity.getDelaySeconds());
-        po.setStatus(taskEntity.getStatus() == null ? null : taskEntity.getStatus().name());
-        po.setRetryCount(taskEntity.getRetryCount());
-        return po;
+    private static TimeoutTask toPO(TimeoutTaskEntity timeoutTaskEntity) {
+        TimeoutTask timeoutTask = new TimeoutTask();
+        timeoutTask.setId(timeoutTaskEntity.getId());
+        timeoutTask.setTaskType(timeoutTaskEntity.getTaskType());
+        timeoutTask.setBizId(timeoutTaskEntity.getBizId());
+        timeoutTask.setDelaySeconds(timeoutTaskEntity.getDelaySeconds());
+        timeoutTask.setStatus(timeoutTaskEntity.getStatus() == null ? null : timeoutTaskEntity.getStatus().name());
+        timeoutTask.setRetryCount(timeoutTaskEntity.getRetryCount());
+        return timeoutTask;
     }
 
-    private static TimeoutTaskEntity toEntity(TimeoutTask po) {
-        TimeoutTaskEntity taskEntity = new TimeoutTaskEntity();
-        taskEntity.setId(po.getId());
-        taskEntity.setTaskType(po.getTaskType());
-        taskEntity.setBizId(po.getBizId());
-        taskEntity.setActionTime(po.getActionTime());
-        taskEntity.setNextFireTime(po.getNextFireTime());
-        taskEntity.setStatus(po.getStatus() == null ? null : TimeoutTaskStatus.valueOf(po.getStatus()));
-        taskEntity.setRetryCount(po.getRetryCount());
-        taskEntity.setCreatedAt(po.getCreatedAt());
-        taskEntity.setUpdatedAt(po.getUpdatedAt());
-        return taskEntity;
+    private static TimeoutTaskEntity toEntity(TimeoutTask timeoutTask) {
+        TimeoutTaskEntity timeoutTaskEntity = new TimeoutTaskEntity();
+        timeoutTaskEntity.setId(timeoutTask.getId());
+        timeoutTaskEntity.setTaskType(timeoutTask.getTaskType());
+        timeoutTaskEntity.setBizId(timeoutTask.getBizId());
+        timeoutTaskEntity.setActionTime(timeoutTask.getActionTime());
+        timeoutTaskEntity.setNextFireTime(timeoutTask.getNextFireTime());
+        timeoutTaskEntity.setStatus(timeoutTask.getStatus() == null ? null : TimeoutTaskStatusEnum.valueOf(timeoutTask.getStatus()));
+        timeoutTaskEntity.setRetryCount(timeoutTask.getRetryCount());
+        timeoutTaskEntity.setCreatedAt(timeoutTask.getCreatedAt());
+        timeoutTaskEntity.setUpdatedAt(timeoutTask.getUpdatedAt());
+        return timeoutTaskEntity;
     }
 }

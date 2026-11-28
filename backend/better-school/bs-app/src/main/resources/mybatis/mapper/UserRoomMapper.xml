@@ -4,11 +4,13 @@
 
     <!-- ===== user_room（用户维度会话状态，每用户每会话一行） ===== -->
 
-    <!-- 发送扇出时在用户维度行上刷列表排序键（票 02 预览去副本：只刷 last_msg_time，预览读时现算）：
-         成员集由名册给定（恒两行），逐用户执行；未读数不落副本，由 room.last_seq 现算 -->
-    <update id="updateUserRoomLastMsgTime">
+    <!-- 发送事务内一条 UPDATE 完成用户维度行两件事：刷列表排序键（票 02 预览去副本：只刷 last_msg_time，
+         预览读时现算）+ 清隐藏位（新消息必弹回——删除的会话弹回列表顶部，微信行为）；
+         行不变式「可见 ⇒ 排序键非 NULL」。成员集由名册给定（恒两行），逐用户执行；未读数不落副本，由 room.last_seq 现算 -->
+    <update id="updateUserRoomOnMessage">
         UPDATE user_room
         SET last_msg_time = #{lastMsgTime},
+            hidden_at     = NULL,
             update_time   = NOW()
         WHERE room_id = #{roomId}
           AND user_id = #{userId}
@@ -30,12 +32,13 @@
         LIMIT #{limit} OFFSET #{offset}
     </select>
 
-    <!-- 建会话事务内与两行名册同事务写入：read_seq 从 0 起（join_seq 入群水位在名册行上） -->
+    <!-- 建会话事务内与两行名册同事务写入：read_seq 从 0 起（join_seq 入群水位在名册行上）；
+         hidden_at 建行即置 NOW()——只有发过消息，会话才出现在双方列表，首条消息经 clearUserRoomHidden 弹回 -->
     <insert id="insertUserRooms">
-        INSERT INTO user_room (room_id, user_id, read_seq, create_time, update_time)
+        INSERT INTO user_room (room_id, user_id, read_seq, hidden_at, create_time, update_time)
         VALUES
         <foreach collection="userRooms" item="u" separator=",">
-            (#{u.roomId}, #{u.userId}, 0, NOW(), NOW())
+            (#{u.roomId}, #{u.userId}, 0, NOW(), NOW(), NOW())
         </foreach>
     </insert>
 
@@ -76,11 +79,14 @@
           AND user_id = #{userId}
     </update>
 
-    <!-- 新消息扇出时清空单个成员的隐藏位（删除的会话弹回；成员集由名册给定，逐用户执行） -->
+    <!-- 新消息扇出时清空单个成员的隐藏位（删除的会话弹回；成员集由名册给定，逐用户执行）。
+         last_msg_time COALESCE 保底：凡弹回可见的行排序键必非 NULL（行不变式「可见 ⇒ 可排序」），
+         防御未来出现的「无消息解除隐藏」路径把 NULL 排序键带进列表 -->
     <update id="clearUserRoomHidden">
         UPDATE user_room
-        SET hidden_at   = NULL,
-            update_time = NOW()
+        SET hidden_at      = NULL,
+            last_msg_time  = COALESCE(last_msg_time, NOW()),
+            update_time    = NOW()
         WHERE room_id = #{roomId}
           AND user_id = #{userId}
           AND hidden_at IS NOT NULL

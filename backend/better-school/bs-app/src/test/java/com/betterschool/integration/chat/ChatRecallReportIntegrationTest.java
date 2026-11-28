@@ -1,11 +1,9 @@
 package com.betterschool.integration.chat;
 
 import com.betterschool.integration.support.PostApiTestBase;
-import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,9 +32,10 @@ public class ChatRecallReportIntegrationTest extends PostApiTestBase {
         assertThat(queryLong("SELECT COUNT(1) FROM user_room WHERE room_id = '" + roomId + "'"
                 + " AND update_time = '2000-01-01 00:00:00'")).as("撤回非最后一条不碰 user_room 行").isEqualTo(2);
 
-        // 幂等：重复撤回静默成功，不重复写 RECALL 事件
+        // 幂等：重复撤回静默成功（条件 UPDATE 落空，不产生第二次 RECALL 推送）
         assertSuccess(postJson("/api/chat/rooms/" + roomId + "/messages/1/recall", Map.of(), sessionA), "重复撤回");
-        assertThat(queryLong("SELECT COUNT(1) FROM mq_outbox WHERE destination = '" + Constants.CHAT_RECALL_TOPIC + "'")).isEqualTo(1);
+        assertThat(queryLong("SELECT COUNT(1) FROM message WHERE room_id = '" + roomId + "' AND state = 'RECALLED'"))
+                .as("重复撤回不重复生效").isEqualTo(1);
 
         // 撤回最后一条：预览读时直接呈现 [已撤回]（不经过任何预览写路径），占 seq 不回退、不动水位线（计入未读）
         assertSuccess(postJson("/api/chat/rooms/" + roomId + "/messages/2/recall", Map.of(), sessionA), "撤回最新消息");
@@ -59,11 +58,7 @@ public class ChatRecallReportIntegrationTest extends PostApiTestBase {
         assertThat(recalled.path("status").asText()).isEqualTo("RECALLED");
         assertThat(recalled.path("content").isNull()).as("撤回后 content 不出服务端").isTrue();
 
-        // RECALL 轻事件载荷只带定位（msg1 + msg2 两次撤回各一条）
-        List<String> payloads = jdbcTemplate.queryForList(
-                "SELECT payload FROM mq_outbox WHERE destination = '" + Constants.CHAT_RECALL_TOPIC + "'", String.class);
-        assertThat(payloads).hasSize(2)
-                .anySatisfy(payload -> assertThat(payload).contains("\"roomId\":\"" + roomId + "\"").contains("\"seq\":2"));
+        // RECALL 推送（轻事件只带 roomId+seq）在撤回请求内直接投递，帧语义由 WsIntegrationTest 断言
     }
 
     @Test

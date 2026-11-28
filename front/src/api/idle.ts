@@ -82,10 +82,6 @@ export function getProductOrder(orderId: number) {
   return httpGet<ProductOrder>(`/idle/orders/${orderId}`)
 }
 
-export function payProductOrder(orderId: number) {
-  return httpPost<null>(`/idle/orders/${orderId}/pay`)
-}
-
 export function markDeliveredProduct(orderId: number) {
   return httpPost<null>(`/idle/orders/${orderId}/mark-delivered`)
 }

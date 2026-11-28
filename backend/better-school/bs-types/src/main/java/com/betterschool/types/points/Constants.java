@@ -9,7 +9,7 @@ public class Constants {
     /** 本域消费 bs-lottery-drawn 的消费组：同 topic 多方订阅必须各用一组（同组会抢消息） */
     public final static String LOTTERY_DRAWN_CONSUMER_GROUP = "bs-points-lottery-drawn-group";
 
-    /** 本域 Redis key 前缀（与 raffle / rebate / inventory 各占一段，避免同实例下串味；抽奖次数与抽奖同域，共用 raffle 段） */
+    /** 本域 Redis key 前缀（与 draw / rebate / inventory 各占一段，避免同实例下串味；抽奖次数与抽奖同域，共用 draw 段） */
     public final static String POINTS_KEY_PREFIX = "bs:points:";
 
     /**

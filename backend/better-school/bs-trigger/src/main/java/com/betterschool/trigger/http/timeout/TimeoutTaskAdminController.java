@@ -13,7 +13,7 @@ import com.betterschool.infrastructure.timeout.TaskKey;
 import com.betterschool.infrastructure.timeout.TimeoutDeadLetterAdmin;
 import com.betterschool.infrastructure.timeout.TimeoutTaskEntity;
 import com.betterschool.trigger.http.security.SecurityUtils;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -82,49 +82,49 @@ public class TimeoutTaskAdminController implements ITimeoutTaskAdminService {
      */
     @Override
     @PostMapping("/dead-letters/resend")
-    public Response<DeadLetterResendResultDTO> resendDeadLetters(@RequestBody TaskKeysRequestDTO request) {
+    public Response<DeadLetterResendResultDTO> resendDeadLetters(@RequestBody TaskKeysRequestDTO taskKeysRequestDTO) {
         requireAdmin();
-        if (request == null || request.getKeys() == null || request.getKeys().isEmpty()) {
+        if (taskKeysRequestDTO == null || taskKeysRequestDTO.getKeys() == null || taskKeysRequestDTO.getKeys().isEmpty()) {
             throw illegalParam("重发入参缺 keys（单条也请放进列表）");
         }
-        List<TaskKey> keys = request.getKeys().stream().map(TimeoutTaskAdminController::toKey).toList();
-        DeadLetterResendOutcome outcome = timeoutDeadLetterAdmin.resend(keys);
+        List<TaskKey> keys = taskKeysRequestDTO.getKeys().stream().map(TimeoutTaskAdminController::toKey).toList();
+        DeadLetterResendOutcome deadLetterResendOutcome = timeoutDeadLetterAdmin.resend(keys);
 
-        DeadLetterResendResultDTO result = new DeadLetterResendResultDTO();
-        outcome.getSuccessList().forEach(key -> result.getSuccessList().add(toKeyDTO(key)));
-        outcome.getFailList().forEach(key -> result.getFailList().add(toKeyDTO(key)));
-        return Response.ok(result);
+        DeadLetterResendResultDTO deadLetterResendResultDTO = new DeadLetterResendResultDTO();
+        deadLetterResendOutcome.getSuccessList().forEach(key -> deadLetterResendResultDTO.getSuccessList().add(toKeyDTO(key)));
+        deadLetterResendOutcome.getFailList().forEach(key -> deadLetterResendResultDTO.getFailList().add(toKeyDTO(key)));
+        return Response.ok(deadLetterResendResultDTO);
     }
 
     /** 手动取消死信：FAILED → CANCELED 终态。返回 false = 该键当前不是 FAILED，无副作用。 */
     @Override
     @PostMapping("/dead-letters/cancel")
-    public Response<Boolean> cancelDeadLetter(@RequestBody TaskKeyDTO request) {
+    public Response<Boolean> cancelDeadLetter(@RequestBody TaskKeyDTO taskKeyDTO) {
         requireAdmin();
-        if (request == null) {
+        if (taskKeyDTO == null) {
             throw illegalParam("取消入参为空");
         }
         boolean canceled = timeoutDeadLetterAdmin.cancel(
-                requireText(request.getTaskType(), "taskType"), requireText(request.getBizId(), "bizId"));
+                requireText(taskKeyDTO.getTaskType(), "taskType"), requireText(taskKeyDTO.getBizId(), "bizId"));
         return Response.ok(canceled);
     }
 
     /** 管理面只对管理员开放（与 AdminReviewController 同款；未登录已被过滤链 401 挡下） */
     private static void requireAdmin() {
         if (!"ADMIN".equals(SecurityUtils.currentRole())) {
-            throw new BusinessException(ResponseCode.FORBIDDEN, "仅管理员可操作");
+            throw new BusinessException(ResponseCodeEnum.FORBIDDEN, "仅管理员可操作");
         }
     }
 
-    private static TaskKey toKey(TaskKeyDTO key) {
-        if (key == null) {
+    private static TaskKey toKey(TaskKeyDTO taskKeyDTO) {
+        if (taskKeyDTO == null) {
             throw illegalParam("重发入参含空键");
         }
-        return TaskKey.of(requireText(key.getTaskType(), "taskType"), requireText(key.getBizId(), "bizId"));
+        return TaskKey.of(requireText(taskKeyDTO.getTaskType(), "taskType"), requireText(taskKeyDTO.getBizId(), "bizId"));
     }
 
-    private static TaskKeyDTO toKeyDTO(TaskKey key) {
-        return new TaskKeyDTO(key.getTaskType(), key.getBizId());
+    private static TaskKeyDTO toKeyDTO(TaskKey taskKey) {
+        return new TaskKeyDTO(taskKey.getTaskType(), taskKey.getBizId());
     }
 
     private static String requireText(String value, String field) {
@@ -136,19 +136,19 @@ public class TimeoutTaskAdminController implements ITimeoutTaskAdminService {
 
     private static BusinessException illegalParam(String detail) {
         log.warn("[超时中心告警] 死信管理入参不合法：{}", detail);
-        return new BusinessException(ResponseCode.PARAM_ERROR, detail);
+        return new BusinessException(ResponseCodeEnum.PARAM_ERROR, detail);
     }
 
     /** 实体 → 只读 DTO（死信的 status 恒为 FAILED，不占一列） */
-    private static DeadLetterTaskDTO toDTO(TimeoutTaskEntity taskEntity) {
-        DeadLetterTaskDTO dto = new DeadLetterTaskDTO();
-        dto.setTaskType(taskEntity.getTaskType());
-        dto.setBizId(taskEntity.getBizId());
-        dto.setActionTime(taskEntity.getActionTime());
-        dto.setNextFireTime(taskEntity.getNextFireTime());
-        dto.setRetryCount(taskEntity.getRetryCount());
-        dto.setCreatedAt(taskEntity.getCreatedAt());
-        dto.setUpdatedAt(taskEntity.getUpdatedAt());
-        return dto;
+    private static DeadLetterTaskDTO toDTO(TimeoutTaskEntity timeoutTaskEntity) {
+        DeadLetterTaskDTO deadLetterTaskDTO = new DeadLetterTaskDTO();
+        deadLetterTaskDTO.setTaskType(timeoutTaskEntity.getTaskType());
+        deadLetterTaskDTO.setBizId(timeoutTaskEntity.getBizId());
+        deadLetterTaskDTO.setActionTime(timeoutTaskEntity.getActionTime());
+        deadLetterTaskDTO.setNextFireTime(timeoutTaskEntity.getNextFireTime());
+        deadLetterTaskDTO.setRetryCount(timeoutTaskEntity.getRetryCount());
+        deadLetterTaskDTO.setCreatedAt(timeoutTaskEntity.getCreatedAt());
+        deadLetterTaskDTO.setUpdatedAt(timeoutTaskEntity.getUpdatedAt());
+        return deadLetterTaskDTO;
     }
 }

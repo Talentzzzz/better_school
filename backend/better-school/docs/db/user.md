@@ -1,12 +1,14 @@
 # 用户表（账号 / 钱包 / 信用分）
 
-> 业务：账号登录 + 公开资料 + 隐私开关，以及以用户为主体的虚拟钱包与信用账户；归属模块：user（`virtual_wallet` / `wallet_detail` 归 wallet 域、`user_credit` / `user_credit_detail` 归 credit 域，各表均只以用户为键，随本文档记）
+> 业务：账号登录 + 公开资料 + 隐私开关，以及以用户为主体的虚拟钱包、支付单与信用账户；归属模块：user（`virtual_wallet` / `wallet_detail` / `payment_order` / `wallet_pay_task` 归 wallet 域、`user_credit` / `user_credit_detail` 归 credit 域，各表均只以用户为键，随本文档记）
 
 |表名|说明|
 |----|----|
 |bs_user|用户主表（`user` 是 MySQL 保留字，故加 `bs_` 前缀）|
 |virtual_wallet|虚拟钱包（一人一行：余额 + 托管冻结）|
 |wallet_detail|钱包流水（资金事实源，uk_order_type 幂等）|
+|payment_order|支付单（模拟微信支付的统一下单产物：一单一支付单，`pay_no` 对外支付凭据）|
+|wallet_pay_task|支付回调任务（域内最终一致 outbox，不走 MQ；与支付单 PAID / 冻结同事务落行）|
 |user_credit|信用账户（分数 + 封禁状态，credit 域独占写；行懒播种，无行 = 默认 100/NORMAL）|
 |user_credit_detail|信用分流水（信用分事实源，uk_user_reason_ref 幂等）|
 
@@ -40,7 +42,7 @@
 
 ## 关联
 - 1:1 → virtual_wallet / user_credit（user_id）
-- 1:N → wallet_detail / user_credit_detail（user_id）
+- 1:N → wallet_detail / payment_order / user_credit_detail（user_id）
 - 被 post.user_id / post_comment.user_id / product.user_id / product_order.buyer_id|seller_id / notification|timeline.user_id 引用（一律存 `user_id`）
 
 ## 谁在写 / 注意
@@ -88,6 +90,51 @@
 - 幂等语义：同一 (订单, type, 轮次, 人) 只允许一条流水；并发/重试撞键 → 影响 0 行 → 该次资金动作整体跳过
 - 只插不改（无 UPDATE / DELETE 语句）；分页读按 `user_id` + `id DESC`
 
+# payment_order
+
+> 业务：支付单（钱包域扮演「微信支付」，模拟统一下单 / 支付 / 关闭）；归属模块：wallet
+
+|字段|类型|约束|说明|
+|----|----|----|----|
+|id|bigint|PK, AUTO_INCREMENT|内部物理主键|
+|pay_no|varchar(36)|UNIQUE(uk_pay_no), NOT NULL|支付单号（业务 ID，UUID 字符串，应用层发号）；对外支付凭据与收银台路由键|
+|biz_order_id|varchar(36)|UNIQUE(uk_biz_order_id), NOT NULL|商户订单业务 ID（`product_order_id`）；一单一支付单|
+|user_id|varchar(36)|NOT NULL, INDEX(idx_user)|付款人用户 ID|
+|amount|decimal(10,2)|NOT NULL|支付金额（下单时商户订单总额快照）|
+|subject|varchar(100)|NOT NULL|收银台展示标题（商品标题 + 件数快照，超长截断）|
+|state|varchar(20)|NOT NULL, DEFAULT 'WAIT_PAY'|WAIT_PAY 待支付 / PAID 已支付 / CLOSED 已关闭|
+|pay_time|datetime|NULL|支付完成时间|
+|create_time|datetime|NOT NULL|创建时间|
+|update_time|datetime|NOT NULL|更新时间|
+
+## 索引 / 注意
+- `uk_pay_no (pay_no)`：收银台按支付单号寻址；`uk_biz_order_id (biz_order_id)`：预下单幂等锚点（同一商户订单只允许一张支付单）
+- **预下单（统一下单）**：`INSERT IGNORE` 发号落行；撞 `uk_biz_order_id` 说明已下过单，回读既有行返回同一 `pay_no`，不重复发号。预下单失败不拖垮商户下单——订单详情 / 支付前按 `biz_order_id` 幂等懒创建
+- **支付事务**（`WalletRepository.pay`）：支付单 WAIT_PAY→PAID（条件 UPDATE 先行，并发双支付只有一个抢到）→ PRODUCT_FROZEN 流水（`uk_order_type` 幂等）→ 余额条件冻结 → `wallet_pay_task` 回调任务行；任一步失败整体回滚，支付单留 WAIT_PAY
+- 已 PAID 的重复支付幂等返回（不再动资金）；CLOSED 支付直接拒绝
+- **关闭**：`closePaymentOrder` 只把 WAIT_PAY→CLOSED（订单取消 / 超时），已支付是空操作——已支付订单的退款继续走原 PRODUCT_UNFROZEN 解冻链路，本表没有 REFUNDED 状态
+
+# wallet_pay_task
+
+> 业务：支付回调任务（支付成功后通知商户，域内最终一致 outbox，ADR-0017 同形）；归属模块：wallet
+
+|字段|类型|约束|说明|
+|----|----|----|----|
+|id|bigint|PK, AUTO_INCREMENT|物理自增，扫描抢占 / 死信按 id 条件更新|
+|order_id|varchar(36)|UNIQUE(uk_order_id), NOT NULL|商品订单业务 ID（插行幂等锚点：同一订单只落一条回调任务）|
+|state|tinyint|NOT NULL, DEFAULT 0|0 待回调 / 1 已完成 / 2 死信（重试耗尽，人工重置回 0 可自愈）|
+|retry_count|int|NOT NULL, DEFAULT 0|重试次数（扫描抢占时递增）|
+|next_retry_at|datetime|NULL, INDEX(idx_state_next_retry)|下次重试时间（1/2/4/8/16 分钟退避）；NULL = 立即可扫|
+|finish_time|datetime|NULL|回调收敛完成时间|
+|create_time|datetime|NOT NULL|创建时间|
+|update_time|datetime|NOT NULL|更新时间|
+
+## 注意
+- **任务行与支付同事务写入**：`WalletRepository.pay` 在一个钱包事务里落支付单 WAIT_PAY→PAID + PRODUCT_FROZEN 流水 + 余额条件扣减 + 本行 PENDING，因此「行在 ⇒ 支付单已 PAID 且钱已冻，行不在 ⇒ 支付与冻结都回滚了」；表归钱包域，支付只写自己的表，不跨仓储（ADR-0016 边界不破）
+- 事务提交后由 `WalletPaymentServiceImpl` 调进程内回调端口 `IPaymentNotifyPort`（商户侧实现 = idle 域 `PaymentNotifyHandler`）翻转订单：回调成功 / 永久拒绝（订单已取消、不存在、付款人不符）→ 任务置 DONE；回调抛异常 → 留 PENDING，由 `productPayTaskScan`（cron 0/30）退避重放，1/2/4/8/16 分钟退避、5 次耗尽置死信
+- 重放前校验任务对应支付单必为 PAID，缺失 / 状态漂移属于数据不一致，直接置死信人工核查
+- 支付与取消竞态：回调返回 false，任务置 DONE，已冻结的悬置款仍由 `productFundOrphanScan` 退买家
+
 # user_credit
 
 > 业务：信用账户（分数 + 封禁状态）；归属模块：credit（**credit 域独占写**，user/search 域只读）
@@ -114,7 +161,7 @@
 |id|bigint|PK, AUTO_INCREMENT|内部物理主键|
 |user_id|varchar(36)|NOT NULL, INDEX(idx_user)|变动用户|
 |change|int|NOT NULL|信用分变化量（可为负；列名是 SQL 关键字 `change`，SQL 里必须反引号）|
-|reason_type|varchar(30)|NOT NULL|原因类型，取 `CreditReasonTypeVO` 枚举名：TRADE_COMPLAINT(-20，预留未接入) / ADMIN_ADJUST / ADMIN_BAN / ADMIN_UNBAN(0)|
+|reason_type|varchar(30)|NOT NULL|原因类型，取 `CreditReasonTypeEnum` 枚举名：TRADE_COMPLAINT(-20，预留未接入) / ADMIN_ADJUST / ADMIN_BAN / ADMIN_UNBAN(0)|
 |ref_id|varchar(36)|NULL|关联业务 ID（内容类=被罚内容 UUID；ADMIN 类为 NULL）|
 |create_time|datetime|NOT NULL|创建时间（也是「每日上限」统计的时间窗依据）|
 |update_time|datetime|NOT NULL|更新时间|

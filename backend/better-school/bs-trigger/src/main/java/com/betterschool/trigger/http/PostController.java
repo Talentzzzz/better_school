@@ -5,21 +5,19 @@ import com.betterschool.api.dto.PostCommentRequestDTO;
 import com.betterschool.api.dto.PostCommentResponseDTO;
 import com.betterschool.api.dto.PostDraftSaveRequestDTO;
 import com.betterschool.api.dto.PostPublishRequestDTO;
+import com.betterschool.api.dto.PostPublishResponseDTO;
 import com.betterschool.api.dto.PostResponseDTO;
 import com.betterschool.api.dto.PostSummaryResponseDTO;
 import com.betterschool.api.dto.UserCommentResponseDTO;
 import com.betterschool.api.response.PageResult;
 import com.betterschool.api.response.Response;
-import com.betterschool.usecase.post.CommentLikeCase;
-import com.betterschool.usecase.post.CommentPublishCase;
-import com.betterschool.usecase.post.PostLikeCase;
-import com.betterschool.usecase.post.PostPublishCase;
+import com.betterschool.usecase.post.IPostCase;
 import com.betterschool.domain.post.model.entity.PostCommentEntity;
 import com.betterschool.domain.post.service.post.IPostService;
 import com.betterschool.domain.post.model.entity.PostEntity;
 import com.betterschool.domain.post.model.valobj.FeedPageVO;
-import com.betterschool.domain.post.model.valobj.PostStatusVO;
-import com.betterschool.domain.post.service.post.IPostService;
+import com.betterschool.domain.rebate.model.valobj.RebateClaimItemVO;
+import com.betterschool.domain.rebate.model.valobj.RebateClaimResultVO;
 import com.betterschool.trigger.http.security.SecurityUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -35,7 +33,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -51,10 +48,7 @@ public class PostController {
     private static final int FEED_SUMMARY_MAX_LENGTH = 50;
 
     private final IPostService postService;
-    private final PostPublishCase postPublishCase;
-    private final CommentPublishCase commentPublishCase;
-    private final PostLikeCase postLikeCase;
-    private final CommentLikeCase commentLikeCase;
+    private final IPostCase postCase;
 
     @GetMapping("/posts")
     public Response<PageResult<PostSummaryResponseDTO>> listPosts(
@@ -66,9 +60,9 @@ public class PostController {
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         // 索引 + 游标分页（票 04）：total 降口径 -1 不再精确 COUNT，续页靠 cursor；
         // 索引查询失败降级直查时 indexPath=false，total 仍精确
-        FeedPageVO feedPage = postService.listPosts(sort, cursor, page, pageSize);
-        List<PostEntity> postList = feedPage.getPosts();
-        long total = feedPage.isIndexPath() ? -1 : postService.countPosts();
+        FeedPageVO feedPageVO = postService.listPosts(sort, cursor, page, pageSize);
+        List<PostEntity> postList = feedPageVO.getPosts();
+        long total = feedPageVO.isIndexPath() ? -1 : postService.countPosts();
         String currentUserId = SecurityUtils.currentUserId();
         Set<String> likedIds = likedIdsOf(postList, currentUserId);
         List<PostSummaryResponseDTO> dtoList = postList.stream()
@@ -76,7 +70,7 @@ public class PostController {
         // 已读灰显（feed-index-uv 票 05）：页内 post_id 批量回查浏览明细，登录用户带 viewed 标记（未登录 false）
         Set<String> viewedIds = viewedIdsOf(postList, currentUserId);
         dtoList.forEach(dto -> dto.setViewed(viewedIds.contains(dto.getPostId())));
-        return Response.ok(new PageResult<>(page, pageSize, total, dtoList, feedPage.getNextCursor()));
+        return Response.ok(new PageResult<>(page, pageSize, total, dtoList, feedPageVO.getNextCursor()));
     }
 
     @GetMapping("/posts/mine")
@@ -165,8 +159,8 @@ public class PostController {
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         String viewerId = SecurityUtils.currentUserId();
-        long total = postService.countUserLikedPosts(userId, viewerId);
-        List<PostEntity> postList = postService.listUserLikedPosts(userId, viewerId, page, pageSize);
+        long total = postCase.countUserLikedPosts(userId, viewerId);
+        List<PostEntity> postList = postCase.listUserLikedPosts(userId, viewerId, page, pageSize);
         List<PostSummaryResponseDTO> dtoList = postList.stream()
                 .map(post -> toSummaryDTO(post, false, true, ContentMode.SUMMARY)).toList();
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
@@ -180,38 +174,38 @@ public class PostController {
         page = Math.max(page, 1);
         pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
         String viewerId = SecurityUtils.currentUserId();
-        long total = postService.countCommentsByUser(userId, viewerId);
-        List<PostCommentEntity> commentList = postService.listCommentsByUser(userId, viewerId, page, pageSize);
+        long total = postCase.countCommentsByUser(userId, viewerId);
+        List<PostCommentEntity> commentList = postCase.listCommentsByUser(userId, viewerId, page, pageSize);
         List<UserCommentResponseDTO> dtoList = commentList.stream().map(this::toUserCommentDTO).toList();
         return Response.ok(new PageResult<>(page, pageSize, total, dtoList));
     }
 
     @PostMapping("/posts")
-    public Response<String> publishPost(@Valid @RequestBody PostPublishRequestDTO request) {
-        String postId = postPublishCase.publishPost(SecurityUtils.currentUserId(),
-                request.getTitle(), request.getContent(), request.getImages(), request.getCover());
-        return Response.ok(postId);
+    public Response<PostPublishResponseDTO> publishPost(@Valid @RequestBody PostPublishRequestDTO postPublishRequestDTO) {
+        RebateClaimResultVO rebateClaimResultVO = postCase.publishPost(SecurityUtils.currentUserId(),
+                postPublishRequestDTO.getTitle(), postPublishRequestDTO.getContent(), postPublishRequestDTO.getImages(), postPublishRequestDTO.getCover());
+        return Response.ok(toPostPublishResponse(rebateClaimResultVO));
     }
 
     @PostMapping("/posts/draft")
-    public Response<String> savePostDraft(@Valid @RequestBody PostDraftSaveRequestDTO request) {
-        String postId = postPublishCase.savePostDraft(SecurityUtils.currentUserId(),
-                request.getTitle(), request.getContent(), request.getImages(), request.getCover());
+    public Response<String> savePostDraft(@Valid @RequestBody PostDraftSaveRequestDTO postDraftSaveRequestDTO) {
+        String postId = postCase.savePostDraft(SecurityUtils.currentUserId(),
+                postDraftSaveRequestDTO.getTitle(), postDraftSaveRequestDTO.getContent(), postDraftSaveRequestDTO.getImages(), postDraftSaveRequestDTO.getCover());
         return Response.ok(postId);
     }
 
     @PutMapping("/posts/{postId}/draft")
     public Response<Void> updatePostDraft(@PathVariable String postId,
-                                          @Valid @RequestBody PostDraftSaveRequestDTO request) {
-        postPublishCase.updatePostDraft(SecurityUtils.currentUserId(), postId,
-                request.getTitle(), request.getContent(), request.getImages(), request.getCover());
+                                          @Valid @RequestBody PostDraftSaveRequestDTO postDraftSaveRequestDTO) {
+        postCase.updatePostDraft(SecurityUtils.currentUserId(), postId,
+                postDraftSaveRequestDTO.getTitle(), postDraftSaveRequestDTO.getContent(), postDraftSaveRequestDTO.getImages(), postDraftSaveRequestDTO.getCover());
         return Response.ok(null);
     }
 
     @PostMapping("/posts/{postId}/submit")
-    public Response<Void> submitPostDraft(@PathVariable String postId) {
-        postPublishCase.submitPostDraft(SecurityUtils.currentUserId(), postId);
-        return Response.ok(null);
+    public Response<PostPublishResponseDTO> submitPostDraft(@PathVariable String postId) {
+        RebateClaimResultVO rebateClaimResultVO = postCase.submitPostDraft(SecurityUtils.currentUserId(), postId);
+        return Response.ok(toPostPublishResponse(rebateClaimResultVO));
     }
 
     @GetMapping("/posts/{postId}")
@@ -223,13 +217,13 @@ public class PostController {
 
     @DeleteMapping("/posts/{postId}")
     public Response<Void> deletePost(@PathVariable String postId) {
-        postService.deletePost(postId, SecurityUtils.currentUserId());
+        postService.deletePostEntity(postId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @PostMapping("/posts/{postId}/like")
     public Response<Void> likePost(@PathVariable String postId) {
-        postLikeCase.like(postId, SecurityUtils.currentUserId());
+        postCase.likePost(postId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
@@ -241,13 +235,13 @@ public class PostController {
 
     @PostMapping("/comments/{commentId}/like")
     public Response<Void> likeComment(@PathVariable String commentId) {
-        commentLikeCase.like(commentId, SecurityUtils.currentUserId());
+        postCase.likeComment(commentId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
     @DeleteMapping("/comments/{commentId}/like")
     public Response<Void> unlikeComment(@PathVariable String commentId) {
-        commentLikeCase.unlike(commentId, SecurityUtils.currentUserId());
+        postCase.unlikeComment(commentId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
@@ -271,9 +265,9 @@ public class PostController {
     }
 
     @PostMapping("/posts/{postId}/comments")
-    public Response<PostCommentResponseDTO> addComment(@PathVariable String postId, @Valid @RequestBody PostCommentRequestDTO request) {
-        PostCommentEntity commentEntity = commentPublishCase.addComment(postId, SecurityUtils.currentUserId(), request.getContent());
-        return Response.ok(toCommentResponseDTO(commentEntity));
+    public Response<PostCommentResponseDTO> publishRootComment(@PathVariable String postId, @Valid @RequestBody PostCommentRequestDTO postCommentRequestDTO) {
+        PostCommentEntity postCommentEntity = postCase.publishRootComment(postId, SecurityUtils.currentUserId(), postCommentRequestDTO.getContent());
+        return Response.ok(toCommentResponseDTO(postCommentEntity));
     }
 
     @GetMapping("/comments/{commentId}/replies")
@@ -295,37 +289,56 @@ public class PostController {
     }
 
     @PostMapping("/comments/{commentId}/replies")
-    public Response<CommentReplyResponseDTO> addReply(@PathVariable String commentId, @Valid @RequestBody PostCommentRequestDTO request) {
-        PostCommentEntity replyEntity = commentPublishCase.addReply(commentId, SecurityUtils.currentUserId(), request.getContent());
-        return Response.ok(toReplyResponseDTO(replyEntity));
+    public Response<CommentReplyResponseDTO> publishReplyComment(@PathVariable String commentId, @Valid @RequestBody PostCommentRequestDTO postCommentRequestDTO) {
+        PostCommentEntity postCommentEntity = postCase.publishReplyComment(commentId, SecurityUtils.currentUserId(), postCommentRequestDTO.getContent());
+        return Response.ok(toReplyResponseDTO(postCommentEntity));
     }
 
     @DeleteMapping("/comments/{commentId}")
     public Response<Void> deleteComment(@PathVariable String commentId) {
-        postService.deleteComment(commentId, SecurityUtils.currentUserId());
+        postService.deleteCommentEntity(commentId, SecurityUtils.currentUserId());
         return Response.ok(null);
     }
 
+    /**
+     * 发帖 / 草稿提交响应：postId + 本次返利领取结果（DENIED / NO_REBATE / CLAIM_ERROR 项列表为空，金额恒 0）。
+     * {@code apiState()} 把内部的 GRANTED 折叠成 CLAIMED，响应取值恒为四个之一。
+     * <p>
+     * 响应 DTO 仍是老契约的两个固定字段，这里把按类型的项列表摊平成字段；新增返利类型时接口契约需同步扩展。
+     */
+    private PostPublishResponseDTO toPostPublishResponse(RebateClaimResultVO rebateClaimResultVO) {
+        int pointsRebate = 0;
+        int drawCountRebate = 0;
+        for (RebateClaimItemVO rebateClaimItemVO : rebateClaimResultVO.getRebateClaimItemVOList()) {
+            switch (rebateClaimItemVO.getRebateType()) {
+                case POINTS -> pointsRebate = rebateClaimItemVO.getRebateValue();
+                case DRAW_COUNT -> drawCountRebate = rebateClaimItemVO.getRebateValue();
+            }
+        }
+        return new PostPublishResponseDTO(rebateClaimResultVO.getRefId(),
+                rebateClaimResultVO.getRebateClaimState().apiState().name(), pointsRebate, drawCountRebate);
+    }
+
     private PostResponseDTO toPostResponseDTO(PostEntity postEntity, String currentUserId) {
-        PostResponseDTO dto = new PostResponseDTO();
-        dto.setPostId(postEntity.getPostId());
-        dto.setUserId(postEntity.getUserId());
-        dto.setNickname(postEntity.getAuthorNickname());
-        dto.setAvatar(postEntity.getAuthorAvatar());
-        dto.setTitle(postEntity.getTitle());
-        dto.setContent(postEntity.getContent());
-        dto.setImages(postEntity.getImages());
-        dto.setCover(postEntity.displayCover());
+        PostResponseDTO postResponseDTO = new PostResponseDTO();
+        postResponseDTO.setPostId(postEntity.getPostId());
+        postResponseDTO.setUserId(postEntity.getUserId());
+        postResponseDTO.setNickname(postEntity.getAuthorNickname());
+        postResponseDTO.setAvatar(postEntity.getAuthorAvatar());
+        postResponseDTO.setTitle(postEntity.getTitle());
+        postResponseDTO.setContent(postEntity.getContent());
+        postResponseDTO.setImages(postEntity.getImages());
+        postResponseDTO.setCover(postEntity.displayCover());
         // 原始独立封面（未回退相册）：草稿编辑回填用，避免展示口径被固化为独立封面
-        dto.setIndependentCover(postEntity.getCover());
-        dto.setStatus(postEntity.getStatus().name());
-        dto.setLikeCount(postEntity.getLikeCount());
-        dto.setCommentCount(postEntity.getCommentCount());
+        postResponseDTO.setIndependentCover(postEntity.getCover());
+        postResponseDTO.setStatus(postEntity.getStatus().name());
+        postResponseDTO.setLikeCount(postEntity.getLikeCount());
+        postResponseDTO.setCommentCount(postEntity.getCommentCount());
         // 浏览量仅作者本人可见
-        dto.setViewCount(postEntity.isOwner(currentUserId) ? postEntity.getViewCount() : null);
-        dto.setLiked(postEntity.isLiked());
-        dto.setCreatedAt(postEntity.getCreatedAt());
-        return dto;
+        postResponseDTO.setViewCount(postEntity.isOwner(currentUserId) ? postEntity.getViewCount() : null);
+        postResponseDTO.setLiked(postEntity.isLiked());
+        postResponseDTO.setCreatedAt(postEntity.getCreatedAt());
+        return postResponseDTO;
     }
 
     /** 当前用户已点赞的帖子 id 集合（未登录为空集；批量查询避免 N+1） */
@@ -353,25 +366,25 @@ public class PostController {
      */
     private PostSummaryResponseDTO toSummaryDTO(PostEntity postEntity, boolean self, boolean liked,
                                                 ContentMode contentMode) {
-        PostSummaryResponseDTO dto = new PostSummaryResponseDTO();
-        dto.setPostId(postEntity.getPostId());
-        dto.setTitle(postEntity.getTitle());
-        dto.setCover(postEntity.displayCover());
-        dto.setUserId(postEntity.getUserId());
-        dto.setNickname(postEntity.getAuthorNickname());
-        dto.setAvatar(postEntity.getAuthorAvatar());
+        PostSummaryResponseDTO postSummaryResponseDTO = new PostSummaryResponseDTO();
+        postSummaryResponseDTO.setPostId(postEntity.getPostId());
+        postSummaryResponseDTO.setTitle(postEntity.getTitle());
+        postSummaryResponseDTO.setCover(postEntity.displayCover());
+        postSummaryResponseDTO.setUserId(postEntity.getUserId());
+        postSummaryResponseDTO.setNickname(postEntity.getAuthorNickname());
+        postSummaryResponseDTO.setAvatar(postEntity.getAuthorAvatar());
         if (self) {
-            dto.setViewCount(postEntity.getViewCount());
-            dto.setStatus(postEntity.getStatus().name());
+            postSummaryResponseDTO.setViewCount(postEntity.getViewCount());
+            postSummaryResponseDTO.setStatus(postEntity.getStatus().name());
         }
-        dto.setLikeCount(postEntity.getLikeCount());
-        dto.setCreatedAt(postEntity.getCreatedAt());
-        dto.setLiked(liked);
+        postSummaryResponseDTO.setLikeCount(postEntity.getLikeCount());
+        postSummaryResponseDTO.setCreatedAt(postEntity.getCreatedAt());
+        postSummaryResponseDTO.setLiked(liked);
         switch (contentMode) {
-            case FULL -> dto.setContent(postEntity.getContent());
-            case SUMMARY -> dto.setContent(summarize(postEntity.getContent()));
+            case FULL -> postSummaryResponseDTO.setContent(postEntity.getContent());
+            case SUMMARY -> postSummaryResponseDTO.setContent(summarize(postEntity.getContent()));
         }
-        return dto;
+        return postSummaryResponseDTO;
     }
 
     /** feed 摘要：正文截断至约前 50 字（null 安全） */
@@ -392,53 +405,53 @@ public class PostController {
         SUMMARY
     }
 
-    private PostCommentResponseDTO toCommentResponseDTO(PostCommentEntity commentEntity, boolean liked) {
-        PostCommentResponseDTO dto = new PostCommentResponseDTO();
-        dto.setCommentId(commentEntity.getCommentId());
-        dto.setPostId(commentEntity.getPostId());
-        dto.setUserId(commentEntity.getUserId());
-        dto.setNickname(commentEntity.getAuthorNickname());
-        dto.setContent(commentEntity.getContent());
-        dto.setLikeCount(commentEntity.getLikeCount());
-        dto.setReplyCount(commentEntity.getReplyCount());
-        dto.setLiked(liked);
-        dto.setCreatedAt(commentEntity.getCreatedAt());
-        return dto;
+    private PostCommentResponseDTO toCommentResponseDTO(PostCommentEntity postCommentEntity, boolean liked) {
+        PostCommentResponseDTO postCommentResponseDTO = new PostCommentResponseDTO();
+        postCommentResponseDTO.setCommentId(postCommentEntity.getCommentId());
+        postCommentResponseDTO.setPostId(postCommentEntity.getPostId());
+        postCommentResponseDTO.setUserId(postCommentEntity.getUserId());
+        postCommentResponseDTO.setNickname(postCommentEntity.getAuthorNickname());
+        postCommentResponseDTO.setContent(postCommentEntity.getContent());
+        postCommentResponseDTO.setLikeCount(postCommentEntity.getLikeCount());
+        postCommentResponseDTO.setReplyCount(postCommentEntity.getReplyCount());
+        postCommentResponseDTO.setLiked(liked);
+        postCommentResponseDTO.setCreatedAt(postCommentEntity.getCreatedAt());
+        return postCommentResponseDTO;
     }
 
-    private PostCommentResponseDTO toCommentResponseDTO(PostCommentEntity commentEntity) {
-        return toCommentResponseDTO(commentEntity, false);
+    private PostCommentResponseDTO toCommentResponseDTO(PostCommentEntity postCommentEntity) {
+        return toCommentResponseDTO(postCommentEntity, false);
     }
 
-    private UserCommentResponseDTO toUserCommentDTO(PostCommentEntity commentEntity) {
-        UserCommentResponseDTO dto = new UserCommentResponseDTO();
-        dto.setCommentId(commentEntity.getCommentId());
-        dto.setContent(commentEntity.getContent());
-        dto.setLikeCount(commentEntity.getLikeCount());
-        dto.setCreatedAt(commentEntity.getCreatedAt());
-        dto.setPostId(commentEntity.getPostId());
-        dto.setPostTitle(commentEntity.getPostTitle());
-        dto.setPostCover(commentEntity.getPostCover());
-        return dto;
+    private UserCommentResponseDTO toUserCommentDTO(PostCommentEntity postCommentEntity) {
+        UserCommentResponseDTO userCommentResponseDTO = new UserCommentResponseDTO();
+        userCommentResponseDTO.setCommentId(postCommentEntity.getCommentId());
+        userCommentResponseDTO.setContent(postCommentEntity.getContent());
+        userCommentResponseDTO.setLikeCount(postCommentEntity.getLikeCount());
+        userCommentResponseDTO.setCreatedAt(postCommentEntity.getCreatedAt());
+        userCommentResponseDTO.setPostId(postCommentEntity.getPostId());
+        userCommentResponseDTO.setPostTitle(postCommentEntity.getPostTitle());
+        userCommentResponseDTO.setPostCover(postCommentEntity.getPostCover());
+        return userCommentResponseDTO;
     }
 
-    private CommentReplyResponseDTO toReplyResponseDTO(PostCommentEntity replyEntity, boolean liked) {
-        CommentReplyResponseDTO dto = new CommentReplyResponseDTO();
-        dto.setCommentId(replyEntity.getCommentId());
-        dto.setPostId(replyEntity.getPostId());
-        dto.setParentId(replyEntity.getParentId());
-        dto.setUserId(replyEntity.getUserId());
-        dto.setNickname(replyEntity.getAuthorNickname());
-        dto.setContent(replyEntity.getContent());
-        dto.setLikeCount(replyEntity.getLikeCount());
-        dto.setLiked(liked);
-        dto.setCreatedAt(replyEntity.getCreatedAt());
-        dto.setReplyToUserId(replyEntity.getReplyToUserId());
-        dto.setReplyToNickname(replyEntity.getReplyToNickname());
-        return dto;
+    private CommentReplyResponseDTO toReplyResponseDTO(PostCommentEntity postCommentEntity, boolean liked) {
+        CommentReplyResponseDTO commentReplyResponseDTO = new CommentReplyResponseDTO();
+        commentReplyResponseDTO.setCommentId(postCommentEntity.getCommentId());
+        commentReplyResponseDTO.setPostId(postCommentEntity.getPostId());
+        commentReplyResponseDTO.setParentId(postCommentEntity.getParentId());
+        commentReplyResponseDTO.setUserId(postCommentEntity.getUserId());
+        commentReplyResponseDTO.setNickname(postCommentEntity.getAuthorNickname());
+        commentReplyResponseDTO.setContent(postCommentEntity.getContent());
+        commentReplyResponseDTO.setLikeCount(postCommentEntity.getLikeCount());
+        commentReplyResponseDTO.setLiked(liked);
+        commentReplyResponseDTO.setCreatedAt(postCommentEntity.getCreatedAt());
+        commentReplyResponseDTO.setReplyToUserId(postCommentEntity.getReplyToUserId());
+        commentReplyResponseDTO.setReplyToNickname(postCommentEntity.getReplyToNickname());
+        return commentReplyResponseDTO;
     }
 
-    private CommentReplyResponseDTO toReplyResponseDTO(PostCommentEntity replyEntity) {
-        return toReplyResponseDTO(replyEntity, false);
+    private CommentReplyResponseDTO toReplyResponseDTO(PostCommentEntity postCommentEntity) {
+        return toReplyResponseDTO(postCommentEntity, false);
     }
 }

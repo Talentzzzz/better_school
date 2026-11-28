@@ -4,7 +4,7 @@ import com.betterschool.api.IFileService;
 import com.betterschool.api.dto.FileUploadResponseDTO;
 import com.betterschool.api.response.Response;
 import com.betterschool.infrastructure.file.FileStorage;
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import com.betterschool.types.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
@@ -35,16 +35,16 @@ public class FileController implements IFileService {
     @Override
     public Response<FileUploadResponseDTO> uploadImage(byte[] content, String fileName, String contentType) {
         String url = fileStorage.uploadImage(content, fileName, contentType);
-        FileUploadResponseDTO dto = new FileUploadResponseDTO();
-        dto.setUrl(url);
-        return Response.ok(dto);
+        FileUploadResponseDTO fileUploadResponseDTO = new FileUploadResponseDTO();
+        fileUploadResponseDTO.setUrl(url);
+        return Response.ok(fileUploadResponseDTO);
     }
 
     private byte[] getBytes(MultipartFile file) {
         try {
             return file.getBytes();
         } catch (IOException e) {
-            throw new BusinessException(ResponseCode.PARAM_ERROR, "文件读取失败，请重试");
+            throw new BusinessException(ResponseCodeEnum.PARAM_ERROR, "文件读取失败，请重试");
         }
     }
 }

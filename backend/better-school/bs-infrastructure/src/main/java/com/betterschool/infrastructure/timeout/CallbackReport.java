@@ -32,7 +32,7 @@ public class CallbackReport {
      * 该行是否算「回调成功」——判据<b>从严</b>：必须出现在成功清单里。
      * 漏回报（异常、分发器不认识这个 taskType）算失败：重投一次无害，漏关一次是真事故。
      */
-    public boolean isSucceeded(TaskKey key) {
-        return successKeys.contains(key);
+    public boolean isSucceeded(TaskKey taskKey) {
+        return successKeys.contains(taskKey);
     }
 }

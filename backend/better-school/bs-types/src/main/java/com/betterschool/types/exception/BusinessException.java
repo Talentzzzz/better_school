@@ -1,6 +1,6 @@
 package com.betterschool.types.exception;
 
-import com.betterschool.types.enums.ResponseCode;
+import com.betterschool.types.enums.ResponseCodeEnum;
 import lombok.Getter;
 
 /**
@@ -13,15 +13,15 @@ public class BusinessException extends RuntimeException {
 
     public BusinessException(String message) {
         super(message);
-        this.code = ResponseCode.BUSINESS_ERROR.getCode();
+        this.code = ResponseCodeEnum.BUSINESS_ERROR.getCode();
     }
 
-    public BusinessException(ResponseCode responseCode) {
+    public BusinessException(ResponseCodeEnum responseCode) {
         super(responseCode.getInfo());
         this.code = responseCode.getCode();
     }
 
-    public BusinessException(ResponseCode responseCode, String message) {
+    public BusinessException(ResponseCodeEnum responseCode, String message) {
         super(message);
         this.code = responseCode.getCode();
     }

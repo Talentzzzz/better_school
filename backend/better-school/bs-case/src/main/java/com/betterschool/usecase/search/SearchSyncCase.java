@@ -3,13 +3,11 @@ package com.betterschool.usecase.search;
 import com.betterschool.domain.post.service.post.IPostService;
 import com.betterschool.domain.idle.service.IIdleService;
 import com.betterschool.domain.user.service.profile.IUserProfileService;
-import com.betterschool.types.common.SearchEntityType;
+import com.betterschool.types.common.SearchEntityTypeEnum;
 import com.betterschool.types.common.SearchSyncMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-
-import java.util.Locale;
 
 /**
  * 搜索索引增量同步用例：一条 MQ 消息按 type 分派给实体所属域的领域服务。
@@ -29,27 +27,16 @@ public class SearchSyncCase {
     private final IIdleService idleService;
     private final IUserProfileService userProfileService;
 
-    public void sync(SearchSyncMessage message) {
-        SearchEntityType entityType = parseType(message.getType());
-        if (entityType == null) {
-            log.warn("[SearchSyncCase] 未知实体类型 type={}, id={}", message.getType(), message.getId());
+    public void sync(SearchSyncMessage searchSyncMessage) {
+        SearchEntityTypeEnum searchEntityType = SearchEntityTypeEnum.fromName(searchSyncMessage.getType());
+        if (searchEntityType == null) {
+            log.warn("[SearchSyncCase] 未知实体类型 type={}, id={}", searchSyncMessage.getType(), searchSyncMessage.getId());
             return;
         }
-        switch (entityType) {
-            case POST -> postService.syncSearchDoc(message.getId());
-            case PRODUCT -> idleService.syncSearchDoc(message.getId());
-            case USER -> userProfileService.syncSearchDoc(message.getId());
-        }
-    }
-
-    private SearchEntityType parseType(String type) {
-        if (type == null) {
-            return null;
-        }
-        try {
-            return SearchEntityType.valueOf(type.toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            return null;
+        switch (searchEntityType) {
+            case POST -> postService.syncSearchDoc(searchSyncMessage.getId());
+            case PRODUCT -> idleService.syncSearchDoc(searchSyncMessage.getId());
+            case USER -> userProfileService.syncSearchDoc(searchSyncMessage.getId());
         }
     }
 }

@@ -159,14 +159,14 @@ class ProductFeedCursorPagingIntegrationTest extends PostApiTestBase {
                         org.mockito.ArgumentMatchers.any(),
                         org.mockito.ArgumentMatchers.anyInt());
 
-        ProductFeedPageVO page = new IdleServiceImpl(failingIndexRepo)
+        ProductFeedPageVO productFeedPageVO = new IdleServiceImpl(failingIndexRepo)
                 .listProducts(null, null, null, "time", null, 1, PAGE_SIZE);
-        assertThat(page.isIndexPath()).as("降级后 indexPath=false（total 由调用方精确 COUNT）").isFalse();
-        assertThat(page.getNextCursor()).as("降级路径不发游标").isNull();
-        assertThat(page.getProducts()).as("降级路径仍出满页数据").hasSize(PAGE_SIZE);
+        assertThat(productFeedPageVO.isIndexPath()).as("降级后 indexPath=false（total 由调用方精确 COUNT）").isFalse();
+        assertThat(productFeedPageVO.getNextCursor()).as("降级路径不发游标").isNull();
+        assertThat(productFeedPageVO.getProducts()).as("降级路径仍出满页数据").hasSize(PAGE_SIZE);
         // 旧直查按 create_time DESC, product_id DESC：夹具逐条错开 create_time（uuid-biz-id 票 05 起
         // 业务 id 是 UUID、无自增时间趋势，「首页 = 最新发出的 PAGE_SIZE 条」靠错开秒数固化）
-        assertThat(page.getProducts()).extracting(ProductEntity::getProductId)
+        assertThat(productFeedPageVO.getProducts()).extracting(ProductEntity::getProductId)
                 .containsAll(seeded.subList(PRODUCT_COUNT - PAGE_SIZE, PRODUCT_COUNT));
     }
 

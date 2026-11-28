@@ -23,21 +23,21 @@ public final class TimeoutCallbackFixture {
 
     /** 造一条 {@code actionTime = minutesAgo 分钟前}（已到点）的任务，taskType/bizId 原样带上 */
     public static TimeoutTaskEntity dueTask(String taskType, String bizId, int minutesAgo) {
-        TimeoutTaskEntity taskEntity = new TimeoutTaskEntity();
-        taskEntity.setTaskType(taskType);
-        taskEntity.setBizId(bizId);
-        taskEntity.setActionTime(LocalDateTime.now().minusMinutes(minutesAgo));
-        return taskEntity;
+        TimeoutTaskEntity timeoutTaskEntity = new TimeoutTaskEntity();
+        timeoutTaskEntity.setTaskType(taskType);
+        timeoutTaskEntity.setBizId(bizId);
+        timeoutTaskEntity.setActionTime(LocalDateTime.now().minusMinutes(minutesAgo));
+        return timeoutTaskEntity;
     }
 
     /** 逐项驱动真装配并逐项隔离，返回失败项的 {@code taskType:bizId}（空集 = 全部成功） */
     public static Set<String> callback(TimeoutActionRouter router, TimeoutTaskEntity... tasks) {
         Set<String> failures = new LinkedHashSet<>();
-        for (TimeoutTaskEntity taskEntity : tasks) {
+        for (TimeoutTaskEntity timeoutTaskEntity : tasks) {
             try {
-                router.fire(taskEntity);
+                router.fire(timeoutTaskEntity);
             } catch (Exception e) {
-                failures.add(taskEntity.getTaskType() + ":" + taskEntity.getBizId());
+                failures.add(timeoutTaskEntity.getTaskType() + ":" + timeoutTaskEntity.getBizId());
             }
         }
         return failures;

@@ -22,9 +22,9 @@ public class PointsDeductPlanVO {
     /** 至多一条：remain 大于还差的额度，只扣差额（整笔恰好扣完时为 null） */
     private final PointsBucketDeductionVO partialBucket;
 
-    private PointsDeductPlanVO(List<PointsBucketDeductionVO> drainedBuckets, PointsBucketDeductionVO partialBucket) {
+    private PointsDeductPlanVO(List<PointsBucketDeductionVO> drainedBuckets, PointsBucketDeductionVO pointsBucketDeductionVO) {
         this.drainedBuckets = List.copyOf(drainedBuckets);
-        this.partialBucket = partialBucket;
+        this.partialBucket = pointsBucketDeductionVO;
     }
 
     /**
@@ -38,13 +38,13 @@ public class PointsDeductPlanVO {
         List<PointsBucketDeductionVO> drainedBuckets = new ArrayList<>();
         PointsBucketDeductionVO partialBucket = null;
         int remaining = amount;
-        for (PointsBucketEntity bucket : buckets) {
+        for (PointsBucketEntity pointsBucketEntity : buckets) {
             if (remaining == 0) {
                 break;
             }
-            int take = Math.min(bucket.getRemain(), remaining);
-            PointsBucketDeductionVO deduction = new PointsBucketDeductionVO(bucket.getBucketId(), take);
-            if (take == bucket.getRemain()) {
+            int take = Math.min(pointsBucketEntity.getRemain(), remaining);
+            PointsBucketDeductionVO deduction = new PointsBucketDeductionVO(pointsBucketEntity.getBucketId(), take);
+            if (take == pointsBucketEntity.getRemain()) {
                 drainedBuckets.add(deduction);
                 remaining -= take;
                 continue;

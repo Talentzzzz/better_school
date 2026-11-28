@@ -1,7 +1,7 @@
 package com.betterschool.domain.notification.model.entity;
 
-import com.betterschool.domain.notification.model.valobj.NotificationScopeVO;
-import com.betterschool.domain.notification.model.valobj.NotificationTypeVO;
+import com.betterschool.domain.notification.model.valobj.NotificationScopeEnum;
+import com.betterschool.domain.notification.model.valobj.NotificationTypeEnum;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -12,13 +12,13 @@ public class NotificationEntity {
     /** 业务 ID（notification_id，UUID 字符串，uuid-biz-id 票 06） */
     private String notificationId;
     private String userId;
-    /** 收件范围（生产点显式标注，见 NotificationScopeVO） */
-    private NotificationScopeVO scope;
+    /** 收件范围（生产点显式标注，见 NotificationScopeEnum） */
+    private NotificationScopeEnum scope;
     /** per-(user, scope) 收件序号（notification_seq 计数器写入事务内取号）；查询路径由仓储回填 */
     private Long seq;
     /** 触发者用户 ID（互动通知：谁评/回/赞了你；广播类为空） */
     private String senderId;
-    private NotificationTypeVO type;
+    private NotificationTypeEnum type;
     private String title;
     private String content;
     /** 已读态（seq ≤ 该范围水位），由读路径算出，非落库列 */
@@ -35,12 +35,12 @@ public class NotificationEntity {
 
     private LocalDateTime createdAt;
 
-    public static NotificationEntity create(String userId, NotificationScopeVO scope, NotificationTypeVO type,
+    public static NotificationEntity create(String userId, NotificationScopeEnum notificationScopeVO, NotificationTypeEnum notificationTypeVO,
                                             String title, String content, String refType, String refId) {
         NotificationEntity notificationEntity = new NotificationEntity();
         notificationEntity.userId = userId;
-        notificationEntity.scope = scope;
-        notificationEntity.type = type;
+        notificationEntity.scope = notificationScopeVO;
+        notificationEntity.type = notificationTypeVO;
         notificationEntity.title = title;
         notificationEntity.content = content;
         notificationEntity.refType = refType;
@@ -48,21 +48,4 @@ public class NotificationEntity {
         return notificationEntity;
     }
 
-    public static NotificationEntity createInteraction(String userId, String senderId, NotificationScopeVO scope,
-                                                       NotificationTypeVO type, String title, String content,
-                                                       String refType, String refId, String dedupKey) {
-        NotificationEntity notificationEntity = create(userId, scope, type, title, content, refType, refId);
-        notificationEntity.senderId = senderId;
-        notificationEntity.dedupKey = dedupKey;
-        return notificationEntity;
-    }
-
-    /** 系统通知（无触发者）：带 dedupKey 时按唯一键幂等（消费重放/重复扫描只落一条） */
-    public static NotificationEntity createSystem(String userId, NotificationScopeVO scope, NotificationTypeVO type,
-                                                  String title, String content, String refType, String refId,
-                                                  String dedupKey) {
-        NotificationEntity notificationEntity = create(userId, scope, type, title, content, refType, refId);
-        notificationEntity.dedupKey = dedupKey;
-        return notificationEntity;
-    }
 }

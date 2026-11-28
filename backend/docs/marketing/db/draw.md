@@ -1,7 +1,7 @@
 # 抽奖新模型 schema（draw_* 表集，已并入单体库 better_school）
 
 > 业务：抽奖决策侧 + 主链路（营销域，票 11 落表、票 13 接主链路；monolith-restructure 票 07 起并入单体）；
-> 归属域：`domain.raffle`（包根 `com.betterschool`，marketing 命名空间已退役）
+> 归属域：`domain.draw`（包根 `com.betterschool`，marketing 命名空间已退役）
 > 结构与根 `sql.md` §2 逐表一致（唯一事实源；schema 已并入单体 `better-school/sql/schema.sql` 尾段，比对脚本随之失效退役）。
 > DDL 在单体 `better-school/sql/schema.sql`（`schema-legacy.sql` 已随旧域表整体删除）。
 
@@ -9,7 +9,7 @@
 |----|----|
 |draw_activity|抽奖活动（活动 → 策略 1:1，uk_strategy_id；state create/open/close）|
 |draw_strategy|抽奖策略；`rule` 列 = 责任链节点码逗号序列（如 rule_blacklist,rule_weight），ChainFactory 按它动态组链|
-|draw_strategy_award|奖品位配置；概率口径 award_rate（DECIMAL(6,4)，×10000 即槽位）；type = normal（进概率池）/ fallback（库存兜底）/ blacklist（黑名单强制奖）；库存账户 1:1 见 draw_strategy_award_inventory（[inventory.md](inventory.md)）|
+|draw_strategy_award|奖品位配置；概率口径 award_rate（DECIMAL(6,4)，×10000 即槽位）；type = normal（进概率池）/ fallback（库存兜底）/ blacklist（黑名单强制奖）；库存账户 1:1 见 award_inventory（[award.md](award.md)）|
 |draw_strategy_weight|权重档（票 11 自设计稿 strategy_weight 规范化：并入 draw_* 命名、去时间戳默认值、加 COMMENT；weights 随 uuid-biz-id 票 07 award_id UUID 化放宽到 varchar(512)）|
 |draw_record|抽奖记录（中奖事实 + 奖品快照；写入方 = 票 13 主链路）|
 |draw_record_detail|动作明细（只插入：DRAW/EXCHANGE/SHIP/COMPLETE，uk_record_type 幂等；票 13/14 用）|
@@ -21,15 +21,15 @@
   链按 `draw_strategy.rule` 动态组装、按 strategyId 缓存，重预热时失效重组。
 - **权重档命中**：累计抽数 = `draw_record` 中该 user_id + strategy_id 行数；取「count ≤ 累计抽数」中最大的一档。
 - **预热**：概率表恒 10000 槽（award_rate ×10000；权重池内按 award_rate 归一化、最大余数法补齐）。
-  Redis key 见 `types.raffle.Constants`（前缀 `bs:raffle:`）：`table:{strategyId}:default` /
+  Redis key 见 `types.draw.Constants`（前缀 `bs:draw:`）：`table:{strategyId}:default` /
   `table:{strategyId}:weight:{count}`（RMap 槽位 → awardId）、`award:{strategyId}:{blacklist|fallback}`、
   `warmup:{strategyId}`（预热态标记）；黑名单成员 `blacklist:user:{strategyId}:{userId}`（风控侧写入，预热不负责）。
-- **降级态**：`warmup:{strategyId}` 不存在即未预热——默认节点抛 `RAFFLE_WARMUP_MISSING(4311)`，
+- **降级态**：`warmup:{strategyId}` 不存在即未预热——默认节点抛 `DRAW_WARMUP_MISSING(4311)`，
   主链路捕获该码**降级走 DB 直算**（`normal` 档 `award_rate ×10000` 归一化后随机取槽）。
 
 ## 主链路口径（票 13 定，接口面见 [../api/lottery.md](../api/lottery.md)）
 
-**写入方**：`RaffleDrawServiceImpl.draw` 是 `draw_record` / `draw_record_detail` 的唯一写入方。
+**写入方**：`DrawServiceImpl.draw` 是 `draw_record` / `draw_record_detail` 的唯一写入方。
 
 - **顺序**：幂等预检 → 活动校验（`state = open` + 窗口）→ 扣次数（`draw_count_bucket` Lua，明细 `ref_id = record_id`）
   → 责任链出奖 → 库存预扣（库存域的 port，走进程内合并，返回即台账已动）→ 落库。
@@ -47,14 +47,13 @@
   - 回放**必校验归属**（`user_id` 不符按系统错拒绝）：防 hash 碰撞把他人记录顶出来
 - **`state` 初值**：`award_type = THANKS` 直接落 **已完成**（不走兑换/发货）；
   其余落 **待兑换**，推进归票 14 状态机。明细**只插 `DRAW` 一条**，其余三个动作由状态机落。
-- **`inv_id`**：award-inventory 两层模型（开放点①拍板）：记**奖品库存账户的 award_id**（奖品位 id，
-  1 奖品位 1 账户，账户见 [inventory.md](inventory.md) `draw_strategy_award_inventory`），不再是池 inv_id。
+- **`inv_id`**：记**奖品库存账户的 award_id**（奖品位 id，1 奖品位 1 账户，账户见 [award.md](award.md) `award_inventory`）。
   不限量档（配置哨兵 `draw_strategy_award.inv_id = '0'`，字符串）落库时置 `NULL`（「无库存来源」比哨兵更好判）；
-  来源池不落快照列——从分配流水表（`inventory_allocation_flow`，award_id → pool_inv_id）反查。
+  来源就是该账户本身（无配额池，也没有需要反查的分配流水）。
 
 ## 发货状态机口径（票 14 定）
 
-**写入方**：`RaffleShippingServiceImpl` 是 `draw_record.state` 推进的唯一入口。
+**写入方**：`DrawShippingServiceImpl` 是 `draw_record.state` 推进的唯一入口。
 
 | 起点 | 动作（`draw_record_detail.type`） | 终点 | 触发方 | 其他副作用 |
 | --- | --- | --- | --- | --- |
@@ -80,8 +79,8 @@
 **对账窗口（两处，明说而不是假装没有）**：
 1. **孤儿预扣（预扣成功后落库失败），无自动读数，见 SQL**：预扣提交、`draw_record` 没落 ⇒
    库存被白扣一份。对账读数瘦成台账三列直读后（hot-row-merge-l2w256），这条**没有自动暴露口**——
-   能自愈的靠同 token 重试撞明细唯一键回放；用户放弃的部分永久挂账，只能跑 inventory.md 里那条
-   「两张明细表 LEFT JOIN `draw_record` 找 `record_id IS NULL` 的 `type = 1` 行」人工 SQL（不建 job、不建巡检）。
+   能自愈的靠同 token 重试撞明细唯一键回放；用户放弃的部分永久挂账，只能跑 award.md 里那条
+   「`award_inventory_detail` LEFT JOIN `draw_record` 找 `record_id IS NULL` 的 `flow_type = 1` 行」人工 SQL（不建 job、不建巡检）。
    **draw-recon-round 起该口径被取代**：孤儿预扣收敛 job（fund-consistency 票）已承接逐笔收敛，其上的
    每日全量对账轮（`drawReconScan`）做总量兜底复查与平账分流（自动补种 / 告警人工），见 [recon.md](recon.md)。
 2. **确认不分活动**（库存域的有意口径）：合并器只认分片键（奖品库存账户 awardId），确认与预扣都按

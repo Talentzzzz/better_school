@@ -4,7 +4,9 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.betterschool.trigger.listener.CommentLikedConsumer;
 import com.betterschool.trigger.listener.NotifyEventConsumer;
+import com.betterschool.trigger.listener.PostLikedConsumer;
 import com.betterschool.types.common.Constants;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -134,16 +136,27 @@ public abstract class PostApiTestBase {
     protected RedissonClient redissonClient;
     @Autowired
     protected NotifyEventConsumer notifyEventConsumer;
+    @Autowired
+    protected PostLikedConsumer postLikedConsumer;
+    @Autowired
+    protected CommentLikedConsumer commentLikedConsumer;
 
     /**
-     * 通知事件消费 helper（事件驱动改造，测试环境无 broker 手动喂）：把业务事务写进 outbox 的
-     * bs-notify-event 载荷逐条喂给通知域消费方 NotifyEventConsumer（生产环境由 MQ 驱动同一入口）
+     * 通知事件消费 helper（测试环境无 broker 手动喂）：先喂 bs-comment-liked / bs-post-liked 载荷给
+     * 各自的事实消费方（它们按业务事实落 bs-notify-event 的 outbox 行），再喂 bs-notify-event 给
+     * 通知域消费方 NotifyEventConsumer（生产环境由 MQ 驱动同一入口）。
      */
     protected void consumeNotifyEvents() {
+        drainOutbox(Constants.COMMENT_LIKED_TOPIC, commentLikedConsumer::onMessage);
+        drainOutbox(Constants.POST_LIKED_TOPIC, postLikedConsumer::onMessage);
+        drainOutbox(Constants.NOTIFY_EVENT_TOPIC, notifyEventConsumer::onMessage);
+    }
+
+    private void drainOutbox(String destination, java.util.function.Consumer<String> handler) {
         List<String> payloads = jdbcTemplate.queryForList(
                 "SELECT payload FROM mq_outbox WHERE destination = ? AND state = 0 ORDER BY id",
-                String.class, Constants.NOTIFY_EVENT_TOPIC);
-        payloads.forEach(notifyEventConsumer::onMessage);
+                String.class, destination);
+        payloads.forEach(handler);
     }
 
     /** 清超时分表用的裸 MySQL 连接（物理分表经 SS 连接查不到，同 TimeoutShardingRouteIntegrationTest） */
@@ -196,12 +209,14 @@ public abstract class PostApiTestBase {
     @BeforeEach
     void truncateTables() {
         List.of("bs_user", "post", "post_comment", "post_like", "post_like_count", "post_comment_count",
-                        "post_comment_like", "post_comment_like_count", "post_comment_feed_index", "mq_outbox",
+                        "post_comment_like", "post_comment_like_count", "post_comment_feed_index",
+                        "post_rebate_claim_task", "mq_outbox",
                         "post_feed_index", "user_view_history", "post_view_count",
                         "product_feed_index",
                         "product_view_history",
                         "product_view_count",
-                        "notification", "virtual_wallet", "wallet_detail", "user_credit_detail",
+                        "notification", "virtual_wallet", "wallet_detail", "payment_order", "wallet_pay_task",
+                        "user_credit_detail",
                         "product", "product_favorite", "product_order", "product_order_event",
                         "room", "user_pair_room", "user_room", "room_member", "message", "timeline", "user_seq",
                         "notification_seq", "notification_read")
@@ -311,7 +326,7 @@ public abstract class PostApiTestBase {
         JsonNode response = postJson("/api/community/posts",
                 Map.of("title", "测试帖子", "content", content), author);
         assertSuccess(response, "发帖");
-        String postId = response.path("data").asText();
+        String postId = response.path("data").path("postId").asText();
         // uuid-biz-id 票 03：发帖响应 id 必须是可解析的 UUID 字符串（ID 形态断言）
         org.assertj.core.api.Assertions.assertThat(java.util.UUID.fromString(postId)).isNotNull();
         return postId;

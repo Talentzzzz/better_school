@@ -1,22 +1,17 @@
 package com.betterschool.usecase.idle;
 
 import com.betterschool.domain.credit.service.ICreditAccountService;
-import com.betterschool.domain.idle.adapter.repository.IIdleRepository;
-import com.betterschool.domain.idle.model.entity.ProductEntity;
 import com.betterschool.domain.idle.model.entity.ProductOrderEntity;
-import com.betterschool.domain.idle.model.valobj.ProductCancelResult;
 import com.betterschool.domain.idle.model.valobj.ProductConfirmResult;
 import com.betterschool.domain.idle.model.valobj.ProductFundOrphanScanSummaryVO;
 import com.betterschool.domain.idle.model.valobj.ProductOrderEventVO;
-import com.betterschool.domain.idle.model.valobj.ProductOrderStatusVO;
+import com.betterschool.domain.idle.model.valobj.ProductOrderStatusEnum;
 import com.betterschool.domain.idle.service.IIdleService;
-import com.betterschool.domain.wallet.adapter.repository.IWalletRepository;
 import com.betterschool.domain.wallet.model.entity.WalletDetailEntity;
-import com.betterschool.domain.wallet.model.valobj.WalletDetailTypeVO;
+import com.betterschool.domain.wallet.model.valobj.WalletDetailTypeEnum;
 import com.betterschool.domain.wallet.service.IWalletAccountService;
 import com.betterschool.types.concurrent.VirtualThreadFanout;
-import com.betterschool.types.enums.ResponseCode;
-import com.betterschool.types.exception.BusinessException;
+import com.betterschool.usecase.payment.PaymentCase;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -34,8 +29,9 @@ import java.util.List;
  * 订单段向钱包域要冻结/解冻/入账，扫描段读钱包流水做补偿——任何一处改了资金口径，
  * 另外两处的判据都在同一文件里，不会各走各的。
  *
- * <p>支付与取消为两段式资金链路：支付资金段（冻结）先行、订单翻转在后；取消翻转段先行、
- * 本层补解冻退款；宕机窗口的长款中间态由扫描段（{@code productFundOrphanScan}）收敛。
+ * <p>支付走支付渠道（wallet 模拟微信支付）：下单时向 {@link PaymentCase} 预下单拿支付单号，
+ * 用户在收银台按支付单号付款；钱包扣冻完成后回调本域翻转订单。本类只保留发货、收货、
+ * 取消、超时与资金孤儿扫描，支付编排在 {@link PaymentCase}。
  */
 @Slf4j
 @Service
@@ -57,11 +53,10 @@ public class IdleCase {
     private final IIdleService idleService;
     private final ICreditAccountService creditAccountService;
     private final IWalletAccountService walletAccountService;
-    private final IWalletRepository walletRepository;
-    private final IIdleRepository idleRepository;
+    private final PaymentCase paymentCase;
     private final VirtualThreadFanout fanout;
 
-    // ==================== 发布：信用分门槛前置校验 + 草稿完整性 ====================
+    // ==================== 发布：信用分门槛前置校验 ====================
 
     public String publishProduct(String userId, String title, String description, List<String> images, BigDecimal price,
                                  String tradeLocation, String category, Integer quantity) {
@@ -82,19 +77,16 @@ public class IdleCase {
                 tradeLocation, category, quantity);
     }
 
-    /** 提交商品草稿：与直接发布同门槛校验，通过即上架可见 */
+    /** 提交商品草稿：与直接发布同门槛校验（信用分前置），归属/状态守卫与完整性校验在域内裁决，通过即上架可见 */
     public void submitProductDraft(String userId, String productId) {
-        ProductEntity draftEntity = idleService.getOwnedProductDraft(userId, productId);
         creditAccountService.ensureOperable(userId);
-        validateProductDraftComplete(draftEntity);
         idleService.submitProductDraft(userId, productId);
     }
 
-    /** 上架后编辑商品（编辑语义）：先做归属与状态守卫，再由域层落编辑、立即生效 */
+    /** 上架后编辑商品（编辑语义）：归属与状态守卫、落编辑都在域内裁决，立即生效 */
     public void editOnSaleProduct(String userId, String productId, String title, String description, List<String> images,
                                   BigDecimal price) {
-        idleService.getOwnedOnSaleProduct(userId, productId);
-        idleService.editOnSaleProduct(productId, title, description, images, price);
+        idleService.editOnSaleProduct(userId, productId, title, description, images, price);
     }
 
     /**
@@ -119,39 +111,19 @@ public class IdleCase {
                 idleService::expireProductToDraft);
     }
 
-    private void validateProductDraftComplete(ProductEntity draftEntity) {
-        if (isBlank(draftEntity.getTitle()) || draftEntity.getPrice() == null
-                || isBlank(draftEntity.getTradeLocation()) || draftEntity.getCategory() == null) {
-            throw new BusinessException(ResponseCode.BUSINESS_ERROR, "草稿内容不完整，请补全标题、价格、交易地点与分类后再提交");
-        }
-    }
-
-    private boolean isBlank(String text) {
-        return text == null || text.isBlank();
-    }
-
     // ==================== 商品托管订单：跨域资金编排 ====================
 
     public String createOrder(String buyerId, String productId, int quantity) {
         creditAccountService.ensureOperable(buyerId);
-        return idleService.createOrder(buyerId, productId, quantity);
-    }
-
-    /**
-     * 支付（两段式 ADR-0016）：① 域服务 prepare 校验（买家/状态幂等，返回需冻结货款）→
-     * ② 本层资金段冻结货款（PRODUCT_FROZEN，流水 uk_order_type 幂等 + 余额条件扣减，
-     * 余额不足抛异常、订单留待支付）→ ③ 域服务 confirm 翻转「待支付 → 已支付」（单仓储事务）。
-     * 资金段恒先行（宁可长款不可短款）：翻转失败时订单留待支付、钱悬置冻结，
-     * 孤儿由 {@code productFundOrphanScan} 扫描解冻收敛。客户端重试安全：prepare 幂等回放 +
-     * 冻结流水 uk 吸收重复冻结
-     */
-    public void payOrder(String orderId, String buyerId) {
-        var payResult = idleService.preparePayOrder(orderId, buyerId);
-        if (payResult.isAlreadyPaid()) {
-            return; // 幂等：上次支付已提交成功（重试场景），零副作用
+        String orderId = idleService.createOrder(buyerId, productId, quantity);
+        // 下单后向钱包预下单拿支付单号（best-effort）：预下单失败不拖垮已成立的订单，
+        // 订单详情 / 支付前会按同一 bizOrderId 幂等补齐
+        try {
+            paymentCase.ensurePayNo(idleService.getOrderEntity(orderId), buyerId);
+        } catch (Exception e) {
+            log.warn("[支付单] 下单后预下单失败，待订单详情懒创建 orderId={}", orderId, e);
         }
-        walletAccountService.freeze(buyerId, payResult.getAmount(), orderId, WalletDetailTypeVO.PRODUCT_FROZEN);
-        idleService.confirmPayOrder(orderId, buyerId);
+        return orderId;
     }
 
     public void markDelivered(String orderId, String sellerId) {
@@ -159,11 +131,11 @@ public class IdleCase {
     }
 
     public void confirmReceived(String orderId, String buyerId) {
-        ProductConfirmResult confirmResult = idleService.confirmReceived(orderId, buyerId);
-        walletAccountService.unfreeze(confirmResult.getBuyerId(), confirmResult.getAmount(), orderId,
-                WalletDetailTypeVO.PRODUCT_UNFROZEN);
-        walletAccountService.income(confirmResult.getSellerId(), confirmResult.getAmount(), orderId,
-                WalletDetailTypeVO.PRODUCT_INCOME);
+        ProductConfirmResult productConfirmResult = idleService.confirmReceived(orderId, buyerId);
+        walletAccountService.unfreeze(productConfirmResult.getBuyerId(), productConfirmResult.getAmount(), orderId,
+                WalletDetailTypeEnum.PRODUCT_UNFROZEN);
+        walletAccountService.income(productConfirmResult.getSellerId(), productConfirmResult.getAmount(), orderId,
+                WalletDetailTypeEnum.PRODUCT_INCOME);
     }
 
     /**
@@ -177,8 +149,10 @@ public class IdleCase {
         var cancelResult = idleService.cancelOrder(orderId, buyerId);
         if (cancelResult.isNeedRefund()) {
             walletAccountService.unfreeze(cancelResult.getBuyerId(), cancelResult.getAmount(), orderId,
-                    WalletDetailTypeVO.PRODUCT_UNFROZEN);
+                    WalletDetailTypeEnum.PRODUCT_UNFROZEN);
         }
+        // 支付前取消：关闭支付单，避免旧支付单被继续支付（已支付订单 close 是空操作，退款走上面的解冻）
+        closePaymentOrderQuietly(orderId);
     }
 
     public ProductOrderEntity orderDetail(String orderId, String currentUserId) {
@@ -195,6 +169,17 @@ public class IdleCase {
 
     public void handlePayTimeout(String orderId) {
         idleService.handlePayTimeout(orderId);
+        // 超时关单后关闭支付单：晚到的收银台请求按「支付单已关闭」拒绝
+        closePaymentOrderQuietly(orderId);
+    }
+
+    /** 关闭支付单不阻断取消/超时主流程：关失败最多让旧支付单可支付，回调按订单已取消拒绝，冻结款由孤儿扫描退 */
+    private void closePaymentOrderQuietly(String orderId) {
+        try {
+            paymentCase.closePaymentOrder(orderId);
+        } catch (Exception e) {
+            log.warn("[支付单] 关闭支付单失败，留待回调拒绝/资金孤儿扫描收敛 orderId={}", orderId, e);
+        }
     }
 
     // ==================== 资金孤儿扫描：两段式链路的收敛 job ====================
@@ -220,38 +205,35 @@ public class IdleCase {
      * 每个动作单调用单事务，失败异常整轮上抛由 xxl 记账、下个周期照常重扫（未收敛行永远满足扫描条件）。
      */
     public ProductFundOrphanScanSummaryVO scanFundOrphans() {
-        List<WalletDetailEntity> frozenOrphans = walletRepository.listOrphanFrozen(
-                WalletDetailTypeVO.PRODUCT_FROZEN, WalletDetailTypeVO.PRODUCT_UNFROZEN,
+        List<WalletDetailEntity> frozenOrphans = walletAccountService.listOrphanFrozen(
+                WalletDetailTypeEnum.PRODUCT_FROZEN, WalletDetailTypeEnum.PRODUCT_UNFROZEN,
                 FROZEN_ORPHAN_THRESHOLD_MINUTES, SCAN_LIMIT);
-        List<ProductOrderEntity> settledOrders = idleRepository.listRecentSettled(SETTLED_WINDOW_MINUTES, SCAN_LIMIT);
+        List<ProductOrderEntity> settledOrders = idleService.listRecentSettled(SETTLED_WINDOW_MINUTES, SCAN_LIMIT);
         int orphanUnfrozenDone = unfreezeTerminalOrphans(frozenOrphans);
         int replayUnfrozenDone = replayPaidCancelUnfreeze(settledOrders);
         return new ProductFundOrphanScanSummaryVO(frozenOrphans.size(), orphanUnfrozenDone, replayUnfrozenDone);
     }
 
-    /**
-     * 第一段（钱包侧自查 → 订单裁决）：有 PRODUCT_FROZEN 无 PRODUCT_UNFROZEN 且超阈值的行，
-     * 订单已终态即补解冻退买家（解冻流水 uk(order_id, type, biz_round, user_id) 幂等吸收重复）。
-     */
+    // ==================== 资金孤儿扫描：两段式链路的收敛 job ====================
     private int unfreezeTerminalOrphans(List<WalletDetailEntity> frozenOrphans) {
         int done = 0;
-        for (WalletDetailEntity frozenEntity : frozenOrphans) {
-            ProductOrderEntity orderEntity = idleRepository.findOrderById(frozenEntity.getOrderId());
-            if (orderEntity == null) {
-                log.error("[资金孤儿] 商品冻结流水无对应订单，需人工核查：orderId={}", frozenEntity.getOrderId());
+        for (WalletDetailEntity walletDetailEntity : frozenOrphans) {
+            ProductOrderEntity productOrderEntity = idleService.getOrderEntity(walletDetailEntity.getOrderId());
+            if (productOrderEntity == null) {
+                log.error("[资金孤儿] 商品冻结流水无对应订单，需人工核查：orderId={}", walletDetailEntity.getOrderId());
                 continue;
             }
-            ProductOrderStatusVO status = orderEntity.getStatus();
-            if (status != ProductOrderStatusVO.CANCELLED && status != ProductOrderStatusVO.COMPLETED) {
+            ProductOrderStatusEnum productOrderStatusVO = productOrderEntity.getStatus();
+            if (productOrderStatusVO != ProductOrderStatusEnum.CANCELLED && productOrderStatusVO != ProductOrderStatusEnum.COMPLETED) {
                 // 未终态（支付翻转在途 / PAID 交付流转中）：不动钱——支付链路冻结先行是常态在途，
                 // 此刻解冻，随后翻转成功会造出「已支付但没冻结」的短款；长款等到终态后下一轮自然满足条件
                 continue;
             }
-            walletRepository.unfreeze(frozenEntity.getUserId(), frozenEntity.getAmount(),
-                    frozenEntity.getOrderId(), WalletDetailTypeVO.PRODUCT_UNFROZEN, frozenEntity.getBizRound());
+            walletAccountService.unfreeze(walletDetailEntity.getUserId(), walletDetailEntity.getAmount(),
+                    walletDetailEntity.getOrderId(), WalletDetailTypeEnum.PRODUCT_UNFROZEN, walletDetailEntity.getBizRound());
             done++;
             log.warn("[资金孤儿] 终态商品订单补解冻退款：orderId={}, state={}, amount={}, bizRound={}",
-                    frozenEntity.getOrderId(), status, frozenEntity.getAmount(), frozenEntity.getBizRound());
+                    walletDetailEntity.getOrderId(), productOrderStatusVO, walletDetailEntity.getAmount(), walletDetailEntity.getBizRound());
         }
         return done;
     }
@@ -264,21 +246,21 @@ public class IdleCase {
      */
     private int replayPaidCancelUnfreeze(List<ProductOrderEntity> settledOrders) {
         int done = 0;
-        for (ProductOrderEntity orderEntity : settledOrders) {
-            if (orderEntity.getStatus() != ProductOrderStatusVO.CANCELLED) {
+        for (ProductOrderEntity productOrderEntity : settledOrders) {
+            if (productOrderEntity.getStatus() != ProductOrderStatusEnum.CANCELLED) {
                 continue; // COMPLETED 的资金段（解冻 + 卖家入账）走确认收货幂等回放口径，本扫描不改
             }
-            ProductOrderEventVO latestEvent = idleRepository.latestEventOf(orderEntity.getOrderId());
-            if (latestEvent == null || !EVENT_CANCELLED.equals(latestEvent.getEventType())) {
+            ProductOrderEventVO productOrderEventVO = idleService.latestEventOf(productOrderEntity.getOrderId());
+            if (productOrderEventVO == null || !EVENT_CANCELLED.equals(productOrderEventVO.getEventType())) {
                 continue;
             }
-            if (!"PAID".equals(latestEvent.getFromState())) {
+            if (!"PAID".equals(productOrderEventVO.getFromState())) {
                 continue;
             }
-            int quantity = orderEntity.getQuantity() == null ? 1 : orderEntity.getQuantity();
-            BigDecimal totalAmount = orderEntity.getPrice().multiply(BigDecimal.valueOf(quantity));
-            walletRepository.unfreeze(orderEntity.getBuyerId(), totalAmount, orderEntity.getOrderId(),
-                    WalletDetailTypeVO.PRODUCT_UNFROZEN);
+            int quantity = productOrderEntity.getQuantity() == null ? 1 : productOrderEntity.getQuantity();
+            BigDecimal totalAmount = productOrderEntity.getPrice().multiply(BigDecimal.valueOf(quantity));
+            walletAccountService.unfreeze(productOrderEntity.getBuyerId(), totalAmount, productOrderEntity.getOrderId(),
+                    WalletDetailTypeEnum.PRODUCT_UNFROZEN);
             done++;
         }
         return done;

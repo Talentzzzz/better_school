@@ -95,7 +95,7 @@ class ViewHistoryIntegrationTest extends PostApiTestBase {
         JsonNode ownPublish = postJson("/api/community/posts",
                 Map.of("title", "我自己的帖", "content", "自己的帖子"), viewer);
         assertSuccess(ownPublish, "发本人帖");
-        String ownPost = ownPublish.path("data").asText();
+        String ownPost = ownPublish.path("data").path("postId").asText();
 
         assertSuccess(getJson("/api/community/posts/" + kept, viewer), "浏览保留帖");
         assertSuccess(getJson("/api/community/posts/" + removed, viewer), "浏览将删帖");

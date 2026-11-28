@@ -15,4 +15,7 @@ public interface IUserAuthService {
     UserEntity register(String phone, String code, String nickname);
 
     UserAuthResult login(String phone, String code);
+
+    /** 签发登录令牌（注册成功后由 case 层编排调用；登录路径在 login 内部已签发） */
+    String issueToken(UserEntity userEntity);
 }

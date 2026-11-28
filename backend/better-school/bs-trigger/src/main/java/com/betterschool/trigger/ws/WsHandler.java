@@ -2,7 +2,7 @@ package com.betterschool.trigger.ws;
 
 import com.betterschool.infrastructure.ws.IWsService;
 import com.betterschool.infrastructure.ws.wsframe.WsFrameFactory;
-import com.betterschool.infrastructure.ws.wsframe.WsFrameType;
+import com.betterschool.infrastructure.ws.wsframe.WsFrameTypeEnum;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,14 +40,14 @@ public class WsHandler extends TextWebSocketHandler {
     }
 
     @Override
-    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
+    protected void handleTextMessage(WebSocketSession session, TextMessage textMessage) throws Exception {
         String userId = (String) session.getAttributes().get(WsConnectionConstants.ATTR_USER_ID);
         // 任何入站帧（含解析失败）都刷新活跃时间（多实例形态下顺带续期路由条目）
         wsService.refresh(userId, session);
         try {
             // 入站不反序列化出站信封：C→S 仅 PING，readTree 取 type 识别即可
-            String type = objectMapper.readTree(message.getPayload()).path("type").asText("");
-            if (WsFrameType.PING.name().equals(type) && userId != null) {
+            String type = objectMapper.readTree(textMessage.getPayload()).path("type").asText("");
+            if (WsFrameTypeEnum.PING.name().equals(type) && userId != null) {
                 wsService.push(userId, WsFrameFactory.pong());
             }
             // C→S 仅 PING，其余类型无业务路由，静默忽略

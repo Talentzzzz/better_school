@@ -92,7 +92,7 @@
 
 ### B2. 枚举与常量
 
-- `marketing-types/.../points/PointsReasonType.java`：新增 `COMPACTION`（桶合并）。
+- `marketing-types/.../points/PointsReasonTypeEnum.java`：新增 `COMPACTION`（桶合并）。
   确认 `points_bucket.reason_type` 列宽 VARCHAR(30) 足够（COMPACTION 10 字符）。
 - `marketing-types/.../points/Constants.java`：新增
   `MERGE_BUCKET_THRESHOLD = 10`（单桶余额阈值）与 `MERGE_MIN_BUCKETS = 2`（最少桶数）。

@@ -5,7 +5,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * 通知 CHAT 通道投递消息（outbox → 消费 → chat 发送管线落系统消息）：
+ * 通知 CHAT 通道投递消息（NotifyEventConsumer 落库后直接调 NotificationCase.deliver → chat 发送管线落系统消息）：
  * 字段从落库的通知行抄出，消费端免回查；幂等由 chat 侧 client_msg_id = "NOTIFY:" + notificationId 收敛
  */
 @Data

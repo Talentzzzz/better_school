@@ -70,12 +70,17 @@ Provider：`bs-trigger/.../trigger/points/rpc/PointsExchangeDubboService`（`@Du
 | `bs-lottery-drawn` | 消费 | `{recordId,userId,prizeId,prizeType,pointsAmount}` | 消费组 `bs-points-lottery-drawn-group`；**只有 `prizeType = POINTS` 才加分**，谢谢参与/实物档忽略 |
 | `bs-points-changed` | 生产 | `{userId,delta,balanceAfter,reasonType,refId}` | 走本服务 outbox + `@XxlJob("outboxScan")`（`MAX_RETRY_COUNT = 5`，死信 `status = 2`）。`reasonType` 入账为 `LOTTERY_WIN` / `REBATE`（行为返利），出账为 `REDEEM_DRAW_COUNT` / `REDEEM_PRIZE` |
 
-## 行为返利入账（域内能力，暂无 MQ/HTTP 入口）
+## 行为返利入账（域内能力 + 发帖返利 MQ 入口）
 
-`IPointsAccountService.creditForRebate(actionType, userId, refId)`：按
-`action_rebate_config` 的 POINTS 行（`state=open`）发放，落一行 `REBATE` 桶并发变动事件；
-规则未配/关闭返回 false。幂等键 = `(userId, REBATE, refId)`，refId 是调用方的发放幂等键
-（签到/支付等业务接入时自定）。规则管理见 [config.md](config.md)。
+`IPointsAccountService.addForRebate(userId, refId, amount)`：按**显式金额**落一行 `REBATE` 桶并发
+变动事件；金额 ≤ 0 返回 false 不落桶。金额是返利域领取时按 `action_rebate_config`（`state=open`）
+快照下来的，本方法不再读规则。幂等键 = `(userId, REBATE, refId)`，refId 是调用方的发放幂等键
+（发帖返利传 postId；签到/支付等业务接入时自定）。规则管理见 [config.md](config.md)。
+
+发帖返利是两段式：**领取快照**（请求线程同步 + post 域 `post_rebate_claim_task` 任务重放，不走 MQ）→
+**按快照入账**（`bs-post-rebate-credit`，消费端不再读规则）。领取任务与入账任务是两种不同的
+outbox：前者是域内最终一致任务（ADR-0017），后者是跨进程投递。签到 / 支付等其余行为暂无 MQ/HTTP
+入口，仍走上面的 `addForRebate` 域内能力。
 
 ## 定时任务
 

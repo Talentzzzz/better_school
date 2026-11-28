@@ -1,6 +1,6 @@
 # 营销域运行手册（单体收口后）
 
-> 归属：营销域（points / raffle / rebate / inventory 四域，monolith-restructure 票 05/06/07 起已并入单体）。
+> 归属：营销域（points / draw / rebate / award 四域，monolith-restructure 票 05/06/07 起已并入单体）。
 > 需求以 `.scratch/marketing/spec.md` 为准，栈选型论证见 `.scratch/marketing/research-cloud-stack.md`。
 > 本文只写「怎么跑起来、怎么改不翻车」。原「两个平级工程、营销独立 app」的口径已退役。
 
@@ -14,15 +14,15 @@ backend/
     └── bs-{types,api,domain,case,infrastructure,trigger,app}
 ```
 
-营销四域以**平级领域包**并入 `com.betterschool`：`domain/{points,raffle,rebate,inventory}`、
-`infrastructure` 侧对应域的 adapter/dao、`trigger/{points,raffle,config}`、`case` 层编排类。
+营销四域以**平级领域包**并入 `com.betterschool`：`domain/{points,draw,rebate,award}`、
+`infrastructure` 侧对应域的 adapter/dao、`trigger/{points,draw,config}`、`case` 层编排类。
 `com.betterschool.marketing` 命名空间**已退役**；`marketing-api` 模块与营销独立 app 不复存在，
 对外契约只剩 `bs-api`。HTTP 路径前缀不变（`/api/points`、`/api/lottery`、`/api/marketing/*`——
-**前后端契约路径不因合码而改**），域段名（`raffle`）与契约名（`lottery`）不一致仍是有意保留的历史包袱。
+**前后端契约路径不因合码而改**），域段名（`draw`）与契约名（`lottery`）不一致仍是有意保留的历史包袱。
 
 沿革（营销域自身）：票 06 并入 points、票 07 并入 lottery 旧域、票 10 加 drawcount 与 config、
-票 12 加 inventory、票 13 删 lottery 旧域换成 raffle 并吸收抽奖次数；config 域拆掉（两张有效期表跟表走，
-`points_validity_config` 归 points、`action_rebate_config` 归 rebate）；drawcount 并入 raffle。
+票 12 加 inventory（后改名 award 并收窄为单一奖品库存台账）、票 13 删 lottery 旧域换成 draw 并吸收抽奖次数；config 域拆掉（两张有效期表跟表走，
+`points_validity_config` 归 points、`action_rebate_config` 归 rebate）；drawcount 并入 draw。
 
 装配要点（同名类合流后的兜底与扫描口径）：
 
@@ -85,12 +85,12 @@ Dubbo 边只剩历史契约的 Provider，**现状保留、不再新增 consumer
 | 积分兑换 | `IPointsExchangeService` | `bs-trigger/points/rpc/PointsExchangeDubboService` | 无（票 13 起已折叠成进程内调用） |
 
 用户读域内口径：合并前营销域经 Dubbo 读单体用户中心；单体回归后该同步边退役——
-探活 `/api/points/ping` 改为进程内直调 `IUserRepository`，chat / post 域各自的
-`IUserQueryPort` 也是进程内实现（`infrastructure/adapter/port/<域>/UserQueryPort`）。
+探活 `/api/points/ping` 改为进程内直调 `IUserRepository`。chat / post 等域不再持有
+`IUserQueryPort`：跨域用户资料由 case 层取回并回填，domain 只处理本域数据。
 
 购买抽奖次数链路（票 C，ADR-0016）：组合事务端口 `IPointsDeductPort` / `PointsDeductPort` 退役，
-链路改**三段式顺序编排**（编排落 bs-case 的 `DrawCountPurchaseCase`，每段各自仓储本地事务，无跨域事务）：
-① 落单段——购买单 `CREATED`（raffle 仓储）；② 扣分段——积分域 `deduct`（流水先行，唯一键
+链路改**三段式顺序编排**（编排落 bs-case 的 `DrawCase`，每段各自仓储本地事务，无跨域事务）：
+① 落单段——购买单 `CREATED`（draw 仓储）；② 扣分段——积分域 `deduct`（流水先行，唯一键
 `(userId, REDEEM_DRAW_COUNT, 购买单号)` 幂等，资金段先行、余额不足单置 DEAD 等原 token 重放自愈）；
 ③ 推进段——次数入账（桶唯一键幂等）+ 条件更新置 `DONE`。收敛三路：客户端带 token 重放、
 xxl `drawCountPurchaseScan` 定时补偿（条件更新抢占 + 退避，5 次耗尽进死信；收敛动作 = 三段全量重放）、
@@ -114,7 +114,7 @@ Dubbo 自身仍要留意的三条（单体自身作为 Provider / 测试里的 c
 | 消费方 | 消费组 | 域 | 干什么 |
 | --- | --- | --- | --- |
 | 积分 | `bs-points-lottery-drawn-group` | points | `prizeType == VIRTUAL` 时加分（幂等键 `(userId, LOTTERY_WIN, recordId)`） |
-| 抽奖 | `bs-raffle-shipping-group` | raffle | 发货状态机：虚拟 / 次数 → 已完成；实物 → 已发货 + 配额兑换确认 |
+| 抽奖 | `bs-draw-shipping-group` | draw | 发货状态机：虚拟 / 次数 → 已完成；实物 → 已发货 + 配额兑换确认 |
 | 通知 | `bs-monolith-lottery-drawn-group` | notification | 落中奖通知 |
 
 **同 topic 多方订阅必须各用一组**（同组会抢消息）。组名是域自有常量，topic 是跨域契约
@@ -146,9 +146,9 @@ mvn -o install -pl bs-api -am -DskipTests
 
 ## 6. 数据面：单库 better_school
 
-营销四域与单体**同库**：`better_school`（测试 `better_school_test`）。营销 22 张表
-（积分 / 次数桶、配置、抽奖、库存两段式、outbox）随票 07 并入
-`better-school/sql/schema.sql` **尾段**；该文件是全库**唯一 DDL 事实源**（79 张表、单份
+营销四域与单体**同库**：`better_school`（测试 `better_school_test`）。营销 20 张表
+（积分 / 次数桶、配置、抽奖、奖品库存、outbox）随票 07 并入
+`better-school/sql/schema.sql` **尾段**；该文件是全库**唯一 DDL 事实源**（72 张表，含 16 张 `timeout_task` 分表、单份
 `outbox_message` DDL——取 marketing 超集形状，含 `delay_level` / `delay_ms`）。
 `bs_marketing` / `bs_marketing_test` 库名退役，`marketing/sql/` 四件（init-dev / init-test /
 schema / xxl-job-tasks）已删除；xxl 注册收敛为单体唯一 seed `better-school/sql/xxl-job-tasks.sql`。
@@ -161,10 +161,10 @@ schema / xxl-job-tasks）已删除；xxl 注册收敛为单体唯一 seed `bette
 
 跨域纪律**不因合库改变**（ADR-0016）：一个物理事务只写一个仓储（一个域）的表，跨域一致性 =
 两段各自本地事务 + 资金先行 + 流水唯一键幂等 + 孤儿扫描补偿（`drawCountPurchaseScan` /
-`productFundOrphanScan` 口径）。表所有权原则也照旧：用户表归 user 域
-独占写，营销域只存 `user_id`、读经消费方域的 port（进程内实现）或 case 层编排直调用户域。
+`productFundOrphanScan` 口径）。表所有权原则也照旧：用户表归 user 域独占写，营销域只存
+`user_id`；跨域读写一律由 case 层编排直调他域 service，domain 不再使用任何跨域 port。
 
-同库内跨表展示的数据（如抽奖的中奖记录关联 `virtual_inventory_quota` 带出面额与库存）
+同库内跨表展示的数据（如抽奖的中奖记录关联 `award_inventory` 带出面额与库存）
 仍**多查一次应用层拼装**，SQL 层零 JOIN。
 
 建库：`USE` 是连接级的，同一条命令里建库文件与 schema 之间不用再切库（两文件都已指向

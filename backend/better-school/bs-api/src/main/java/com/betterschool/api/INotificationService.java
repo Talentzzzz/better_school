@@ -19,8 +19,8 @@ public interface INotificationService {
     Response<NotificationUnreadCountResponseDTO> unreadCount(String scope);
 
     /** 按范围推已读水位，取代原 read-all（逐行 is_read 已退休） */
-    Response<Void> markRead(NotificationReadRequestDTO request);
+    Response<Void> markRead(NotificationReadRequestDTO notificationReadRequestDTO);
 
     /** 管理员公告广播（outbox + MQ → 全用户落库） */
-    Response<Void> broadcast(NotificationBroadcastRequestDTO request);
+    Response<Void> broadcast(NotificationBroadcastRequestDTO notificationBroadcastRequestDTO);
 }

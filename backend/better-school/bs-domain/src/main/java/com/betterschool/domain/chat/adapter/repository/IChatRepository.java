@@ -8,9 +8,8 @@ import com.betterschool.domain.chat.model.entity.UserRoomEntity;
 import com.betterschool.domain.chat.model.valobj.ChatMessagePushEvent;
 import com.betterschool.domain.chat.model.valobj.ChatReadPushEvent;
 import com.betterschool.domain.chat.model.valobj.ChatRecallPushEvent;
-import com.betterschool.domain.chat.model.valobj.RecallByVO;
+import com.betterschool.domain.chat.model.valobj.RecallByEnum;
 import com.betterschool.domain.chat.model.valobj.RoomListItemVO;
-import com.betterschool.domain.chat.model.valobj.TimelineItemVO;
 import com.betterschool.domain.chat.model.valobj.TimelinePageVO;
 
 import java.time.LocalDateTime;
@@ -44,25 +43,28 @@ public interface IChatRepository {
     /**
      * 发送落库段（一个原子用例）：取号 → 落消息 → 名册事务内一次读取 → 按成员集扇出时间线（per-user
      * delivery_seq 取号）→ 逐用户清 hidden 弹回 → 逐用户刷 user_room 列表排序键（last_msg_time；
-     * 预览不落副本，读时现算）→ 写 MSG 推送事件。
-     * 推送载荷（发送者昵称头像等）由调用方备好，实现内只补事务中生成的消息 ID/序号/时间
+     * 预览不落副本，读时现算）。
+     * 推送载荷（发送者昵称头像等）由调用方备好，实现内只补事务中生成的消息 ID/序号/时间；
+     * 实时推送由调用方在本方法返回后执行（此时事务已提交，避免脏推）
      *
      * @return 落库后的完整消息体（含 roomId/seq/messageId/createdAt）
      */
     MessageEntity deliverMessage(MessageEntity messageEntity, ChatMessagePushEvent chatMessagePushEvent);
 
     /**
-     * 已读水位线推进 + READ 事件（一个原子用例）。
-     * 守卫 UPDATE 只前进：仅水位线实际前进才写 outbox（并发/重复打开幂等无噪音）
+     * 已读水位线推进（一个原子用例）。
+     * 守卫 UPDATE 只前进：返回 true 表示水位线实际前进（调用方据此推送 READ；
+     * 并发/重复打开落空返回 false，幂等无噪音）
      */
-    void advanceReadWatermark(String roomId, String userId, long readSeq);
+    boolean advanceReadWatermark(String roomId, String userId, long readSeq);
 
     /**
-     * 撤回 + RECALL 事件（一个原子用例）：预览零维护写（读时按 message 真相现算，撤回即时反映）。
-     * 条件 UPDATE（status=NORMAL 才生效）：并发撤回/强撤撞自行撤回时落空即静默，不重复投递事件；
+     * 撤回（一个原子用例）：预览零维护写（读时按 message 真相现算，撤回即时反映）。
+     * 条件 UPDATE（status=NORMAL 才生效）：返回 true 表示本次真正撤回（调用方据此推送 RECALL）；
+     * 并发撤回/强撤撞自行撤回时落空返回 false，幂等静默；
      * recalled_at 由 SQL NOW() 落库（时刻一律数据库时钟）
      */
-    void recallMessageWithEvent(String roomId, Long seq, RecallByVO recalledBy);
+    boolean recallMessageWithEvent(String roomId, Long seq, RecallByEnum recallByVO);
 
     // ===== room（会话本体） =====
 
@@ -77,11 +79,12 @@ public interface IChatRepository {
     long increaseLastSeq(String roomId);
 
     /**
-     * 发送事务内刷用户行列表排序键（与取号同事务）：last_msg_time 按给定成员集逐用户刷新（1v1 恒两行）；
-     * 成员集由调用方给定（发送事务内名册一次读取，扇出/清隐藏/刷排序键共用同一成员集）；
+     * 发送事务内一条 UPDATE 完成用户行两件事（与取号同事务）：刷列表排序键 last_msg_time + 清隐藏位
+     * （新消息必弹回，删除的会话弹回列表顶部）——按给定成员集逐用户执行（1v1 恒两行）；
+     * 成员集由调用方给定（发送事务内名册一次读取，扇出/刷排序键+清隐藏位共用同一成员集）；
      * 预览不落副本（读时按 message 真相现算），未读数不落副本，由 room.last_seq 现算
      */
-    void updateUserRoomLastMsgTime(String roomId, List<String> memberIdList, LocalDateTime lastMsgTime);
+    void updateUserRoomOnMessage(String roomId, List<String> memberIdList, LocalDateTime lastMsgTime);
 
     /**
      * 会话列表四段查（SQL 层零 JOIN）：排除 hidden_at 非空，按 last_msg_time 倒序分页；
@@ -131,10 +134,10 @@ public interface IChatRepository {
      */
     boolean updateUserReadSeq(String roomId, String userId, long readSeq);
 
-    /** 新消息扇出时按给定成员集清空隐藏位（删除的会话弹回，微信行为；逐用户执行；成员集由调用方给定） */
+    /** 按给定成员集清空隐藏位（弹回；逐用户执行；成员集由调用方给定）。发送路径已并入 updateUserRoomOnMessage，本方法保留给独立弹回路径 */
     void clearHidden(String roomId, List<String> memberIdList);
 
-    /** 用户侧隐藏会话（置 hidden_at，时刻取数据库时钟）；新消息 clearHidden 弹回 */
+    /** 用户侧隐藏会话（置 hidden_at，时刻取数据库时钟）；新消息经 updateUserRoomOnMessage 弹回 */
     void hideRoom(String roomId, String userId);
 
     // ===== message（内容中心） =====
@@ -152,7 +155,7 @@ public interface IChatRepository {
      *
      * @return 是否实际撤回（0 = 已被撤回，调用方据此跳过 RECALL 事件）
      */
-    boolean recallMessage(String roomId, Long seq, RecallByVO recalledBy);
+    boolean recallMessage(String roomId, Long seq, RecallByEnum recallByVO);
 
     /** 举报回查：按消息全局主键取消息（MESSAGE 举报定位 / 强制撤回入口） */
     MessageEntity findMessageById(String messageId);
@@ -172,16 +175,7 @@ public interface IChatRepository {
      */
     long increaseUserSeq(String userId, int n);
 
-    // ===== outbox（推送事件） =====
-
-    /** 发送事务内写 MSG 推送事件（outbox），事务提交后异步发 MQ，由 WS 推送消费（票 04） */
-    void savePushMessage(ChatMessagePushEvent chatMessagePushEvent);
-
-    /** 水位线推进事务内写 READ 推送事件（outbox），仅水位线实际前进时调用（幂等无噪音） */
-    void saveReadMessage(ChatReadPushEvent chatReadPushEvent);
-
-    /** 撤回事务内写 RECALL 轻事件（outbox）：载荷只带 roomId+seq 定位，内容终态以拉取为准 */
-    void saveRecallMessage(ChatRecallPushEvent chatRecallPushEvent);
+    // ===== WS 实时推送（outbox 推送事件由上面的原子用例内部落库并在事务提交后发送） =====
 
     /**
      * WS 实时推送 MSG 帧（技术出站能力走仓储，同 outbox 待遇）：实现组装帧并委托 infrastructure/ws 连接组件。
