@@ -1,10 +1,10 @@
 # 支付收银台（模拟微信支付）
 
-钱包域扮演「微信支付」的角色：商户（idle 域）下单时向钱包**预下单**拿支付单号 `payNo`，用户拿 `payNo` 进独立模拟收银台支付，支付成功后钱包通过**进程内回调端口**通知商户翻转订单。资金仍从钱包可用余额扣（冻结托管）。
+钱包域扮演「微信支付」的角色：商户（idle 域）下单时向钱包**预下单**拿支付单号 `payNo`，用户拿 `payNo` 进独立模拟收银台支付，支付成功后钱包通过**进程内回调端口**通知商户翻转订单。资金从买家可用余额扣出、进平台代收账户（平台托管），订单完成或取消时再由平台出账（ADR-0019）。
 
 全部接口需登录（JWT Bearer），且仅付款人本人可操作。表结构见 `docs/db/user.md` 的 `payment_order` / `wallet_pay_task`。
 
-> **钱包对用户已隐藏**：前端钱包页 / 个人页钱包入口、用户端 `/api/wallet/**`（余额 / 充值 / 流水）已全部撤除；余额与冻结只在支付链路内部流转。`GET /api/wallet/balance` 等旧接口返回 404。
+> **钱包对用户已隐藏**：前端钱包页 / 个人页钱包入口、用户端 `/api/wallet/**`（余额 / 充值 / 流水）已全部撤除；余额只在支付链路内部流转。`GET /api/wallet/balance` 等旧接口返回 404。
 
 ## 预下单（无独立 HTTP 接口）
 
@@ -30,17 +30,18 @@
 
 - Body: 无
 - 成功: `data = null`；支付单转 `PAID`，同时：
-  - 钱包冻结货款（`wallet_detail` type=PRODUCT_FROZEN，`uk_order_type` 幂等）
-  - 可用余额条件扣减（`balance − frozen_amount >= amount`，不足 → 500「零钱余额不足，无法完成支付」，支付单留 WAIT_PAY）
+  - 买家余额出账（`wallet_detail` type=`PRODUCT_PAY`）与平台入账（`PLATFORM_IN`）双边流水（`uk_order_type` 幂等）
+  - 买家可用余额条件扣减（`balance − frozen_amount >= amount`，不足 → 500「零钱余额不足，无法完成支付」，支付单留 WAIT_PAY）
+  - 平台代收账户余额入账（账户行懒创建，余额从 0 起）
   - 落支付回调任务行（`wallet_pay_task` PENDING），与上述动作同一钱包事务
   - 事务提交后进程内回调 idle 域翻转订单「待支付 → 已支付」；成功后任务置 DONE
-- 幂等: 已 PAID 重复支付直接返回成功、不重复冻结；已 CLOSED → 500「支付单已关闭」
+- 幂等: 已 PAID 重复支付直接返回成功、不重复出账；已 CLOSED → 500「支付单已关闭」
 - 错误: 支付单不存在 → 404；非本人 → 403；余额不足 / 已关闭 → 500
 
 ## 支付状态机与回调收敛
 
 ```
-WAIT_PAY ──pay（扣冻 + 回调任务行，同一钱包事务）──▶ PAID
+WAIT_PAY ──pay（买家出账 + 平台入账 + 回调任务行，同一钱包事务）──▶ PAID
     │                                                │
     └── 订单取消 / 超时：closePaymentOrder ──▶ CLOSED │
                                                      └── 回调失败 → wallet_pay_task 留 PENDING
@@ -49,6 +50,6 @@ WAIT_PAY ──pay（扣冻 + 回调任务行，同一钱包事务）──▶ P
 ```
 
 - **回调是进程内端口**（`IPaymentNotifyPort`），不是 HTTP `notify_url`；商户侧实现 = idle 域 `PaymentNotifyHandler`，翻转为幂等条件更新。
-- 回调永久拒绝（订单已取消 / 不存在 / 付款人不符）不再重试；支付与取消竞态下已冻结的悬置款由 `productFundOrphanScan` 退买家。
-- 已支付订单取消仍走原解冻退款链路（`PRODUCT_UNFROZEN`）；`payment_order` 没有 REFUNDED 状态。
+- 回调永久拒绝（订单已取消 / 不存在 / 付款人不符）不再重试；支付与取消竞态下平台已代收的悬置款由 `productFundOrphanScan` 出账退买家（判据：有 `PLATFORM_IN` 无 `PLATFORM_OUT`）。
+- 已支付订单取消由平台出账退回买家（`PLATFORM_OUT` + `PRODUCT_REFUND`）；`payment_order` 没有 REFUNDED 状态。
 - 预下单 / 支付 / 关闭的事务边界都在钱包仓储内（ADR-0016），支付事务只写钱包域表。
