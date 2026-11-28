@@ -17,14 +17,14 @@ export interface PageResult<T> {
 
 // ---------- search ----------
 export interface UserSummary {
-  userId: number
+  userId: string
   nickname: string
   avatar: string | null
 }
 
 // ---------- auth ----------
 export interface UserInfo {
-  userId: number
+  userId: string
   phone: string
   nickname: string
   avatar: string | null
@@ -45,7 +45,7 @@ export interface UserAuthResponse {
 export type Gender = 'MALE' | 'FEMALE'
 
 export interface PublicUserProfile {
-  userId: number
+  userId: string
   nickname: string
   avatar: string | null
   /** 个性签名（null＝不展示） */
@@ -61,11 +61,11 @@ export interface PublicUserProfile {
 
 /** 按用户列评论的列表项（作者主页 / 「我的」页「评论」tab） */
 export interface AuthorProfileComment {
-  commentId: number
+  commentId: string
   content: string
   likeCount: number
   createdAt: string
-  postId: number
+  postId: string
   /** 来源帖标题（可空） */
   postTitle: string | null
   /** 来源帖封面（无封面帖为 null） */
@@ -75,10 +75,10 @@ export interface AuthorProfileComment {
 // ---------- community ----------
 
 export interface PostSummary {
-  postId: number
+  postId: string
   title: string
   cover: string | null
-  userId: number
+  userId: string
   nickname: string
   avatar: string | null
   likeCount: number
@@ -98,14 +98,14 @@ export interface PostSummary {
 export type ProductOrderStatus = 'PENDING_PAYMENT' | 'PAID' | 'DELIVERED' | 'COMPLETED' | 'CANCELLED'
 
 export interface ProductOrder {
-  orderId: number
-  productId: number
+  orderId: string
+  productId: string
   productTitle: string
   productImage: string | null
-  buyerId: number
+  buyerId: string
   buyerNickname: string
   buyerAvatar: string | null
-  sellerId: number
+  sellerId: string
   sellerNickname: string
   sellerAvatar: string | null
   price: number
@@ -116,8 +116,8 @@ export interface ProductOrder {
 }
 
 export interface PostDetail {
-  postId: number
-  userId: number
+  postId: string
+  userId: string
   nickname: string
   avatar: string | null
   title: string
@@ -147,9 +147,9 @@ export interface PostPublishResult {
 }
 
 export interface PostComment {
-  commentId: number
-  postId: number
-  userId: number
+  commentId: string
+  postId: string
+  userId: string
   nickname: string
   content: string
   /** 评论点赞数（根评论与子回复通用） */
@@ -163,16 +163,16 @@ export interface PostComment {
 
 /** 楼内子回复（平铺展示）：parentId ≠ 楼根评论 id 时展示"▶ 被回复人昵称"指向标签 */
 export interface CommentReply {
-  commentId: number
-  postId: number
-  parentId: number
-  userId: number
+  commentId: string
+  postId: string
+  parentId: string
+  userId: string
   nickname: string
   content: string
   likeCount?: number
   /** 当前用户是否已赞（访客 false） */
   liked?: boolean
-  replyToUserId: number
+  replyToUserId: string
   replyToNickname: string
   createdAt: string
 }
@@ -187,8 +187,8 @@ export type IdleCategory =
   | 'OTHER'
 
 export interface Product {
-  productId: number
-  userId: number
+  productId: string
+  userId: string
   sellerNickname: string
   sellerAvatar: string | null
   title: string
@@ -230,7 +230,7 @@ export interface CreditLog {
   change: number
   reasonType: string
   reasonDesc: string
-  refId: number | null
+  refId: string | null
   createdAt: string
 }
 
@@ -243,8 +243,8 @@ export type RoomSource = 'PRODUCT'
 export type RoomPeerRole = 'SELLER' | 'BUYER'
 
 export interface ChatRoomSummary {
-  roomId: number
-  peerUserId: number | null
+  roomId: string
+  peerUserId: string | null
   peerNickname: string | null
   peerAvatar: string | null
   peerRole: RoomPeerRole | null
@@ -256,14 +256,14 @@ export interface ChatRoomSummary {
 }
 
 export interface ChatRoom {
-  roomId: number
+  roomId: string
 }
 
 export interface ChatMessage {
-  roomId: number
-  messageId: number
+  roomId: string
+  messageId: string
   seq: number
-  fromUserId: number | null
+  fromUserId: string | null
   fromNickname: string | null
   fromAvatar: string | null
   /** SYSTEM=系统通知卡片（系统助手会话，content 为 JSON 载荷，用户不可回复） */
@@ -271,7 +271,7 @@ export interface ChatMessage {
   status: string
   content: string
   refType: string | null
-  refId: number | null
+  refId: string | null
   clientMsgId: string | null
   deliverySeq: number | null
   createdAt: string
@@ -288,7 +288,7 @@ export interface ChatTimelinePage {
 }
 
 /** 会话成员水位线（room_member）：1v1 已读回执的水位初值来源 */export interface RoomMember {
-  userId: number
+  userId: string
   nickname: string
   avatar: string | null
   lastReadSeq: number
@@ -311,15 +311,15 @@ export type NotificationType =
   | 'POINTS_CHANGED'
 
 export interface Notification {
-  id: number
+  id: string
   /** per-(user, scope) 收件序号：横幅补拉游标锚点（seq > 本地水位 = 没弹过） */
   seq: number
-  senderId: number | null
+  senderId: string | null
   type: NotificationType
   title: string
   content: string
   read: boolean
   refType: string | null
-  refId: number | null
+  refId: string | null
   createdAt: string
 }

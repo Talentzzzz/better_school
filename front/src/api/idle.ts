@@ -32,35 +32,35 @@ export interface ProductCreateBody {
 }
 
 export function createProduct(body: ProductCreateBody) {
-  return httpPost<number>('/idle/products', body)
+  return httpPost<string>('/idle/products', body)
 }
 
-export function getProduct(productId: number) {
+export function getProduct(productId: string) {
   return httpGet<Product>(`/idle/products/${productId}`)
 }
 
 /** 某用户的在售商品（作者主页「闲置」tab，免登录；仅 ON_SALE） */
-export function listUserProducts(userId: number, page = 1, pageSize = 50) {
+export function listUserProducts(userId: string, page = 1, pageSize = 50) {
   return httpGet<PageResult<Product>>(`/idle/users/${userId}/products`, { page, pageSize })
 }
 
-export function deleteProduct(productId: number) {
+export function deleteProduct(productId: string) {
   return httpDelete<null>(`/idle/products/${productId}`)
 }
 
-export function markSold(productId: number) {
+export function markSold(productId: string) {
   return httpPost<null>(`/idle/products/${productId}/sold`)
 }
 
-export function relistProduct(productId: number) {
+export function relistProduct(productId: string) {
   return httpPost<null>(`/idle/products/${productId}/relist`)
 }
 
-export function favoriteProduct(productId: number) {
+export function favoriteProduct(productId: string) {
   return httpPost<null>(`/idle/products/${productId}/favorite`)
 }
 
-export function unfavoriteProduct(productId: number) {
+export function unfavoriteProduct(productId: string) {
   return httpDelete<null>(`/idle/products/${productId}/favorite`)
 }
 
@@ -74,23 +74,23 @@ export function listMyProducts(page = 1, pageSize = 10) {
 
 // ---------- 商品托管订单 ----------
 
-export function createProductOrder(productId: number) {
-  return httpPost<number>('/idle/orders', null, { params: { productId } })
+export function createProductOrder(productId: string) {
+  return httpPost<string>('/idle/orders', null, { params: { productId } })
 }
 
-export function getProductOrder(orderId: number) {
+export function getProductOrder(orderId: string) {
   return httpGet<ProductOrder>(`/idle/orders/${orderId}`)
 }
 
-export function markDeliveredProduct(orderId: number) {
+export function markDeliveredProduct(orderId: string) {
   return httpPost<null>(`/idle/orders/${orderId}/mark-delivered`)
 }
 
-export function confirmProductOrder(orderId: number) {
+export function confirmProductOrder(orderId: string) {
   return httpPost<null>(`/idle/orders/${orderId}/confirm`)
 }
 
-export function cancelProductOrder(orderId: number) {
+export function cancelProductOrder(orderId: string) {
   return httpPost<null>(`/idle/orders/${orderId}/cancel`)
 }
 

@@ -2,7 +2,7 @@ import { httpGet, httpPut } from './http'
 import type { Gender, PublicUserProfile } from '@/types/api'
 
 /** 公开资料（免登录；作者主页与「我的」页资料区共用） */
-export function getPublicProfile(userId: number) {
+export function getPublicProfile(userId: string) {
   return httpGet<PublicUserProfile>(`/user/${userId}/profile`)
 }
 

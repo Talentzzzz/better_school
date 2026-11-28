@@ -41,17 +41,17 @@ export function listViewHistory(page = 1, pageSize = 10) {
 // ---------- 按用户查询（作者主页，免登录，一律公开口径） ----------
 
 /** 某用户的公开帖（「笔记」tab）：仅 NORMAL */
-export function listUserPosts(userId: number, page = 1, pageSize = 50) {
+export function listUserPosts(userId: string, page = 1, pageSize = 50) {
   return httpGet<PageResult<PostSummary>>(`/community/users/${userId}/posts`, { page, pageSize })
 }
 
 /** 某用户赞过的帖（「赞过」tab）：源帖仅 NORMAL，按点赞时间倒序 */
-export function listUserLikedPosts(userId: number, page = 1, pageSize = 50) {
+export function listUserLikedPosts(userId: string, page = 1, pageSize = 50) {
   return httpGet<PageResult<PostSummary>>(`/community/users/${userId}/liked`, { page, pageSize })
 }
 
 /** 某用户的评论（「评论」tab）：评论与源帖均 NORMAL，按评论时间倒序 */
-export function listUserComments(userId: number, page = 1, pageSize = 50) {
+export function listUserComments(userId: string, page = 1, pageSize = 50) {
   return httpGet<PageResult<AuthorProfileComment>>(`/community/users/${userId}/comments`, { page, pageSize })
 }
 
@@ -77,66 +77,66 @@ export interface PostDraftBody {
 
 /** 保存帖子草稿（可全空），返回 postId */
 export function savePostDraft(body: PostDraftBody) {
-  return httpPost<number>('/community/posts/draft', body)
+  return httpPost<string>('/community/posts/draft', body)
 }
 
 /** 编辑草稿（仅 DRAFT 可改，全量覆盖） */
-export function updatePostDraft(postId: number, body: PostDraftBody) {
+export function updatePostDraft(postId: string, body: PostDraftBody) {
   return httpPut<null>(`/community/posts/${postId}/draft`, body)
 }
 
 /** 发布草稿：正文必填，缺项停留草稿 */
-export function submitPostDraft(postId: number) {
+export function submitPostDraft(postId: string) {
   return httpPost<PostPublishResult>(`/community/posts/${postId}/submit`)
 }
 
-export function getPost(postId: number) {
+export function getPost(postId: string) {
   return httpGet<PostDetail>(`/community/posts/${postId}`)
 }
 
-export function deletePost(postId: number) {
+export function deletePost(postId: string) {
   return httpDelete<null>(`/community/posts/${postId}`)
 }
 
-export function likePost(postId: number) {
+export function likePost(postId: string) {
   return httpPost<null>(`/community/posts/${postId}/like`)
 }
 
-export function unlikePost(postId: number) {
+export function unlikePost(postId: string) {
   return httpDelete<null>(`/community/posts/${postId}/like`)
 }
 
 /** 点赞评论（根评论与子回复通用） */
-export function likeComment(commentId: number) {
+export function likeComment(commentId: string) {
   return httpPost<null>(`/community/comments/${commentId}/like`)
 }
 
-export function unlikeComment(commentId: number) {
+export function unlikeComment(commentId: string) {
   return httpDelete<null>(`/community/comments/${commentId}/like`)
 }
 
 /** 根评论排序：hot 最热（like_count 降序），new 最新（id 升序），默认最热 */
 export type CommentSort = 'hot' | 'new'
 
-export function listComments(postId: number, page = 1, pageSize = 20, sort: CommentSort = 'hot') {
+export function listComments(postId: string, page = 1, pageSize = 20, sort: CommentSort = 'hot') {
   return httpGet<PageResult<PostComment>>(`/community/posts/${postId}/comments`, { page, pageSize, sort })
 }
 
 /** 发布评论：响应即返回完整新评论 DTO（乐观插顶用） */
-export function createComment(postId: number, content: string) {
+export function createComment(postId: string, content: string) {
   return httpPost<PostComment>(`/community/posts/${postId}/comments`, { content })
 }
 
 /** 楼内子回复平铺：不传 pageSize 时后端按首页 3 条、之后每页 10 条分页 */
-export function listReplies(commentId: number, page: number) {
+export function listReplies(commentId: string, page: number) {
   return httpGet<PageResult<CommentReply>>(`/community/comments/${commentId}/replies`, { page })
 }
 
 /** 回复评论（根评论或楼内子回复），归属由后端计算；响应含完整新回复 DTO */
-export function createReply(commentId: number, content: string) {
+export function createReply(commentId: string, content: string) {
   return httpPost<CommentReply>(`/community/comments/${commentId}/replies`, { content })
 }
 
-export function deleteComment(commentId: number) {
+export function deleteComment(commentId: string) {
   return httpDelete<null>(`/community/comments/${commentId}`)
 }
